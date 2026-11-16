@@ -7,13 +7,16 @@
 // before it acts is a row with three buttons, which answer it. In lesson 15
 // the last row of each closed turn carries "Branch after turn N", and the row
 // of chats above the messages shows each chat of the store, the one shown
-// marked.
+// marked. In lesson 17 the row of task chips above the messages shows each
+// background task the conversation started, and how it stands.
 import type { TurnNumber } from "@xandreed/core/kernel"
 import type { Decision } from "@xandreed/sdk/kernel"
 import type { ChatEntry } from "../chats.ts"
 import { answersTo, NO_TEXT } from "../chat-model.ts"
 import type { ChatRow } from "../chat-model.ts"
 import { renderMarkdown } from "../markdown.ts"
+import { chipLine } from "../task-chips.ts"
+import type { TaskChip } from "../task-chips.ts"
 
 export interface ChatPane {
   /** An element of the pane's own at the end of the chat: the place a view is drawn in (views.ts). */
@@ -25,6 +28,8 @@ export interface ChatPane {
   readonly render: (rows: ReadonlyArray<ChatRow>, branches?: ReadonlyMap<number, TurnNumber>) => void
   /** Draw the row of chats (lesson 15), the one shown marked; an empty row hides it. */
   readonly renderChats: (chats: ReadonlyArray<ChatEntry>, shown: string) => void
+  /** Draw the row of task chips (lesson 17), each with its state; an empty row hides it. */
+  readonly renderTasks: (chips: ReadonlyArray<TaskChip>) => void
   readonly clear: () => void
   readonly setState: (state: { ready: boolean; running: boolean; hint: string }) => void
   readonly focus: () => void
@@ -57,6 +62,8 @@ export const mountChat = (root: HTMLElement, hooks: ChatHooks): ChatPane => {
   const three = q<HTMLButtonElement>("[data-send-three]")
   // Lesson 15's row of chats: only its page has one.
   const chatsBox = root.querySelector<HTMLElement>("[data-chats]")
+  // Lesson 17's row of task chips: only its page has one.
+  const tasksBox = root.querySelector<HTMLElement>("[data-tasks]")
   const sent: string[] = []
   let recall = -1
 
@@ -232,10 +239,27 @@ export const mountChat = (root: HTMLElement, hooks: ChatHooks): ChatPane => {
     }))
   }
 
+  const renderTasks = (chips: ReadonlyArray<TaskChip>) => {
+    if (tasksBox === null) return
+    tasksBox.hidden = chips.length === 0
+    tasksBox.replaceChildren(...chips.map((chip) => {
+      const item = document.createElement("span")
+      item.className = "task-chip"
+      item.dataset.task = chip.task
+      item.dataset.state = chip.state
+      if (chip.failed) item.dataset.failed = ""
+      // The task's text is the model's: a text node.
+      item.title = `${chip.text} (session ${chip.session})`
+      item.textContent = chipLine(chip)
+      return item
+    }))
+  }
+
   return {
     add,
     render,
     renderChats,
+    renderTasks,
     clear: () => { messages.replaceChildren(); pending.clear(); drawn.clear(); closes.clear(); empty.hidden = false; following = true },
     setState: ({ ready, running, hint: text }) => {
       // While the agent answers, more messages may be sent: they wait in the queue.

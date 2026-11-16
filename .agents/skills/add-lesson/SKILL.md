@@ -117,6 +117,12 @@ checks.
   as one walk on one runtime, press by press in the page's order, and
   each experiment's text names the state it starts from, which its test
   sets up the same way.
+- Code that waits on time (lesson 17's helper, three seconds) is held on a
+  signal in every test, never slept through: a page test edits the wait
+  into a wait on a function the test gives, and program.test.ts compiles
+  a module whose wait comes from a file the test writes. Work that runs
+  beside the chat's turn (a task) shares the model with it: each page
+  model stops one request alone, and the page's Stop stops them all.
 - An experiment that must edit two files lists the second under `also`,
   and its tests apply it with `applyExperiment`, as the page does.
 - A lesson whose page runs a kit or checks (`Lesson.kits`, lessons 7 and

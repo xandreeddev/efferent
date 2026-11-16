@@ -1,0 +1,26 @@
+---
+// The last step: each button rewrites one of the learner's files and runs it again (see learn/playground.ts,
+// `data-exp`). A task running when the program is built again is cut short, and reports nothing.
+const experiments = [
+  {
+    id: "instant", title: "A helper that answers at once", button: "Take the wait out",
+    text: "helper.ts loses its two lines that wait three seconds. Send In the background, what is 6 * 7?. The turn answers Started task t1: its answer comes as a message of its own., and the report comes right behind it: on Echo the helper answers at once, so the next turn is the report's, Task t1 finished: The tool answered: calculator says 42. Nothing waited long enough to send a message in between: that is why the starter's helper takes its time.",
+  },
+  {
+    id: "one-at-a-time", title: "One task at a time", button: "Run one task at a time",
+    text: "Press Reset first: this starts from agent.ts as it starts. main then provides tasks(helper, { running: 1 }): at most one task runs at once, where the plugin allows four when it is given no number. Send In the background, what is 6 * 7?, then Start a task: what is 3 + 4? before the first reports. The second is refused in the kernel's words, which the model reads: 1 task is running, the most at once. Wait for one to report, or cancel one with cancelTask, then start this one. The chips show t1 running, and no t2.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

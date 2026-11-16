@@ -111,7 +111,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     const row = sessionRow(all)
     sessionsBox.hidden = row.length < 2
     patch(sessionsBox, row.map((tab): Item => [keyOf(tab, tab.session === shownSession), () => {
-      const button = el("button", { type: "button", class: "tr-session", "data-kind": tab.kind, "data-child": tab.kind === "helper" ? "" : undefined, "aria-pressed": String(tab.session === shownSession), title: tab.title }, tab.label)
+      const button = el("button", { type: "button", class: "tr-session", "data-kind": tab.kind, "data-child": tab.kind === "helper" || tab.kind === "task" ? "" : undefined, "aria-pressed": String(tab.session === shownSession), title: tab.title }, tab.label)
       button.addEventListener("click", () => showSession(tab.session))
       return button
     }]))
@@ -220,12 +220,15 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     "not-conversation": "not conversation: memory skips it",
     fact: "a fact's record: what withFacts reads for each request, in every conversation",
   }
-  /** The session a stored delegate result names (ADR 0006: the link from the call to the helper's session). */
-  const helperOf = (seq: number): string | undefined => {
+  /**
+   * The session a stored result names: a delegate's, the helper's (ADR 0006: the link from the call to the helper's
+   * session), or a startTask's, the background task's (lesson 17, ADR 0018).
+   */
+  const helperOf = (seq: number): { readonly session: string; readonly task: boolean } | undefined => {
     const message = board.records.find((one) => one.seq === seq)?.message
-    if (message?._tag !== "ToolResult" || message.name !== "delegate") return undefined
+    if (message?._tag !== "ToolResult" || (message.name !== "delegate" && message.name !== "startTask")) return undefined
     const result = message.result
-    return typeof result === "object" && result !== null && "session" in result && typeof result.session === "string" ? result.session : undefined
+    return typeof result === "object" && result !== null && "session" in result && typeof result.session === "string" ? { session: result.session, task: message.name === "startTask" } : undefined
   }
   const renderJournal = (view: CallView, lit: ReadonlySet<number>) => {
     const tags = [...new Set(view.journal.flatMap((row) => row.tags))]
@@ -248,9 +251,9 @@ export const mountTrace = (root: HTMLElement): TracePane => {
         el("p", { class: "tr-use" }, useText[row.use]),
         (() => {
           const helper = helperOf(row.seq)
-          if (helper === undefined || !all.boards.has(helper)) return undefined
-          const open = el("button", { type: "button", class: "btn btn-quiet tr-open-session" }, "Open the helper's session ▸")
-          open.addEventListener("click", () => showSession(helper))
+          if (helper === undefined || !all.boards.has(helper.session)) return undefined
+          const open = el("button", { type: "button", class: "btn btn-quiet tr-open-session" }, helper.task ? "Open the task's session ▸" : "Open the helper's session ▸")
+          open.addEventListener("click", () => showSession(helper.session))
           return open
         })(),
         el("pre", { class: "tr-payload" }, row.payload))

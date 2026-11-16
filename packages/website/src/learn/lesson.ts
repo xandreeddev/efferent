@@ -6,7 +6,7 @@ import { Option } from "effect"
 import type { Duration, Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xandreed/core/kernel"
-import type { Approval, Files, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
+import type { Approval, Files, KeyValueStore, Memory, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 import type { EvalsView } from "./lessons/evals/board.ts"
 import type { LoadedModel } from "./models/types.ts"
@@ -124,6 +124,13 @@ export interface PageParts {
    */
   readonly approvalOn: (pane: unknown) => Layer.Layer<Approval>
   /**
+   * Where a background task's report goes (lesson 17, ADR 0018): the page's `TaskReports`, whose `deliver` puts the
+   * report into the chat's one queue, behind the messages and reports that came before it. The program takes it
+   * from `Chat.inputs` for a turn of its own; `drain` leaves it. A report still waiting when the program stops is
+   * dropped.
+   */
+  readonly reportsOn: (pane: unknown) => Layer.Layer<TaskReports>
+  /**
    * The spare (lesson 14): a second Echo, named `echo-spare`, watched as the model picked is (its prompts and usage
    * traced under its name) and never failing. A plan's second step provides it.
    */
@@ -226,6 +233,11 @@ export interface Lesson {
    * from them, once, given to the program as `PageParts.files`; the page's file pane shows and edits the same one.
    */
   readonly workspace?: { readonly seed: Readonly<Record<string, string>> }
+  /**
+   * The chat shows a chip for each background task the conversation started (lesson 17): running, ended, its report
+   * waiting, reported, cancelled, stopped with the program, or its report dropped (`task-chips.ts`).
+   */
+  readonly tasks?: true
   /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>
   /**

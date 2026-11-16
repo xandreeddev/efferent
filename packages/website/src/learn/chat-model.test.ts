@@ -5,11 +5,11 @@
 // rows.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { assistantMessage, Seq, stored as draftOf, ToolCallId, toolResult, turnEnded, TurnNumber, turnStarted, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, Seq, SessionId, stored as draftOf, ToolCallId, toolResult, turnEnded, TurnNumber, turnStarted, userMessage } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
-import { APPROVAL_REFUSED, decidedEvent } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, decidedEvent, TaskId, taskReport } from "@xandreed/sdk/kernel"
 import type { Decision } from "@xandreed/sdk/kernel"
-import { answersTo, asked, asking, attemptLine, branchPoints, chatRowsOf, drawsAnew, decidedLine, dropWaiting, emptyChat, failed, failureLine, hear, piece, questionsWaiting, replied, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
+import { answersTo, asked, asking, attemptLine, branchPoints, chatRowsOf, drawsAnew, decidedLine, dropWaiting, emptyChat, failed, failureLine, hear, piece, questionsWaiting, replied, reportLine, sent, stored, taken, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import type { ChatBoard, ChatRow } from "./chat-model.ts"
 import type { Lesson } from "./lesson.ts"
 import { compaction } from "./lessons/compaction/lesson.ts"
@@ -368,5 +368,37 @@ describe("the chat's rows, record by record", () => {
     expect(drawsAnew(board, "chat", { session: "chat", journal: records })).toBe(false)
     expect(drawsAnew(board, "chat", { session: "branch", journal: records })).toBe(true)
     expect(drawsAnew(board, "chat", { session: "chat", journal: records.map((record) => ({ ...record, at: 1 })) })).toBe(true)
+  })
+})
+
+describe("a background task's report in the chat (lesson 17)", () => {
+  const report = (outcome: "Finished" | "Failed", text: string) =>
+    taskReport({ task: TaskId.make("t1"), parent: SessionId.make("chat"), session: SessionId.make("task-session"), outcome, text })
+
+  test("a stored report is a row of its own, naming the task and how it ended, drawn the same from the journal", () => {
+    const records = journal(
+      [turnStarted(one), userMessage("In the background, what is 6 * 7?"), assistantMessage("Started task t1.")],
+      [turnStarted(TurnNumber.make(2)), report("Finished", "It is 42."), assistantMessage("Task t1 finished: It is 42.")],
+      [turnStarted(TurnNumber.make(3)), report("Failed", "The helper gave up.")],
+    )
+    expect(chatRowsOf(records).map((row) => `${row.kind} (turn ${row.turn}): ${row.text}`)).toEqual([
+      "user (turn 1): In the background, what is 6 * 7?",
+      "agent (turn 1): Started task t1.",
+      "report (turn 2): Report of task t1 (finished): It is 42.",
+      "agent (turn 2): Task t1 finished: It is 42.",
+      "report (turn 3): Report of task t1 (failed): The helper gave up.",
+    ])
+    // A message another session sent that is no report the kernel wrote is shown as it was sent, still apart.
+    expect(reportLine("hello")).toBe("From another session: hello")
+  })
+
+  test("a report takes no waiting message's place: the person's message waits on, and its row becomes its own record's", () => {
+    const records = journal([turnStarted(one), userMessage("first"), assistantMessage("done")], [turnStarted(TurnNumber.make(2)), report("Finished", "It is 42.")], [turnStarted(TurnNumber.make(3)), userMessage("waiting")])
+    const before = records.slice(0, 3).reduce(stored, emptyChat)
+    const waiting = sent(before, "waiting")
+    const reported = records.slice(3, 5).reduce(stored, waiting)
+    expect(reported.rows.map(told)).toEqual(["user: first", "agent: done", "report: Report of task t1 (finished): It is 42.", "user* (waiting): waiting"])
+    const taken = records.slice(5).reduce(stored, reported)
+    expect(taken.rows.map(told)).toEqual(["user: first", "agent: done", "report: Report of task t1 (finished): It is 42.", "user: waiting"])
   })
 })

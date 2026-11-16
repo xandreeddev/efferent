@@ -234,6 +234,9 @@ describe("the Context tab's row of sessions", () => {
     expect(kindOf("s1", "chat", header("plugin.facts"))).toBe("memory")
     // The memory session continues no other, as the kernel finds it: one the plugin owns under a parent is a child.
     expect(kindOf("s1", "chat", header("plugin.facts", "chat"))).toBe("helper")
+    // A background task's session (lesson 17): the tasks plugin owns it, and it is a child. Without a parent it is another.
+    expect(kindOf("s1", "chat", header("plugin.tasks", "chat"))).toBe("task")
+    expect(kindOf("s1", "chat", header("plugin.tasks"))).toBe("other")
     // An earlier conversation, or any session of the program's own making, is no helper: it has no parent.
     expect(kindOf("s1", "chat", header("learner"))).toBe("other")
     // A header that was never heard says nothing: the session is not taken for a helper.

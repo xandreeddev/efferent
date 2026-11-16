@@ -229,6 +229,15 @@ export const loadWebLlm = async (
   let issued = 0
   let stoppedUpTo = 0
   const interrupt = () => { stoppedUpTo = issued; engine.interruptGenerate() }
+  // Two requests can be under way at once (lesson 17: the chat's turn and a task's helper), one on the GPU and one
+  // waiting. A request cancelled on its own stops itself and no other: one still waiting is skipped by its own
+  // ticket, and the engine is told to stop only when the request cancelled is the one generating now.
+  const cancelled = new Set<number>()
+  let generating: number | undefined
+  const cancel = (ticket: number) => {
+    cancelled.add(ticket)
+    if (generating === ticket) engine.interruptGenerate()
+  }
   // One generation on the GPU at a time, and a stopped one is read to its end: a new request that starts
   // while the last step's results are still being read back loses the device ("Buffer was unmapped before
   // mapping was resolved", then "Device was lost").
@@ -258,11 +267,15 @@ export const loadWebLlm = async (
       const messages = alternating(toChatMessages(options.prompt))
       return modelStream("WebLLM", (sink) => {
         let reply = ""
+        let done = false
         issued += 1
         const ticket = issued
-        const stopped = () => ticket <= stoppedUpTo
+        const stopped = () => ticket <= stoppedUpTo || cancelled.has(ticket)
         void exclusive(async () => {
-          if (stopped()) { sink.end(usageOf(messages, "")); return }
+          // The request is done before the stream hears so: a stop its reader sends after that changes nothing.
+          const settle = () => { done = true; cancelled.delete(ticket); if (generating === ticket) generating = undefined }
+          if (stopped()) { settle(); sink.end(usageOf(messages, "")); return }
+          generating = ticket
           let reported: Usage | undefined
           try {
             const chunks = await engine.chat.completions.create({ messages, stream: true, max_tokens: MAX_REPLY_TOKENS, stream_options: { include_usage: true } })
@@ -273,13 +286,16 @@ export const loadWebLlm = async (
               if (delta.length > 0 && !stopped()) { reply += delta; sink.push(delta) }
             }
             if (stopped()) await clearAfterStop()
+            settle()
             sink.end(reported ?? { inputTokens: { total: estimateTokens(messages.map((m) => m.content).join("\n")) }, outputTokens: { total: estimateTokens(reply) } })
           } catch (error) {
-            if (stopped()) { await clearAfterStop(); sink.end(usageOf(messages, reply)) }
-            else sink.fail(error)
+            if (stopped()) { await clearAfterStop(); settle(); sink.end(usageOf(messages, reply)) }
+            else { settle(); sink.fail(error) }
           }
         })
-        return interrupt
+        // The stream's own stop, called whenever its reader lets go: it cancels this request alone, and nothing
+        // once the request is done.
+        return () => { if (!done) cancel(ticket) }
       }) as never
     },
   })

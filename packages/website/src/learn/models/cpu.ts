@@ -112,6 +112,7 @@ const wrap = (choice: ModelChoice, worker: WorkerLike): LoadedModel => {
       }) as never
     },
   })
-  // The Stop button: interrupt the latest request.
-  return { choice, model, interrupt: () => interruptRequest(nextId), dispose: () => worker.terminate() }
+  // The Stop button: interrupt every request not yet done, the one generating and those waiting behind it. A
+  // stream cancelled on its own (a task's helper, lesson 17) interrupts its request alone, by its id.
+  return { choice, model, interrupt: () => [...handlers.keys()].forEach(interruptRequest), dispose: () => worker.terminate() }
 }

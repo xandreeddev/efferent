@@ -7,7 +7,7 @@
 import { Option, Predicate } from "effect"
 import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText, turnsOf } from "@xandreed/sdk/kernel"
+import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText, TASKS_OWNER, turnsOf } from "@xandreed/sdk/kernel"
 import type { ClosedRead, TurnRead } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
@@ -32,10 +32,11 @@ interface ContextSeen {
 
 /**
  * What a session is, read from its header and never guessed from its place in a list: the chat's conversation; a
- * helper's (lesson 4: it has a parent); the memory session (lesson 11: the facts plugin owns it, and it continues
- * no other); or another session of the program's own making.
+ * helper's (lesson 4: it has a parent); a background task's (lesson 17: the tasks plugin owns it, and it has a
+ * parent); the memory session (lesson 11: the facts plugin owns it, and it continues no other); or another session
+ * of the program's own making.
  */
-export type SessionKind = "chat" | "helper" | "memory" | "other"
+export type SessionKind = "chat" | "helper" | "task" | "memory" | "other"
 
 /** What the page heard of a session's header: who owns it, and the session it was created under, if any. */
 export interface SessionSeen {
@@ -51,7 +52,7 @@ export interface SessionSeen {
 export const kindOf = (session: string, chat: string, header: Option.Option<SessionSeen>): SessionKind =>
   session === chat ? "chat" : Option.match(header, {
     onNone: (): SessionKind => "other",
-    onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? "helper" : owner === FACTS_OWNER ? "memory" : "other",
+    onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? (owner === TASKS_OWNER ? "task" : "helper") : owner === FACTS_OWNER ? "memory" : "other",
   })
 
 /**
@@ -250,6 +251,11 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       return withEntry(board, { ...base, kind: "program", turn: 0, title: "the program stopped", detail: trace.reason })
     case "Taken":
       return board
+    case "Reported":
+      // Lesson 17: a task's report waits in the chat's queue, for a turn of its own.
+      return withEntry(board, { ...base, kind: "chat", turn: board.records.at(-1)?.turn ?? 0, title: `task ${trace.task}'s report waits in the chat's queue`, detail: trace.session })
+    case "ReportsDropped":
+      return withEntry(board, { ...base, kind: "program", turn: board.records.at(-1)?.turn ?? 0, title: `${trace.sessions.length === 1 ? "a report" : `${trace.sessions.length} reports`} dropped as the program stopped`, detail: json(trace.sessions) })
     case "Asking":
       // A tool asked before it acts: the question is the page's to put, in the turn the conversation has open.
       return withEntry(board, { ...base, kind: "chat", turn: board.records.at(-1)?.turn ?? 0, title: `approval asked: ${trace.action}`, detail: trace.detail })
@@ -703,7 +709,9 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "hooks.stream (quiet)", column: "prompt", happened: Option.isSome(answer), seqs: [],
       detail: board.kind === "helper"
         ? "A helper's hooks keep its words out of the chat: its answer goes back to its caller as delegate's result."
-        : "This session is not the chat's: what its model says is not drawn in the chat.",
+        : board.kind === "task"
+          ? "A task's words stay out of the chat: its answer goes back to the chat's queue as a report, answered in a turn of its own."
+          : "This session is not the chat's: what its model says is not drawn in the chat.",
     } : {
       id: `streamed-${n}`, kind: "streamed", call: n, label: at("Answer streamed"), code: "chat.stream(piece)", column: "prompt", happened: streamed > 0 || Option.isSome(answer), seqs: [],
       detail: streamed > 0 ? `${plural(streamed, "piece")} streamed to the chat as they arrived.` : Option.isSome(answer) ? "The model streamed no text: it only called tools." : "Each piece goes to the chat as it arrives.",
@@ -825,11 +833,11 @@ const taskOf = (board: Board): string => {
 
 /**
  * The row of sessions: the chat's first, then each other session in the order it appeared, named for what it is.
- * A helper is numbered among the helpers and named by its task; the memory session is "Memory"; a session that is
- * none of these is numbered among its like, with its owner.
+ * A helper is numbered among the helpers and named by its task, and a background task among the tasks (lesson 17);
+ * the memory session is "Memory"; a session that is none of these is numbered among its like, with its owner.
  */
 export const sessionRow = (all: Boards): ReadonlyArray<SessionTab> => {
-  const counts = { helper: 0, other: 0 }
+  const counts = { helper: 0, task: 0, other: 0 }
   return [...all.boards].map(([session, board]): SessionTab => {
     const header = Option.fromNullishOr(all.headers.get(session))
     const kind = kindOf(session, all.chat, header)
@@ -837,10 +845,9 @@ export const sessionRow = (all: Boards): ReadonlyArray<SessionTab> => {
     if (kind === "memory") return { session, kind, label: "Memory", title: `The memory session: it holds the facts the agent remembers, in a journal of its own, for every conversation: ${session}` }
     const task = taskOf(board)
     const named = task.length > 0 ? `: ${task}` : ""
-    if (kind === "helper") {
-      const under = Option.exists(header, ({ parent }) => Option.contains(parent, all.chat)) ? "the chat's" : "another session's"
-      return { session, kind, label: `Helper ${++counts.helper}${named}`, title: `A helper's session, a child of ${under}: ${session}` }
-    }
+    const under = Option.exists(header, ({ parent }) => Option.contains(parent, all.chat)) ? "the chat's" : "another session's"
+    if (kind === "helper") return { session, kind, label: `Helper ${++counts.helper}${named}`, title: `A helper's session, a child of ${under}: ${session}` }
+    if (kind === "task") return { session, kind, label: `Task ${++counts.task}${named}`, title: `A background task's session, a child of ${under}, owned by the tasks plugin: ${session}` }
     const owner = Option.match(header, { onNone: () => "", onSome: (seen) => `, owned by ${seen.owner}` })
     return { session, kind, label: `Session ${++counts.other}${named}`, title: `A session of the program's own${owner}: ${session}` }
   })
