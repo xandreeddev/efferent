@@ -13,7 +13,7 @@ import { Chat } from "./chat.ts"`
 export const PLUGIN_HEADER = `${PLUGIN_IMPORTS}\n\n`
 
 /** What the learner edits: the two plugins. Plain JavaScript, so the page runs it as written. */
-export const DEFAULT_PLUGIN = `// An event plugin. On boot it hooks three events, as a Neovim autocmd does.
+export const DEFAULT_PLUGIN = `// An event plugin. On boot it hooks three events: its code runs when each one fires.
 // It stores nothing and says nothing to the model: it counts what each answer cost, and shows it.
 export const meter = Layer.effectDiscard(
   Effect.gen(function* () {

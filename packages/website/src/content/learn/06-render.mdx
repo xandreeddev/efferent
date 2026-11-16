@@ -22,13 +22,13 @@ One rule makes it work: **the model asks, the tool makes**. What the model write
 
 This lesson runs on **Echo**. "Show a table of squares to 5" or "show the times table of 7" goes to `show`, by rule.
 
-The small models on your machine rarely call a tool, as lesson 2 showed. Hosted models use `show` when their system text tells them to.
+The small models on your machine rarely call a tool, as lesson 2 showed. Hosted models (lesson 2) use `show` when their system text tells them to.
 
 </Step>
 
 <Step n={3} id="tool" title="A tool that shows" focus="code" file="tools">
 
-**tools.ts** declares `show`. It takes three small things: an `id`, which `table` (`squares`, `cubes` or `times`) and `n`. The **id is the model's**: showing again under the same id replaces the table, keeping its place in the chat. The rows are the handler's own work, from `kinds`.
+**tools.ts** declares `show`. It takes three small things: an `id`, which `table` (`squares`, `cubes` or `times`) and `n`. The **id is the model's**: showing again under the same id replaces the table, keeping its place in the chat. The rows are the handler's own work, from `kinds`, which says for each kind of table its title, its columns and how to work out a row.
 
 Its handler needs one thing, which it lists in `dependencies`: **`CurrentTurn`**, the turn its call runs in. Through it the handler does two things:
 
@@ -55,7 +55,7 @@ Open **Context**:
 - **Memory**: the view is not there. It is not conversation, and memory skips it.
 - **Prompt**: the call, `show({ id, table, n })`, and the result "shown as squares". None of the cells.
 
-The chat draws views by folding the journal: one view per id, the latest wins. The button below forgets everything the chat drew and draws it again from the journal alone, as a reload would: every stored message, tool result and view comes back where it was.
+The chat draws views by folding the journal, which here means, unlike lesson 5's folding of turns into a summary, reading every record in order and keeping a running result: one view per id, the latest wins. The button below forgets everything the chat drew and draws it again from the journal alone, as a reload would: every stored message, tool result and view comes back where it was.
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-redraw-views>Redraw the chat from the journal</button></p>
 

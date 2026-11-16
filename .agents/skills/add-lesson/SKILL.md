@@ -153,6 +153,18 @@ checks.
   lesson and the ADR. The previous lesson's "Next" links here; the learn
   index lists what is still to come.
 - Controls and experiments go in `src/components/learn/<slug>/`.
+- Write for a reader who knows a little JavaScript and nothing else: not
+  agents, models, Effect or this kernel. Two rules, for the prose, the
+  controls' and experiments' text and the comments of shown code:
+  - no comparison with something outside the page (an editor, a framework,
+    a product): say what the thing does instead;
+  - every term is said in plain words where the track first uses it, in a
+    clause beside it ("a **record**: your message, the model's answer…").
+    A later lesson may point back to it ("the journal, lesson 1").
+- Test it: give a fresh agent only the text of the lessons up to this one,
+  and ask for every word it cannot explain from them. Keep every step,
+  claim, code name, button label and quoted string while you reword: a
+  script that compares them before and after shows what went.
 
 ## 6. Checks
 
@@ -167,4 +179,6 @@ checks.
       1600×1000 and 390×844, light and dark, the screenshots looked at; Stop,
       Rebuild and Clear context tried where the lesson's state lives
 - [ ] One real-model run, and the mdx says what it did
+- [ ] The prose read by a fresh agent: no word it cannot explain from the
+      lessons so far, no comparison with something outside the page
 - [ ] CHANGELOG entry; the full definition of done

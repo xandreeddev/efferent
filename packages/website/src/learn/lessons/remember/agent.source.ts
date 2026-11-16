@@ -19,7 +19,7 @@ export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
 ]
 
 /** The base's boot hook, which names every turn that starts, in any session. */
-const BOOT_HOOK = `    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each turn.
+const BOOT_HOOK = `    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.
     yield* core.on(turnStartedEvent, ({ data }) => chat.status(\`turn \${data.turn}\`), {
       name: "boot",
       wait: true,
@@ -27,7 +27,7 @@ const BOOT_HOOK = `    // On boot: hook an event, as a Neovim autocmd would. Her
 `
 
 /** This lesson's boot hook: it names the conversation's turns, and passes over a turn on the memory session. */
-export const CHAT_HOOK = `    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each
+export const CHAT_HOOK = `    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each
     // turn of the conversation. A rememberFact call opens a turn too, on the memory session: the
     // hook passes that one over.
     yield* core.on(

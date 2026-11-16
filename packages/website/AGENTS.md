@@ -671,6 +671,10 @@ check` (tsc over the learn code, the build, the link check) and
 
 - Text a lesson shows is code the learner reads: plain, commented in full
   sentences, and the same text the tests compile and run.
+- A lesson's words assume a reader who knows a little JavaScript and
+  nothing else: no comparison with something outside the page, and every
+  term said in plain words where the track first uses it (skill
+  `add-lesson`, "The page").
 - Draw what a model or a user wrote as text nodes, never as markup, unless it
   goes through `markdown.ts` (the agent's answers).
 - A browser check runs Chrome with WebGPU (`--enable-unsafe-webgpu`), at

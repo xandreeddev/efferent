@@ -10,17 +10,17 @@ import Experiments from '../../components/learn/your-first-agent/Experiments.ast
 
 <Step n={1} id="build" title="What you will build" focus="code">
 
-An agent is a program: it takes your messages one by one and answers each in a **turn**. You write that program in **agent.ts**, on the right. It is the whole agent: no loop hides behind it.
+An agent is a program that holds a conversation with a language **model**, the part that writes text. It takes your messages one by one and answers each in a **turn**: one round, from your message to the model's answer. You write that program in **agent.ts**, on the right. It is the whole agent: no hidden code runs the conversation for it.
 
-It stands on a small **kernel**: events every part can hook, a **journal** that stores the conversation, and **sessions**, which open and close turns. Next to the kernel are **modules**, each with one job: the **chat** your messages come from, a **memory** that picks what the model sees, and the **model**.
+It stands on a small **kernel**, the few pieces every agent needs:
 
-It works like Neovim. The kernel is the editor's core, the modules are plugins, and your program is `init.lua`, which sets them up and wires them together:
+- **events**, which announce what happens (a turn starts, a message is stored), so any part can **hook** one: ask for its own code to run each time it happens;
+- a **journal**, the list where the conversation is stored. Each entry is a **record**: your message, the model's answer, or a note that a turn opened or closed, with its number and its turn;
+- **sessions**: a session is one conversation, and it opens and closes its turns.
 
-| In Neovim | Here |
-|---|---|
-| plugins set up on start | modules given to `main` with `Effect.provide` |
-| an autocmd on an event | `core.on(turnStartedEvent, …)` on boot |
-| a key mapping that calls a plugin | a message arrives, and `turn` calls memory and the model |
+Next to the kernel are **modules**, parts you can swap, each with one job: the **chat** your messages come from, a **memory** that picks which stored messages the model sees, and the model. The model reads only what it is sent with each request, and a long conversation can be too much for it, so what to send is a choice: memory's.
+
+Your program puts these parts together: it says which modules to use, which events to hook, and what a turn does. The code is TypeScript (JavaScript with types) written with **Effect**, a library for programs made of steps that can wait, fail or be stopped. You do not need to know it: each line is explained where it is used.
 
 Everything runs in your browser.
 
@@ -28,12 +28,12 @@ Everything runs in your browser.
 
 <Step n={2} id="model" title="Pick a model" focus="model">
 
-Open the **Model** list above. **Echo** needs no download and answers only from the messages it is sent, which is ideal for seeing what your agent remembers.
+Open the **Model** list above. **Echo** is a stand-in model that answers by fixed rules. It needs no download and answers only from the messages it is sent, which is ideal for seeing what your agent remembers.
 
 For real answers use a model on your own machine; nothing you type leaves your browser.
 
-- **CPU models** work anywhere, but are small: expect odd answers.
-- **GPU models** (WebLLM, Phi-3.5 mini included) and **Chrome's built-in model** need WebGPU or a recent Chrome. If yours cannot run them, the list says why.
+- **CPU models** run on your computer's processor. They work anywhere, but are small: expect odd answers.
+- **GPU models** run on its graphics chip, which is faster, through **WebGPU**, the browser's way to reach it, with the WebLLM library (Phi-3.5 mini included). **Chrome's built-in model** needs a recent Chrome. If yours cannot run them, the list says why.
 
 </Step>
 
@@ -41,13 +41,15 @@ For real answers use a model on your own machine; nothing you type leaves your b
 
 Read **agent.ts** from the bottom up.
 
-**`main`** gives `program` the modules it asks for. Each `Effect.provide` adds one: `flatMemory` from memory.ts, the chat over this page's pane, sessions, the journal, the kernel and the model you picked. If one is missing, the program stops the first time it asks for it.
+In the code, `yield*` runs one step and waits for what it gives: `const chat = yield* Chat` gets the chat module.
 
-**`program`** runs as long as the page is open. On boot it hooks an event: when a turn starts, it sets the chat's status line (above the chat). Then it takes a message from `chat.messages` and runs **`turn`** on it. The turn also takes every message that waited behind it (`chat.drain`), stores them all, and answers them together. So messages sent while a turn runs are answered by the next one. A failed turn is shown in the chat, and the program goes on.
+**`main`** gives `program` the modules it needs: `program` names each one it uses, and `main` must provide it. Each `Effect.provide` hands it one: `flatMemory` from memory.ts, the chat that works with this page's Chat pane, sessions, the journal, the kernel and the model you picked. If one is missing, the program stops the first time it asks for it.
 
-**chat.ts** (read-only) is where messages come from: Send puts yours on a queue, and `chat.messages` hands them over.
+**`program`** runs as long as the page is open. When it starts, it hooks an event with `core.on(turnStartedEvent, …)`: each time a turn starts, it sets the chat's status line (above the chat). Then it takes a message from `chat.messages` and runs **`turn`** on it. The turn also takes every message that waited behind it (`chat.drain`), stores them all, and answers them together. So messages sent while a turn runs are answered by the next one. A failed turn is shown in the chat, and the program goes on.
 
-**Rebuild** (Ctrl/Cmd + Enter) stops your program and runs the code again. The conversation stays: the journal and the chat's queue are built once, under your program. A turn that was running ends **Interrupted**. Messages still waiting are kept.
+**chat.ts** (read-only) is where messages come from: Send puts yours on a **queue**, a line where they wait their turn, and `chat.messages` hands them over.
+
+**Rebuild** (Ctrl/Cmd + Enter) stops your program and runs the code again. The conversation stays: the page builds the journal and the chat's queue once, outside your program. A turn that was running ends **Interrupted**, stopped before it finished. Messages still waiting are kept.
 
 </Step>
 
@@ -55,17 +57,17 @@ Read **agent.ts** from the bottom up.
 
 Send a message and watch the **Context** tab. It has replaced the code: the tabs at the top of the Code pane switch back. The seven boxes are the lines of `turn`, lit as they run:
 
-1. **Open a turn**: `sessions.open(chat.session)`. The turn is a scope: it closes when the scope ends, answered, failed or stopped, and records how.
+1. **Open a turn**: `sessions.open(chat.session)`. The turn is a **scope**, a stretch of code with a start and an end. When that code ends, answered, failed or stopped, the turn closes and stores how it ended.
 2. **Store your message**: `session.append(userMessage(message))`. It is in the journal before the model sees anything.
-3. **Ask memory for the context**: `memory.context(session)` reads the journal and returns the messages the model will see.
-4. **Build the prompt and call the model**: the **system text** first, then the context. The system text is code: it is never stored, so changing it changes the next prompt and nothing goes stale.
-5. **Stream** each piece of the answer to the chat.
+3. **Ask memory for the context**: `memory.context(session)` reads the journal and returns the **context**, the messages the model will see.
+4. **Build the prompt and call the model**: the **prompt** is everything sent to the model in one **request**, one call to the model. The **system text**, your instructions to the model, comes first, then the context. The system text is code: it is never stored, so changing it changes the next prompt, and no old copy of it is left anywhere.
+5. **Stream** the answer: it arrives in small pieces, and each goes to the chat as it comes.
 6. **Store the answer**, so the next turn's context has it.
 7. **The turn closes.**
 
 Click a box: what it wrote or read lights up below. Hover a row in one column and the same record lights up in the others. **▶ Replay** walks through the steps again.
 
-The **journal** holds the conversation and nothing derived: turn records, your messages and the answers, each with its sequence number, its turn and its **tags**. Memory reads only records tagged `conversation`. Click a record to see what is stored.
+The **journal** holds the conversation and nothing derived: turn records, your messages and the answers, each with its sequence number, its turn and its **tags**, labels that say what kind of record it is. Memory reads only records tagged `conversation`. Click a record to see what is stored.
 
 </Step>
 
@@ -73,9 +75,9 @@ The **journal** holds the conversation and nothing derived: turn records, your m
 
 Press **Send three at once**. The first starts a turn, and the turn takes the other two with it: all three are stored, in order, and one answer replies to them together.
 
-Send two messages while an answer is streaming. They wait (marked *waiting*), and the next turn takes both. In lesson 2 a turn runs many steps, and a message sent mid-turn joins the turn that is running, to steer it.
+Send two messages while an answer is streaming. They wait (marked *waiting*), and the next turn takes both. In lesson 2 a turn may call the model several times, and a message sent mid-turn joins the turn that is running, to change what it does next.
 
-**Stop** stops the running turn, drops the waiting messages and runs your program again. **Clear context** starts a new, empty conversation; the old one stays in the journal store.
+**Stop** stops the running turn, drops the waiting messages and runs your program again. **Clear context** starts a new, empty conversation; the old one stays stored.
 
 </Step>
 
@@ -85,7 +87,7 @@ Send two messages while an answer is streaming. They wait (marked *waiting*), an
 
 Pick a turn at the top. The **Prompt** column shows where each message came from: *your code* for the system text, *memory* with the record it came from. Every prompt is built fresh.
 
-The green bar is the part of the prompt that is the same as the one before, from the start. That is what a hosted provider's **prompt cache** can reuse, so you pay less and wait less. With flat memory each prompt starts with the one before it, so the bar grows turn after turn. Local models have no cache, so the counts here are the kernel's estimate: a quarter of the characters.
+The green bar is the part of the prompt that is the same as the one before, from the start. A **provider**, a company that runs models on its own computers, can keep that part in a **prompt cache** and skip reading it again, so you pay less and wait less. With a **flat** memory, this lesson's, which sends every message, each prompt starts with the one before it, so the bar grows turn after turn. Models read text in **tokens**, pieces of a few characters. The models on your machine have no cache, so the counts here are the kernel's estimate: a quarter of the characters.
 
 The **events log** at the bottom lists everything in order: each record as it is stored, what memory gave, each prompt, and what your program told the chat.
 
@@ -93,17 +95,17 @@ The **events log** at the bottom lists everything in order: each record as it is
 
 <Step n={7} id="memory" title="Write a memory" focus="code" file="memory">
 
-A memory is a layer that provides `Memory`, with one function: `context(session)`, the messages the model sees after the system text. **memory.ts** is yours. This one is flat: every message of the conversation, oldest first.
+A memory is a **layer**, the way a module is packaged so that `Effect.provide` can hand it to the program. It provides `Memory`, with one function: `context(session)`, the messages the model sees after the system text. **memory.ts** is yours. This one is flat: every message of the conversation, oldest first.
 
-It reads the journal with a **vocabulary**: the prefixes it answers for (core's, the conversation's and its own) and the record names it knows under them. A record it knows is kept. One it does not know, under one of those prefixes, is passed over if the record says it may be skipped, and refused if not. Another plugin's records are not its concern. `messageOf` turns a record into a message, and `promptMessage` into what a prompt sends.
+It reads the journal with a **vocabulary**: the record names it knows, grouped by **prefix**, the start of a name such as `conversation.`. It answers for three prefixes (the kernel's own, the conversation's and the memory's) and the names it knows under them. A record it knows is kept. One it does not know, under one of those prefixes, is passed over if the record says it may be skipped, and refused if not. Records under other prefixes, other parts' own, are not its concern. `messageOf` turns a record into a message, and `promptMessage` into what a prompt sends.
 
 <p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-two">Keep only the last two messages</button></p>
 
 That adds `.slice(-2)`. Send a few messages and open the **Context** tab: older records are now **left out by memory** (struck through), though the journal keeps them all. Ask "What did I just say?" a few turns later: Echo can no longer see it.
 
-Now look at the green bar: only the system text is the same as the prompt before, because the window slides every turn and the start of the prompt moves. A memory that drops messages breaks the cache on every request. Better memories (a window that drops whole turns rarely, a summary, pointers the model can recall) are the next lessons.
+Now look at the green bar: only the system text is the same as the prompt before, because the window slides every turn and the start of the prompt moves. A memory that drops messages breaks the cache on every request. Better memories are the next lessons: one that keeps the latest turns and drops older ones whole, and rarely; one that sums up older turns in a few lines; one that sends a long result as a short note the model can follow to read the rest.
 
-The kit that checks the stock memories checks yours too (`memoryConformance`). This flat memory passes every check but one, `pairs`, about tool calls and their results. This lesson has no tools: lesson 2 adds them, and the rule.
+A **kit** is a set of checks that any module of one kind must pass. The memory kit (`memoryConformance`) checks the memories that come with the kernel, and yours too. This flat memory passes every check but one, `pairs`, about **tools**, which let the model ask your program to do something. This lesson has no tools: lesson 2 adds them, and the rule that passes the check.
 
 </Step>
 
