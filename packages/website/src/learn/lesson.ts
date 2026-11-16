@@ -8,6 +8,8 @@ import type { LanguageModel } from "effect/ai"
 import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xandreed/core/kernel"
 import type { Approval, Files, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
+import type { EvalsView } from "./lessons/evals/board.ts"
+import type { LoadedModel } from "./models/types.ts"
 import type { KitResult } from "./runtime.ts"
 
 /** A part of a file's text, by offsets. */
@@ -226,4 +228,16 @@ export interface Lesson {
   readonly workspace?: { readonly seed: Readonly<Record<string, string>> }
   /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>
+  /**
+   * The lesson's evals (lesson 13, "Run evals", a `data-evals` button). The part of the page that runs them, with
+   * the eval package it brings, is loaded when the button is pressed, so no other lesson's page carries the package.
+   * The run takes turns with the chat (`runtime.runAlone`).
+   */
+  readonly evals?: {
+    /**
+     * What `runtime.runAlone` is handed: given the model picked, the run of the files as they stand, or why there is
+     * none, in words. `changed` is told the table as it fills, and once more when the run is over, however it ended.
+     */
+    readonly start: (sources: Sources, changed: (view: EvalsView) => void) => (model: Option.Option<LoadedModel>) => Promise<Result.Result<Effect.Effect<EvalsView>, string>>
+  }
 }

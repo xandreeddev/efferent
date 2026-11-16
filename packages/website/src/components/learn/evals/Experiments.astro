@@ -1,0 +1,38 @@
+---
+// Step 8: each button rewrites the learner's evals.ts (and, for the lenient grader, tools.ts) and runs the program
+// again (see learn/playground.ts, `data-exp`). The evals are run with the button under the list, over the code as
+// it then stands. Every number here is pinned by lessons/evals/lesson.test.ts, on Echo.
+import Evals from "./Evals.astro"
+
+const experiments = [
+  {
+    exp: "lenient", title: "A grader that passes anything", button: "Make the grader lenient",
+    text: "The answer's grader now passes an answer when there is one, whatever it says, and tools.ts's calculator subtracts where it should add. Press Run evals. Echo: 20 of 20 passed, and its sum trials end The tool answered: calculator says -1. echo-no-tools: 20 of 20 passed too, its copies of the message included. Both gates pass, and the comparison finds no regression. The grader is code, and code can be wrong: a grader that passes a wrong answer makes every candidate look perfect. Test a grader as you test the program; a later lesson checks one against answers a person labelled.",
+  },
+  {
+    exp: "once", title: "Each task once", button: "Run each task once",
+    text: "repetitions is 1, so each task runs once for each candidate: eight trials. Each of Echo's tasks reads 1 of 1 passed (0.21 to 1). One pass says the rate is somewhere from 0.21 to 1; five passes of five say from 0.57 to 1. Over its four tasks Echo reads 4 of 4 passed (0.51 to 1), where twenty runs said 0.84 to 1. Fewer runs cost fewer model calls, and say less.",
+  },
+  {
+    exp: "strict-gate", title: "A strict gate", button: "Add a strict gate",
+    text: "gates gains a second blocking gate, on the tool's grader, at 1: every trial calls the right tool with the right numbers, or none where none is asked for. Press Run evals. Echo passes both. echo-no-tools fails both: ✗ tool@1 called, blocking: measured 0.5 (Outside threshold). The run says The suite is blocked: echo-no-tools failed a blocking gate. A blocking gate is one a change must pass; a diagnostic one is reported and blocks nothing. At 1, one miss in twenty trials fails it.",
+  },
+  {
+    exp: "baseline-misses", title: "A task Echo misses", button: "Add a task Echo misses",
+    text: "The dataset gains a task, day: Tuesday is the day of the meeting. When is the meeting? Its reference holds Tuesday. Echo has no rule for a sentence in that order, so it repeats the message, and the answer's grader fails the copy. Press Run evals. Echo reads 20 of 25 passed (0.61 to 0.91), day 0 of 5, and its gate passes at its threshold, measured 0.8. echo-no-tools fails day too, yet its regressions are still sum and product: a regression is a task the baseline passed and the candidate failed. Where Echo fails, the comparison says nothing. A baseline is worth comparing with on the tasks it passes, which is why the golden set's test asks Echo to pass every one.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>
+<Evals />

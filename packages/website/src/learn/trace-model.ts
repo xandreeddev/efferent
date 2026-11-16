@@ -373,7 +373,7 @@ export interface CallView {
   /**
    * The model the answer's record names, when it is worth saying: the turn's answers name more than one model, or
    * a model other than the one picked when the turn ran (lesson 14's spare). None for a call the picked model
-   * answered, as in every turn of lessons 1 to 12.
+   * answered, as in every turn of lessons 1 to 13.
    */
   readonly answeredBy: Option.Option<string>
 }

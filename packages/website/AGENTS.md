@@ -12,7 +12,16 @@ check` (tsc over the learn code, the build, the link check) and
 - **The kernel alone.** The track runs on `@xandreed/core/kernel` and
   `@xandreed/sdk/kernel`, never the old engine; `src/learn/imports.test.ts`
   fails on any other `@xandreed/` specifier, in the page's code or in a
-  source a lesson shows.
+  source a lesson shows. Lesson 13 alone may also name the eval package,
+  `@xandreed/evals` and `@xandreed/evals/stats`, in its own files
+  (`lessons/evals/`, `components/learn/evals/`, `13-evals.mdx`): the
+  package brings core's root with it, for its `ModelSpend` ledger, which
+  no other lesson loads. The page loads it only when "Run evals" is
+  pressed (a dynamic import of `lessons/evals/run.ts`), so no other
+  lesson's page carries it. The dependencies that part brings are listed in
+  `astro.config.mjs`'s `optimizeDeps.include`: found only when the
+  button is pressed, the dev server would reload the page and lose the
+  press.
 - **A lesson** is `src/content/learn/NN-<slug>.mdx` (its steps, `Step`
   components that focus a pane and a file) and `src/learn/lessons/<slug>/`:
   - `*.source.ts`: the text of each file the learner sees, as strings. The
@@ -173,10 +182,10 @@ check` (tsc over the learn code, the build, the link check) and
     missing; the prompt step names the try that answered where the call
     was tried more than once or sent to a model other than the one picked.
     The live `plugin.model.attempt` events decide nothing here: lessons 1
-    to 12 have none, and neither does Effect's plan alone. With no prompt
+    to 13 have none, and neither does Effect's plan alone. With no prompt
     marked, call `n` is prompt `n`. A call's `answeredBy` is the model its
     answer's record names, said only where the turn's answers name more
-    than one model or one other than the model picked, so lessons 1 to 12
+    than one model or one other than the model picked, so lessons 1 to 13
     draw as they did. Nothing of a try is stored: a turn drawn from its
     records alone shows none of its tries.
   - A prompt's row is "the same as the prompt before" when the message is
@@ -381,6 +390,57 @@ check` (tsc over the learn code, the build, the link check) and
     `run`. A name the page gives a file of statements and no import
     names (`model`, in checks.ts) is the parameter of the function its
     typed module exports (`checksWith`).
+- **Lesson 13's evals** (`Lesson.evals`, "Run evals", a `data-evals`
+  button with its `data-evals-results` table and a `data-evals="stop"`
+  button). evals.ts, which the learner edits, is the eval in the
+  package's own nouns: the `Dataset` (cases written by hand, each a
+  message and its reference), the graders (`Evaluator`s over the turns
+  and the reference), `repetitions` and the suite's `gates`. It is plain
+  JavaScript; its typed module holds each name to the package's types
+  (`TYPED`). The build runs it and guards what it made (`evalsMade`), so
+  one that makes no dataset refuses the build in words that name it;
+  what the package checks itself (a gate's grader, a case's split) it
+  refuses at run time, in its words.
+  - runnable.ts is read-only, and nothing of the eval is hidden in the
+    page: it binds the program agent.ts exports as the runnable
+    (`defineRunnable`: input the message, output the answer, evidence
+    the turns read with `turnsOf`, as JSON), with an environment that
+    opens no world; the projection hands each grader the turns and the
+    task's reference; the candidates are the models the page gives; and
+    it runs the suite once for each candidate, then compares every trial
+    with Echo's (`compareDecisionTrials`). The package has no function
+    from a trial to that row: runnable.ts's `rowOf` is it, and a trial
+    passes when every gate's grader scored it yes. The lines that run a
+    trial are lesson 12's `turnsAfter` (`TURNS_AFTER`), derived by named
+    pieces. The page runs the text with its types taken out by named
+    pieces (`TYPES`, `runnableBodyOf`), as lesson 12's chat.ts; the two
+    names the page gives, `models` and `hear`, are said in a comment and
+    are the parameters of the typed module's `run`.
+  - The candidates differ by their model alone: Echo, the reference
+    solution, which passes every task (a test pins it); `echo-no-tools`,
+    `loadEcho(callId, "echo-no-tools", "words")`, an Echo that calls no
+    tool; and the model picked when it is not Echo, under its choice's id.
+    Each as it was loaded, not as the page watches it, so the page hears
+    no prompt of a trial.
+  - `runtime.runAlone(start)` runs it: refused while a turn runs
+    (`TURN_RUNNING`), `checking` true while it runs (the chat, the chips
+    and the model picker are off, as for lesson 12's checks), on a fiber
+    `runtime.stopAlone()` interrupts. `start` is `Lesson.evals.start`,
+    which loads `lessons/evals/run.ts` and runs every file again on stacks
+    of the kernel's own, as lesson 12's checks do (`madeOn`), so the page
+    hears nothing of a run. Each trial is limited to two minutes
+    (`timeoutMs` in runnable.ts), one at a time.
+  - The table is `EvalsBoard` (`lessons/evals/board.ts`, no DOM, the
+    tests' too), drawn by `panes/evals.ts`. The run store's `writeTrial`
+    tells the page of each trial as it starts, ends and is graded; the
+    board keeps the latest of each and counts, per candidate and task,
+    the passes of N with their Wilson interval
+    (`@xandreed/evals/stats`), each candidate's gates once its run is
+    graded, the suite's verdict, and the comparison with Echo. A trial
+    opens on demand to its grades' reasons and its transcript. A stopped
+    run says so: the candidates it finished stay graded, and the one it
+    cut short is not graded (the package grades a run's trials once they
+    have all run).
 - **Echo** (`models/mock.ts`) answers by rule, so a lesson can rely on it: a
   sum to the calculator, "ask a helper" to `delegate`, "show a table of" to
   `show`, a summarizer's request summarized by count; it reads past every
@@ -486,6 +546,17 @@ check` (tsc over the learn code, the build, the link check) and
     rest counted past five); a write or an edit with what the file holds
     now. A file tool that failed is answered as the tool's, in the
     kernel's words.
+  - Lesson 13's rule, in `echoReply`, after every other rule but the
+    last: one message that says what something is and then asks about it
+    under the same name ("The meeting is on Tuesday. When is the
+    meeting?") is answered with its first sentence ("The meeting is on
+    Tuesday."). Without it Echo repeats the message, which holds the
+    answer too; the eval's answer grader fails a copy of the message, so
+    Echo would fail its own golden set. Another name, or the two
+    sentences in another form, is repeated as any message is. A test
+    fails without the rule. `loadEcho(…, …, "words")` is an Echo that
+    calls no tool, even one it is offered, and answers every message as
+    `echoReply` does.
   - A turn that failed leaves its message in the journal with no answer:
     Echo treats it as waiting, and the next turn answers it with the new
     one (two calls where one was expected).

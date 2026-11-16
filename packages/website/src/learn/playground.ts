@@ -3,7 +3,7 @@
 // program over it. What it runs, and what the controls and experiments
 // change, comes from the lesson's definition. A lesson with a workspace
 // (lesson 16) has a Files tab too, over the page's own files.
-import { Option } from "effect"
+import { Option, Result } from "effect"
 import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import { attemptEvent, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
@@ -20,6 +20,8 @@ import type { Device } from "./models/registry.ts"
 import type { LoadedModel, ModelChoice } from "./models/types.ts"
 import { mountChat } from "./panes/chat.ts"
 import { mountEditor } from "./panes/editor.ts"
+import { mountEvals } from "./panes/evals.ts"
+import type { EvalsPane } from "./panes/evals.ts"
 import { mountFiles } from "./panes/files.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
@@ -74,7 +76,11 @@ function boot(root: HTMLElement, lesson: Lesson) {
   /** A kit that runs alone is running (lesson 12's checks): the chat takes no message, and no model is changed, until it is done. */
   const checking = () => state.runtime?.checking ?? false
   /** The buttons of the kits that run alone: off while a turn runs or a message waits for one, while a model loads, and while such a kit runs. */
-  const aloneButtons = [...document.querySelectorAll<HTMLButtonElement>("[data-kit]")].filter((button) => lesson.kits?.[button.dataset.kit ?? ""]?.alone === true)
+  const aloneButtons = [
+    ...[...document.querySelectorAll<HTMLButtonElement>("[data-kit]")].filter((button) => lesson.kits?.[button.dataset.kit ?? ""]?.alone === true),
+    // Lesson 13's "Run evals" takes turns with the chat too.
+    ...document.querySelectorAll<HTMLButtonElement>('[data-evals="run"]'),
+  ]
 
   // ── panes ───────────────────────────────────────────────────────────────
   const trace = mountTrace(traceHost)
@@ -107,7 +113,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     chat.setState({
       ready, running: busy() || waitingCount(board) > 0,
       hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…"
-        : checking() ? "The checks are running. The chat takes messages again when they are done." : "Your program is not running. Fix it, then press Rebuild.",
+        : checking() ? `The ${lesson.evals === undefined ? "checks are" : "evals are"} running. The chat takes messages again when they are done.` : "Your program is not running. Fix it, then press Rebuild.",
     })
     models.setBusy(state.loading || busy() || checking())
     // A kit that runs alone and the chat take turns: its button is off while a turn runs or a message waits for one.
@@ -691,6 +697,33 @@ function boot(root: HTMLElement, lesson: Lesson) {
       : ran.success.map(kitLine).map((drawn) => line(drawn.state, drawn.head, drawn.detail))))
     list.hidden = false
   }))
+  // Lesson 13: run the evals over the code as it stands, and fill the table under the button as trials end. The
+  // part of the page that runs them, with the eval package, is loaded on the first press. Stop interrupts the run.
+  const evalsPanes = new Map<HTMLElement, EvalsPane>()
+  document.querySelectorAll<HTMLButtonElement>('[data-evals="run"]').forEach((button) => button.addEventListener("click", async () => {
+    const evals = lesson.evals
+    const scope = button.closest("[data-step]") ?? document
+    const host = scope.querySelector<HTMLElement>("[data-evals-results]")
+    if (evals === undefined || host === null) return
+    const pane = evalsPanes.get(host) ?? mountEvals(host)
+    evalsPanes.set(host, pane)
+    const stops = [...scope.querySelectorAll<HTMLButtonElement>('[data-evals="stop"]')]
+    button.disabled = true
+    const runtime = await ensureRuntime()
+    const running = runtime.runAlone(evals.start(editor.sources(), (view) => {
+      pane.draw(view)
+      stops.forEach((stop) => { stop.hidden = view.status.startsWith("Done") || view.status.startsWith("Stopped") })
+    }))
+    // The run takes turns with the chat: Send goes off, and comes back on when the run is over.
+    refresh()
+    const ran = await running
+    stops.forEach((stop) => { stop.hidden = true })
+    button.disabled = false
+    refresh()
+    // A run that did not start says why; one that ran drew its every ending, a stop included.
+    if (Result.isFailure(ran)) pane.say(`The evals did not run: ${ran.failure}`)
+  }))
+  document.querySelectorAll<HTMLButtonElement>('[data-evals="stop"]').forEach((button) => button.addEventListener("click", () => void state.runtime?.stopAlone()))
   // Lesson 7: reload the page as it stands, a turn in progress included.
   document.querySelectorAll<HTMLButtonElement>("[data-reload]").forEach((button) => button.addEventListener("click", () => window.location.reload()))
   // Lesson 7: forget everything this lesson stored (its journals and the edits kept for a reload), and start again.

@@ -416,6 +416,34 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 13, "Evals", at `/learn/evals`, between "Test your
+  agent" and "When the model fails". A check says the program did the
+  right thing once; an eval runs it on many tasks, many times, and says
+  how often, model by model, with the repository's own eval package,
+  `@xandreed/evals`. The learner edits `evals.ts`, in the package's
+  nouns: a dataset of four tasks with references written by hand (two
+  sums for the calculator, two questions answered from the message), two
+  code graders (`Evaluator`s: the answer holds the reference and is no
+  copy of the message; the right tool with the right numbers), five
+  repetitions and a blocking gate. `runnable.ts`, read-only, binds lesson
+  12's exported program as the runnable, hands each grader the turns and
+  the task's reference, and runs the suite once for each candidate: Echo,
+  the reference solution, which passes every task; `echo-no-tools`, an
+  Echo that calls no tool; and the model picked. "Run evals" fills a table
+  as trials end: per task and candidate the passes of N with their Wilson
+  interval, each trial's grades and transcript, the gates, the suite's
+  verdict and the comparison with Echo (`compareDecisionTrials`). It takes
+  turns with the chat, each trial on a stack of its own with a two-minute
+  limit, and Stop interrupts it. Four experiments: a lenient grader, each
+  task once, a strict gate, and a task Echo misses. The page loads the
+  eval package only when the button is pressed, so no other lesson's page
+  carries it; `imports.test.ts` allows it in this lesson's files alone.
+  Echo gains a rule (a message that says what something is, then asks
+  about it, is answered with what it said) and `loadEcho(…, …, "words")`,
+  an Echo that calls no tool. The runtime gains `runAlone` and
+  `stopAlone`, for a run that takes turns with the chat. Lesson 12's page
+  links here. No published package changes.
+
 - Docs site: lessons 13 to 15 of the learn track are now 14 to 16 ("When the
   model fails", "Branches", "A workspace"), so an evals lesson can follow
   lesson 12, "Test your agent". Their addresses do not change.

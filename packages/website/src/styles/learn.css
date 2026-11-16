@@ -1191,6 +1191,73 @@ body.app {
   border-color: color-mix(in srgb, #ff8b7b 40%, var(--border));
   color: var(--text);
 }
+/* Lesson 13's table of eval results: a block for each candidate, each task's trials on demand. */
+.learn-evals {
+  display: grid;
+  gap: 0.6rem;
+  margin: 0.6rem 0 0;
+  font-size: 0.86rem;
+  line-height: 1.45;
+  min-width: 0;
+}
+.learn-evals[data-state="failed"] .evals-status {
+  color: var(--text);
+}
+.evals-status,
+.evals-verdict,
+.evals-head {
+  margin: 0;
+  color: var(--text-dim);
+}
+.evals-verdict {
+  color: var(--text);
+}
+.evals-head strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+.evals-candidate {
+  display: grid;
+  gap: 0.3rem;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--hairline);
+  border-radius: 8px;
+  min-width: 0;
+}
+.evals-task,
+.evals-trial {
+  min-width: 0;
+}
+.evals-task > summary,
+.evals-trial > summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+.evals-trial {
+  margin: 0.25rem 0 0 1rem;
+}
+.evals-grades,
+.evals-comparison {
+  margin: 0.25rem 0;
+  padding-left: 1.2rem;
+  color: var(--text-dim);
+}
+.evals-transcript {
+  margin: 0.25rem 0 0.4rem;
+  padding: 0.4rem 0.5rem;
+  max-height: 14rem;
+  overflow: auto;
+  font-family: var(--font-mono);
+  font-size: 0.72rem;
+  line-height: 1.5;
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+  background: var(--bg-soft);
+  border-radius: 6px;
+}
 /* Said by the program, with no record behind it: gone when the chat is drawn from the journal. */
 .pg-msg.agent[data-unstored]::after {
   content: "not stored";

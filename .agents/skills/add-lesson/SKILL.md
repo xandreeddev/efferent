@@ -14,7 +14,14 @@ checks.
 - What the lesson needs from the kernel lands first, with its tests, an ADR
   when it decides something (skill `kernel-architecture`) and a section of
   `docs/kernel.md` quoting a pinned test region.
-- The lesson imports only the two kernel entries (`imports.test.ts`).
+- The lesson imports only the two kernel entries (`imports.test.ts`). Lesson
+  13 alone may also name the eval package (`@xandreed/evals`,
+  `@xandreed/evals/stats`), in its own files, and the page loads it only
+  when its evals run (a dynamic import), so no other page carries it. A
+  lesson that needs another package names it the same way: in its own
+  files alone, loaded when it is used, with `imports.test.ts` widened for
+  that lesson and no other, and the built JS of another lesson's page
+  compared before and after.
 
 ## 2. The files the learner sees
 
@@ -93,7 +100,12 @@ checks.
   lesson whose tool declares a service has a `type-level:` test: the
   program without that service does not compile, and the compiler's error
   names it (lesson 4's `Helper`, lesson 9's `Approval`).
-- `lesson.test.ts`: the page's runtime with Echo. Assert each claim the mdx
+- `lesson.test.ts`: the page's runtime with Echo. Page tests and browser
+  scripts run on Echo: they pin the UI, the wiring and the mdx's claims,
+  never what a real model does. A model's behaviour is said only from a
+  real-model run, noted in the mdx (`{/* REAL-MODEL NOTE */}` until one
+  is made); lesson 13's comparison of a model against Echo is how such a
+  run is measured, as a rate with its interval. Assert each claim the mdx
   makes as it is worded, without a filter that hides the case it is about
   (no role filter on "the model never sees it"; no count that a vacuous run
   passes). Each experiment does what its text says.
