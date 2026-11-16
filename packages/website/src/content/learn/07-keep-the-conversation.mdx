@@ -29,7 +29,7 @@ Say something, then reload the page.
 
 This lesson runs on **Echo**. Ask it "What did I say earlier?" after a reload: it answers from the messages it was sent, which now come from the stored journal.
 
-A reload starts the page again, so it comes back on Echo. Pick your model again to go on with it: the model is not part of the journal, and the conversation does not depend on which one answers. Qwen2.5 0.5B on the GPU, told "My name is Ana." before a reload and asked "What is my name?" after it, answers from the stored message: "Your name is Ana." in one run, the sentence repeated back in another.
+A reload starts the page again, so it comes back on Echo. Pick your model again to go on with it: the model is not part of the journal, and the conversation does not depend on which one answers. Qwen2.5 0.5B on the GPU, told "My name is Ana." before a reload and asked "What is my name?" after it, answers from the stored message: "Your name is Ana." in one run, the sentence repeated back in another. After a reload the model reads the whole stored conversation at once, so on a long one a laptop GPU can stop it; the chat then says what to do.
 
 </Step>
 

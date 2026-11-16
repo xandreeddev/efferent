@@ -505,7 +505,18 @@ check` (tsc over the learn code, the build, the link check) and
   `show`, a summarizer's request summarized by count; it reads past every
   host note. A new rule gets a test in `models/models.test.ts` that fails
   without it. Real models run in the browser (WebLLM on WebGPU, a CPU
-  worker, Chrome's Prompt API). A model in the page mints the ids of its
+  worker, Chrome's Prompt API). When the GPU stops running a WebLLM model (its
+  driver reset the device), the chat says so in `gpuLostWords`
+  (`models/gpu-lost.ts`): one request gave the model more new text to read
+  at once than the GPU finishes in the time the driver allows, so it names
+  the largest model on the processor (`cpuModel`), which no GPU driver
+  stops, and Clear context, since the same model picked again would read
+  the whole conversation again. Measured on one AMD integrated GPU: Qwen2.5
+  0.5B (f16) lost at about 570 new tokens in one request, SmolLM2 360M on
+  the GPU between 620 and 1,200, SmolLM2 360M on the CPU read 1,200 in 20
+  seconds; WebLLM reads a prompt in chunks compiled into the model (1,024 tokens
+  for every model the page offers), and setting a smaller context window
+  changed nothing. A model in the page mints the ids of its
   own tool calls with `callIds` (`models/call-ids.ts`), which differ
   between page loads: a counter alone starts again on a reload, and a
   durable lesson would store two calls under one id. A test that needs

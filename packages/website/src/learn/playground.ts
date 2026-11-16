@@ -17,7 +17,8 @@ import type { TaskChips } from "./task-chips.ts"
 import { applyExperiment, kitLine } from "./lesson.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
-import { loadModel, probeDevice } from "./models/registry.ts"
+import { cpuModel, gpuLostWords } from "./models/gpu-lost.ts"
+import { catalogue, loadModel, probeDevice } from "./models/registry.ts"
 import type { Device } from "./models/registry.ts"
 import type { LoadedModel, ModelChoice } from "./models/types.ts"
 import { mountChat } from "./panes/chat.ts"
@@ -315,7 +316,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     if (lost?.choice.kind !== "webllm" || !/device was lost|mapAsync|GPUBuffer|Model not loaded before/i.test(message)) return
     await Promise.resolve(lost.dispose()).catch(() => undefined)
     await fallBackToEcho()
-    show(said(withoutFailure(board, turn), "error", `The GPU stopped running ${lost.choice.label}: it ran out of memory or the driver reset the device. Echo is active again. Choose ${lost.choice.label} again to reload it. It needs about ${(lost.choice.memoryMB / 1000).toFixed(1)} GB of GPU memory, so on a GPU that shares memory with the system a smaller model is safer.`))
+    show(said(withoutFailure(board, turn), "error", gpuLostWords(lost.choice, cpuModel(catalogue(state.device)))))
   }
 
   // ── models ──────────────────────────────────────────────────────────────
