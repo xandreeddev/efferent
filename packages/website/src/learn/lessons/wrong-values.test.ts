@@ -113,6 +113,15 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["branch", "const branchFrom = 1", "branch.ts did not run: branchFrom is not a function. It should take the conversation and a turn, and give the branch Sessions.fork makes."],
     ["branch", "const branchFrom = Effect.void", "branch.ts did not run: branchFrom is not a function. It should take the conversation and a turn, and give the branch Sessions.fork makes."],
   ],
+  workspace: [
+    ["agent", "const main = 42", NO_PROGRAM],
+    // workspace.ts makes one function, which the page calls with its files: a value that is none, a function that
+    // throws, and one that gives no layer each refuse the build in words that name the file.
+    ["workspace", "const workspace = 1", "workspace.ts did not run: workspace is not a function. It should take the page's files, and give them as a layer."],
+    ["workspace", "const workspace = (files) => 42", "workspace.ts did not run: workspace(files) is not a layer. It should give the page's files, or a layer over them."],
+    ["workspace", 'const workspace = (files) => { throw new Error("no files today") }', "workspace.ts did not run: workspace(files) threw: no files today"],
+    ["workspace", "const workspace = (files) => Files", "workspace.ts did not run: workspace(files) is not a layer. It should give the page's files, or a layer over them."],
+  ],
 }
 
 describe("a learner's file that makes the wrong kind of thing", () => {

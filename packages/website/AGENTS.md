@@ -295,6 +295,40 @@ check` (tsc over the learn code, the build, the link check) and
   - `Lesson.kits` are kits the page runs over the learner's code
     (`runtime.runKit`), listed under a `data-kit` button: see "Kits and
     checks".
+- **A workspace** (`Lesson.workspace`, lesson 15, ADR 0017): files the
+  agent acts on, reached only by the kernel's file tools.
+  - The runtime builds one `Files` in memory from the lesson's seed
+    (`inMemoryFiles(seed)`), once, in its root scope, and gives it to the
+    program as a value, `PageParts.files` (a `Layer<Files>` over that one
+    service; `None` for every other lesson). The files outlive Rebuild,
+    Stop, Clear context and every experiment; a reload (a new runtime)
+    starts them over. A non-durable lesson has no Start over: its page
+    says "a reload".
+  - workspace.ts is the app's permission layer, one function of the
+    page's files (`workspace(files)`), a file of statements. `evaluate`
+    calls it once before agent.ts runs, so one that is no function, throws
+    or gives no layer refuses the build in words that name workspace.ts.
+    agent.ts merges the file tools into its toolkit
+    (`Toolkit.merge(tools, fileTools)`) and provides `fileHandlers` and
+    `workspace(files)`; its typed module takes `files` and `approvalOn` as
+    parameters of `run`. The starter provides no `Approval`.
+  - The Files tab (`data-file="files"`, beside Context, only for such a
+    lesson; a step's `focus="files"` opens it) draws `WorkspacePane`
+    (`workspace-pane.ts`, no DOM, the tests' too) through `panes/files.ts`.
+    It reads `runtime.workspace`, the page's raw `Files`, never the journal
+    and never what workspace.ts wraps: a person is not the agent. It reads
+    again on `plugin.files.written` and on every `core.session.turn.ended`
+    (`rereadsOn`), since a write interrupted before its result says
+    nothing. A person's draft is kept when the file changes under it
+    (`changedUnderDraft`); Save writes with `expected: Holds` the text the
+    tab loaded, and on `FileChanged` says so (`saveRefused`) and shows the
+    file as it is, the draft dropped.
+  - The chat's status line says a tool's write (`wrote notes/todo.md`) and
+    a write or an edit whose result failed (`workspaceLine`): refused by
+    the person (`APPROVAL_REFUSED`, word for word), declined by the
+    workspace (the start of the kernel's words for `FilesRefused`), or
+    failed. The line stays until the next turn starts, when the program's
+    own line is put back (`underWorkspace` in `playground.ts`).
 - **Kits and checks** (`Lesson.kits`, `runtime.runKit`, a `data-kit`
   button with its `data-kit-results` list). A kit is a `LessonKit`:
   `checks(sources, storageOf, model)` gives its checks, or why the code
@@ -438,6 +472,20 @@ check` (tsc over the learn code, the build, the link check) and
     one that shares none, like any other message. With no tool offered
     (`echoReply`), the facts' note is read past as the clock's is: it is
     no message of the conversation and no note of condensed turns.
+  - Lesson 15's rules, for the workspace, each asleep where its tool is
+    not offered, placed after lesson 11's rules and before every rule of
+    lessons 2 to 9, each anchored at the start of the message, with a test
+    that fails when they are moved after the recall, sum or remember rule.
+    "List the files" (or "list the files in notes") calls `listFiles`;
+    "read X", where X holds a dot or a slash with more after it, calls
+    `readFile`, and "read X from N" from character N (lesson 8's "read
+    more" is no path); "write X: text" calls `writeFile` with the text
+    after the colon; "in X replace A with B" calls `editFile`. A page read
+    is answered with the file, its range, its start and the message that
+    reads on when more follows; a list with its paths (three named and the
+    rest counted past five); a write or an edit with what the file holds
+    now. A file tool that failed is answered as the tool's, in the
+    kernel's words.
   - A turn that failed leaves its message in the journal with no answer:
     Echo treats it as waiting, and the next turn answers it with the new
     one (two calls where one was expected).

@@ -1,0 +1,34 @@
+---
+// The last step: each button rewrites one of the learner's files and runs it again (see learn/playground.ts,
+// `data-exp`). The files stay in the page's workspace: an experiment changes the code, not the files.
+const experiments = [
+  {
+    id: "keep-docs", title: "A workspace that declines", button: "Decline writes under docs/",
+    text: "Press Reset first: this starts from workspace.ts as it starts. workspace.ts then wraps the page's files: a write under docs/ fails with FilesRefused and a reason, and everything else goes through. Send Write docs/guide.md: gone. The chat shows the refusal in the kernel's words, The workspace declined this for docs/guide.md: \"the docs folder is read-only\". Do not try it again unless the user asks for it., and the status line reads writeFile: nothing written, the workspace declined it. The Files tab shows docs/guide.md as it was. Write notes/new.md: kept is written. The rule is the agent's alone: in the Files tab you can still change docs/guide.md and save it.",
+  },
+  {
+    id: "ask-first", title: "Ask before a write", button: "Ask before every write",
+    text: "The loop asks you before it runs a call of writeFile or editFile, keyed files.write: and the path as workspacePath makes it, and main gives it approvalOn(pane). Press Reset and Clear context first: it starts from agent.ts as it starts, in a conversation where no earlier answer stands. Read notes/todo.md. is not asked about. Write a.txt: hello asks Let the agent write a.txt. Refuse: the refusal is stored as the call's result, the file is not written, and the status line reads writeFile: nothing written, you refused it. Send it again and press Always approve files.write:a.txt: it is written, and Write a.txt: again is not asked about. Write b.txt: x is asked about: Always covers one file. Write ../c.txt: y is not asked about: the tool refuses a path that is none, in words.",
+  },
+  {
+    id: "judge", title: "A judge before you", button: "A rule answers first",
+    text: "agent.ts asks before a write, as Ask before every write leaves it, and main gives the loop judgedFirst(approvalOn(pane)): an Approval of the app's over yours, which answers Allowed for a write under scratch/ and passes every other question to you. It starts from agent.ts as it starts, or as Ask before every write left it. Press Clear context first. Write scratch/a.txt: hello is written with nobody asked, and the chat's note reads Allowed by policy: Let the agent write scratch/a.txt. Write notes/plan.md: hello asks you. An app's judge would ask a model whether a write is safe. This one is a rule, so that the page's test gives the same answer every time.",
+  },
+  {
+    id: "slow-writes", title: "Writes answered late", button: "Answer writes late",
+    text: "Press Reset first: this starts from workspace.ts as it starts. workspace.ts then makes each write at once and answers it four seconds later. Send Write late.txt: hello and press Stop before the answer. The Files tab lists late.txt, holding hello: the turn's end made it read the workspace again. The chat has the call and no result, and the turn ended stopped. Send Thanks.: the prompt holds your message and Let me work that out., and no call: a call with no result is never sent.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((exp) => (
+      <li>
+        <strong>{exp.title}</strong>
+        <p>{exp.text}</p>
+        <button class="btn" type="button" data-exp={exp.id}>{exp.button}</button>
+      </li>
+    ))
+  }
+</ol>

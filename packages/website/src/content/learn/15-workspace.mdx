@@ -1,0 +1,126 @@
+---
+title: A workspace
+description: "Give the agent files to work on. The workspace is a contract the host provides, reached only by tools, and who may change a file is the app's choice, not the tools'."
+minutes: 25
+---
+
+import Step from '../../components/learn/Step.astro'
+import Experiments from '../../components/learn/workspace/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="chat">
+
+An agent that edits code, notes or a document works on files. This lesson gives yours a **workspace**: files it reads and changes through four tools, which the page keeps in memory.
+
+The program is the base one, lesson 2's loop on the kernel's `modelAnswer` and `callTool`, with the kernel's four file tools added to the tools it offers. One file is new, **workspace.ts**, and the Code pane has a tab beside **Context**: **Files**, the workspace as it is.
+
+Send **List the files.** Echo answers *I see 3 files: docs/guide.md, notes/long.md, notes/todo.md.* Then **Read notes/todo.md.**: *I read notes/todo.md, characters 0 to 22 of 22: "- buy milk - call Ana"*. Then **In notes/todo.md replace call Ana with call Ana at noon.**: *I changed notes/todo.md: it holds 30 characters now.*
+
+The chat's status line reads *wrote notes/todo.md*. Open **Files** and pick notes/todo.md: it reads `- call Ana at noon`.
+
+</Step>
+
+<Step n={2} id="model" title="Pick a model" focus="model">
+
+This lesson runs on **Echo**, which calls the file tools by rule:
+
+- "List the files", or "list the files in notes", calls `listFiles`;
+- "Read X", where X holds a dot or a slash, calls `readFile`, and "Read X from 4000" reads from that character;
+- "Write X: text" calls `writeFile` with the text after the colon;
+- "In X replace A with B" calls `editFile`.
+
+These rules come before lesson 2's, so a path under `notes/` is no question about notes, and a number in a text is no sum.
+
+A real model may not call the tools at all. On this machine, **Qwen2.5 0.5B** was sent **List the files.**, **Read notes/todo.md.** and **Write a file named hello.txt that says hello.**, twice, and called no tool either time, so no file changed. The first time it wrote the calls as text instead: `listFiles()`, `readFile()` with no path, and `writeFile("hello.txt", "hello\n")`. The second time it repeated each message as an instruction: "List the files of the workspace.", "Read the notes/todo.md.", "Write the file hello.txt." Each answer took under a second, the first about four. The rest of this lesson runs on Echo.
+
+</Step>
+
+<Step n={3} id="contract" title="A contract the host gives" focus="code" file="workspace">
+
+The kernel has no disk. A workspace is a contract, **`Files`**, with three calls: `read(path)`, `list(folder)` and `write(path, text, expected?)`. The host provides it: a command line over a folder, a test in memory, and this page in memory.
+
+This page builds its `Files` once, when the page loads, with three files in it, and gives it to your program as a value, **`files`**. Your code never builds it. So the files outlive **Rebuild**, **Stop**, **Clear context** and every experiment, and a reload starts them over. Press **Rebuild**, then **Read notes/todo.md.**: your change is still there. ADR 0017 says it as a consequence: *a reload keeps the files only if the host's `Files` is durable*. This page's is not.
+
+**agent.ts** is the base program with three changes:
+
+- the loop offers and calls `Toolkit.merge(tools, fileTools)`: tools.ts's three tools and the kernel's four, each keeping its own type;
+- main provides `fileHandlers`, what the four tools do;
+- main provides `workspace(files)`, the page's files as **workspace.ts** gives them.
+
+The file tools declare `Files`, so a program that leaves the workspace out does not compile: "Type 'Files' is not assignable to type 'never'".
+
+**workspace.ts** is one function of the page's files. As it starts it is a sandbox, `(files) => files`: the agent may change any file, and nothing is asked.
+
+The line ADR 0017 draws: **tools reach the files, and nothing the agent is made of reads them**. No memory and no fold holds `Files`. A file reaches the model only as a tool's result, stored in the journal.
+
+</Step>
+
+<Step n={4} id="tools" title="Four tools, and their limits" focus="chat">
+
+What the journal keeps of files is bounded: every call and every result is stored, and later prompts send them again.
+
+- **readFile** returns a page of at most **4,000 characters**, with where it starts, where it stops and the file's length. Send **Read notes/long.md.**: *I read notes/long.md, characters 0 to 4000 of 6246: …* and Echo says how to go on. **Read notes/long.md from 4000.** reads the rest: *characters 4000 to 6246 of 6246*.
+- **writeFile** writes at most **4,000 characters** in one call: the text is in the call, which every later prompt sends. A longer text is refused: "The text is 4001 characters long, and one call takes at most 4000." A longer file is written in parts, each next one with `append`.
+- **listFiles** lists at most **200 paths**, and says how many it left out.
+- **editFile** replaces the one place that holds a text. A text that is not there, or is there twice, is refused, and nothing is written.
+
+Every path goes through `workspacePath`, which refuses one that would leave the workspace. Send **Read ../secret.txt**: "The path "../secret.txt" is not a path in the workspace. Give a path relative to the workspace, with / between folders and no "..", such as notes/todo.md."
+
+Each refusal is the call's failed result, which the model reads.
+
+</Step>
+
+<Step n={5} id="journal" title="What the journal holds of a file" focus="context" wide={true}>
+
+The journal holds what a read returned, not the file.
+
+Send **Read notes/todo.md.**: *characters 0 to 30 of 30: "- buy milk - call Ana at noon"*. Open **Files**, pick notes/todo.md, change `milk` to `bread` and press **Save**: *Saved notes/todo.md.* Now send **Thanks.** and open **Context** at that turn. The Prompt column holds the read's result as it was stored, `- buy milk`. Nothing in the prompt says `bread`: nothing told the agent, and nothing reads the file for it.
+
+The agent learns of the change when it reads the file again, or when something it does fails. Send **In notes/todo.md replace milk with eggs.** The edit reads the file as it is now. `milk` is not in it, so the edit is refused in the kernel's words: "The text to find is not in notes/todo.md, so nothing was changed. Call readFile and copy the text exactly, spaces and line breaks included." The file keeps your `bread`, and the status line reads *editFile: nothing written, it failed*.
+
+The kernel has one more refusal for two writers: `FileChanged`, for a file written by someone else between an edit's read and its write. On this page nothing can run between the two, so the page cannot make it. The kernel's test of the file tools does, "a file written by someone else between an edit's read and its write". The page's own words for that race are the Files tab's, in the next step.
+
+</Step>
+
+<Step n={6} id="pane" title="The Files tab" focus="files">
+
+The Files tab draws the world, not the agent. It reads the page's own `Files`, never the journal, and never what workspace.ts wraps around it: workspace.ts's rule is for the agent, and you are not the agent.
+
+It reads the workspace again when a tool says it wrote a file, with the live event `plugin.files.written`, and whenever a turn ends, however it ends.
+
+**Save** is a compare and set: it writes only if the file still holds the text the tab loaded. In notes/todo.md, type a line and do not save. Send **Write notes/todo.md: - buy rice**. The tab keeps your text and says: "notes/todo.md was changed in the workspace while you were editing it. Your text is kept here, and Save will not write over that change." Press **Save**: nothing is written, and the tab says "notes/todo.md was changed since this pane loaded it, so your text was not saved. It is shown as it is now: make your change again." It shows `- buy rice`.
+
+</Step>
+
+<Step n={7} id="permission" title="Permission is the app's" focus="code" file="workspace">
+
+The file tools never ask anyone. Whether a write is allowed is decided by the app that composes the agent, and ADR 0017 names three ways, each a layer the app puts around the tools:
+
+- **a workspace that declines**: workspace.ts wraps the page's files with a `write` of its own that fails with `FilesRefused` and a reason. The tool hands the reason to the model. A `Files` cannot ask a person: its calls run with no turn, and an answer is stored in a turn.
+- **asking a person**: the loop asks before it runs a call that writes, with `approveIn`, as lesson 9's loop did. The key is chosen by the app: here one per file, so "Always" covers that file alone.
+- **a judge, then a person**: an `Approval` of the app's over the person's answers `Allowed` for what it finds safe and passes the rest on.
+
+As it starts, your program provides no `Approval` and asks nobody: the sandbox. Each of the three is an experiment of the last step.
+
+</Step>
+
+<Step n={8} id="interrupted" title="An interrupted write" focus="chat">
+
+`callTool` stores a call's result after the tool returns. A write that is made, then stopped before its result is stored, leaves the file changed and the call with no result.
+
+Press **Answer writes late** in the last step: workspace.ts then makes each write at once and answers four seconds later. Send **Write late.txt: hello** and press **Stop** before the answer. The turn ends, stopped, and the Files tab, which reads the workspace again at every turn's end, lists late.txt. No `plugin.files.written` was said: the tool never got that far. The call with no result is never sent again, and the next read shows the file as it is.
+
+Press **Reset** in the Code pane afterwards. The files keep late.txt.
+
+</Step>
+
+<Step n={9} id="experiments" title="Experiments" focus="code" file="workspace">
+
+Each button rewrites a file, then builds the program again. The files stay as they are: an experiment changes the code, not the workspace. Each text says the code it starts from: press **Reset** in the Code pane where it says so.
+
+<Experiments />
+
+After the last one, press **Reset** in the Code pane.
+
+**Next:** background tasks. Why a workspace is not a store of the agent, and why permission is the app's, is in [ADR 0017](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0017-a-workspace-is-the-world-the-agent-acts-on.md).
+
+</Step>

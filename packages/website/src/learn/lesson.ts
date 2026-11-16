@@ -6,7 +6,7 @@ import { Option } from "effect"
 import type { Duration, Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xandreed/core/kernel"
-import type { Approval, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
+import type { Approval, Files, KeyValueStore, Memory, Summarizer } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 import type { KitResult } from "./runtime.ts"
 
@@ -133,6 +133,12 @@ export interface PageParts {
    * the lesson calls it once a build, so the list starts again with every build.
    */
   readonly failing: (failures: ReadonlyArray<MadeFailure>) => Layer.Layer<LanguageModel.LanguageModel>
+  /**
+   * The page's workspace (lesson 15), for a lesson that declares one (`Lesson.workspace`): one `Files`, built once
+   * per runtime from the lesson's seed and given as a value, so the files outlive every build (Rebuild, Stop, Clear
+   * context, an experiment) and a reload starts them over. None for every other lesson.
+   */
+  readonly files: Option.Option<Layer.Layer<Files>>
 }
 
 /**
@@ -213,6 +219,11 @@ export interface Lesson {
    * chat reads, or why the code made none. The runtime provides its own base `Sessions` and runs it.
    */
   readonly branch?: (sources: Sources, conversation: SessionId, turn: TurnNumber) => Result.Result<Effect.Effect<SessionId, { readonly message: string }, Sessions>, string>
+  /**
+   * The page's workspace (lesson 15): the files it starts with, by path. The runtime builds one `Files` in memory
+   * from them, once, given to the program as `PageParts.files`; the page's file pane shows and edits the same one.
+   */
+  readonly workspace?: { readonly seed: Readonly<Record<string, string>> }
   /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>
 }

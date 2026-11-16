@@ -1206,6 +1206,124 @@ body.app {
   text-decoration: line-through;
 }
 
+/* ── The Files tab (lesson 15): the page's workspace, as it is ───────────── */
+.files .tab-files {
+  margin-left: 0.2rem;
+  font-family: var(--font-sans, inherit);
+  font-weight: 600;
+  color: var(--accent);
+}
+.wsp {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  min-height: 0;
+}
+.wsp[hidden] {
+  display: none !important;
+}
+.wsp-sub {
+  margin: 0;
+  font-size: 0.78rem;
+  color: var(--text-faint);
+}
+.wsp-cols {
+  display: grid;
+  grid-template-columns: minmax(150px, 220px) minmax(0, 1fr);
+  gap: 0.7rem;
+  flex: 1 1 auto;
+  min-height: 0;
+}
+.wsp-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.2rem;
+  overflow: auto;
+}
+.wsp-list button {
+  font: inherit;
+  font-family: var(--font-mono);
+  font-size: 0.76rem;
+  width: 100%;
+  text-align: left;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.25rem 0.5rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+  cursor: pointer;
+}
+.wsp-list button[aria-current="true"] {
+  border-color: var(--accent-3);
+  color: var(--text);
+  box-shadow: 0 0 0 1px var(--accent-3);
+}
+.wsp-file {
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  min-width: 0;
+  min-height: 0;
+}
+.wsp-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.5rem;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  color: var(--text);
+}
+.wsp-file textarea {
+  flex: 1 1 auto;
+  min-height: 12rem;
+  resize: vertical;
+  font-family: var(--font-mono);
+  font-size: 0.8rem;
+  line-height: 1.5;
+  padding: 0.5rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--text);
+}
+.wsp-file textarea:disabled {
+  opacity: 0.6;
+}
+.wsp-notice {
+  margin: 0;
+  min-height: 1.2em;
+  font-size: 0.78rem;
+  color: var(--text-dim);
+}
+.wsp-notice[data-state="changed"] {
+  color: var(--accent);
+}
+@media (max-width: 700px) {
+  /* On a phone the files are one row of chips above the text. */
+  .wsp-cols {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .wsp-list {
+    flex-direction: row;
+    flex-wrap: wrap;
+  }
+  .wsp-list button {
+    width: auto;
+    max-width: 100%;
+  }
+  .wsp-file textarea {
+    min-height: 9rem;
+  }
+}
+
 /* ── The Context tab: what happened in each turn ─────────────────────────── */
 .tr {
   display: flex;

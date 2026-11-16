@@ -78,6 +78,14 @@ checks.
   tab's `sessionStorage` (`RuntimeOptions.tab`): its tests reload with the
   same tab storage, and open a new tab with an empty one.
 
+- A lesson whose world is the page's (lesson 15's workspace, `Lesson.workspace`)
+  gets it built once per runtime and given as a value (`PageParts.files`), never
+  built by the learner's code. A learner's function of it (workspace.ts) is called
+  once in `evaluate` before agent.ts runs, so a bad one is refused in words that
+  name its own file. A pane that shows that world reads the page's own service,
+  not the learner's wrapper, and its model is a class with no DOM that the tests
+  drive (`WorkspacePane`).
+
 ## 3. Tests that can fail
 
 - `program.test.ts`: tsc over every shown file, and the program run on
