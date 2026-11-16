@@ -1,4 +1,4 @@
-// The Files tab (lesson 15): the page's workspace as it is. A list of the
+// The Files tab (lesson 16): the page's workspace as it is. A list of the
 // files, and the chosen one's text in an editor a person can change and
 // save. It draws what `WorkspacePane` gives (workspace-pane.ts) and hands it
 // what the person does; it reads no journal and knows no agent. The file's

@@ -1,4 +1,4 @@
-// Lesson 13 on the page's runtime, with Echo picked and Echo as the spare:
+// Lesson 14 on the page's runtime, with Echo picked and Echo as the spare:
 // failures.ts makes the calls of the model picked fail, one entry a call; the
 // plan tries the call again or hands it to the spare; an answer cut after a
 // word is final. Each claim of the page and each experiment is pinned here:
@@ -82,7 +82,7 @@ const RETRYABLE = "echo.streamText: Internal provider error: failures.ts made th
 const FOR_GOOD = "echo.streamText: failures.ts made this call fail, and did not say it is worth another try"
 const CUT = "echo.streamText: Internal provider error: failures.ts made this call fail after 1 piece, and said it is worth another try"
 
-describe("lesson 13 on the page (the kernel, Echo picked, Echo as the spare)", () => {
+describe("lesson 14 on the page (the kernel, Echo picked, Echo as the spare)", () => {
   test("a made failure says the page made it, from failures.ts, never the model's words: an AiError of the model picked, a provider's own error when worth another try", () => {
     expect(madeFailureWords({ retryable: true })).toBe("failures.ts made this call fail, and said it is worth another try")
     expect(madeFailureWords({})).toBe("failures.ts made this call fail, and did not say it is worth another try")

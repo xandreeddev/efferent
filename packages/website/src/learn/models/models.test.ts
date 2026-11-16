@@ -1258,9 +1258,9 @@ describe("Echo's rules for facts (lesson 11)", () => {
   })
 })
 
-describe("Echo's rules for the workspace (lesson 15)", () => {
+describe("Echo's rules for the workspace (lesson 16)", () => {
   const files = ["readFile", "listFiles", "writeFile", "editFile"]
-  // Lesson 15's toolkit: lesson 2's three tools, and the four file tools.
+  // Lesson 16's toolkit: lesson 2's three tools, and the four file tools.
   const every = ["calculator", "remember", "recall", ...files]
   const asked = (text: string, offered: ReadonlyArray<string> = every) => echoStep(Prompt.make([{ role: "user", content: text }]), offered)
   const calling = (name: string, params: Record<string, unknown>) => ({ text: "Let me work that out.", calls: [{ name, params }] })
@@ -1307,7 +1307,7 @@ describe("Echo's rules for the workspace (lesson 15)", () => {
     expect(asked("In notes/todo.md replace 2 with 3")).toEqual(calling("editFile", { path: "notes/todo.md", find: "2", replace: "3" }))
   })
 
-  test("each rule is asleep where its tool is not offered: the same messages call no file tool in lessons 2 to 14", () => {
+  test("each rule is asleep where its tool is not offered: the same messages call no file tool in lessons 2 to 15", () => {
     for (const text of ["List the files.", "Read docs/guide.md.", "Write a.txt: hello", "In a.txt replace hello with bye"]) {
       expect({ text, calls: asked(text, ["calculator", "remember", "recall"]).calls }).toEqual({ text, calls: [] })
     }

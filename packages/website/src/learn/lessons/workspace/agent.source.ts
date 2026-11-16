@@ -1,4 +1,4 @@
-// The one source of truth for lesson 15's agent.ts: the base program (lesson
+// The one source of truth for lesson 16's agent.ts: the base program (lesson
 // 2's, on the kernel's modelAnswer and callTool) given a workspace. The loop
 // offers and calls tools.ts's tools and the kernel's four file tools, merged
 // into one toolkit, and main provides what the file tools need: their

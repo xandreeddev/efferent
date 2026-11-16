@@ -1,4 +1,4 @@
-// Lesson 13's five files, compiled as written, type-checked as shown and as
+// Lesson 14's five files, compiled as written, type-checked as shown and as
 // each experiment leaves them, and run on the kernel with a scripted model
 // for the model picked and a scripted spare: a call tried again, a call
 // handed to the spare, and an answer cut after a word. agent.ts is checked
@@ -100,7 +100,7 @@ const changed = (before: string, after: string) => ({
   come: after.split("\n").filter((line) => !before.split("\n").includes(line)),
 })
 
-describe("lesson 13's displayed program", () => {
+describe("lesson 14's displayed program", () => {
   test("the base program still holds each piece this lesson replaces, once, and agent.ts differs from it by those pieces alone", () => {
     for (const [from] of REPLACED) expect({ from, held: BASE_AGENT.split(from).length - 1 }).toEqual({ from, held: 1 })
     for (const [from] of REPLACED_IMPORTS) expect({ from, held: BASE_IMPORTS.split(from).length - 1 }).toEqual({ from, held: 1 })
@@ -226,7 +226,7 @@ describe("lesson 13's displayed program", () => {
   }, 120_000)
 })
 
-describe("lesson 13's program on the kernel, the model picked and the spare each scripted", () => {
+describe("lesson 14's program on the kernel, the model picked and the spare each scripted", () => {
   test("a failure worth another try: the model picked is asked again with the same prompt, and its answer is the turn's; the spare is not asked", async () => {
     const ran = await Effect.runPromise(runMain(write("retry"), "Hi.", [{ _tag: "Fails", retryable: true }, { _tag: "Answers", pieces: ["Hello."] }], [{ _tag: "Answers", pieces: ["Spare."] }]))
     expect(ran.shown).toEqual({ pieces: ["Hello."], replies: ["Hello."], errors: [] })

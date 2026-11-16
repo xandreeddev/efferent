@@ -13,7 +13,7 @@ import StartOver from '../../components/learn/keep-the-conversation/StartOver.as
 
 Until now a reload lost everything. The journal was kept in the page, by `inProcessJournal()`, and went with it.
 
-The journal's store is a module like the others: a contract, **`JournalStorage`**, with five calls (the fifth, `fork`, is lesson 14's). In this lesson you write one that keeps the journal in the browser's `localStorage`. Then:
+The journal's store is a module like the others: a contract, **`JournalStorage`**, with five calls (the fifth, `fork`, is lesson 15's). In this lesson you write one that keeps the journal in the browser's `localStorage`. Then:
 
 - the conversation **outlives the page**: reload, and it is there;
 - the chat **finds it again** when the page loads, and closes a turn the page before it left open;
@@ -56,7 +56,7 @@ How do you know a store is right? Its contract comes with a **kit**: the contrac
 
 <Kit />
 
-Eight checks. Seven ask what any store must do, **fork** among them: a branch starts as a copy of another session, which lesson 14 uses. The eighth, **reopens**, is only asked of a store whose journals outlive it: a second handle on the same storage must read what the first one wrote.
+Eight checks. Seven ask what any store must do, **fork** among them: a branch starts as a copy of another session, which lesson 15 uses. The eighth, **reopens**, is only asked of a store whose journals outlive it: a second handle on the same storage must read what the first one wrote.
 
 </Step>
 

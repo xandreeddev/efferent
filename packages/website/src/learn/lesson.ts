@@ -111,7 +111,7 @@ export interface PageParts {
    */
   readonly chatWith: (resume: Effect.Effect<SessionId, { readonly message: string }, Sessions>) => Layer.Layer<Chat, { readonly message: string }, Sessions>
   /**
-   * The chat the page asks to show (lesson 14): the one picked in the row of chats, or the one shown when a branch
+   * The chat the page asks to show (lesson 15): the one picked in the row of chats, or the one shown when a branch
    * was made, so that a rebuild does not move to the branch; none after Clear context and on a new tab. The
    * learner's `resume` is given it as `chosen`, and decides.
    */
@@ -122,19 +122,19 @@ export interface PageParts {
    */
   readonly approvalOn: (pane: unknown) => Layer.Layer<Approval>
   /**
-   * The spare (lesson 13): a second Echo, named `echo-spare`, watched as the model picked is (its prompts and usage
+   * The spare (lesson 14): a second Echo, named `echo-spare`, watched as the model picked is (its prompts and usage
    * traced under its name) and never failing. A plan's second step provides it.
    */
   readonly spare: Layer.Layer<LanguageModel.LanguageModel>
   /**
-   * The model picked, failing as `failures` says (lesson 13's failures.ts): one entry each time it is asked, in
+   * The model picked, failing as `failures` says (lesson 14's failures.ts): one entry each time it is asked, in
    * order, a try of a call tried again included and a summarizer's call not counted, then it answers as it does.
    * A call made to fail never reaches the model. The list counts from its first entry each time this is called:
    * the lesson calls it once a build, so the list starts again with every build.
    */
   readonly failing: (failures: ReadonlyArray<MadeFailure>) => Layer.Layer<LanguageModel.LanguageModel>
   /**
-   * The page's workspace (lesson 15), for a lesson that declares one (`Lesson.workspace`): one `Files`, built once
+   * The page's workspace (lesson 16), for a lesson that declares one (`Lesson.workspace`): one `Files`, built once
    * per runtime from the lesson's seed and given as a value, so the files outlive every build (Rebuild, Stop, Clear
    * context, an experiment) and a reload starts them over. None for every other lesson.
    */
@@ -142,7 +142,7 @@ export interface PageParts {
 }
 
 /**
- * One call of the model picked that the page makes fail (lesson 13): the fields of the kernel's scripted model's
+ * One call of the model picked that the page makes fail (lesson 14): the fields of the kernel's scripted model's
  * `Fails`. `retryable` makes it a provider's own error, worth another try, and without it an unknown error; with
  * `pieces` the answer starts, shows them, then fails, and without them it fails before anything.
  */
@@ -214,13 +214,13 @@ export interface Lesson {
    */
   readonly durable?: { readonly prefix: string }
   /**
-   * How a branch is made (lesson 14), from the code as it was last built: the learner's `branchFrom` called with the
+   * How a branch is made (lesson 15), from the code as it was last built: the learner's `branchFrom` called with the
    * conversation shown and the turn a "Branch after turn N" button names, as an Effect over the sessions the page's
    * chat reads, or why the code made none. The runtime provides its own base `Sessions` and runs it.
    */
   readonly branch?: (sources: Sources, conversation: SessionId, turn: TurnNumber) => Result.Result<Effect.Effect<SessionId, { readonly message: string }, Sessions>, string>
   /**
-   * The page's workspace (lesson 15): the files it starts with, by path. The runtime builds one `Files` in memory
+   * The page's workspace (lesson 16): the files it starts with, by path. The runtime builds one `Files` in memory
    * from them, once, given to the program as `PageParts.files`; the page's file pane shows and edits the same one.
    */
   readonly workspace?: { readonly seed: Readonly<Record<string, string>> }

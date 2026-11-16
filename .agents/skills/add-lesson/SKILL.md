@@ -41,7 +41,7 @@ checks.
   output, then read it: a comment still sits above the line it explains.
   A control's pattern matches its line in both forms Format can leave it
   (a long `const system =` wraps onto two lines).
-- A file whose editable part must carry a type (lesson 13's failures.ts:
+- A file whose editable part must carry a type (lesson 14's failures.ts:
   `ReadonlyArray<Failure>`) ends its read-only part with the typed
   declaration and leaves one expression to edit, as memory.ts does: the
   page runs the editable text as JavaScript and Format parses it with
@@ -61,7 +61,7 @@ checks.
   (`evaluate.ts`) and guards (`Layer.isLayer`, `typeof`), and hands `main`
   over with `programOf`, the one place the page says an untyped program
   needs nothing more.
-  An Effect a file made that needs a service the page holds (lesson 14's
+  An Effect a file made that needs a service the page holds (lesson 15's
   `resume`, what `branchFrom` gave) gets it with `Effect.provideService`,
   goes through `programOf`, and what it gives is decoded with the
   kernel's schema (`SessionId`), never cast.
@@ -74,11 +74,11 @@ checks.
   (`packages/website/AGENTS.md`, "A durable lesson"): its tests reload by
   closing a storage view, and its browser script removes the lesson's keys
   first and reloads for real.
-  What it keeps for one tab alone (lesson 14's chat picked) goes in the
+  What it keeps for one tab alone (lesson 15's chat picked) goes in the
   tab's `sessionStorage` (`RuntimeOptions.tab`): its tests reload with the
   same tab storage, and open a new tab with an empty one.
 
-- A lesson whose world is the page's (lesson 15's workspace, `Lesson.workspace`)
+- A lesson whose world is the page's (lesson 16's workspace, `Lesson.workspace`)
   gets it built once per runtime and given as a value (`PageParts.files`), never
   built by the learner's code. A learner's function of it (workspace.ts) is called
   once in `evaluate` before agent.ts runs, so a bad one is refused in words that

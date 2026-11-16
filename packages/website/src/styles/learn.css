@@ -1206,7 +1206,7 @@ body.app {
   text-decoration: line-through;
 }
 
-/* ── The Files tab (lesson 15): the page's workspace, as it is ───────────── */
+/* ── The Files tab (lesson 16): the page's workspace, as it is ───────────── */
 .files .tab-files {
   margin-left: 0.2rem;
   font-family: var(--font-sans, inherit);
@@ -1340,7 +1340,7 @@ body.app {
   flex-shrink: 0;
 }
 /* The sessions a program ran turns in: the chat's, and each helper's, under the call that made it. */
-/* Lesson 14: the row of chats above the messages, the one shown marked, and "Branch after turn N" under a turn. */
+/* Lesson 15: the row of chats above the messages, the one shown marked, and "Branch after turn N" under a turn. */
 .chat-row {
   display: flex;
   gap: 0.3rem;

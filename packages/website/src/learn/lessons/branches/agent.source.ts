@@ -1,4 +1,4 @@
-// Lesson 14's agent.ts is lesson 7's, unchanged: the base program over the
+// Lesson 15's agent.ts is lesson 7's, unchanged: the base program over the
 // learner's store. Only its typed module differs, since this lesson's chat.ts
 // takes `chosen`, the chat the page asks for, as a parameter of `chatOn`:
 // `run` takes it too, and hands it on.

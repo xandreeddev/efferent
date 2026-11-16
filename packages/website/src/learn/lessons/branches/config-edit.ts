@@ -1,4 +1,4 @@
-// Lesson 14's experiments edit the learner's code in place, so the code and
+// Lesson 15's experiments edit the learner's code in place, so the code and
 // the page never disagree. A line the learner rewrote beyond recognition is
 // left alone (None) rather than guessed at.
 import { Option } from "effect"

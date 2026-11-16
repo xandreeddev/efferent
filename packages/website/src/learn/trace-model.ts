@@ -57,7 +57,7 @@ export const kindOf = (session: string, chat: string, header: Option.Option<Sess
 /**
  * One prompt of a turn as it was sent: to which model, while which model was picked, and how its stream ended when
  * it failed (`PromptFailed`). A prompt whose stream failed is an attempt of a model call that has no answer: the
- * call is tried again or handed to another model (lesson 13), or it ends the turn.
+ * call is tried again or handed to another model (lesson 14), or it ends the turn.
  */
 export interface AttemptSeen {
   readonly model: string
@@ -67,7 +67,7 @@ export interface AttemptSeen {
 
 /**
  * Everything heard about one session. Per turn: one context per model call, and one prompt per attempt, in order.
- * A model call is tried once unless a plan tries it again (lesson 13): its prompts are then each attempt's, every
+ * A model call is tried once unless a plan tries it again (lesson 14): its prompts are then each attempt's, every
  * one but the last marked failed. The tools offered, whether the turn was given, the usage, the pieces streamed
  * and how it ended are each prompt's.
  */
@@ -103,7 +103,7 @@ export interface Board {
    */
   readonly restored: number
   /**
-   * How the records up to `restored` came to be read rather than heard (lesson 14): with the page as it loaded
+   * How the records up to `restored` came to be read rather than heard (lesson 15): with the page as it loaded
    * (`page`), with a chat this page showed before and shows again after a switch (`again`), and for a branch, the
    * records it copied up to `through`, from the chat named `from` (`copied`). Turns past the copy read as the rest do.
    */
@@ -265,7 +265,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
         ...trace.journal.reduce((seeded, event) => record(seeded, { _tag: "Event", event: { _tag: "Stored", session: SessionId.make(trace.session), ...event } }, at), board),
         // Only what this page did not hear of live: a rebuild shows the same conversation again, and its turns ran here.
         restored: Math.max(board.restored, board.records.length === 0 ? (trace.journal.at(-1)?.seq ?? 0) : board.restored),
-        // Lesson 14: a chat shown again after a switch, and a branch's copied records, say so; a reload reads as before.
+        // Lesson 15: a chat shown again after a switch, and a branch's copied records, say so; a reload reads as before.
         readBack: board.records.length === 0
           ? { how: trace.again === true ? "again" : "page", copied: Option.map(Option.fromNullishOr(trace.branch), ({ through, label }) => ({ through, from: label })) }
           : board.readBack,
@@ -368,11 +368,11 @@ export interface CallView {
   readonly tools: ReadonlyArray<string>
   /** The journal as this call saw it. */
   readonly journal: ReadonlyArray<JournalRow>
-  /** Each prompt sent for this call, in order (lesson 13: a call under a plan may be tried again): one for a call tried once. */
+  /** Each prompt sent for this call, in order (lesson 14: a call under a plan may be tried again): one for a call tried once. */
   readonly attempts: ReadonlyArray<AttemptView>
   /**
    * The model the answer's record names, when it is worth saying: the turn's answers name more than one model, or
-   * a model other than the one picked when the turn ran (lesson 13's spare). None for a call the picked model
+   * a model other than the one picked when the turn ran (lesson 14's spare). None for a call the picked model
    * answered, as in every turn of lessons 1 to 12.
    */
   readonly answeredBy: Option.Option<string>
@@ -424,7 +424,7 @@ export interface RestoredWords {
 }
 
 /**
- * Why a turn read back from the journal has only its records (lesson 14 adds two reasons to lesson 7's): it ran
+ * Why a turn read back from the journal has only its records (lesson 15 adds two reasons to lesson 7's): it ran
  * before the page loaded; it ran before the chat was shown again after a switch, which dropped what the page saw of
  * it; or a branch copied it from the chat it was cut from.
  */
@@ -677,7 +677,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
         ? `${plural(memoryCount, "message")} from the journal${leftOut > 0 ? `; ${leftOut} left out by memory` : ", nothing left out"}.`
         : restored ? readBack.detail : "Memory reads the journal and picks what the model sees.",
     })
-    // Each attempt of this call before its last: a prompt whose stream failed, and the call tried again (lesson 13).
+    // Each attempt of this call before its last: a prompt whose stream failed, and the call tried again (lesson 14).
     const last = Option.fromNullishOr(view.attempts.at(-1))
     view.attempts.slice(0, -1).forEach((attempt, place) => {
       const next = view.attempts[place + 1]
@@ -714,7 +714,7 @@ export const viewOf = (board: Board, turn: number): TurnView => {
       detail: Option.match(answer, {
         onNone: () => "The answer goes into the journal, for the next call's context.",
         onSome: (one) => {
-          // The model that answered, where it is worth saying: lesson 13's spare.
+          // The model that answered, where it is worth saying: lesson 14's spare.
           const by = Option.match(view.answeredBy, { onNone: () => "", onSome: (name) => `, answered by ${name}` })
           return asked.length > 0 ? `Record #${one.seq}${by}: the model asked for ${plural(asked.length, "tool call")}.` : `Record #${one.seq}${by}. The next turn's memory can read it.`
         },

@@ -1,4 +1,4 @@
-// The one source of truth for lesson 14's chat.ts: lesson 7's chat, whose
+// The one source of truth for lesson 15's chat.ts: lesson 7's chat, whose
 // editable `resume` now shows the chat the page asks for, `chosen`, when it
 // is one of the learner's own; otherwise lesson 7's rule. Derived from
 // lesson 7's text by named pieces; program.test.ts checks that text still

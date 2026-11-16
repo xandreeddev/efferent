@@ -1,4 +1,4 @@
-// Lesson 14, "Branches": continue a conversation from an earlier turn and keep
+// Lesson 15, "Branches": continue a conversation from an earlier turn and keep
 // the original. Lesson 7's durable program, with one new file, branch.ts,
 // whose `branchFrom` the page calls on its own base sessions when "Branch
 // after turn N" is pressed, and lesson 7's chat.ts with a `resume` that shows

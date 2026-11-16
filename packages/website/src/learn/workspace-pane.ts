@@ -1,4 +1,4 @@
-// The file pane's model (lesson 15): what the pane shows of the page's
+// The file pane's model (lesson 16): what the pane shows of the page's
 // workspace, and what a person does there. It draws the world, not the agent
 // (ADR 0017): it reads the page's own `Files`, never the journal and never
 // what the learner's workspace.ts wraps around it, since a person is not the
@@ -155,7 +155,7 @@ export class WorkspacePane {
 }
 
 /**
- * What the chat's status line says of the workspace (lesson 15), in lesson 13's style, from what the page hears: a
+ * What the chat's status line says of the workspace (lesson 16), in lesson 14's style, from what the page hears: a
  * write a tool said (`wrote notes/todo.md`), and a write or an edit whose result failed, so nothing was written,
  * with who said no: the person (the kernel's `APPROVAL_REFUSED`, word for word), or the workspace (the start of the
  * kernel's words for a `Files` that declines). None for anything else.

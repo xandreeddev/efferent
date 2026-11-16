@@ -168,7 +168,7 @@ describe("the Context tab's model", () => {
     expect(board.log).toEqual([])
   })
 
-  test("a prompt whose stream failed is an attempt of the next prompt's model call (lesson 13): calls are paired by the prompts' own marks, and each prompt keeps its usage", () => {
+  test("a prompt whose stream failed is an attempt of the next prompt's model call (lesson 14): calls are paired by the prompts' own marks, and each prompt keeps its usage", () => {
     const prompt = (model: string): Trace => ({ _tag: "Prompt", session: "s", turn: 1, messages: [], tools: [], model, picked: "echo", givenTurn: true })
     const failed = (reason: string): Trace => ({ _tag: "PromptFailed", session: "s", turn: 1, reason })
     const usage = (inputTokens: number): Trace => ({ _tag: "Usage", session: "s", turn: 1, usage: { inputTokens } })

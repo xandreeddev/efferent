@@ -1,4 +1,4 @@
-// Lesson 13's failures.ts: what the model you picked does on its next
+// Lesson 14's failures.ts: what the model you picked does on its next
 // calls, so the lesson can show a failure on any model. The read-only part
 // says what an entry means and declares its type, `Failure`, the fields of
 // the kernel's scripted model's `Fails` without its `_tag`; the learner edits

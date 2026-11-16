@@ -4,7 +4,7 @@
 // stays open while the agent answers: what you send then waits its turn.
 // The rows it draws are the chat model's (chat-model.ts): `render` is given
 // them all each time and changes only what changed. A question a tool asks
-// before it acts is a row with three buttons, which answer it. In lesson 14
+// before it acts is a row with three buttons, which answer it. In lesson 15
 // the last row of each closed turn carries "Branch after turn N", and the row
 // of chats above the messages shows each chat of the store, the one shown
 // marked.
@@ -20,10 +20,10 @@ export interface ChatPane {
   readonly add: (kind: "view", text: string) => HTMLElement
   /**
    * Draw the chat's rows: a new row goes at the end, one already drawn is changed where it is, one that is gone is
-   * removed. `branches` (lesson 14) names, by row id, the turn a row closes: it carries "Branch after turn N".
+   * removed. `branches` (lesson 15) names, by row id, the turn a row closes: it carries "Branch after turn N".
    */
   readonly render: (rows: ReadonlyArray<ChatRow>, branches?: ReadonlyMap<number, TurnNumber>) => void
-  /** Draw the row of chats (lesson 14), the one shown marked; an empty row hides it. */
+  /** Draw the row of chats (lesson 15), the one shown marked; an empty row hides it. */
   readonly renderChats: (chats: ReadonlyArray<ChatEntry>, shown: string) => void
   readonly clear: () => void
   readonly setState: (state: { ready: boolean; running: boolean; hint: string }) => void
@@ -37,9 +37,9 @@ export interface ChatHooks {
   readonly stop: () => void
   readonly newChat: () => void
   readonly decide: (id: string, decision: Decision) => void
-  /** "Branch after turn N" was pressed (lesson 14). */
+  /** "Branch after turn N" was pressed (lesson 15). */
   readonly branch: (turn: TurnNumber) => void
-  /** A chat of the row was pressed (lesson 14). */
+  /** A chat of the row was pressed (lesson 15). */
   readonly choose: (chat: string) => void
 }
 
@@ -55,7 +55,7 @@ export const mountChat = (root: HTMLElement, hooks: ChatHooks): ChatPane => {
   const hint = q("[data-hint]")
   const chips = [...root.querySelectorAll<HTMLButtonElement>("[data-chip-text]")]
   const three = q<HTMLButtonElement>("[data-send-three]")
-  // Lesson 14's row of chats: only its page has one.
+  // Lesson 15's row of chats: only its page has one.
   const chatsBox = root.querySelector<HTMLElement>("[data-chats]")
   const sent: string[] = []
   let recall = -1
@@ -67,7 +67,7 @@ export const mountChat = (root: HTMLElement, hooks: ChatHooks): ChatPane => {
   scroller.addEventListener("scroll", () => { following = nearBottom() }, { passive: true })
   const pending = new Map<HTMLElement, string>()
   let frame = 0
-  /** The turn each drawn element closes, for its "Branch after turn N" (lesson 14). */
+  /** The turn each drawn element closes, for its "Branch after turn N" (lesson 15). */
   const closes = new Map<HTMLElement, TurnNumber>()
   /** The element's button "Branch after turn N", after what it shows, when it closes a turn. */
   const withBranch = (item: HTMLElement) => {

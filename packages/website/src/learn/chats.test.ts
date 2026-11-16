@@ -1,4 +1,4 @@
-// The row of chats (lesson 14): which headers are the learner's own, how each
+// The row of chats (lesson 15): which headers are the learner's own, how each
 // is labelled, and what the page says when `resume` did not show the chat
 // asked for.
 import { describe, expect, test } from "bun:test"
