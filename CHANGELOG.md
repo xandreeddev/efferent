@@ -416,6 +416,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the Context tab no longer redraws on every piece a model
+  streams, which rebuilt the step track and restarted its highlight dozens
+  of times a second (on a Qwen answer of 88 pieces, 648 nodes removed and
+  the steps built 273 times; now 40 and 13, the same as a short answer).
+  The page's controls are written only when they change, so while an
+  answer streams only its row in the chat changes. The step running is
+  lit without an animation, and the streamed step stays lit until the
+  answer is stored. Once a turn closes, the Memory column lists the
+  records the turn stored after its last context (the answer), marked as
+  stored after it.
+
 - Docs site: when the GPU stops running a model in the browser, the chat
   says why in plain words (one request gave the model more new text to read
   at once than the GPU finishes in time, as a long message or a whole

@@ -22,7 +22,7 @@ import type { Lesson } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
 import { LessonRuntime } from "./runtime.ts"
 import type { Trace } from "./runtime.ts"
-import { attemptsByCall, emptyBoard, emptyBoards, heardBy, keptInJournal, kindOf, record, sessionRow, startedOver, turnNumbersOf, viewOf } from "./trace-model.ts"
+import { attemptsByCall, emptyBoard, emptyBoards, heardBy, keptInJournal, kindOf, record, paintsOn, sessionRow, startedOver, storedAfter, turnNumbersOf, viewOf } from "./trace-model.ts"
 import type { Board, Boards } from "./trace-model.ts"
 
 const opened: Array<LessonRuntime> = []
@@ -68,6 +68,48 @@ describe("the Context tab's model", () => {
       [3, "conversation.assistant.message", ["conversation"], "later"],
       [4, "core.session.turn.ended", ["turn"], "not-conversation"],
     ])
+  })
+
+  test("the tab paints on a call's first streamed piece and not on the later ones, and on a second call's first", async () => {
+    const runtime = await LessonRuntime.create(tools)
+    opened.push(runtime)
+    runtime.setModel(loadEcho())
+    let board = emptyBoard(runtime.conversation)
+    const pieces: Array<{ readonly turn: number; readonly paints: boolean }> = []
+    const done = new Promise<void>((resolve) => runtime.onTrace((trace) => {
+      if (trace._tag === "Piece") pieces.push({ turn: trace.turn, paints: paintsOn(Option.some(board), trace) })
+      board = record(board, trace, 0)
+      if (trace._tag === "Reply") resolve()
+    }))
+    await runtime.start(Object.fromEntries(tools.files.map((file) => [file.id, file.defaultText])))
+    runtime.send(`${"The sea is wide and the waves are tall. ".repeat(4)}What is 12 * 3?`)
+    await done
+    // Two calls (the calculator, then the answer), each streaming more than one piece: two paint, the rest do not.
+    expect(viewOf(board, 1).calls.length).toBe(2)
+    expect(pieces.length).toBeGreaterThan(2)
+    expect(pieces.filter((one) => one.paints).length).toBe(2)
+    // Every other trace paints, and a piece of a session heard for the first time does too.
+    expect(paintsOn(Option.some(board), { _tag: "Reply", turn: 1, text: "x" })).toBe(true)
+    expect(paintsOn(Option.none(), { _tag: "Piece", turn: 1, text: "x" })).toBe(true)
+  })
+
+  test("once a turn closes, its last call lists the answer stored after its context; the turn still open, or an earlier call, lists none", async () => {
+    const board = await boardAfter(["hello"])
+    const view = viewOf(board, 1)
+    expect(storedAfter(view, view.calls.at(-1)!).map((row) => [row.seq, row.name])).toEqual([[3, "conversation.assistant.message"]])
+    // The same turn before its end: nothing yet.
+    expect(storedAfter({ ...view, closed: Option.none() }, view.calls.at(-1)!)).toEqual([])
+    // After a second turn, the first lists its own answer still, not the second turn's records.
+    const two = await boardAfter(["hello", "again"])
+    const first = viewOf(two, 1)
+    expect(storedAfter(first, first.calls.at(-1)!).map((row) => row.seq)).toEqual([3])
+    // A turn read back from the journal has no context of its own.
+    expect(storedAfter({ ...view, restored: true }, view.calls.at(-1)!)).toEqual([])
+    // With a tool: the first call's context came before the call, its result and the answer, but only the last call lists.
+    const turn = viewOf(await boardAfter(["What is 12 * 3?"], Object.fromEntries(tools.files.map((file) => [file.id, file.defaultText])), tools), 1)
+    expect(turn.calls.length).toBe(2)
+    expect(storedAfter(turn, turn.calls[0]!)).toEqual([])
+    expect(storedAfter(turn, turn.calls[1]!).map((row) => row.name)).toEqual(["conversation.assistant.message"])
   })
 
   test("the second prompt's messages come from the records of turn 1 and its own, and its start is the first prompt", async () => {

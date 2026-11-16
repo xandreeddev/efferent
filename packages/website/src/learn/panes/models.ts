@@ -88,7 +88,8 @@ export const mountModels = (root: HTMLElement, hooks: { choose: (choice: ModelCh
       refresh()
     },
     setActive: (id) => { active = id; refresh() },
-    setBusy: (value) => { busy = value; refresh() },
+    // Called after every trace the page hears, a streamed piece included: only a change is drawn.
+    setBusy: (value) => { if (value === busy) return; busy = value; refresh() },
     progress: (progress) => {
       bar.hidden = progress === undefined
       if (progress === undefined) return

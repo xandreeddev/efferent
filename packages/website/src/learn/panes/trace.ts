@@ -5,7 +5,7 @@
 // Hovering a row lights the same record everywhere; a step lights what it
 // wrote or read. The events log underneath lists everything, in order.
 import { Option } from "effect"
-import { emptyBoard, emptyBoards, heardBy, LOG_LIMIT, sessionOfTrace, sessionRow, startedOver, turnNumbersOf, viewOf } from "../trace-model.ts"
+import { emptyBoard, emptyBoards, heardBy, LOG_LIMIT, paintsOn, sessionOfTrace, sessionRow, startedOver, storedAfter, turnNumbersOf, viewOf } from "../trace-model.ts"
 import type { Board, Boards, CallView, JournalRow, LogEntry, MemoryRow, PromptRow, RestoredWords, StepView, TurnView } from "../trace-model.ts"
 import type { Trace } from "../runtime.ts"
 
@@ -263,7 +263,12 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   }
 
   // ── memory ──────────────────────────────────────────────────────────────
-  const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>) => {
+  /**
+   * `after`: the conversation's records stored after this context was built, shown once the turn has closed and
+   * the column shows its last call (the answer, a tool's result), so what the turn added is in view as it ends. They
+   * are not this context: memory builds the next request's context from the journal again, and decides then.
+   */
+  const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>, after: ReadonlyArray<JournalRow>) => {
     Option.match(view.memory, {
       onNone: () => {
         // A turn on the memory session stores a fact's record: no memory builds a context from that journal.
@@ -288,6 +293,11 @@ export const mountTrace = (root: HTMLElement): TracePane => {
             el("span", { class: "tr-role" }, Option.getOrElse(row.role, () => "")),
             el("span", { class: "tr-text" }, row.summary),
             el("span", { class: "tr-from" }, `#${row.seq} · not sent`))]),
+          ...(after.length > 0 ? [[keyOf("after", after.length), () => el("li", { class: "tr-sep", title: "Memory builds each request's context from the journal: the next one is built when the next turn calls the model." }, `stored after this context: ${after.length}. Memory reads the journal again for the next request.`)] as const] : []),
+          ...after.map((row): Item => [keyOf("after", row.seq, row.role, row.summary, lit.has(row.seq)), () => el("li", { class: "tr-row tr-msg", "data-after": "", "data-seq": String(row.seq), "data-lit": lit.has(row.seq) ? "" : undefined },
+            el("span", { class: "tr-role" }, Option.getOrElse(row.role, () => "")),
+            el("span", { class: "tr-text" }, row.summary),
+            el("span", { class: "tr-from" }, `#${row.seq} · stored after it`))]),
         ]))
       },
     })
@@ -395,7 +405,8 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     renderJournal(call, lit)
     // A turn read back from the journal says why only its records are here: a reload, a switch, or a branch's copy.
     const restored = view.restored ? Option.some(view.readBack) : Option.none()
-    renderMemory(call, lit, restored)
+    // Once the turn has closed, the column of its last call also lists what the turn stored after that context.
+    renderMemory(call, lit, restored, storedAfter(view, call))
     renderPrompt(call, lit, restored)
     lightHovered()
     if (lit.size > 0) root.querySelector('[data-lit=""]')?.scrollIntoView({ block: "nearest" })
@@ -454,6 +465,9 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       if (session !== shownSession) return
       const turnsBefore = turnNumbersOf(board).length
       board = filed
+      // A later piece of a call changes only a count (`paintsOn`): painting on every piece rebuilt the step track and
+      // restarted its highlight dozens of times a second.
+      if (!paintsOn(Option.fromNullishOr(known), trace)) return
       // A new turn: follow it, unless the reader picked one to look at.
       if (follow.checked && turnNumbersOf(board).length !== turnsBefore) { selected = Option.none(); step = Option.none(); pickedCall = Option.none() }
       paintSoon()
