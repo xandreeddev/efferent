@@ -1,4 +1,4 @@
-// The one source of truth for lesson 13's agent.ts: the base program (lesson
+// The one source of truth for lesson 14's agent.ts: the base program (lesson
 // 2's, on the kernel's modelAnswer and callTool) with the model call asked
 // for under a plan. Three pieces change: the loop no longer takes the model
 // as a service and asks for its answer through `planned(plan)`; a `plan` is

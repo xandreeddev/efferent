@@ -1,4 +1,4 @@
-// Lesson 15's files, compiled as written, type-checked, and run on the kernel
+// Lesson 16's files, compiled as written, type-checked, and run on the kernel
 // with a scripted model over the page's workspace: a read and an edit through
 // the file tools, a workspace that declines, a loop that asks before a write,
 // and a judge before the person. Each text the lesson derives is checked
@@ -107,7 +107,7 @@ const TODO = SEED["notes/todo.md"] ?? ""
 /** The page's files after a run that changed one: the seed, with that file as given. */
 const seedWith = (path: string, text: string) => ({ ...SEED, [path]: text })
 
-describe("lesson 15's displayed program", () => {
+describe("lesson 16's displayed program", () => {
   test("the base still holds each piece this lesson replaces in it, and nothing else differs", () => {
     for (const [from] of REPLACED) expect({ from, held: BASE_AGENT.split(from).length - 1 }).toEqual({ from, held: 1 })
     for (const [from] of REPLACED_IMPORTS) expect({ from, held: BASE_IMPORTS.split(from).length - 1 }).toEqual({ from, held: 1 })

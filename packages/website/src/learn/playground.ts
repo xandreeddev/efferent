@@ -2,7 +2,7 @@
 // lesson runtime, which runs the kernel in the page and the learner's
 // program over it. What it runs, and what the controls and experiments
 // change, comes from the lesson's definition. A lesson with a workspace
-// (lesson 15) has a Files tab too, over the page's own files.
+// (lesson 16) has a Files tab too, over the page's own files.
 import { Option } from "effect"
 import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
@@ -28,7 +28,7 @@ import { viewBoard } from "./views.ts"
 import { workspaceLine, WorkspacePane } from "./workspace-pane.ts"
 
 const CONTEXT_TAB = "context"
-/** The Files tab of a lesson with a workspace (lesson 15). */
+/** The Files tab of a lesson with a workspace (lesson 16). */
 const FILES_TAB = "files"
 
 const root = document.querySelector<HTMLElement>(".wb-bench")
@@ -87,12 +87,12 @@ function boot(root: HTMLElement, lesson: Lesson) {
     newChat: () => void newConversation(),
     // A press on a question's button answers it: the tool that asked goes on, or is refused.
     decide: (id, decision) => state.runtime?.decide(id, decision),
-    // Lesson 14: "Branch after turn N" makes a branch and switches nothing; a chat of the row is shown.
+    // Lesson 15: "Branch after turn N" makes a branch and switches nothing; a chat of the row is shown.
     branch: (turn) => void branchAfter(turn),
     choose: (id) => void chooseChat(id),
   })
 
-  // Lesson 15: the Files tab, over the page's workspace once the runtime has built it. It reads the page's own files.
+  // Lesson 16: the Files tab, over the page's workspace once the runtime has built it. It reads the page's own files.
   let workspacePane: WorkspacePane | undefined
   const filesPane = filesHost === null ? undefined : mountFiles(filesHost, {
     choose: (path) => void workspacePane?.choose(path),
@@ -123,7 +123,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     setChip(busy() ? "answering" : "waiting for a message", "ready")
   }
 
-  /** The tab's own storage (`sessionStorage`), where a durable lesson keeps the chat picked (lesson 14); none where the browser gives none. */
+  /** The tab's own storage (`sessionStorage`), where a durable lesson keeps the chat picked (lesson 15); none where the browser gives none. */
   const tabStorage = (): KeyValueStore | undefined => {
     try {
       const storage = window.sessionStorage
@@ -190,7 +190,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const show = (next: ChatBoard) => {
     if (next === board) return
     board = next
-    // Lesson 14: the last row of each closed turn carries "Branch after turn N".
+    // Lesson 15: the last row of each closed turn carries "Branch after turn N".
     chat.render(board.rows, lesson.branch === undefined ? undefined : branchPoints(board))
   }
   let unseen = false
@@ -200,10 +200,10 @@ function boot(root: HTMLElement, lesson: Lesson) {
 
   /** The conversation a durable lesson's program last named. */
   let shownSession: string | undefined
-  /** The program's own status line while a plan's attempts are said over it (lesson 13): put back when the turn ends. */
+  /** The program's own status line while a plan's attempts are said over it (lesson 14): put back when the turn ends. */
   let programStatus: string | undefined
   /**
-   * The program's own status line while a workspace line is said over it (lesson 15): a write, or a write that failed.
+   * The program's own status line while a workspace line is said over it (lesson 16): a write, or a write that failed.
    * Put back when the next turn starts, so the line speaks of the turn that is running or just ended, never an older one.
    */
   let underWorkspace: string | undefined
@@ -223,7 +223,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     trace.hear(event)
     if (contextTab.getAttribute("aria-selected") !== "true" && !unseen) { unseen = true; contextTab.dataset.unseen = "" }
     window.dispatchEvent(new CustomEvent("learn:trace", { detail: event }))
-    // Lesson 15: the Files tab reads the workspace again after a write a tool said, and after every turn's end.
+    // Lesson 16: the Files tab reads the workspace again after a write a tool said, and after every turn's end.
     void workspacePane?.hear(event)
     const conversation = state.runtime?.conversation
     // The chat's rows first: a stored record of the conversation shown, a piece, a reply, a failure, the program's end.
@@ -233,9 +233,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
         const record = event.event
         if (record._tag === "Live" && record.session === conversation) {
           Option.map(dataOf(progressEvent, record), ({ id, done, total }) => views.progress(id, done, total))
-          // Lesson 15: a tool wrote a file, said on the status line.
+          // Lesson 16: a tool wrote a file, said on the status line.
           Option.map(workspaceLine(record), sayWorkspace)
-          // Lesson 13: an attempt of a model call failed, or a later one started or answered, said on the status line.
+          // Lesson 14: an attempt of a model call failed, or a later one started or answered, said on the status line.
           Option.map(Option.flatMap(dataOf(attemptEvent, record), attemptLine), (text) => {
             // The program's own line is kept, and put back when the turn ends: an attempt's line says nothing after it.
             if (programStatus === undefined) programStatus = statusBox.textContent ?? ""
@@ -243,7 +243,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
           })
         }
         if (record._tag !== "Stored" || record.session !== conversation) break
-        // Lesson 15: a write or an edit whose result failed, so nothing was written, said on the status line.
+        // Lesson 16: a write or an edit whose result failed, so nothing was written, said on the status line.
         Option.map(workspaceLine(record), sayWorkspace)
         if (record.name === turnStartedEvent.name && underWorkspace !== undefined) {
           statusBox.textContent = underWorkspace
@@ -268,7 +268,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
         // from it alone; the one already shown takes the records it has not taken (a turn closed as the program started).
         if (fresh) drawFrom(event.journal, board.rows.filter((row) => row.waiting === true && row.dropped === undefined).map((row) => row.text))
         else event.journal.forEach(take)
-        // Lesson 14: the row of chats, and a word when the learner's `resume` showed another chat than the one picked.
+        // Lesson 15: the row of chats, and a word when the learner's `resume` showed another chat than the one picked.
         if (lesson.branch !== undefined) void showChats(event.session)
         break
       case "Reply":
@@ -468,7 +468,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
   }
 
   // ── chat ────────────────────────────────────────────────────────────────
-  // ── branches (lesson 14) ────────────────────────────────────────────────
+  // ── branches (lesson 15) ────────────────────────────────────────────────
   /** The row of chats, as the store lists them; and, as a chat was shown, a word when it is not the one asked for. */
   const showChats = async (showing?: string) => {
     const runtime = state.runtime
@@ -564,7 +564,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
 
   type Focus = { pane?: string | undefined; file?: string | undefined; unfold?: string | undefined; wide?: string | undefined }
   const applyFocus = (detail: Focus) => {
-    // A step about the context opens the Context tab in the Code pane; one about the files (lesson 15), its Files tab.
+    // A step about the context opens the Context tab in the Code pane; one about the files (lesson 16), its Files tab.
     const context = detail.pane === "context" || detail.file === CONTEXT_TAB
     const files = filesHost !== null && (detail.pane === FILES_TAB || detail.file === FILES_TAB)
     const pane = context || files ? "code" : detail.pane
@@ -700,7 +700,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     try {
       const storage = window.localStorage
       Array.from({ length: storage.length }, (_, index) => storage.key(index)).forEach((key) => { if (key !== null && key.startsWith(prefix)) storage.removeItem(key) })
-      // What this tab kept for the lesson: the edits, and the chat picked (lesson 14).
+      // What this tab kept for the lesson: the edits, and the chat picked (lesson 15).
       const tab = window.sessionStorage
       Array.from({ length: tab.length }, (_, index) => tab.key(index)).forEach((key) => { if (key !== null && key.startsWith(prefix)) tab.removeItem(key) })
     } catch { /* no storage: there is nothing kept to forget */ }

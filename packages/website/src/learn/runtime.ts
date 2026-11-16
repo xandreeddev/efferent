@@ -15,7 +15,7 @@
 // no longer waits, answered or dropped with its turn. A session other than
 // the chat's that a turn opens in (a helper's, the memory session) is named
 // with its header before that turn's first record is heard. A lesson with a
-// workspace (lesson 15) has one `Files`, built once in the root scope from
+// workspace (lesson 16) has one `Files`, built once in the root scope from
 // its seed: the program is given it as a value, and the page's file pane
 // reads and writes the same one.
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Schema, Scope, Stream } from "effect"
@@ -43,7 +43,7 @@ export interface RuntimeOptions {
   /** A durable lesson's storage: the browser's `localStorage` on the page, a value of the test's own in a test. */
   readonly storage?: KeyValueStore
   /**
-   * What a durable lesson keeps for this tab alone (lesson 14): the browser's `sessionStorage` on the page. The
+   * What a durable lesson keeps for this tab alone (lesson 15): the browser's `sessionStorage` on the page. The
    * chat picked is kept there, so a reload shows the same chat and a new tab the latest.
    */
   readonly tab?: KeyValueStore
@@ -127,11 +127,11 @@ export type Trace =
    * A prompt the model received, for the session's turn open when it was sent, and the tools offered with it. A
    * summarizer's (`purpose: "summary"`) was sent while memory compacted, not by the turn's loop. `model` names the
    * model it was sent to, as its answers name it, and `picked` the model picked when it was sent: they differ for
-   * the spare's prompts (lesson 13).
+   * the spare's prompts (lesson 14).
    */
   | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly model: string; readonly picked: string; readonly purpose?: "summary"; readonly givenTurn?: true }
   /**
-   * The stream of the session's turn's last prompt failed, in these words: that attempt has no answer (lesson 13,
+   * The stream of the session's turn's last prompt failed, in these words: that attempt has no answer (lesson 14,
    * a call under a plan). Said by the stream itself, so it always follows its own prompt and comes before the
    * next. A stream that was stopped is not said to have failed. A summarizer's (`purpose: "summary"`) is no try of
    * the turn's model call.
@@ -154,9 +154,9 @@ export type Trace =
    */
   | {
     readonly _tag: "Showing"; readonly session: string; readonly journal: ReadonlyArray<StoredEvent>
-    /** The session is a branch (lesson 14): the chat it was cut from, the place of its last copied record, and that chat's label in the row. */
+    /** The session is a branch (lesson 15): the chat it was cut from, the place of its last copied record, and that chat's label in the row. */
     readonly branch?: { readonly of: string; readonly through: number; readonly label: string }
-    /** This page showed the session before, and shows it again after another (lesson 14): what it saw of its turns is gone. */
+    /** This page showed the session before, and shows it again after another (lesson 15): what it saw of its turns is gone. */
     readonly again?: true
   }
   /** A tool asked before it acts (lesson 9): the question waits for the person, under an id `decide` answers it by. */
@@ -204,11 +204,11 @@ const usageOf = (part: unknown): Option.Option<Reported> => {
 
 const saidOf = (raw: Prompt.RawInput): ReadonlyArray<Said> => Prompt.make(raw).content.map(saidOfMessage)
 
-/** The name the page's spare answers under (lesson 13): a second Echo, never failing. */
+/** The name the page's spare answers under (lesson 14): a second Echo, never failing. */
 export const SPARE = "echo-spare"
 
 /**
- * What a failure failures.ts made says (lesson 13): that the page made it, and whether it said the call is worth
+ * What a failure failures.ts made says (lesson 14): that the page made it, and whether it said the call is worth
  * another try. A learner on a real model reads these words, so they never speak for the model.
  */
 export const madeFailureWords = (failure: MadeFailure): string => {
@@ -272,18 +272,18 @@ export class LessonRuntime {
   /** Whether a kit that runs alone (`LessonKit.alone`) is running now. */
   private kitAlone = false
 
-  /** The page's spare (lesson 13): a second Echo, built once, which a plan's second step provides. */
+  /** The page's spare (lesson 14): a second Echo, built once, which a plan's second step provides. */
   private readonly spare: LoadedModel = loadEcho(undefined, SPARE)
 
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
 
-  /** The chat the page asks to show (lesson 14), kept in the tab's storage: see `PageParts.chosen`. */
+  /** The chat the page asks to show (lesson 15), kept in the tab's storage: see `PageParts.chosen`. */
   private chosenChat: Option.Option<SessionId>
   /** The sessions this page has shown: one shown again after another says so (`Showing.again`). */
   private readonly shownBefore = new Set<string>()
 
-  /** The page's workspace (lesson 15), built once with the runtime: none for a lesson that declares none. */
+  /** The page's workspace (lesson 16), built once with the runtime: none for a lesson that declares none. */
   private files: Option.Option<Context.Service.Shape<typeof Files>> = Option.none()
 
   private constructor(
@@ -351,7 +351,7 @@ export class LessonRuntime {
   }
 
   /**
-   * The page's workspace (lesson 15), as it is: the one the program is given, never what the learner's workspace.ts
+   * The page's workspace (lesson 16), as it is: the one the program is given, never what the learner's workspace.ts
    * wraps around it. The file pane reads and writes it, since a person is not the agent. None for a lesson without one.
    */
   get workspace(): Option.Option<Context.Service.Shape<typeof Files>> {
@@ -425,7 +425,7 @@ export class LessonRuntime {
     return this.session
   }
 
-  /** The chat the page asks to show (lesson 14): see `PageParts.chosen`. */
+  /** The chat the page asks to show (lesson 15): see `PageParts.chosen`. */
   get chosen(): Option.Option<SessionId> {
     return this.chosenChat
   }
@@ -437,7 +437,7 @@ export class LessonRuntime {
   }
 
   /**
-   * The row of chats (lesson 14), from the store's headers: the learner's own, labelled (`chatsOf`). A branch's turn
+   * The row of chats (lesson 15), from the store's headers: the learner's own, labelled (`chatsOf`). A branch's turn
    * is read from its own record at the place it was cut. A store that cannot list gives an empty row.
    */
   private readonly chatsNow: Effect.Effect<ReadonlyArray<ChatEntry>> = Effect.suspend(() => {
@@ -453,7 +453,7 @@ export class LessonRuntime {
       Effect.map(Effect.forEach(headers, turnOf, { concurrency: 1 }), (turns) => chatsOf(headers, new Map(turns.flat()))))
   })
 
-  /** The row of chats (lesson 14): the learner's own conversations and their branches, labelled, by creation. */
+  /** The row of chats (lesson 15): the learner's own conversations and their branches, labelled, by creation. */
   async chats(): Promise<ReadonlyArray<ChatEntry>> {
     return Effect.runPromise(this.chatsNow)
   }
@@ -501,7 +501,7 @@ export class LessonRuntime {
     /**
      * A model as the page hands it to the program, watched: each prompt it is sent and the usage it reports are
      * traced under `name`, the name its answers give, and a stream that fails says so (`PromptFailed`). `failures`
-     * are what the page makes of this model's next calls (lesson 13's failures.ts), one entry each time it is asked,
+     * are what the page makes of this model's next calls (lesson 14's failures.ts), one entry each time it is asked,
      * a try of a call tried again included, a summarizer's call not counted; each `watch` counts from the first, so
      * a build that watches anew starts the list again. A call the page makes fail never reaches the model.
      */
@@ -542,7 +542,7 @@ export class LessonRuntime {
       sessions: () => Layer.effect(Sessions, Effect.gen(function* () { yield* JournalStorage; yield* Core; return sessionsOf })),
       chatOn: () => Layer.effect(Chat, Effect.gen(function* () { yield* Sessions; return chat })),
       model: Layer.succeed(LanguageModel.LanguageModel, watch(model.model, picked)),
-      // Lesson 13: a second Echo, watched as the model picked is and never failing, and the model picked failing as
+      // Lesson 14: a second Echo, watched as the model picked is and never failing, and the model picked failing as
       // failures.ts says. Each build calls `failing` once, so the list starts again with every build.
       spare: Layer.succeed(LanguageModel.LanguageModel, watch(this.spare.model, SPARE)),
       failing: (failures) => Layer.succeed(LanguageModel.LanguageModel, watch(model.model, picked, failures)),
@@ -593,7 +593,7 @@ export class LessonRuntime {
         const session = yield* resume.pipe(Effect.provideService(Sessions, sessionsOf))
         const journal = yield* Effect.mapError(sessionsOf.read(session), (error) => ({ message: `the conversation \`resume\` gave cannot be read: ${error.message}` }))
         const again = shown(session)
-        // A branch (lesson 14) says where it was cut, and from which chat of the row, so its copied turns say so.
+        // A branch (lesson 15) says where it was cut, and from which chat of the row, so its copied turns say so.
         const branch = yield* Option.match(Option.fromNullishOr(journal.header.branch), {
           onNone: () => Effect.succeed({}),
           onSome: ({ of, through }) => Effect.map(chatsNow, (chats) => ({ branch: { of: String(of), through: Number(through), label: chats.find((chat) => chat.id === of)?.label ?? "another chat" } })),
@@ -674,13 +674,13 @@ export class LessonRuntime {
     if (created._tag === "Failure") return { _tag: "Refused", message: `a new conversation could not be created: ${created.failure.message}` }
     if (this.lesson.durable === undefined) this.session = created.success
     this.asked = undefined
-    // No chat is asked for (lesson 14): the learner's `resume` finds the new one as the latest.
+    // No chat is asked for (lesson 15): the learner's `resume` finds the new one as the latest.
     if (Option.isSome(this.chosenChat)) this.setChosen(Option.none())
     return this.start(this.last)
   }
 
   /**
-   * Show another chat of the row (lesson 14): it is the one asked for from here on, and the program starts again over
+   * Show another chat of the row (lesson 15): it is the one asked for from here on, and the program starts again over
    * it, as Rebuild does, a turn in progress ending Interrupted. The messages still waiting are dropped: they were
    * written for the chat that was shown. Returns them, and the build.
    */
@@ -691,7 +691,7 @@ export class LessonRuntime {
   }
 
   /**
-   * Make a branch of the conversation shown (lesson 14), cut after `turn`, with the learner's `branchFrom` as it was
+   * Make a branch of the conversation shown (lesson 15), cut after `turn`, with the learner's `branchFrom` as it was
    * last built, on the page's own base `Sessions`: the sessions the chat reads, over the store the program built. A
    * kit's stack is no place for it, since a kit runs over a store of its own. Nothing is stopped and nothing
    * switches: a turn running in the chat goes on. The chat shown becomes the one asked for, so a rebuild stays on it

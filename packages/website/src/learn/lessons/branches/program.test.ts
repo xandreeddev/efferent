@@ -1,4 +1,4 @@
-// Lesson 14's files, compiled as written and as each experiment leaves them,
+// Lesson 15's files, compiled as written and as each experiment leaves them,
 // and run on the kernel: branch.ts's `branchFrom` makes a session whose
 // journal is the conversation's, record for record, up to the end of the turn
 // it names, and chat.ts's `resume` shows the chat the page asks for when it is
@@ -69,7 +69,7 @@ const branchedWith = (branchFrom: BranchFrom, turn: number) => Effect.gen(functi
 
 afterAll(() => { rmSync(dir, { recursive: true, force: true }) })
 
-describe("lesson 14's displayed program", () => {
+describe("lesson 15's displayed program", () => {
   test("lesson 7's chat still holds what this lesson's chat.ts replaces, and each typed module's pieces are in its text", () => {
     for (const [from] of REPLACED_INTRO) expect({ from, held: times(KEEP_INTRO, from) }).toEqual({ from, held: 1 })
     for (const [from] of REPLACED_RESUME) expect({ from, held: times(KEEP_RESUME, from) }).toEqual({ from, held: 1 })

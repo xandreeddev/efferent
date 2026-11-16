@@ -1,4 +1,4 @@
-// Lesson 15's experiments edit the learner's code in place, so the code and
+// Lesson 16's experiments edit the learner's code in place, so the code and
 // the buttons never disagree. Each is one of the app's ways to decide who may
 // change a file (ADR 0017): a workspace that declines, a loop that asks you,
 // a judge before you. A line the learner rewrote beyond recognition is left

@@ -1,4 +1,4 @@
-// The row of chats (lesson 14): the learner's own conversations and their
+// The row of chats (lesson 15): the learner's own conversations and their
 // branches, each labelled from its header, and what the page says when the
 // learner's `resume` shows a chat other than the one picked. Pure: the
 // runtime reads the headers and each branch's turn from the store, and the
@@ -12,7 +12,7 @@ export const CHAT_OWNER = "learner"
 
 /**
  * A chat of the learner's own: owned by the learner, with no parent (a helper is never one) and of this kernel's
- * format. The same three conditions lesson 7's `resume` keeps a conversation by, and lesson 14's accepts `chosen` by.
+ * format. The same three conditions lesson 7's `resume` keeps a conversation by, and lesson 15's accepts `chosen` by.
  */
 export const ownChat = (header: SessionHeader): boolean =>
   header.owner === CHAT_OWNER && header.parent === undefined && Result.isSuccess(currentFormat(header))

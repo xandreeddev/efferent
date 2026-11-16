@@ -49,7 +49,7 @@ export interface ChatBoard {
   readonly last: number
   /** When each record taken was stored, by its place: what tells one journal from another that holds the same places. */
   readonly times: ReadonlyArray<number>
-  /** The turns whose end was taken, in order: each is closed, and a branch may be cut after it (lesson 14). */
+  /** The turns whose end was taken, in order: each is closed, and a branch may be cut after it (lesson 15). */
   readonly ended: ReadonlyArray<TurnNumber>
 }
 
@@ -79,14 +79,14 @@ const finish = (board: ChatBoard, turn: number, suffix = ""): ChatBoard => Optio
 })
 
 /**
- * How a turn's failure begins when its answer was cut (lesson 13): the kernel words a failure as its tag, then its
+ * How a turn's failure begins when its answer was cut (lesson 14): the kernel words a failure as its tag, then its
  * message (`reasonOf`), and the tag of a cut answer is `AnswerCut`.
  */
 const CUT = "AnswerCut: "
 
 /**
  * Why a turn failed, as the chat says it: the reason its record holds, and for an answer cut after its first words
- * (lesson 13's `AnswerCut`) what that means, before the failure's own words. Read from the record, so a chat drawn
+ * (lesson 14's `AnswerCut`) what that means, before the failure's own words. Read from the record, so a chat drawn
  * again from the journal says the same.
  */
 export const failureLine = (reason: string): string =>
@@ -101,7 +101,7 @@ const endRow = (turn: number, outcome: TurnOutcome): Option.Option<Pick<ChatRow,
 }
 
 /**
- * What the chat's status line says of one attempt of a model call under a plan (lesson 13, `plugin.model.attempt`,
+ * What the chat's status line says of one attempt of a model call under a plan (lesson 14, `plugin.model.attempt`,
  * said live and never stored): a failed attempt, and a later attempt starting and which step of the plan makes it,
  * each short enough for the line. An attempt that answered says nothing: the turn goes on, and ends. A first attempt says nothing, so a call that
  * answers at once leaves the line as the program set it; the page puts the program's line back when the turn ends.
@@ -306,7 +306,7 @@ export const drawsAnew = (board: ChatBoard, shown: string | undefined, trace: { 
   trace.session !== shown || !continues(board, trace.journal)
 
 /**
- * Where "Branch after turn N" goes (lesson 14): after the last stored row of each closed turn, by that row's id.
+ * Where "Branch after turn N" goes (lesson 15): after the last stored row of each closed turn, by that row's id.
  * A turn still open has none, and neither has a turn that left no row. A row drawn from the journal knows its turn
  * as one drawn live does: both come from the record.
  */

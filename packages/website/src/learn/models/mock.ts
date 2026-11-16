@@ -341,7 +341,7 @@ const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string 
 }
 
 /**
- * What a file tool's result says in Echo's words (lesson 15), for a result that did not fail: a page `readFile`
+ * What a file tool's result says in Echo's words (lesson 16), for a result that did not fail: a page `readFile`
  * returned (the file, the characters it holds, its start, and the message that reads on when more follows), the
  * paths `listFiles` gave (a few named, the rest counted), or what `writeFile` and `editFile` wrote. Nothing for
  * any other result: a failure is answered as the tool's, in the kernel's words.
@@ -382,7 +382,7 @@ const WRITE_ASKED = /^\s*write\s+(\S+?)\s*:\s*([^]*?)\s*$/i
 const EDIT_ASKED = /^\s*in\s+(\S+?),?\s+replace\s+([^]+?)\s+with\s+([^]+?)[.!]?\s*$/i
 
 /**
- * The file tool a message asks for (lesson 15), each where its tool is offered, by the four phrasings above, each
+ * The file tool a message asks for (lesson 16), each where its tool is offered, by the four phrasings above, each
  * anchored at the message's start. None for any other message.
  */
 const fileCallFor = (asked: string, offered: ReadonlyArray<string>): EchoCall | undefined => {
@@ -483,7 +483,7 @@ const READ_LENGTH = 400
  * facts' note as it reads past the clock's: it is no message of the conversation, and no note that older turns were
  * condensed.
  *
- * Lesson 15's rules, for the workspace, each asleep where its tool is not offered, placed after lesson 11's rules and
+ * Lesson 16's rules, for the workspace, each asleep where its tool is not offered, placed after lesson 11's rules and
  * before every rule of lessons 2 to 9, each anchored at the start of the message. "List the files" (or "list files
  * in notes") calls listFiles; "read X", where X holds a dot or a slash, calls readFile, and "read X from N" reads
  * from character N; "write X: text" calls writeFile with the text after the colon; "in X replace A with B" calls
@@ -557,7 +557,7 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     // "What do you remember?": the tool that reads the facts, where a lesson offers one (lesson 11's recall-tool).
     if (ASKS_WHAT_IS_REMEMBERED.test(asked) && offered.includes("recallFacts")) return [{ name: "recallFacts", params: {} }]
     // "List the files", "read notes/todo.md", "write a.txt: hello", "in notes/todo.md replace milk with eggs": the
-    // file tools (lesson 15), each where it is offered. They go before the rules of lessons 2 to 9: a path under
+    // file tools (lesson 16), each where it is offered. They go before the rules of lessons 2 to 9: a path under
     // notes/ is no question about notes, a number in a text is no sum, and "remember" in a text is no note.
     const file = fileCallFor(asked, offered)
     if (file !== undefined) return [file]

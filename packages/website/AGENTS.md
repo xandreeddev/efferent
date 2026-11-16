@@ -44,7 +44,7 @@ check` (tsc over the learn code, the build, the link check) and
     lesson's `evaluate` says so. What a file made is read with `named`
     and held to a guard (`Layer.isLayer`, `typeof`), never cast; lesson
     7 alone says two types it cannot check, its store's and its
-    `resume`'s, each with the reason beside it. Lesson 14 reuses lesson
+    `resume`'s, each with the reason beside it. Lesson 15 reuses lesson
     7's `storeOf` and says no type of its own: an Effect a file made
     (`resume`, what `branchFrom` gave) is run over the page's sessions
     with `Effect.provideService` and handed over with `programOf`, and
@@ -119,7 +119,7 @@ check` (tsc over the learn code, the build, the link check) and
     itself, so it always follows its own prompt and comes before the
     next; a stream that was stopped says nothing, and a summarizer's
     carries `purpose: "summary"` and marks no try of the turn's call.
-  - Lesson 13's parts: `PageParts.spare`, a second Echo built once per
+  - Lesson 14's parts: `PageParts.spare`, a second Echo built once per
     runtime (`loadEcho(undefined, "echo-spare")`), watched as the model
     picked is and never failing; and `PageParts.failing(failures)`, the
     model picked failing as failures.ts lists (`MadeFailure`, the fields
@@ -160,7 +160,7 @@ check` (tsc over the learn code, the build, the link check) and
     functions give; the DOM wiring itself is type-checked, not run by a
     test.
   - A turn has one context per model call, and one prompt per attempt: a
-    call under a plan (lesson 13) may be tried again, and each try is a
+    call under a plan (lesson 14) may be tried again, and each try is a
     prompt. The prompts are grouped by call from the prompts' own marks
     (`attemptsByCall`): a prompt whose stream failed (`PromptFailed`)
     belongs to the call of the prompt after it, and the prompts after the
@@ -215,14 +215,14 @@ check` (tsc over the learn code, the build, the link check) and
     (`decidedLine`). While a question waits the status chip says so
     (`questionsWaiting`, `WAITING_FOR_ANSWER`), and the input takes
     messages as during any turn.
-  - A turn whose answer was cut after its first words (lesson 13,
+  - A turn whose answer was cut after its first words (lesson 14,
     `AnswerCut`) keeps the words shown, a row with no `seq`, and its
     failure's row says the answer was cut (`failureLine`), read from the
     record of the turn's end, so a chat drawn from the journal says the
     same and has no words. The status line says each failed try and each
     later one from the live `plugin.model.attempt` events (`attemptLine`,
     wired in `playground.ts`); a first try says nothing.
-- **Lesson 13's failures.ts** is one list after a read-only declaration
+- **Lesson 14's failures.ts** is one list after a read-only declaration
   (`export const failures: ReadonlyArray<Failure> = `, with `type
   Failure` above it), as memory.ts's layer is, not a file of statements:
   the page runs the editable text as JavaScript and Format parses it with
@@ -253,7 +253,7 @@ check` (tsc over the learn code, the build, the link check) and
     creates a second root session waits a few milliseconds first.
   - A browser script starts by removing the lesson's keys: the Chrome
     profile is kept between runs, and so is its storage.
-  - Lesson 14's branches. `Lesson.branch` is how a branch is made:
+  - Lesson 15's branches. `Lesson.branch` is how a branch is made:
     branch.ts's `branchFrom`, from the sources last built, called with
     the conversation shown and the turn pressed. `runtime.branch(turn)`
     runs it on the page's own base `Sessions`, the sessions the chat
@@ -295,7 +295,7 @@ check` (tsc over the learn code, the build, the link check) and
   - `Lesson.kits` are kits the page runs over the learner's code
     (`runtime.runKit`), listed under a `data-kit` button: see "Kits and
     checks".
-- **A workspace** (`Lesson.workspace`, lesson 15, ADR 0017): files the
+- **A workspace** (`Lesson.workspace`, lesson 16, ADR 0017): files the
   agent acts on, reached only by the kernel's file tools.
   - The runtime builds one `Files` in memory from the lesson's seed
     (`inMemoryFiles(seed)`), once, in its root scope, and gives it to the
@@ -472,7 +472,7 @@ check` (tsc over the learn code, the build, the link check) and
     one that shares none, like any other message. With no tool offered
     (`echoReply`), the facts' note is read past as the clock's is: it is
     no message of the conversation and no note of condensed turns.
-  - Lesson 15's rules, for the workspace, each asleep where its tool is
+  - Lesson 16's rules, for the workspace, each asleep where its tool is
     not offered, placed after lesson 11's rules and before every rule of
     lessons 2 to 9, each anchored at the start of the message, with a test
     that fails when they are moved after the recall, sum or remember rule.

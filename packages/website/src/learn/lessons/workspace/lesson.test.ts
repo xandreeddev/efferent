@@ -1,4 +1,4 @@
-// Lesson 15 on the page's runtime, with Echo: the four file tools over the
+// Lesson 16 on the page's runtime, with Echo: the four file tools over the
 // page's workspace and their limits; the file pane, which reads the page's
 // own files, again after a write a tool said and after every turn's end, and
 // which saves a person's change as a compare and set; what the journal holds
@@ -106,7 +106,7 @@ const LONG = SEED["notes/long.md"] ?? ""
 const GUIDE = SEED["docs/guide.md"] ?? ""
 const outcomes = (journal: ReadonlyArray<StoredEvent>) => journal.flatMap((event) => Option.toArray(dataOf(turnEndedEvent, event))).map((ended) => ended.outcome._tag)
 
-describe("lesson 15 on the page (the kernel, Echo)", () => {
+describe("lesson 16 on the page (the kernel, Echo)", () => {
   test("the page's workspace starts with the seed: the Files tab lists it and shows the first file", async () => {
     const { result, pane, paths } = await page()
     expect(result).toEqual({ _tag: "Built" })
@@ -258,7 +258,7 @@ describe("lesson 15 on the page (the kernel, Echo)", () => {
   })
 })
 
-describe("lesson 15's experiments on the page", () => {
+describe("lesson 16's experiments on the page", () => {
   test("keep-docs: a write under docs/ is declined in the kernel's words, the file is unchanged, and a person can still save it in the Files tab", async () => {
     const { say, replies, file, lines, personSaves, pane } = await page(applied("keep-docs"))
     await say("Write docs/guide.md: gone", "Write notes/new.md: kept")
@@ -370,7 +370,7 @@ describe("lesson 15's experiments on the page", () => {
   })
 })
 
-describe("lesson 15's page, as one walk", () => {
+describe("lesson 16's page, as one walk", () => {
   test("the steps in the page's order on one runtime: the files carry each step's changes into the next", async () => {
     const { runtime, say, send, replies, prompts, pane, personSaves, file, lines } = await page()
     // Step 1: a list, a read, an edit; the Files tab shows the edit, and the status line says the write.

@@ -1,4 +1,4 @@
-// Lesson 13, "When the model fails": a model call fails, and the loop asks
+// Lesson 14, "When the model fails": a model call fails, and the loop asks
 // for its answer under a plan, Effect's `ExecutionPlan` through the kernel's
 // `planned`: the model picked is tried again, then the call goes to a spare.
 // The base program over lesson 2's tools, memory and chat, and a new file,

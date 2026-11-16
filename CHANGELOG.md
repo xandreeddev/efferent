@@ -416,6 +416,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: lessons 13 to 15 of the learn track are now 14 to 16 ("When the
+  model fails", "Branches", "A workspace"), so an evals lesson can follow
+  lesson 12, "Test your agent". Their addresses do not change.
+
 - Docs site: lesson 7's store, the `JournalStorage` the learner writes over
   `localStorage`, gains the contract's fifth call, `fork`, written events
   first and header last. Its kit lists eight checks, `fork` among them, and
@@ -431,7 +435,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   were. Lessons 1 and 2, which read the stream by hand, store no name.
   `loadEcho` takes the name it gives, so a second Echo can be named apart.
 
-- Docs site: Lesson 13, "When the model fails", at `/learn/model-failures`.
+- Docs site: Lesson 14, "When the model fails", at `/learn/model-failures`.
   `agent.ts` is the base program with its model call asked for under a
   plan: the loop no longer takes the model as a service and calls
   `LanguageModel.streamText({ … }).pipe(planned(plan))`; `plan` is
@@ -468,7 +472,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the order it lists them: two created in one millisecond are listed by a
   random id.
 
-- Docs site: Lesson 15, "A workspace", at `/learn/workspace`. The base
+- Docs site: Lesson 16, "A workspace", at `/learn/workspace`. The base
   program with the kernel's four file tools merged into the toolkit its
   loop offers and calls (`Toolkit.merge(tools, fileTools)`), `fileHandlers`
   provided, and the workspace as a new file, `workspace.ts`, gives it:
@@ -489,9 +493,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   decline writes under `docs/` (`FilesRefused`), ask before a write keyed
   by the file (`approveIn`), put a judge before the person (`Allowed` under
   `scratch/`) and answer writes late, so Stop leaves a changed file and a
-  call with no result. Lesson 14's page links here. No published package
+  call with no result. Lesson 15's page links here. No published package
   changes.
-- Docs site: Lesson 14, "Branches", at `/learn/branches`. Lesson 7's
+- Docs site: Lesson 15, "Branches", at `/learn/branches`. Lesson 7's
   durable program, with a new file, `branch.ts`: `branchFrom(conversation,
   turn)`, one call of `Sessions.fork(conversation, { through })`. The page
   calls it when "Branch after turn N" is pressed, a button at the last
@@ -515,7 +519,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   chat switched back to "before this chat was shown again"; a reload reads
   as lesson 7's. Experiments cut at the latest closed turn, branch while a
   slow tool runs, ask for a turn that is not closed (`NoClosedTurn`, in the
-  kernel's words) and put back lesson 7's `resume`. Lesson 13's page links
+  kernel's words) and put back lesson 7's `resume`. Lesson 14's page links
   here. No Echo rule was added. No published package changes.
 - Docs site: Lesson 12, "Test your agent", at `/learn/test-your-agent`.
   A new file, `checks.ts`, holds the lines that run the program for a

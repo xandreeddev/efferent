@@ -1,4 +1,4 @@
-// Lesson 14 on the page's runtime, with Echo: a branch is made by the
+// Lesson 15 on the page's runtime, with Echo: a branch is made by the
 // learner's branchFrom on the page's own sessions, the row of chats lists it,
 // a chat picked is shown and drawn anew, a turn running goes on while a
 // branch is made, and every experiment does what the page says. The chat is
@@ -112,7 +112,7 @@ const twoTurns = async (one: Awaited<ReturnType<typeof page>>) => {
   await one.say("What is 12 * 3?")
 }
 
-describe("lesson 14 on the page (the kernel, Echo)", () => {
+describe("lesson 15 on the page (the kernel, Echo)", () => {
   test("the page's steps 1, 3 and 6 as one walk: two messages, a branch after turn 1 shown and asked, its copied turn in Context, then Chat 1 again and a branch after the sum", async () => {
     const one = await page(storageOf())
     // Step 1.

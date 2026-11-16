@@ -1,4 +1,4 @@
-// Lesson 13's experiments edit the learner's code in place, so the code and
+// Lesson 14's experiments edit the learner's code in place, so the code and
 // the buttons never disagree. failures.ts is a list the experiment replaces
 // whole; a piece of agent.ts the learner rewrote beyond recognition is left
 // alone (None) rather than guessed at.

@@ -1,4 +1,4 @@
-// Lesson 15's workspace.ts: the app's permission layer, a function of the
+// Lesson 16's workspace.ts: the app's permission layer, a function of the
 // page's workspace. As it starts it is a sandbox: it gives the agent the
 // page's files as they are, and nothing is asked. The experiments wrap them
 // (a folder whose writes are declined, writes answered late). The page runs

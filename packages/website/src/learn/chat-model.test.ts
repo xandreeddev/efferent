@@ -166,7 +166,7 @@ describe("the chat's rows", () => {
 })
 
 describe("the chat's rows, record by record", () => {
-  test("an answer cut after its first words (lesson 13): the words written stay, and the failure's row says the answer was cut, from the record, live and drawn again alike", () => {
+  test("an answer cut after its first words (lesson 14): the words written stay, and the failure's row says the answer was cut, from the record, live and drawn again alike", () => {
     const reason = "AnswerCut: echo.streamText: it broke"
     const records = journal([turnStarted(one), userMessage("Hello."), turnEnded(one, { _tag: "Failed", reason })])
     const line = "The answer was cut: it failed after its first words were shown, and it is not made again. echo.streamText: it broke"
@@ -181,7 +181,7 @@ describe("the chat's rows, record by record", () => {
     expect(chatRowsOf(records).map(told)).toEqual(["user: Hello.", `error: ${line}`])
   })
 
-  test("the status line of a call under a plan (lesson 13): a failed attempt, a later one starting and answering; a first attempt says nothing", () => {
+  test("the status line of a call under a plan (lesson 14): a failed attempt, a later one starting and answering; a first attempt says nothing", () => {
     expect(attemptLine({ outcome: "started", attempt: 1, step: 0 })).toEqual(Option.none())
     expect(attemptLine({ outcome: "succeeded", attempt: 1, step: 0 })).toEqual(Option.none())
     expect(attemptLine({ outcome: "failed", attempt: 1, step: 0, reason: "busy" })).toEqual(Option.some("attempt 1 failed"))
@@ -347,7 +347,7 @@ describe("the chat's rows, record by record", () => {
     expect(withoutFailure(board, 1).rows.filter((row) => row.kind === "error")).toEqual([])
   })
 
-  test("lesson 14: Branch after turn N is at the last stored row of each closed turn, a turn's first end alone counts, and an open turn has none", () => {
+  test("lesson 15: Branch after turn N is at the last stored row of each closed turn, a turn's first end alone counts, and an open turn has none", () => {
     const two = TurnNumber.make(2)
     const events = journal(
       [turnStarted(one), userMessage("Hello."), assistantMessage("Hello!"), turnEnded(one, { _tag: "Completed" }), turnEnded(one, { _tag: "Completed" })],
@@ -361,7 +361,7 @@ describe("the chat's rows, record by record", () => {
     ])
   })
 
-  test("lesson 14: a Showing of another session is drawn anew, though its records hold the same places and times as the chat's", () => {
+  test("lesson 15: a Showing of another session is drawn anew, though its records hold the same places and times as the chat's", () => {
     const records = journal([turnStarted(one), userMessage("Hello."), assistantMessage("Hello!"), turnEnded(one, { _tag: "Completed" })])
     const board = records.reduce(stored, emptyChat)
     // The same journal: `continues` holds for either session, the session alone tells them apart.

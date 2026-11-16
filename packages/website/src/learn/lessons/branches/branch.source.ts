@@ -1,4 +1,4 @@
-// The one source of truth for lesson 14's branch.ts: one function the page
+// The one source of truth for lesson 15's branch.ts: one function the page
 // calls when "Branch after turn N" is pressed, which asks the sessions for a
 // branch of the conversation shown. A file of statements, as tools.ts is: the
 // page runs the text as written, and program.test.ts compiles it with its two

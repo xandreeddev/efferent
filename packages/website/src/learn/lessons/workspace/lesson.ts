@@ -1,4 +1,4 @@
-// Lesson 15, "A workspace": give the agent files to work on. The base program
+// Lesson 16, "A workspace": give the agent files to work on. The base program
 // with the kernel's four file tools merged into its toolkit, over the page's
 // workspace: one `Files`, built once per page load, given to the program as a
 // value (`PageParts.files`), so the files outlive every rebuild and a reload
@@ -26,7 +26,7 @@ const LONG_LINES = Array.from({ length: 80 }, (_, index) => `${index + 1}. A lin
 
 /**
  * The files the page's workspace starts with, on every page load: a short list to read and edit, a guide under docs/
- * (the folder lesson 15's `keep-docs` declines writes to), and a file longer than one page of `readFile`.
+ * (the folder lesson 16's `keep-docs` declines writes to), and a file longer than one page of `readFile`.
  */
 export const SEED: Readonly<Record<string, string>> = {
   "notes/todo.md": "- buy milk\n- call Ana\n",
