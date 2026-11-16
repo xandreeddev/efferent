@@ -152,7 +152,9 @@ check` (tsc over the learn code, the build, the link check) and
     and its row of sessions (`sessionRow`) names each for what its header
     says it is (`kindOf`), never for its place in the row: the chat's
     conversation ("Chat"); a helper, which has a parent ("Helper N" and
-    its task, lesson 4); the memory session, which the facts plugin owns
+    its task, lesson 4); a background task's, a child the tasks plugin
+    owns (`plugin.tasks`, "Task N" and its task, lesson 17), drawn as a
+    helper's is; the memory session, which the facts plugin owns
     and which has no parent ("Memory", lesson 11); any other session of
     the program's own ("Session N"). The runtime tells the page a
     session's header in a `Session` trace, for every session but the
@@ -338,6 +340,63 @@ check` (tsc over the learn code, the build, the link check) and
     workspace (the start of the kernel's words for `FilesRefused`), or
     failed. The line stays until the next turn starts, when the program's
     own line is put back (`underWorkspace` in `playground.ts`).
+- **Background tasks** (lesson 17, ADR 0018): a helper works on a task in
+  a session of its own while the chat goes on, and its report comes back
+  into the chat's one queue.
+  - The chat's queue is one queue of inputs (`ChatInput` in
+    `page-chat.ts`): a message the person sent, or a task's report, in
+    the order they came. `Chat.inputs` takes one at a time; `messages` is
+    the same queue's messages alone (a report it takes is passed over),
+    which every other lesson reads. `drain` takes the messages waiting and
+    leaves the reports, in their order, in one step that does not wait
+    (`takeExcept`: `Queue.takeUnsafe` until empty, then the reports offered
+    back), so no send lands between the two: a message sent during a turn
+    steers it, and a report never joins a turn that runs. Only a message
+    taken is said (`Taken`): a report has no row waiting in the chat.
+  - The page gives the program where a report goes as a value:
+    `PageParts.reportsOn(pane)`, a `Layer<TaskReports>` whose `deliver`
+    puts the report in that queue and traces `Reported { task, session }`.
+    It is named by no import: said in a comment of `main`, and a parameter
+    of the typed module's `run`. The lesson's `chat.ts`, derived from
+    lesson 1's by named pieces, shows the same queue, the pane handing the
+    chat a report as it hands it a message (`onReport`); lessons 12 and
+    13 run lesson 1's text, unchanged.
+  - The tasks run on the plugin's scope, which closes with the program:
+    Stop, Rebuild and Clear context cut a task running short, and it
+    reports nothing. A report still waiting in the queue then is dropped,
+    on all three alike (`startNow`, after the program stopped:
+    `ReportsDropped { sessions }`), since its task ids start again at t1
+    with the next program; Rebuild keeps the messages that wait, as
+    before. A task running is not a turn running: `busy` is the chat's
+    turn alone, so the status chip reads "waiting for a message", Send is
+    on, and `runKit` and `runAlone` do not refuse.
+  - The chat draws a report as a row of kind `report` (`stored`): a
+    `conversation.user.message` whose data has `from`, which takes no
+    waiting message's place, its text `reportLine` (the task, how it ended,
+    and its answer, read from the kernel's words by `reportIn`,
+    `reports.ts`). A row of task chips (`Lesson.tasks`, `[data-tasks]`,
+    `task-chips.ts`, no DOM) keys each task by its session: it starts from
+    `startTask`'s stored result, ends as its own session's turn ends,
+    waits (`Reported`), is reported (the stored report), cancelled
+    (`cancelTask`'s result), stopped with the program, or dropped
+    (`ReportsDropped`). A change heard before the chip's start (a fast
+    helper) is kept and made when the chip is.
+  - Two sessions call the model at once: each page model gives each
+    request its own stop. A stream's finalizer (`modelStream`) cancels its
+    own request, and nothing once that request is done: WebLLM skips a
+    request still waiting by its own ticket, and calls `interruptGenerate`
+    only when the request cancelled is the one generating; the CPU worker
+    interrupts by the request's id; Echo has a flag per answer. The page's
+    Stop (`LoadedModel.interrupt`) still stops every request.
+  - helper.ts is the work of one task: lesson 4's helper agent as a small
+    loop over tools.ts's tools (`modelAnswer`, `callTool`, three steps at
+    most) in the task's own session, after its wait. main provides the
+    task lines before `toolsLive`, so the helper's calls find the
+    handlers: a module can use only the ones given after it.
+  - Tests hold a helper on a signal, never on time: a page test edits
+    helper.ts's wait (`WAIT`) into a wait on a function the test gives,
+    and program.test.ts compiles a helper whose wait comes from a file it
+    writes.
 - **Kits and checks** (`Lesson.kits`, `runtime.runKit`, a `data-kit`
   button with its `data-kit-results` list). A kit is a `LessonKit`:
   `checks(sources, storageOf, model)` gives its checks, or why the code
@@ -546,6 +605,27 @@ check` (tsc over the learn code, the build, the link check) and
     rest counted past five); a write or an edit with what the file holds
     now. A file tool that failed is answered as the tool's, in the
     kernel's words.
+  - Lesson 17's rules, for background tasks. A report is known by the
+    kernel's words (`reportText`, read with `reportIn`), and answered
+    before every other rule, with no call: "Task t1 finished: " and its
+    answer's first sentence, or "Task t1 failed: " and why, and a
+    message of the person's that the same turn took quoted after it
+    ("You also said: …"). A test fails without it: Echo reads past every
+    host note, so in a report's turn it would read the last message the
+    person typed. "In the background, X" and "start a task: X" call
+    `startTask` with X, and "cancel task t1" calls `cancelTask`, each
+    where its tool is offered and anchored at the message's start. The
+    start rule sits ahead of every other rule (X may hold a sum, a topic
+    to look up or a note to remember), with a test that fails when it is
+    moved after the sum, lookup or remember rule; no other rule wakes on
+    "cancel task", so the cancel rule's place decides nothing and has no
+    such test. A `startTask` result is answered "Started
+    task t1: its answer comes as a message of its own.", a `cancelTask`
+    result in its own words, and a failure of either as the tool's. A
+    report is never what the person said, and no note of condensed turns
+    (`isReport`). The helper is offered tools.ts's tools and uses them by
+    the same rules: a task that is a sum calls the calculator, and the
+    report reads "The tool answered: calculator says 42.".
   - Lesson 13's rule, in `echoReply`, after every other rule but the
     last: one message that says what something is and then asks about it
     under the same name ("The meeting is on Tuesday. When is the

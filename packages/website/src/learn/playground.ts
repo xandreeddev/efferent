@@ -12,6 +12,8 @@ import { ignoredLine } from "./chats.ts"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
+import { heardTask, noTasks } from "./task-chips.ts"
+import type { TaskChips } from "./task-chips.ts"
 import { applyExperiment, kitLine } from "./lesson.ts"
 import type { Lesson } from "./lesson.ts"
 import { echoChoice } from "./models/mock.ts"
@@ -199,6 +201,13 @@ function boot(root: HTMLElement, lesson: Lesson) {
     // Lesson 15: the last row of each closed turn carries "Branch after turn N".
     chat.render(board.rows, lesson.branch === undefined ? undefined : branchPoints(board))
   }
+  /** Lesson 17: the chips of the background tasks the conversation shown started (task-chips.ts). */
+  let taskChips: TaskChips = noTasks
+  const showTasks = (next: TaskChips) => {
+    if (next === taskChips) return
+    taskChips = next
+    chat.renderTasks(taskChips.chips)
+  }
   let unseen = false
   /** The chat session's records as they are announced, for the views the chat draws (lesson 6). */
   const chatRecords: Array<StoredEvent> = []
@@ -234,6 +243,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
     const conversation = state.runtime?.conversation
     // The chat's rows first: a stored record of the conversation shown, a piece, a reply, a failure, the program's end.
     if (conversation !== undefined) show(hear(board, event, conversation))
+    // Lesson 17: each task's chip, from the chat's journal, the task's own session, and the queue's traces.
+    if (conversation !== undefined && lesson.tasks === true) showTasks(heardTask(taskChips, event, conversation))
     switch (event._tag) {
       case "Event": {
         const record = event.event
@@ -525,6 +536,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     if (lesson.durable === undefined) {
       chat.clear()
       show(emptyChat)
+      showTasks(noTasks)
       chatRecords.length = 0
       views.reset()
       trace.reset(runtime.conversation)

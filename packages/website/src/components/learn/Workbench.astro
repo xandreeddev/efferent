@@ -4,7 +4,9 @@
 // turn), and the Chat. Behaviour lives in learn/playground.ts; markup
 // carries `data-*` hooks. What it shows of a lesson comes from the lesson's
 // definition. A lesson with a workspace (lesson 16) has one more tab beside
-// Context, Files: the page's files as they are, which a person can edit.
+// Context, Files: the page's files as they are, which a person can edit. A
+// lesson with background tasks (lesson 17) has a row of task chips above the
+// chat's messages.
 import { Option } from "effect"
 import { lessonOf } from "../../learn/lessons/index.ts"
 
@@ -127,6 +129,7 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
         </div>
       </header>
       {lesson.branch !== undefined && <div class="chat-row" data-chats role="group" aria-label="Chats" hidden></div>}
+      {lesson.tasks === true && <div class="task-row" data-tasks role="group" aria-label="Background tasks" hidden></div>}
       <div class="pane-body" data-scroll>
         <ol class="pg-messages" data-messages aria-live="polite"></ol>
         <p class="pg-empty" data-empty>Ask the agent something. Echo needs no download; pick another model from the bar above.</p>

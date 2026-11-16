@@ -8,19 +8,23 @@
 // itself. Those rows have no `seq`, and a chat drawn from the journal alone
 // has none of them. A question a tool asks before it acts (lesson 9) is such
 // a row too: it is there while it waits, and its answer is a record, drawn
-// as a note. Views are not rows: the chat draws them from the same records
-// with the kernel's `viewsOf` (views.ts).
+// as a note. A background task's report (lesson 17) is a stored user message
+// that says who sent it (`from`): a row of its own kind, never a message the
+// person typed, so it takes no waiting row's place. Views are not rows: the
+// chat draws them from the same records with the kernel's `viewsOf`
+// (views.ts).
 import { Match, Option } from "effect"
 import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnNumber, TurnOutcome } from "@xandreed/core/kernel"
 import { decidedEvent } from "@xandreed/sdk/kernel"
 import type { AttemptData, DecidedData, Decision } from "@xandreed/sdk/kernel"
+import { reportIn } from "./reports.ts"
 import type { Trace } from "./runtime.ts"
 
 export interface ChatRow {
   /** The row's identity for whoever draws it: it stays when a row said live becomes the row of its record. */
   readonly id: number
-  readonly kind: "user" | "agent" | "tool" | "note" | "error" | "ask"
+  readonly kind: "user" | "agent" | "tool" | "note" | "error" | "ask" | "report"
   readonly text: string
   readonly turn?: number
   /** The place of the record the row is drawn from. A row without one was said, never stored. */
@@ -125,6 +129,19 @@ export const decidedLine = ({ action, detail, decision }: DecidedData): string =
   })
 
 /**
+ * What the chat says of a message another session sent (lesson 17): a task's report names the task and how it
+ * ended, then its answer or why it failed, read from the kernel's words; any other is shown as it was sent.
+ */
+export const reportLine = (text: string): string => {
+  const report = reportIn(text)
+  if (report === undefined) return `From another session: ${text}`
+  return `Report of task ${report.task} (${report.outcome === "Finished" ? "finished" : "failed"}): ${report.text}`
+}
+
+/** Whether a stored user message was sent by another session than the person (a task's report): its data has `from`. */
+const sentByAnother = (data: unknown): boolean => typeof data === "object" && data !== null && "from" in data && typeof data.from === "string"
+
+/**
  * One stored record of the conversation the chat shows: the one step every stored row comes from. A record is
  * taken once: one read from the journal and then heard announced (a turn closed as the program started) adds
  * nothing the second time.
@@ -134,6 +151,11 @@ export const stored = (before: ChatBoard, record: StoredEvent): ChatBoard => {
   const board = { ...before, last: record.seq, times: [...before.times, record.at] }
   const at = { turn: record.turn, seq: record.seq }
   const message = record.message
+  // A message another session sent (a task's report): a row of its own, which takes no waiting message's place.
+  if (record.name === userMessageEvent.name && message?._tag === "User" && sentByAnother(record.data)) {
+    const open = Option.match(liveOf(board, record.turn), { onNone: () => board, onSome: (row) => row.text.length === 0 ? change(board, row.id, () => Option.none()) : board })
+    return add(open, { kind: "report", text: reportLine(message.text), ...at })
+  }
   if (record.name === userMessageEvent.name && message?._tag === "User") {
     // A turn that takes several messages stores them one after another: an answer not yet begun is written after the last.
     const open = Option.match(liveOf(board, record.turn), { onNone: () => board, onSome: (row) => row.text.length === 0 ? change(board, row.id, () => Option.none()) : board })

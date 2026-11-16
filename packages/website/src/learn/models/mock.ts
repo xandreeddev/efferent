@@ -4,8 +4,9 @@
 // sent, which is what makes it useful for seeing what an agent's memory holds.
 import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
-import { APPROVAL_REFUSED, catalogue, EDIT_FILE, factsNote, FORGET_FACT, LIST_FILES, LOAD_SKILL, READ_FILE, REMEMBER_FACT, WRITE_FILE } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, CANCEL_TASK, catalogue, EDIT_FILE, factsNote, FORGET_FACT, LIST_FILES, LOAD_SKILL, READ_FILE, REMEMBER_FACT, START_TASK, WRITE_FILE } from "@xandreed/sdk/kernel"
 import type { ChatMessage } from "../prompt-map.ts"
+import { reportIn } from "../reports.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
 import { makeBrowserModel } from "./make.ts"
@@ -40,8 +41,13 @@ const isFactsNote = (text: string): boolean => text.startsWith(FACTS_OPEN) && te
 const isFacts = (message: ChatMessage): boolean => message.role === "user" && isFactsNote(message.content)
 /** What a wrapper added for this request and never stored: the clock's note, or the facts'. */
 const isAdded = (message: ChatMessage): boolean => isClock(message) || isFacts(message)
-const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:") && !isAdded(message)
-const isNote = (message: ChatMessage): boolean => isLedger(message) || isAdded(message)
+/**
+ * A background task's report (lesson 17), known by the kernel's words: a message of the conversation, but not one
+ * the person said, and no note that older turns were condensed.
+ */
+const isReport = (message: ChatMessage): boolean => message.role === "user" && reportIn(message.content) !== undefined
+const isLedger = (message: ChatMessage): boolean => message.role === "user" && message.content.startsWith("[Host note:") && !isAdded(message) && !isReport(message)
+const isNote = (message: ChatMessage): boolean => isLedger(message) || isAdded(message) || isReport(message)
 const plural = (n: number, word: string): string => `${n} ${word}${n === 1 ? "" : "s"}`
 /** Any note the host added (a clock, a summary of older turns): never a message to answer or a sum to work out. */
 const isHostNote = (text: string): boolean => text.startsWith("[Host note:")
@@ -333,6 +339,9 @@ const rememberedBy = (part: ResultPart): string | undefined =>
 const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string | undefined => {
   if (part.name === "forget" && part.isFailure && part.result === APPROVAL_REFUSED) return NOT_APPROVED
   if (part.isFailure) return undefined
+  const started = taskStartedBy(part)
+  if (started !== undefined) return `Started task ${started}: its answer comes as a message of its own.`
+  if (part.name === CANCEL_TASK && typeof part.result === "string") return part.result
   const file = fileReadingOf(part)
   if (file !== undefined) return file
   const loaded = loadedBy(part)
@@ -385,6 +394,33 @@ const fileReadingOf = (part: ResultPart): string | undefined => {
     return `I ${part.name === WRITE_FILE ? "wrote" : "changed"} ${result.path}: it holds ${plural(result.characters, "character")} now.`
   }
   return undefined
+}
+
+/** The task a successful result of `startTask` names (lesson 17). */
+const taskStartedBy = (part: ResultPart): string | undefined =>
+  part.name === START_TASK && !part.isFailure && typeof part.result === "object" && part.result !== null && "task" in part.result && typeof part.result.task === "string"
+    ? part.result.task
+    : undefined
+
+/** "In the background, X", "start a task: X" (lesson 17): `startTask` with X, the rest of the message. */
+const START_ASKED = /^\s*(?:in the background|start a task)\s*[,:]\s*([^]+?)\s*$/i
+/** "Cancel task t1" (lesson 17): `cancelTask` with the id. */
+const CANCEL_ASKED = /^\s*(?:please\s+)?cancel\s+(?:the\s+)?task\s+(\S+?)[.!]?\s*$/i
+
+/**
+ * What Echo answers in a report's turn (lesson 17): each report since its last answer, by the kernel's words, as
+ * the task's id, how it ended and the first sentence of its answer or why it failed. A message of the person's
+ * that the same turn took (one that waited behind the report) is quoted back after them, and asks for no tool.
+ * Nothing for a prompt with no report since its last answer.
+ */
+const reportsAnswered = (sent: Prompt.Prompt): string | undefined => {
+  const last = sent.content.findLastIndex((message) => message.role === "assistant" || message.role === "tool")
+  const texts = sent.content.slice(last + 1).flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : []))
+  const reports = texts.flatMap((text) => reportIn(text) ?? [])
+  if (reports.length === 0) return undefined
+  const said = texts.filter((text) => !isHostNote(text))
+  const answered = reports.map((report) => `Task ${report.task} ${report.outcome === "Finished" ? "finished" : "failed"}: ${firstSentence(report.text)}`).join(" ")
+  return said.length === 0 ? answered : `${answered} You also said: ${said.map((text) => `"${clip(text, 40)}"`).join(", ")}.`
 }
 
 /** "List the files", "list files in notes": `listFiles`, with the folder when one is named. */
@@ -509,8 +545,21 @@ const READ_LENGTH = 400
  * text is no sum, and "remember" in a text is no note. A page that was read is answered with the file, its range and
  * its start, and the message that reads on when more follows; a list with its paths; a write or an edit with what
  * the file holds now. A file tool that failed is answered as the tool's, in the kernel's words.
+ *
+ * Lesson 17's rules, for background tasks. A task's report, known by the kernel's words (`reportText`), is answered
+ * before every other rule and calls nothing: "Task t1 finished: " and its answer's first sentence, or "Task t1
+ * failed: " and why, with a message of the person's that the same turn took quoted after it. "In the background,
+ * X" and "start a task: X" call startTask with X, and "cancel task t1" calls cancelTask, each where its tool is
+ * offered, anchored at the message's start, and ahead of every other rule. A startTask that started a task is
+ * answered "Started task t1: its answer comes as a message of its own.", a cancelTask in its own words, and a
+ * failure of either as the tool's.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
+  // A task's report (lesson 17) is answered before anything else, and calls nothing. It starts with a host note, which
+  // every rule below reads past: in a report's turn they would read the last message the person typed, which may
+  // be the one that started the task, and start it again.
+  const reported = reportsAnswered(sent)
+  if (reported !== undefined) return { text: reported, calls: [] }
   // A note the host added (a clock, a summary of older turns) is not a message to answer or a sum to work out.
   const prompt = { ...sent, content: sent.content.filter((message) => !(message.role === "user" && message.content.every((part) => part.type === "text" && isHostNote(part.text)))) }
   /** What the tool results ending at `at` say, as Echo answers from them: a helper's answer passed on as the helper's. */
@@ -546,6 +595,13 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   /** Whether a message asks to forget a fact, where the tool that forgets is offered. */
   const forgets = (asked: string): boolean => toForget(asked) !== undefined && offered.includes(FORGET_FACT)
   const callFor = (asked: string): ReadonlyArray<EchoCall> => {
+    // "In the background, X", "start a task: X": startTask with X (lesson 17). "Cancel task t1": cancelTask. Each
+    // anchored at the message's start, and ahead of every rule below: X may hold a sum, a topic to look up, a note
+    // to remember or a path, and is the helper's to do.
+    const start = START_ASKED.exec(asked)
+    if (start !== null && offered.includes(START_TASK)) return [{ name: START_TASK, params: { task: start[1] ?? "" } }]
+    const cancel = CANCEL_ASKED.exec(asked)
+    if (cancel !== null && offered.includes(CANCEL_TASK)) return [{ name: CANCEL_TASK, params: { task: cancel[1] ?? "" } }]
     // "Use convert without loading": a call of the units skill's tool whether or not it is offered, as a model that
     // skips the load would make. It goes before the catalogue's rule, which the word "convert" would wake.
     if (UNLOADED_CALL.test(asked) && offered.includes(LOAD_SKILL)) return [{ name: "convert", params: { value: 5, from: "km", to: "mi" } }]
@@ -661,7 +717,9 @@ const echoCallId = callIds("echo-call")
  * no tool, even one it is offered, and answers every message in words, as it does with no tool offered.
  */
 export const loadEcho = (callId: () => string = echoCallId, name: string = echoChoice.id, uses: "tools" | "words" = "tools"): LoadedModel => {
-  let interrupted = false
+  // Each answer has its own stop (lesson 17: the chat's turn and a task's helper stream at once): a stream that is
+  // cancelled ends with its reader and stops no other, and Stop stops every answer being written now.
+  const writing = new Set<{ stopped: boolean }>()
   const model = makeBrowserModel(name, {
     generateText: (options) => Effect.sync(() => {
       const messages = toChatMessages(options.prompt)
@@ -671,15 +729,21 @@ export const loadEcho = (callId: () => string = echoCallId, name: string = echoC
     streamText: (options) => {
       const messages = toChatMessages(options.prompt)
       const { text: reply, calls } = uses === "tools" && options.tools.length > 0 ? echoStep(options.prompt, options.tools.map((tool) => tool.name)) : { text: echoReply(messages), calls: [] }
-      interrupted = false
       const asked = calls.map((call) => ({ type: "tool-call" as const, id: callId(), name: call.name, params: call.params }))
-      return Stream.fromIterable(words(reply)).pipe(
+      return Stream.unwrap(Effect.acquireRelease(
+        Effect.sync(() => {
+          const answer = { stopped: false }
+          writing.add(answer)
+          return answer
+        }),
+        (answer) => Effect.sync(() => { writing.delete(answer) }),
+      ).pipe(Effect.map((answer) => Stream.fromIterable(words(reply)).pipe(
         Stream.mapEffect((word) => Effect.sleep("35 millis").pipe(Effect.as(word))),
-        Stream.takeWhile(() => !interrupted),
+        Stream.takeWhile(() => !answer.stopped),
         Stream.map(streamDelta),
-        (deltas) => Stream.concat(Stream.concat(Stream.make(streamStart), deltas), Stream.suspend(() => Stream.fromIterable([streamEnd, ...(interrupted ? [] : asked), streamFinish(usageOf(messages, reply))]))),
-      ) as never
+        (deltas) => Stream.concat(Stream.concat(Stream.make(streamStart), deltas), Stream.suspend(() => Stream.fromIterable([streamEnd, ...(answer.stopped ? [] : asked), streamFinish(usageOf(messages, reply))]))),
+      )))) as never
     },
   }, "native")
-  return { choice: echoChoice, model, interrupt: () => { interrupted = true }, dispose: () => {} }
+  return { choice: echoChoice, model, interrupt: () => { writing.forEach((answer) => { answer.stopped = true }) }, dispose: () => {} }
 }

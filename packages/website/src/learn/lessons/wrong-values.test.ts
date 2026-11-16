@@ -142,6 +142,12 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["workspace", 'const workspace = (files) => { throw new Error("no files today") }', "workspace.ts did not run: workspace(files) threw: no files today"],
     ["workspace", "const workspace = (files) => Files", "workspace.ts did not run: workspace(files) is not a layer. It should give the page's files, or a layer over them."],
   ],
+  "background-tasks": [
+    ["agent", "const main = 42", NO_PROGRAM],
+    // helper.ts makes one function, the work of a task, which the tasks plugin calls: a value that is none refuses the build.
+    ["helper", "const helper = 42", "helper.ts did not run: helper is not a function. It should take the task's session and its text, and give the task's answer."],
+    ["helper", "const helper = Effect.succeed(\"done\")", "helper.ts did not run: helper is not a function. It should take the task's session and its text, and give the task's answer."],
+  ],
 }
 
 describe("a learner's file that makes the wrong kind of thing", () => {

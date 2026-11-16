@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Option, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Seq, SessionId, toolResult, TurnNumber } from "@xandreed/core/kernel"
-import { APPROVAL_REFUSED, catalogue, defineSkill, FactId, factsNote, FactText, pointed, promptMessage } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, catalogue, defineSkill, FactId, factsNote, FactText, pointed, promptMessage, reportText, TaskId } from "@xandreed/sdk/kernel"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
 import type { PromptApi } from "./chrome-prompt.ts"
@@ -48,6 +48,40 @@ describe("echo model", () => {
     const parts = await Effect.runPromise(stream(loadEcho(), "ping"))
     expect(textOf(parts)).toContain("You said: \"ping\"")
     expect(parts.at(-1)?.type).toBe("finish")
+  })
+
+  test("two answers at once each have their own stop: one cancelled leaves the other whole (lesson 17)", async () => {
+    const echo = loadEcho()
+    const long = "one two three four five six seven eight"
+    const whole = await Effect.runPromise(stream(loadEcho(), long))
+    const out = await Effect.runPromise(Effect.gen(function* () {
+      const cut = yield* Effect.forkChild(stream(echo, "a message to cut short, with words enough to take a while"))
+      const kept = yield* Effect.forkChild(stream(echo, long))
+      yield* Effect.sleep("80 millis")
+      // The helper's answer is cancelled while the chat's streams: its reader lets go.
+      yield* Fiber.interrupt(cut)
+      return yield* Fiber.join(kept)
+    }))
+    expect(textOf(out)).toBe(textOf(whole))
+  })
+
+  test("Stop stops every answer being written, and an answer started after it is whole (lesson 17)", async () => {
+    const echo = loadEcho()
+    const long = "one two three four five six seven eight nine ten"
+    const whole = await Effect.runPromise(stream(loadEcho(), "after"))
+    const out = await Effect.runPromise(Effect.gen(function* () {
+      const first = yield* Effect.forkChild(stream(echo, long))
+      const second = yield* Effect.forkChild(stream(echo, long))
+      yield* Effect.sleep("80 millis")
+      echo.interrupt()
+      // With one flag for the model, the next answer would set it back, and the two stopped would go on.
+      const after = yield* stream(echo, "after")
+      return { first: yield* Fiber.join(first), second: yield* Fiber.join(second), after }
+    }))
+    const full = textOf(await Effect.runPromise(stream(loadEcho(), long)))
+    expect(textOf(out.first).length).toBeLessThan(full.length)
+    expect(textOf(out.second).length).toBeLessThan(full.length)
+    expect(textOf(out.after)).toBe(textOf(whole))
   })
 
   test("never repeats the system prompt back", () => {
@@ -232,6 +266,64 @@ describe("WebLLM adapter (fake engine)", () => {
     expect(textOf(second)).toBe("")
   })
 
+  /** An engine whose every generation yields "a", waits until the test lets it go, then yields "b". */
+  const heldEngine = () => {
+    const releases: Array<() => void> = []
+    const seen = { started: 0, interrupts: 0 }
+    let signal = false
+    const engine: Engine = {
+      chat: { completions: { create: async () => (async function* () {
+        signal = false
+        seen.started += 1
+        yield delta("a")
+        await new Promise<void>((resolve) => { releases.push(resolve) })
+        if (!signal) yield delta("b")
+      })() } },
+      interruptGenerate: () => { seen.interrupts += 1; signal = true; releases.splice(0).forEach((release) => release()) },
+      unload: async () => {},
+    }
+    return { engine, seen, release: () => releases.splice(0).forEach((release) => release()) }
+  }
+
+  test("a request cancelled while it waits is skipped by its own ticket, and the one generating goes on (lesson 17)", async () => {
+    const { engine, seen, release } = heldEngine()
+    const loaded = await loadWebLlm(choice, gpuChoiceProbe, () => {}, async () => moduleOf(engine))
+    const out = await Effect.runPromise(Effect.gen(function* () {
+      const first = yield* Effect.forkChild(stream(loaded, "the chat's"))
+      yield* Effect.sleep("30 millis")
+      const second = yield* Effect.forkChild(stream(loaded, "the helper's"))
+      yield* Effect.sleep("10 millis")
+      // The helper's request is cancelled while it waits: its reader lets go.
+      yield* Fiber.interrupt(second)
+      release()
+      return yield* Fiber.join(first)
+    }))
+    expect(textOf(out)).toBe("ab")
+    expect(seen).toEqual({ started: 1, interrupts: 0 })
+  })
+
+  test("a request that ends leaves the one waiting behind it to run; cancelling the one generating stops it alone (lesson 17)", async () => {
+    const { engine, seen, release } = heldEngine()
+    const loaded = await loadWebLlm(choice, gpuChoiceProbe, () => {}, async () => moduleOf(engine))
+    const out = await Effect.runPromise(Effect.gen(function* () {
+      const first = yield* Effect.forkChild(stream(loaded, "the chat's"))
+      yield* Effect.sleep("30 millis")
+      const second = yield* Effect.forkChild(stream(loaded, "the helper's"))
+      yield* Effect.sleep("10 millis")
+      release()
+      const chat = yield* Fiber.join(first)
+      yield* Effect.sleep("30 millis")
+      // The helper's request generates now; cancelling it tells the engine to stop, and a third request then runs.
+      yield* Fiber.interrupt(second)
+      const third = yield* Effect.forkChild(stream(loaded, "the next"))
+      yield* Effect.sleep("30 millis")
+      release()
+      return { chat, third: yield* Fiber.join(third) }
+    }))
+    expect([textOf(out.chat), textOf(out.third)]).toEqual(["ab", "ab"])
+    expect(seen).toEqual({ started: 3, interrupts: 1 })
+  })
+
   test("a stopped generation clears the engine's cached state; a finished one does not", async () => {
     const { engine } = gpuEngine()
     let resets = 0
@@ -401,6 +493,29 @@ describe("CPU model adapter (fake worker)", () => {
     loaded.interrupt()
     expect(textOf(await within(running, 500))).toBe("Hello")
     expect(posted.filter((m) => m.type === "interrupt")).toEqual([{ type: "interrupt", id: 1 }])
+  })
+
+  test("a request cancelled on its own is interrupted by its id alone; Stop interrupts every request not done (lesson 17)", async () => {
+    const { w, posted } = worker((post, request) => {
+      if (request.type === "load") post({ type: "ready" })
+      if (request.type === "generate") post({ type: "token", id: request.id, text: `r${request.id}` })
+      if (request.type === "interrupt") post({ type: "done", id: request.id, tokens: 1 })
+    })
+    const loaded = await loadCpu(choice, () => {}, () => w)
+    const out = await Effect.runPromise(Effect.gen(function* () {
+      const chat = yield* Effect.forkChild(stream(loaded, "the chat's"))
+      const helper = yield* Effect.forkChild(stream(loaded, "the helper's"))
+      yield* Effect.sleep("20 millis")
+      yield* Fiber.interrupt(helper)
+      const cancelled = posted.filter((m) => m.type === "interrupt")
+      const third = yield* Effect.forkChild(stream(loaded, "a third"))
+      yield* Effect.sleep("20 millis")
+      loaded.interrupt()
+      return { cancelled, chat: yield* Fiber.join(chat), third: yield* Fiber.join(third) }
+    }))
+    expect(out.cancelled).toEqual([{ type: "interrupt", id: 2 }])
+    expect(posted.filter((m) => m.type === "interrupt")).toEqual([{ type: "interrupt", id: 2 }, { type: "interrupt", id: 1 }, { type: "interrupt", id: 3 }])
+    expect([textOf(out.chat), textOf(out.third)]).toEqual(["r1", "r3"])
   })
 
   test("a stale reply from an interrupted request never reaches the next request", async () => {
@@ -1385,5 +1500,91 @@ describe("the ids of a page model's tool calls", () => {
     const drawn = [callIds("echo-call")(), callIds("echo-call")()]
     expect(drawn[0]).toMatch(/^echo-call-[0-9a-z]{6}-1$/)
     expect(drawn[0]).not.toBe(drawn[1])
+  })
+})
+
+describe("Echo's rules for background tasks (lesson 17)", () => {
+  // Lesson 17's toolkit: lesson 2's three tools, and the two task tools.
+  const every = ["calculator", "remember", "recall", "startTask", "cancelTask"]
+  const asked = (text: string, offered: ReadonlyArray<string> = every) => echoStep(Prompt.make([{ role: "user", content: text }]), offered)
+  const calling = (name: string, params: Record<string, unknown>) => ({ text: "Let me work that out.", calls: [{ name, params }] })
+  const call = (id: string, name: string, params: Record<string, unknown>) => ({ role: "assistant", content: [{ type: "tool-call", id, name, params }] }) as const
+  const result = (id: string, name: string, value: unknown, isFailure = false) => ({ role: "tool", content: [{ type: "tool-result", id, name, isFailure, result: value }] }) as const
+  const report = (outcome: "Finished" | "Failed", text: string) =>
+    reportText({ task: TaskId.make("t1"), parent: SessionId.make("chat"), session: SessionId.make("task-session"), outcome, text })
+
+  test("\"in the background, X\" and \"start a task: X\" call startTask with X; the rule is asleep where startTask is not offered", () => {
+    expect(asked("In the background, what is 6 * 7?")).toEqual(calling("startTask", { task: "what is 6 * 7?" }))
+    expect(asked("start a task: find the boiling point of water")).toEqual(calling("startTask", { task: "find the boiling point of water" }))
+    // Asleep: the next rule the message wakes is used, here the sum's.
+    expect(asked("In the background, what is 6 * 7?", ["calculator"])).toEqual(calling("calculator", { a: 6, op: "*", b: 7 }))
+  })
+
+  test("\"cancel task t1\" calls cancelTask with the id; the rule is asleep where cancelTask is not offered", () => {
+    expect(asked("Cancel task t1.")).toEqual(calling("cancelTask", { task: "t1" }))
+    expect(asked("please cancel the task t2")).toEqual(calling("cancelTask", { task: "t2" }))
+    expect(asked("Cancel task t1.", ["calculator"]).calls).toEqual([])
+  })
+
+  test("the start rule comes before the sum's, lookup's and remember's: the rest of the message is the helper's to do", () => {
+    // Each of these is another rule's with the start rule moved after it.
+    expect(asked("Start a task: what is 6 * 7?")).toEqual(calling("startTask", { task: "what is 6 * 7?" }))
+    expect(asked("In the background, look up the tides.", [...every, "lookup"])).toEqual(calling("startTask", { task: "look up the tides." }))
+    expect(asked("In the background, look up the tides.", ["lookup"])).toEqual(calling("lookup", { topic: "tides" }))
+    expect(asked("In the background, remember that the door is green.")).toEqual(calling("startTask", { task: "remember that the door is green." }))
+    expect(asked("In the background, remember that the door is green.", ["remember"])).toEqual(calling("remember", { note: "the door is green." }))
+    expect(asked("In the background, remember that the door is green.", [...every, "rememberFact"])).toEqual(calling("startTask", { task: "remember that the door is green." }))
+    // The file rules are anchored at the message's start, as this one is: a path in the task is the helper's too.
+    expect(asked("In the background, read notes/todo.md.", [...every, "readFile"])).toEqual(calling("startTask", { task: "read notes/todo.md." }))
+  })
+
+  test("a report is known by the kernel's words and answered first: the task, how it ended, and its answer's first sentence; it calls nothing", () => {
+    // A turn stopped before it answered leaves the person's message unanswered: without the report rule, Echo reads
+    // past the report's host note to that message, and starts the task again. With it, the message is quoted back.
+    const stopped = Prompt.make([
+      { role: "user", content: "In the background, what is 6 * 7?" },
+      { role: "user", content: report("Finished", "You said: \"what is 6 * 7?\". This is the start of the conversation.") },
+    ])
+    expect(echoStep(stopped, every)).toEqual({ text: "Task t1 finished: You said: \"what is 6 * 7?\". You also said: \"In the background, what is 6 * 7?\".", calls: [] })
+    const answered = Prompt.make([
+      { role: "user", content: "In the background, what is 6 * 7?" },
+      call("c1", "startTask", { task: "what is 6 * 7?" }),
+      result("c1", "startTask", { task: "t1", session: "task-session" }),
+      { role: "assistant", content: "Started task t1: its answer comes as a message of its own." },
+      { role: "user", content: report("Failed", "The helper gave up. It had no tool.") },
+    ])
+    expect(echoStep(answered, every)).toEqual({ text: "Task t1 failed: The helper gave up.", calls: [] })
+    // A text that is no report the kernel wrote is a host note like any other, read past.
+    expect(echoStep(Prompt.make([{ role: "user", content: "[Host note: task t1 finished.]" }]), every).text).not.toStartWith("Task t1")
+  })
+
+  test("a person's message the report's turn took with it is quoted back after the report, and asks for no tool", () => {
+    const both = Prompt.make([
+      { role: "user", content: "Hi." },
+      { role: "assistant", content: "Hello!" },
+      { role: "user", content: report("Finished", "It is 42.") },
+      { role: "user", content: "What is 2 + 2?" },
+    ])
+    expect(echoStep(both, every)).toEqual({ text: "Task t1 finished: It is 42. You also said: \"What is 2 + 2?\".", calls: [] })
+  })
+
+  test("a later turn never counts a report as something the person said, nor as a note of condensed turns", () => {
+    const later = [
+      { role: "user", content: "Hi, I'm Ana." },
+      { role: "assistant", content: "Hello!" },
+      { role: "user", content: report("Finished", "It is 42.") },
+      { role: "assistant", content: "Task t1 finished: It is 42." },
+      { role: "user", content: "What did I say earlier?" },
+    ] as const
+    expect(echoReply(later)).toBe("Earlier you said: \"Hi, I'm Ana.\".")
+    expect(echoStep(Prompt.make(later), every)).toEqual({ text: "Earlier you said: \"Hi, I'm Ana.\".", calls: [] })
+  })
+
+  test("startTask's result is answered as started, cancelTask's in its own words, and a refused start as the tool's, in the kernel's words", () => {
+    const after = (name: string, value: unknown, isFailure = false) => echoStep(Prompt.make([{ role: "user", content: "Do it." }, call("c1", name, {}), result("c1", name, value, isFailure)]), every)
+    expect(after("startTask", { task: "t2", session: "s" })).toEqual({ text: "Started task t2: its answer comes as a message of its own.", calls: [] })
+    expect(after("cancelTask", "Cancelled t1. It reports nothing.")).toEqual({ text: "Cancelled t1. It reports nothing.", calls: [] })
+    const refused = "1 task is running, the most at once. Wait for one to report, or cancel one with cancelTask, then start this one."
+    expect(after("startTask", refused, true)).toEqual({ text: `The tool answered: startTask failed: ${JSON.stringify(refused)}.`, calls: [] })
   })
 })

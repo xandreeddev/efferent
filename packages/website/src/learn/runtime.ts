@@ -17,13 +17,17 @@
 // with its header before that turn's first record is heard. A lesson with a
 // workspace (lesson 16) has one `Files`, built once in the root scope from
 // its seed: the program is given it as a value, and the page's file pane
-// reads and writes the same one.
+// reads and writes the same one. The chat's queue is one queue of what comes
+// into the conversation: the person's messages and, in lesson 17, the reports
+// of background tasks, in the order they came. A turn's `drain` takes the
+// messages and leaves the reports, each of which gets a turn of its own; a
+// report still waiting when the program stops is dropped.
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Schema, Scope, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { Approval, CurrentTurn, Files, inMemoryFiles, inProcessJournal, Memory, sessions, Summarizer } from "@xandreed/sdk/kernel"
-import type { Decision, KeyValueStore } from "@xandreed/sdk/kernel"
+import { Approval, CurrentTurn, Files, inMemoryFiles, inProcessJournal, Memory, sessions, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
+import type { Decision, KeyValueStore, TaskReport } from "@xandreed/sdk/kernel"
 import { CHAT_OWNER, chatsOf } from "./chats.ts"
 import type { ChatEntry } from "./chats.ts"
 import { buildFailure, textOf } from "./evaluate.ts"
@@ -31,6 +35,7 @@ import type { Lesson, MadeFailure, PageParts, Sources } from "./lesson.ts"
 import { loadEcho } from "./models/mock.ts"
 import type { LoadedModel } from "./models/types.ts"
 import { Chat } from "./page-chat.ts"
+import type { ChatInput } from "./page-chat.ts"
 import { saidOfMessage } from "./said.ts"
 
 const OWNER = CHAT_OWNER
@@ -139,8 +144,15 @@ export type Trace =
   | { readonly _tag: "PromptFailed"; readonly session: string; readonly turn: number; readonly reason: string; readonly purpose?: "summary" }
   /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
   | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
-  /** The program took messages off the chat's queue: the next one, or every one that waited. */
+  /** The program took messages off the chat's queue: the next one, or every one that waited. A report taken says nothing. */
   | { readonly _tag: "Taken"; readonly count: number }
+  /** A background task's report was put in the chat's queue, behind what came before it (lesson 17): it waits for a turn of its own. */
+  | { readonly _tag: "Reported"; readonly task: string; readonly session: string }
+  /**
+   * The reports still waiting in the chat's queue were dropped as the program stopped (Stop, a rebuild, Clear
+   * context): the tasks' sessions. Task ids start again with the program that comes next.
+   */
+  | { readonly _tag: "ReportsDropped"; readonly sessions: ReadonlyArray<string> }
   /** What the program told the chat, after the turn it last opened. */
   | { readonly _tag: "Piece"; readonly turn: number; readonly text: string }
   | { readonly _tag: "Reply"; readonly turn: number; readonly text: string }
@@ -239,6 +251,28 @@ const madeFailure = (model: string, failure: MadeFailure) => {
 const failureWords = (cause: Cause.Cause<unknown>): string =>
   Option.match(Cause.findErrorOption(cause), { onSome: textOf, onNone: () => Cause.prettyErrors(cause)[0]?.message ?? "the stream failed" })
 
+/** Everything waiting in a queue now, taken in one step that does not wait: nothing is offered in between. */
+const takeEverything = <A>(queue: Queue.Queue<A>): Array<A> => {
+  const taken: Array<A> = []
+  for (let next = Queue.takeUnsafe(queue); next !== undefined; next = Queue.takeUnsafe(queue)) {
+    if (Exit.isSuccess(next)) taken.push(next.value)
+  }
+  return taken
+}
+
+/**
+ * The chat's queue, split in one step that does not wait: what `keep` holds goes back in its order, and the rest is
+ * returned. A send or a report that comes meanwhile cannot land between the two, so the queue's order stays.
+ */
+const takeExcept = (queue: Queue.Queue<ChatInput>, keep: (input: ChatInput) => boolean): ReadonlyArray<ChatInput> => {
+  const all = takeEverything(queue)
+  Queue.offerAllUnsafe(queue, all.filter(keep))
+  return all.filter((input) => !keep(input))
+}
+
+const isReport = (input: ChatInput): boolean => input._tag === "Report"
+const textsOf = (inputs: ReadonlyArray<ChatInput>): ReadonlyArray<string> => inputs.flatMap((input) => (input._tag === "Message" ? [input.text] : []))
+
 /** The session a turn's start or end is about. */
 const sessionOf = (event: { readonly session?: unknown; readonly id?: unknown }): string =>
   typeof event.session === "string" ? event.session : typeof event.id === "string" ? event.id : ""
@@ -292,7 +326,7 @@ export class LessonRuntime {
     private readonly lesson: Lesson,
     private readonly root: Scope.Closeable,
     private readonly base: Context.Context<BaseServices>,
-    private readonly queue: Queue.Queue<string>,
+    private readonly queue: Queue.Queue<ChatInput>,
     session: SessionId,
     /** A durable lesson's storage, seen through the lesson's prefix. */
     private readonly storage: KeyValueStore,
@@ -310,7 +344,7 @@ export class LessonRuntime {
    */
   static async create(lesson: Lesson, options: RuntimeOptions = {}): Promise<LessonRuntime> {
     const root = await Effect.runPromise(Scope.make())
-    const queue = await Effect.runPromise(Queue.bounded<string>(100))
+    const queue = await Effect.runPromise(Queue.bounded<ChatInput>(100))
     if (lesson.durable === undefined) {
       const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))
       const base = await Effect.runPromise(Layer.buildWithScope(Base, root))
@@ -476,13 +510,22 @@ export class LessonRuntime {
       return again
     }
     const chatsNow = this.chatsNow
+    const queue = this.queue
+    // One input at a time: it is taken off the queue only when a turn is ready for it, so what waits stays in the
+    // queue, where a rebuild keeps a message and Stop drops it. Only a message taken is said: a report has no row
+    // waiting in the chat.
+    const inputs = Stream.fromEffectRepeat(Effect.tap(Queue.take(queue), (input) => input._tag === "Message" ? emit({ _tag: "Taken", count: 1 }) : Effect.void))
     const chat = Chat.of({
       session: this.session,
-      // One message at a time: a message is taken off the queue only when a turn is ready for it,
-      // so what waits stays in the queue, where a rebuild keeps it and Stop drops it.
-      messages: Stream.fromEffectRepeat(Effect.tap(Queue.take(this.queue), () => emit({ _tag: "Taken", count: 1 }))),
-      // Every message waiting now, taken at once: a turn that runs many steps takes them between steps.
-      drain: Effect.tap(Effect.map(Queue.clear(this.queue), (taken) => Array.from(taken)), (taken) => taken.length > 0 ? emit({ _tag: "Taken", count: taken.length }) : Effect.void),
+      // The messages alone: a program that reads only these (every lesson but 17) passes a report over.
+      messages: Stream.filterMap(inputs, (input) => input._tag === "Message" ? Result.succeed(input.text) : Result.failVoid),
+      inputs,
+      // Every message waiting now, taken at once: a turn that runs many steps takes them between steps. A report
+      // waiting stays where it is, for a turn of its own (lesson 17).
+      drain: Effect.suspend(() => {
+        const taken = textsOf(takeExcept(queue, isReport))
+        return Effect.as(taken.length > 0 ? emit({ _tag: "Taken", count: taken.length }) : Effect.void, taken)
+      }),
       stream: (piece) => Effect.suspend(() => emit({ _tag: "Piece", turn: this.lastTurn, text: piece })),
       reply: (text) => Effect.suspend(() => emit({ _tag: "Reply", turn: this.lastTurn, text })),
       fail: (error) => Effect.suspend(() => emit({ _tag: "Failed", turn: this.lastTurn, message: textOf(error) })),
@@ -543,6 +586,11 @@ export class LessonRuntime {
       inProcessJournal: () => Layer.effect(JournalStorage, Effect.gen(function* () { yield* Core; return storage })),
       sessions: () => Layer.effect(Sessions, Effect.gen(function* () { yield* JournalStorage; yield* Core; return sessionsOf })),
       chatOn: () => Layer.effect(Chat, Effect.gen(function* () { yield* Sessions; return chat })),
+      // Where a task's report goes (lesson 17): the chat's one queue, behind what came before it, where the program
+      // takes it for a turn of its own. The page is told it waits.
+      reportsOn: () => Layer.succeed(TaskReports, TaskReports.of({
+        deliver: (report: TaskReport) => Effect.andThen(Queue.offer(queue, { _tag: "Report", report }), emit({ _tag: "Reported", task: report.task, session: report.session })),
+      })),
       model: Layer.succeed(LanguageModel.LanguageModel, watch(model.model, picked)),
       // Lesson 14: a second Echo, watched as the model picked is and never failing, and the model picked failing as
       // failures.ts says. Each build calls `failing` once, so the list starts again with every build.
@@ -625,6 +673,10 @@ export class LessonRuntime {
     this.last = sources
     await this.stopProgram()
     if (Option.isNone(this.model)) return { _tag: "Refused", message: "Pick a model first." }
+    // A report that waits was written by tasks of the program that stopped, whose ids start again with the next one:
+    // it is dropped, on Stop, a rebuild and Clear context alike. The messages that wait stay for the next program.
+    const dropped = takeExcept(this.queue, (input) => !isReport(input)).flatMap((input) => (input._tag === "Report" ? [String(input.report.session)] : []))
+    if (dropped.length > 0) this.emit({ _tag: "ReportsDropped", sessions: dropped })
     const evaluated = this.lesson.evaluate(sources, this.parts(this.model.value))
     if (evaluated._tag === "Failure") return { _tag: "Refused", message: evaluated.failure }
     const main = evaluated.success
@@ -642,7 +694,7 @@ export class LessonRuntime {
 
   /** Send a message: it waits in the chat's queue until the program takes it. */
   send(text: string): void {
-    Queue.offerUnsafe(this.queue, text)
+    Queue.offerUnsafe(this.queue, { _tag: "Message", text })
   }
 
   /**
@@ -658,7 +710,8 @@ export class LessonRuntime {
 
   /** Stop: the messages still waiting are dropped, the model is told to stop, and the program starts again over the same code. Returns the dropped messages. */
   async stop(): Promise<{ readonly dropped: ReadonlyArray<string>; readonly result: BuildResult }> {
-    const dropped = Array.from(await Effect.runPromise(Queue.clear(this.queue)))
+    // The messages only: a report that waits is dropped as the program stops, and said so (`ReportsDropped`).
+    const dropped = textsOf(takeExcept(this.queue, isReport))
     if (Option.isSome(this.model)) this.model.value.interrupt()
     this.spare.interrupt()
     return { dropped, result: await this.start(this.last) }
@@ -669,7 +722,7 @@ export class LessonRuntime {
    * store. In a durable lesson the program's chat finds the new session as the last one, and shows it.
    */
   async clear(): Promise<BuildResult> {
-    await Effect.runPromise(Queue.clear(this.queue))
+    takeExcept(this.queue, isReport)
     // The program is stopped first: a turn it has open ends before the new conversation is the one shown.
     await this.stopProgram()
     const created = await Effect.runPromise(Effect.result(Context.get(this.base, Sessions).create({ owner: OWNER })))
@@ -687,7 +740,7 @@ export class LessonRuntime {
    * written for the chat that was shown. Returns them, and the build.
    */
   async choose(chat: SessionId): Promise<{ readonly dropped: ReadonlyArray<string>; readonly result: BuildResult }> {
-    const dropped = Array.from(await Effect.runPromise(Queue.clear(this.queue)))
+    const dropped = textsOf(takeExcept(this.queue, isReport))
     this.setChosen(Option.some(chat))
     return { dropped, result: await this.start(this.last) }
   }

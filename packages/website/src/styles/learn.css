@@ -1441,6 +1441,53 @@ body.app {
   box-shadow: 0 0 0 1px var(--accent-3);
   cursor: default;
 }
+/* Lesson 17: a task's report, a message the conversation took that the person did not type, and the row of task chips. */
+.pg-msg.report {
+  justify-self: stretch;
+  max-width: none;
+  font-size: 0.86rem;
+  background: color-mix(in srgb, #6fc3a0 8%, var(--bg-soft));
+  border: 1px dashed color-mix(in srgb, #6fc3a0 55%, var(--border));
+}
+.pg-msg.report::before {
+  content: "↩ ";
+}
+.task-row {
+  display: flex;
+  gap: 0.3rem;
+  flex-wrap: wrap;
+  align-items: center;
+  padding: 0.45rem 0.75rem 0;
+}
+.task-row::before {
+  content: "Tasks";
+  font-size: 0.72rem;
+  color: var(--text-faint);
+  margin-right: 0.2rem;
+}
+.task-chip {
+  font-size: 0.76rem;
+  max-width: 100%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  padding: 0.18rem 0.6rem;
+  border: 1px solid var(--border);
+  border-radius: 999px;
+  background: var(--bg-soft);
+  color: var(--text-dim);
+}
+.task-chip[data-state="running"] {
+  border-color: var(--accent-3);
+  color: var(--text);
+}
+.task-chip[data-state="reported"] {
+  border-color: color-mix(in srgb, #6fc3a0 60%, var(--border));
+}
+.task-chip[data-failed],
+.task-chip[data-state="dropped"] {
+  border-color: color-mix(in srgb, #ff8b7b 55%, var(--border));
+}
 .pg-msg .msg-branch .btn {
   font-size: 0.74rem;
   padding: 0.12rem 0.55rem;

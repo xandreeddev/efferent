@@ -500,6 +500,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the order it lists them: two created in one millisecond are listed by a
   random id.
 
+- Docs site: Lesson 17, "Background tasks", at `/learn/background-tasks`.
+  The base program with the kernel's two task tools merged into the
+  toolkit its loop offers and calls (`Toolkit.merge(tools, taskTools)`),
+  `taskHandlers` and `tasks(helper)` provided, and the page's
+  `reportsOn(pane)` (`PageParts.reportsOn`), the host's `TaskReports`: it
+  puts a task's report into the chat's one queue, behind the messages that
+  came before it. A new file, `helper.ts`, is the work of one task: lesson
+  4's helper agent as a small loop over tools.ts's tools (`modelAnswer`,
+  `callTool`, three steps at most) in the task's own session, which sees
+  only the task's text and waits three seconds first; main provides the
+  task lines before `toolsLive`, so the helper's calls find the handlers. The page's chat holds one queue of
+  inputs (`Chat.inputs`, a message or a report) and the lesson's `chat.ts`,
+  derived from lesson 1's by named pieces, shows it; the loop's one change
+  stores a report with `taskReport` in `report.parent`. `drain` takes the
+  messages waiting and leaves the reports, in one step that does not wait,
+  so a message sent during a turn steers it and a report gets a turn of its
+  own; a report taken says no `Taken`. A report still waiting when the
+  program stops (Stop, Rebuild, Clear context) is dropped
+  (`ReportsDropped`), and its task ids start again at t1. The chat draws a
+  report as a row of its own kind, never a message the person typed
+  (`reportLine`, from the kernel's words), and a row of task chips says how
+  each task stands, keyed by its session (`task-chips.ts`: running, its
+  report on its way or waiting, reported, cancelled, stopped with the
+  program, dropped). The Context tab names a task's session "Task N" (a
+  child the tasks plugin owns, `kindOf`). Each page model gives each
+  request its own stop, so a task cancelled while the chat streams leaves
+  the chat's answer whole: WebLLM skips a waiting request by its own ticket
+  and tells the engine to stop only when the request cancelled is the one
+  generating, which also keeps a request that ends from stopping the one
+  waiting behind it; the CPU worker's Stop interrupts every request not
+  done; Echo has a flag per answer. Echo learns "in the background, X" and
+  "start a task: X" (`startTask`) and "cancel task t1" (`cancelTask`),
+  ahead of every other rule, and answers a report, known by the kernel's
+  words, before anything else, with no call; a report is never what the
+  person said. Experiments take the helper's wait out and run one task at
+  a time. Lesson 16's page links here. No published package changes.
 - Docs site: Lesson 16, "A workspace", at `/learn/workspace`. The base
   program with the kernel's four file tools merged into the toolkit its
   loop offers and calls (`Toolkit.merge(tools, fileTools)`), `fileHandlers`
