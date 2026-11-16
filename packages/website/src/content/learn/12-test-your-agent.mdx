@@ -14,7 +14,7 @@ Until now you checked the agent by hand: you sent a message and read the answer.
 
 This lesson adds one file, **checks.ts**, and exports the program from agent.ts. A check:
 
-- runs **the program**, the one the chat runs, on a stack of its own;
+- runs **the program**, the one the chat runs, on a **stack** of its own: the parts the program is given, one `Effect.provide` a line, in order;
 - gives it a model that follows a **script**, and a chat that is a **list** of messages;
 - reads what the program did from the **journal**, with the kernel's `turnsOf`.
 
@@ -28,7 +28,7 @@ Three lines, one for each check, and each passed: `sum`, `wrong-call` and `two-t
 
 <Step n={2} id="model" title="Pick a model" focus="model">
 
-The three checks call no model. Each runs on its script, whichever model is picked. The model you pick answers the chat, and the live check that an experiment of the last step adds.
+The three checks call no model. Each runs on its script, whichever model is picked. The model you pick answers the chat, and the **live check** that an experiment of the last step adds: a check with no script, which runs the program on the model you picked several times.
 
 The chat runs on **Echo**, which follows a rule here: a sum goes to the calculator. Press **What is 2 + 3?** Echo calls `calculator({"a":2,"op":"+","b":3})`, the tool answers 5, and Echo says *The tool answered: calculator says 5.*
 
@@ -54,11 +54,11 @@ The chat runs `main`. A check takes `program` and gives it parts of its own. Tha
 **checks.ts** starts with `turnsAfter(model, messages)`: the lines that run the program for a check. It ends with seven `Effect.provide` lines, the seven of `main`, in the same order. Two of them are given something else.
 
 - **The model** is the one the check gives. A check made with `check(…)` gives `scriptedModel(script)`: a model that answers its first call with the script's first entry, its second with the second, and calls no provider.
-- **The chat** is still chat.ts's `chatOn`, over another pane. chat.ts says of a pane: "This page has one; a terminal or a test would have another." This is the test's. Its `onSend` keeps the function that sends a message, and its `finishAnswer` puts the answer on a queue. So the check sends a message, waits for its answer, and sends the next: each message is a turn of its own.
+- **The chat** is still chat.ts's `chatOn`, the function that builds the chat over a pane (lesson 9), here over another pane. chat.ts says of a pane: "This page has one; a terminal or a test would have another." This is the test's. Its `onSend` keeps the function that sends a message, and its `finishAnswer` puts the answer on a queue. So the check sends a message, waits for its answer, and sends the next: each message is a turn of its own.
 
 The other five are the modules `main` has: your tools.ts, your memory.ts, and the kernel's `sessions()`, `inProcessJournal()` and `kernel()`, each called anew for each check. Every check has a journal of its own, which no other check writes to, and the chat's journal is not touched. Nothing of the program is replaced by a stand-in written for the test.
 
-In TypeScript a stack that leaves out a layer the program needs does not compile. Without the tools' line the compiler says `Type 'Handler<"calculator">' is not assignable to type 'never'`. Without the model's it says `Type 'LanguageModel' is not assignable to type 'never'`.
+In TypeScript a stack that leaves out a layer the program needs does not compile. Without the tools' line the compiler says `Type 'Handler<"calculator">' is not assignable to type 'never'`. Without the model's it says `Type 'LanguageModel' is not assignable to type 'never'`. `LanguageModel` is the model's contract: what the program asks for when it calls a model.
 
 </Step>
 
@@ -83,12 +83,12 @@ Each part names the place of its record, `seq`. The turn the `sum` check leaves 
 
 So the calculator's result is record 4, and a check that finds it wrong can say so: `record #4`.
 
-A `result`, an `answer` and `closed` are each an `Option`, since a journal may hold none: a turn the model failed in has no answer.
+A `result`, an `answer` and `closed` are each an `Option`, a value that holds one thing or nothing, since a journal may hold none: a turn the model failed in has no answer.
 
 `check(id, name, script, messages, holds)` makes one check. `holds(turns)` returns what is wrong, in words, or nothing, and what is wrong is the check's failure. Two functions read the turns for the three checks.
 
 - `calculated(turns, 5)`: one call was made, of the calculator, and its result is 5. It counts the calls before it reads them.
-- `answered(turns, […])`: there is one turn for each answer expected, each closed as completed, with that answer.
+- `answered(turns, […])`: there is one turn for each answer expected, each closed as completed, that is answered, with that answer.
 
 The three checks:
 
@@ -104,7 +104,7 @@ The three checks:
 
 A check here asks about the whole agent. The script's answers go through your loop, your tools, your memory and the sessions, and end as records. If one of those parts is wrong, the journal is wrong, and the check reads the journal.
 
-The two have one shape, which is why one button draws both. A check is `{ id, name, run }`, the kernel's `ConformanceCheck`. Its `run` is an Effect that fails with a `ConformanceFailure`: the check's id, and what it found, in words.
+The two have one shape, which is why one button draws both. A check is `{ id, name, run }`, the kernel's `ConformanceCheck`. Its `run` is an Effect: a value that describes work which may succeed or fail, and runs once it is given what it needs. When this one fails, it is with a `ConformanceFailure`: the check's id, and what it found, in words.
 
 A kit checks a part. A check checks the agent. Run the kit when you replace a part, and the checks whenever you change the program.
 
@@ -115,7 +115,7 @@ A kit checks a part. A check checks the agent. Run the kit when you replace a pa
 - **A script is not a model.** A script answers the same way every time. A check on a script says the program is right: given these answers of the model, it stored these records. It never says that a model gives those answers.
 - **The script is your guess.** `wrong-call` scripts one way a model gets a call wrong. A real model finds others.
 - **A check can pass and check nothing.** An experiment of the next step adds one, and the form that makes it honest.
-- **A scripted check costs no model call.** A check on the model you picked does, and what it gives is a rate. The last experiment adds one.
+- **A scripted check costs no model call.** A check on the model you picked does, and what it gives is a rate: how many of its runs passed, out of how many. The last experiment adds one.
 
 </Step>
 
@@ -129,6 +129,6 @@ The checks and the chat take turns. While the checks run, the chat takes no mess
 
 After breaking it, press **Reset** in the Code pane.
 
-**Next:** [evals](/learn/evals/): the same program on many tasks, many times, and how often it gets each right, model by model. How a host's test is written outside this page, over the same `turnsOf`, is in the section [Testing a host](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md#testing-a-host) of the kernel's document.
+**Next:** [evals](/learn/evals/): the same program on many tasks, many times, and how often it gets each right, model by model. A task is one message to send, with what a right answer to it must hold, written by hand. How a host's test is written outside this page, over the same `turnsOf`, is in the section [Testing a host](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md#testing-a-host) of the kernel's document.
 
 </Step>

@@ -32,7 +32,7 @@ This lesson runs on **Echo**. "Look up tides." or "Tell me about volcanoes." goe
 
 Echo answers with the first sentence of what it was sent, and how much of the whole that is. Its answers show what reached the model, and nothing more.
 
-The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU, told "Look up tides." and then "Read more.", called neither `lookup` nor `readResult` in two runs: each time it answered "Its result comes back inside text.", a line of its tool instructions, garbled. Asked how high the tide is in the Bay of Fundy, it answered from what it knows, 13 metres in one run and 3 feet in the other. The article never reached its prompt. A model that does call `lookup` is sent the preview, and decides from it whether to read on.
+The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5 0.5B on the GPU, told "Look up tides." and then "Read more.", called neither `lookup` nor `readResult` in two runs: each time it answered "Its result comes back inside text.", a line of its tool instructions, garbled. Asked how high the tide is in the Bay of Fundy, it answered from what it knows, 13 metres in one run and 3 feet in the other. The article never reached its prompt. A model that does call `lookup` is sent the **preview**, the start of the article, and decides from it whether to read on.
 
 </Step>
 
@@ -56,19 +56,19 @@ Open **Context** at turn 1, the lookup of tides.
 - **Journal**: record 4 is the tool's result, `conversation.tool.result`. Its payload holds the article whole, 2347 characters.
 - **Prompt**, at the turn's second model call, the one shown: the tool's row holds the preview and the note, which ends "To read on, call readResult with result 4 and from 160." Under it the row says *sent as a pointer: 587 tok kept in the journal*. The row is 94 tokens, and the whole prompt 135.
 
-The pointer names the record's **place** in the journal, 4, not the call's id. A place is unique in its journal and never changes. A call's id is the model's, and can repeat.
+The pointer names the record's **place** (lesson 7) in the journal, 4, not the call's id. A place is unique in its journal and never changes. A call's id is the model's, and can repeat.
 
 </Step>
 
 <Step n={5} id="read" title="Read on" focus="code" file="tools">
 
-**tools.ts** lists two tools. `lookup` is yours. `ReadResult` is the kernel's, with `readResult` as its handler: you add both where you list your own, and there is no registry.
+**tools.ts** lists two tools. `lookup` is yours. `ReadResult` is the kernel's, with `readResult` as its handler: you add both where you list your own, and there is no **registry**, a central list where tools are entered by name.
 
 `readResult({ result, from, length })` returns a part of a stored result's text: `text`, the characters from `from` up to `to`, and `total`, the result's length. It reads the journal of the turn its call runs in, at most 2,000 characters a call.
 
 Press **Read more.** Echo calls `readResult` with the pointer's two numbers and a length of 400, and answers *Characters 160 to 560 of 2347*, with the first whole sentence of the part. Press it again: it goes on from 560. Six parts read this article to its end.
 
-A part the model read is conversation like any result: stored, and sent in every later prompt. It is never pointed. `ReadResult` carries the annotation `SentWhole`: `callTool` stores it on the result as `whole`, and the rule leaves such a result alone. So reading on costs what you read: each part of 400 characters is 116 tokens in every prompt from then on.
+A part the model read is conversation like any result: stored, and sent in every later prompt. It is never pointed. `ReadResult` carries the **annotation** `SentWhole`, a label on its declaration that other code reads: `callTool` stores it on the result as `whole`, and the rule leaves such a result alone. So reading on costs what you read: each part of 400 characters is 116 tokens in every prompt from then on.
 
 </Step>
 
@@ -90,7 +90,7 @@ The price: the model sees only the start of a long result, also in the turn that
 
 Both numbers count by memory's estimate, a quarter of the characters. The longest article is 599 tokens: with **Point results over** at 599 or more, no article is pointed.
 
-A preview must be shorter than the results it stands for. Set **Preview** to 150 or more while the size is 150, and `pointed` refuses the two numbers where they are written: memory.ts does not run, and the build is refused. The line at the foot of the Code pane names the file and says why, in the kernel's words. For a preview of 400: "memory.ts did not run: a preview of 400 tokens is not shorter than the results it stands for, those over 150 tokens: give pointers a previewTokens below overTokens". No program runs until a build passes. Nothing is stored, and the conversation is untouched. Set a number that fits: the program runs again, over the same conversation.
+A preview must be shorter than the results it stands for. Set **Preview** to 150 or more while the size is 150, and `pointed` refuses the two numbers where they are written: memory.ts does not run, and the **build**, the run of your files that makes the program, is refused. The line at the foot of the Code pane names the file and says why, in the kernel's words. For a preview of 400: "memory.ts did not run: a preview of 400 tokens is not shorter than the results it stands for, those over 150 tokens: give pointers a previewTokens below overTokens". No program runs until a build passes. Nothing is stored, and the conversation is untouched. Set a number that fits: the program runs again, over the same conversation.
 
 <Experiments />
 

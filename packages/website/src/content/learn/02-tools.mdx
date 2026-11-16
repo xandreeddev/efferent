@@ -16,7 +16,7 @@ In lesson 1, a turn called the model once. With **tools**, the model can ask for
 2. if it asked for tools, run them, store their results, and go back to 1;
 3. if it only answered, the turn is done.
 
-Nothing new is hidden behind this. The tools are Effect AI's own `Tool` and `Toolkit`, declared in **tools.ts**. The loop is yours, in **agent.ts**. The kernel only stores what happened: the model's calls and the tools' results, as records of the conversation.
+Nothing new is hidden behind this. Effect AI is the part of the Effect library for language models. The tools are its own `Tool` and `Toolkit`, a group of tools given to the model together, declared in **tools.ts**. The loop is yours, in **agent.ts**. The kernel only stores what happened: the model's calls and the tools' results, as records of the conversation.
 
 </Step>
 
@@ -29,7 +29,7 @@ Nothing new is hidden behind this. The tools are Effect AI's own `Tool` and `Too
 - a question about your notes goes to recall;
 - after a tool answers, it repeats what the tool said.
 
-The models on your machine are given the tools in their system text, one line each with an example call, and asked to answer with a `<tool_call>` block. A model this small often skips the tool and answers on its own: a 0.5B model may still get 12 * 3 right. Sometimes it writes a call wrong. A wrong call is stored as a failure, and the model can try again. Hosted models are trained for tools and use them reliably.
+The models on your machine are given the tools in their system text, one line each with an example call, and asked to answer with a `<tool_call>` block. A model this small often skips the tool and answers on its own: a 0.5B model, one made of half a billion learned numbers, may still get 12 * 3 right. Sometimes it writes a call wrong. A wrong call is stored as a failure, and the model can try again. Hosted models, larger models a provider (lesson 1) runs on its own computers, reached over the internet, are trained for tools and use them reliably.
 
 </Step>
 
@@ -39,7 +39,7 @@ The models on your machine are given the tools in their system text, one line ea
 
 `Toolkit.make` groups them. `tools.toLayer({ … })` says what each does when called, and runs here in your browser.
 
-Like the system text, the tools are **code**. They are offered to the model in every call, and never stored.
+Like the system text, the tools are **code**. They are offered to the model in every call, given with it as tools it may ask for, and never stored.
 
 The notes live in the file, in `notes`, not in the journal. Rebuild runs the file again, and they are gone. That is a tool's own state: the journal holds the conversation, and what the tools keep is theirs.
 
@@ -47,7 +47,7 @@ The notes live in the file, in `notes`, not in the journal. Rebuild runs the fil
 
 <Step n={4} id="loop" title="The turn is a loop" focus="code">
 
-Read `turn` in **agent.ts**. Each time round the loop:
+Read `turn` in **agent.ts**. Each time round the loop is a **step**:
 
 1. **memory builds the context**, exactly as in lesson 1;
 2. **the model is called** with `toolkit` and `disableToolCallResolution: true`: the model sees the tools, but effect/ai runs none, because your loop does. `toolCallValidation: "deferred"` lets a call the model got wrong through, so it can be answered;
@@ -62,7 +62,7 @@ You wrote two blocks by hand here: reading the model's stream, and running a cal
 
 <Step n={5} id="watch" title="Watch it run" focus="context" wide={true}>
 
-Ask **"What is 12 * 3?"** and open the **Context** tab. The turn now has more steps: the model's first call, the tool's result, then a second call. Pick a model call above the columns to see each one's context and prompt.
+Ask **"What is 12 * 3?"** and open the **Context** tab. The turn now has more boxes: the model's first call, the tool's result, then a second call. Pick a model call above the columns to see each one's context and prompt.
 
 In the **Prompt** column of the second call, the model's tool call and the tool's result follow your message. Both come from the journal: hover one and its record lights up. The calculator's answer sits in the conversation like anything else that was said.
 
@@ -72,7 +72,7 @@ Then ask **"What is 1 / 0?"**: the failure is the tool's answer, and the turn go
 
 <Step n={6} id="steer" title="Steer a long run" focus="chat">
 
-A coding agent may run fifty steps over ten minutes. You need to tell it something without waiting for it to finish.
+An agent on a long task may run fifty steps over ten minutes. You need to tell it something without waiting for it to finish. To **steer** a turn is to change what it does while it runs.
 
 At the end of each step, the turn takes every message you sent meanwhile (`chat.drain`) and stores them in the same turn. The model sees them at its next call.
 
@@ -102,6 +102,6 @@ The journal still keeps everything. The memory kit checks this rule (`pairs`) on
 
 After breaking it, press **Reset** in the Code pane.
 
-**Next:** a plugin of your own. You write an event plugin that counts what each turn costs, and a wrapper of memory that adds the time to every request without storing it. To see how the kernel stores tool traffic, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
+**Next:** a **plugin** of your own: a module (lesson 1) that you write, which sets itself up when your program provides it and then takes part, for example by hooking events. You write an event plugin, one that takes part only by hooking events, that counts what each turn costs, and a wrapper of memory that adds the time to every request without storing it. To see how the kernel stores tool traffic, the model's calls and the tools' results, read [the kernel's design](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md).
 
 </Step>

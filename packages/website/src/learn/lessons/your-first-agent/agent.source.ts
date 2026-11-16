@@ -64,7 +64,7 @@ const program = Effect.scoped(
     const chat = yield* Chat
     const core = yield* Core
 
-    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each turn.
+    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.
     // \`wait\` holds the turn until the hook is done, so the status is set before the answer comes.
     yield* core.on(turnStartedEvent, ({ data }) => chat.status(\`turn \${data.turn}\`), {
       name: "boot",

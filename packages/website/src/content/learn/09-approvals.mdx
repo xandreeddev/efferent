@@ -17,7 +17,7 @@ This lesson's agent has lesson 2's tools and one more, `forget`, which deletes e
 - the **host answers**: here the host is this page, and it asks you in the chat;
 - the **answer is a record** of the turn, in the journal.
 
-Press **Remember to buy milk.**, then **Remember to call Ana.**, then **Forget my notes.** The turn stops at a question in the chat: *Delete all 2 notes.*, with three buttons, **Approve**, **Refuse** and **Always approve notes.forget**. The chip in the model bar reads *waiting for your answer*.
+Press **Remember to buy milk.**, then **Remember to call Ana.**, then **Forget my notes.** The turn stops at a question in the chat: *Delete all 2 notes.*, with three buttons, **Approve**, **Refuse** and **Always approve notes.forget**. The chip in the model bar, the label beside the model list that says what the page is doing, reads *waiting for your answer*.
 
 Press **Refuse**. Echo answers *I did not delete anything: you did not approve it.* Press **What are my notes?**: both notes are there.
 
@@ -37,7 +37,7 @@ The small models on your machine rarely call a tool, as lesson 2 showed. Qwen2.5
 
 **tools.ts** is lesson 2's, with `forget` added. Two lines of its declaration matter here:
 
-- `failure: Schema.String` with `failureMode: "return"`, as the calculator has: a refusal goes back to the model as the tool's answer;
+- `failure: Schema.String`, a failure that is a string (a `Schema` describes the shape of a value), with `failureMode: "return"`, as the calculator has: a refusal goes back to the model as the tool's answer;
 - `dependencies: [Approval, CurrentTurn]`, which no other tool here has: who the tool asks, and the turn it asks in.
 
 Its handler starts with the one new line: `yield* approve({ action: "notes.forget", detail: … })`.
@@ -53,9 +53,9 @@ Nothing below that line runs unless the answer is yes. A no fails the handler wi
 
 <Step n={4} id="host" title="Who is asked" focus="code" file="agent">
 
-The kernel has no person. `Approval` is a contract with one function, `ask(request)`, which answers with a decision: `Approved`, `ApprovedAlways`, `Refused`, or `Allowed`. The host provides it. A chat asks with buttons, a terminal with a prompt, a batch job answers from a policy.
+The kernel has no person. `Approval` is a contract with one function, `ask(request)`, which takes the tool's **request**, its action and its detail, and answers with a decision: `Approved`, `ApprovedAlways` (yes to every later call of the same action in this conversation), `Refused`, or `Allowed` (yes from a rule in code, not from a person). The host provides it. Each host gets the answer its own way: this page asks you with buttons, and a host with no person at hand answers from a **policy**, a rule in code that answers without asking anyone.
 
-**agent.ts** is the base program with one module more in `main`: `Effect.provide(approvalOn(pane))`. `approvalOn` is this page's part, as `pane` and `model` are: it puts the question in the chat and waits for your answer.
+**agent.ts** is the base program with one module more in `main`: `Effect.provide(approvalOn(pane))`. The **base program** is lesson 2's agent.ts written on `modelAnswer` and `callTool`; later lessons change it piece by piece. `approvalOn` is this page's part, as `pane` (the chat area, as your program reaches it) and `model` are: it puts the question in the chat and waits for your answer.
 
 The approval is given to the program, not to the tools' layer. The program is what calls the tool, and what a tool declares in `dependencies` is needed by the call.
 
@@ -70,7 +70,7 @@ While a question waits, the turn is open. You can still send a message: it waits
 Open **Context** at turn 3, the one you refused.
 
 - **Journal**: record 16 is `plugin.approval.decided`, between the model's call, record 15, and the call's result, record 17. Its payload holds what was asked and the answer: the action, the detail, and `Refused`.
-- It is tagged `trace` and bears no message. It is not conversation, and memory skips it: no prompt carries it.
+- It is tagged `trace`, the tag of a record that says what happened and is no part of the conversation, and it holds no message. It is not conversation, and memory skips it: no prompt carries it.
 - **Prompt**, at the turn's second model call: what the model reads of your answer is the last row, the tool's failed result.
 
 `approve` stores the record. The page's approval stores nothing: it only answers.

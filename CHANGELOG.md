@@ -416,6 +416,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn track is written for a reader who knows a little
+  JavaScript and nothing else. It no longer compares the kernel with
+  Neovim (lessons 1, 3 and 4, and the code comments the lessons show:
+  "hook an event, to run code when it fires"). Every lesson says each term
+  in plain words where the track first uses it: lesson 1's turn, kernel,
+  event, journal, record, session, module, memory, context, prompt,
+  provider, token, layer, vocabulary, kit and tool, and in the lessons
+  after it the terms each one adds (a step, a handler, a budget, a fork, a
+  pointer's preview, a policy, a trial, a golden set, a rate limit, a
+  fiber…), each defined once and pointed back to after. A word with two
+  meanings says which one it means (hook, tag, fold). Lesson 7 says when a
+  browser gives a page Web Locks, and lesson 17 what to press while only
+  tasks run, when Stop is hidden. Skill `add-lesson` gains the rule: no
+  comparison with something outside the page, every term said where the
+  track first uses it, checked by a fresh reader.
+
 - Docs site: the Context tab no longer redraws on every piece a model
   streams, which rebuilt the step track and restarted its highlight dozens
   of times a second (on a Qwen answer of 88 pieces, 648 nodes removed and

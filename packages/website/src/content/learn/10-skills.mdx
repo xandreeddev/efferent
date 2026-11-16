@@ -85,6 +85,8 @@ The third change is in `main`, which provides two modules more: `unitsLive`, the
 
 <Step n={6} id="fold" title="What is offered is a fold" focus="chat">
 
+A fold here is lesson 6's: reading every record in order and keeping a running result.
+
 Nothing keeps a list of loaded skills. A skill is loaded because the result of the call that loaded it is in the journal: `loadedOf(journal)` reads those results, and `offered` is built on it. The tools no skill owns come first, then each loaded skill's, in the order the skills were loaded.
 
 Press **Rebuild**, then **How far is 5 km in miles?** again. This turn calls the model twice, where the first took three calls: `convert` is offered from its first call, and Echo does not load again. The program started again over the same journal, and the load's result is in it.
@@ -101,7 +103,7 @@ Against sending everything always, a skill costs three things.
 
 - **A step.** The first conversion took three model calls, one of them to load. With the skill loaded, the same message takes two.
 - **The instructions, from then on.** The load's result is conversation: stored once, and sent whole in every later prompt. In turn 1 the prompt is 95 tokens at the first call and 165 at the second: 55 of the difference is the load's result.
-- **A cache miss for a load that adds tools.** A provider that caches the start of a prompt counts the tool definitions as part of that start. A load that adds a tool changes them, so the request after it is a cache miss, once per load, and the requests after it reuse the new start. A skill that is instructions alone adds no tool and costs none: the *tools* row is the same before and after `haiku` loads.
+- **A cache miss for a load that adds tools.** A provider that caches the start of a prompt counts the **tool definitions**, each offered tool's name, description and parameters, sent with every request, as part of that start. A load that adds a tool changes them, so the request after it is a cache miss, once per load, and the requests after it reuse the new start. A skill that is instructions alone adds no tool and costs none: the *tools* row is the same before and after `haiku` loads.
 
 The page does not show that miss. Its line *the same as the prompt before* compares a prompt's messages, and the tool definitions are not among them. What the page shows is where the list of tools changes: once in a conversation that loads both skills, at the call after `units` loaded.
 

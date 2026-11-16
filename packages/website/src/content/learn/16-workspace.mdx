@@ -36,9 +36,9 @@ A real model may not call the tools at all. On this machine, **Qwen2.5 0.5B** wa
 
 <Step n={3} id="contract" title="A contract the host gives" focus="code" file="workspace">
 
-The kernel has no disk. A workspace is a contract, **`Files`**, with three calls: `read(path)`, `list(folder)` and `write(path, text, expected?)`. The host provides it: a command line over a folder, a test in memory, and this page in memory.
+The kernel has no disk. A workspace is a contract, **`Files`**, with three calls: `read(path)`, `list(folder)` and `write(path, text, expected?)`. Given `expected`, the write happens only if the file still holds what it says: no file yet, or a given text. The host provides `Files`, and each host keeps the files its own way: a program on your computer in a folder on disk, a test in memory, and this page in memory.
 
-This page builds its `Files` once, when the page loads, with three files in it, and gives it to your program as a value, **`files`**. Your code never builds it. So the files outlive **Rebuild**, **Stop**, **Clear context** and every experiment, and a reload starts them over. Press **Rebuild**, then **Read notes/todo.md.**: your change is still there. ADR 0017 says it as a consequence: *a reload keeps the files only if the host's `Files` is durable*. This page's is not.
+This page builds its `Files` once, when the page loads, with three files in it, and gives it to your program as a value, **`files`**. Your code never builds it. So the files outlive **Rebuild**, **Stop**, **Clear context** and every experiment, and a reload starts them over. Press **Rebuild**, then **Read notes/todo.md.**: your change is still there. ADR 0017, the project's written decision on workspaces, says it as a consequence: *a reload keeps the files only if the host's `Files` is durable*, that is, keeps its contents when the page reloads. This page's is not.
 
 **agent.ts** is the base program with three changes:
 
@@ -59,7 +59,7 @@ The line ADR 0017 draws: **tools reach the files, and nothing the agent is made 
 What the journal keeps of files is bounded: every call and every result is stored, and later prompts send them again.
 
 - **readFile** returns a page of at most **4,000 characters**, with where it starts, where it stops and the file's length. Send **Read notes/long.md.**: *I read notes/long.md, characters 0 to 4000 of 6246: …* and Echo says how to go on. **Read notes/long.md from 4000.** reads the rest: *characters 4000 to 6246 of 6246*.
-- **writeFile** writes at most **4,000 characters** in one call: the text is in the call, which every later prompt sends. A longer text is refused: "The text is 4001 characters long, and one call takes at most 4000." A longer file is written in parts, each next one with `append`.
+- **writeFile** writes at most **4,000 characters** in one call: the text is in the call, which every later prompt sends. A longer text is refused: "The text is 4001 characters long, and one call takes at most 4000." A longer file is written in parts, each next one with `append`, which adds the text to the file's end instead of replacing it.
 - **listFiles** lists at most **200 paths**, and says how many it left out.
 - **editFile** replaces the one place that holds a text. A text that is not there, or is there twice, is refused, and nothing is written.
 
@@ -96,8 +96,8 @@ It reads the workspace again when a tool says it wrote a file, with the live eve
 The file tools never ask anyone. Whether a write is allowed is decided by the app that composes the agent, and ADR 0017 names three ways, each a layer the app puts around the tools:
 
 - **a workspace that declines**: workspace.ts wraps the page's files with a `write` of its own that fails with `FilesRefused` and a reason. The tool hands the reason to the model. A `Files` cannot ask a person: its calls run with no turn, and an answer is stored in a turn.
-- **asking a person**: the loop asks before it runs a call that writes, with `approveIn`, as lesson 9's loop did. The key is chosen by the app: here one per file, so "Always" covers that file alone.
-- **a judge, then a person**: an `Approval` of the app's over the person's answers `Allowed` for what it finds safe and passes the rest on.
+- **asking a person**: the loop asks before it runs a call that writes, with `approveIn`, as lesson 9's experiment that asks in the loop did. The key, the name an answer is stored under, is chosen by the app: here one per file, so "Always" covers that file alone.
+- **a judge, then a person**: a **judge** is code that decides first, a rule or a model. An `Approval` of the app's over the person's answers `Allowed` for what it finds safe and passes the rest on.
 
 As it starts, your program provides no `Approval` and asks nobody: the sandbox. Each of the three is an experiment of the last step.
 

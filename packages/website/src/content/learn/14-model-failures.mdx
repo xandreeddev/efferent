@@ -9,7 +9,7 @@ import Experiments from '../../components/learn/model-failures/Experiments.astro
 
 <Step n={1} id="build" title="What you will build" focus="code" file="failures">
 
-So far every model call answered. A real one fails: a rate limit, a provider's own error, a lost connection. This lesson's loop asks for each answer under a **plan**. The plan tries the model again a moment later, and then hands the call to another model.
+So far every model call answered. A real one fails: a **rate limit**, the provider refusing a call because too many came in too short a time; a provider's own error; a lost connection. This lesson's loop asks for each answer under a **plan**. The plan tries the model again a moment later, and then hands the call to another model.
 
 To show a failure on any model, the page makes one. **failures.ts** lists what the model you picked does the next times it is asked, one entry each time, so a call tried again takes an entry for each try. As it starts, the list holds one failure worth another try:
 
@@ -31,7 +31,7 @@ The failure's words say who made it. The failure of step 1 reads "echo.streamTex
 
 The plan has a second model, the **spare**: a second Echo, which the page gives your program as `spare`. Its answers name it `echo-spare`, and it never fails.
 
-With Qwen2.5 0.5B picked, on the GPU, the first **Hello.** failed as failures.ts said, the plan waited its second, and Qwen answered on the second try ("Hello, how can I assist you today?"), about four seconds in all. The failed try never reached the model: the page made it. The next message was answered on the first try in under a second. With the `down` experiment of the last step the spare answered at once, and the answer's record named `echo-spare`; the message after it went back to Qwen, which answered "What is 2 + 3?" with "5", and its record named `qwen2.5-0.5b`. These failures were the page's. A failure of Qwen's own would be an unknown error, which `retryable` does not try again: before its first word the call would go straight to the spare, and after it the answer would be cut.
+With Qwen2.5 0.5B picked, on the GPU, the first **Hello.** failed as failures.ts said, the plan waited its second, and Qwen answered on the second try ("Hello, how can I assist you today?"), about four seconds in all. The failed try never reached the model: the page made it. The next message was answered on the first try in under a second. With the `down` experiment of the last step the spare answered at once, and the answer's record named `echo-spare`; the message after it went back to Qwen, which answered "What is 2 + 3?" with "5", and its record named `qwen2.5-0.5b`. These failures were the page's. A failure of Qwen's own would be an **unknown error**, a failure of no known kind, which `retryable` does not try again. Before its **first word**, the first piece of text or call the answer shows, the call would go straight to the spare, and after it the answer would be cut.
 
 </Step>
 
@@ -60,7 +60,7 @@ The loop no longer takes the model as a service, and `main` provides no model. T
 
 In TypeScript the compiler holds this together. A step without `provide` does not compile: "Property 'provide' is missing". A plan whose steps provide something other than a model does not compile, and neither does a call without `planned(plan)` while `main` provides none: "Type 'LanguageModel' is not assignable to type 'never'". The call needs a model, and nothing gives it one.
 
-The page runs your code as JavaScript, so none of these is refused before it runs. Each builds, and the first message stops the program. Without `planned(plan)` the chat says "Your program stopped: nothing in the stack provides LanguageModel, and a part above it needs it (Service not found: effect/ai/LanguageModel)." A step with no `provide` stops it with a TypeError, and a step that provides something other than a model stops it with the same words as above. A missing model inside a plan is a defect, and no step tries a defect again: the plan's first try fails, and the spare's step is not tried.
+The page runs your code as JavaScript, so none of these is refused before it runs. Each builds, and the first message stops the program. Without `planned(plan)` the chat says "Your program stopped: nothing in the stack provides LanguageModel, and a part above it needs it (Service not found: effect/ai/LanguageModel)." A step with no `provide` stops it with a TypeError, and a step that provides something other than a model stops it with the same words as above. A missing model inside a plan is a **defect**, a failure from a bug in the program and not in the model, and no step tries a defect again: the plan's first try fails, and the spare's step is not tried.
 
 </Step>
 
@@ -101,7 +101,7 @@ The answer's record names the model that answered. Context says so only where it
 
 <Step n={8} id="calls" title="Each call is planned anew" focus="chat">
 
-A turn with a tool call asks the model twice: once for the call, once for the answer after the tool's result. Each of the two is planned anew, from the plan's first step. So a turn may wait through retries twice: a model that fails the first try of each call keeps that turn waiting a second in each.
+A turn with a tool call asks the model twice: once for the call, once for the answer after the tool's result. Each of the two is planned anew, from the plan's first step (a plan's steps are its models in order, not the loop's steps). So a turn may wait through retries twice: a model that fails the first try of each call keeps that turn waiting a second in each.
 
 The list in failures.ts counts each time the model you picked is asked, and not the spare. With `[{}, {}]` and **What is 12 * 3?**, the first call fails and the spare asks for the calculator. The second call fails too, and the spare answers it.
 

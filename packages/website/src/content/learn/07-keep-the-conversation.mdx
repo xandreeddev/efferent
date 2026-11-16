@@ -13,10 +13,10 @@ import StartOver from '../../components/learn/keep-the-conversation/StartOver.as
 
 Until now a reload lost everything. The journal was kept in the page, by `inProcessJournal()`, and went with it.
 
-The journal's store is a module like the others: a contract, **`JournalStorage`**, with five calls (the fifth, `fork`, is lesson 15's). In this lesson you write one that keeps the journal in the browser's `localStorage`. Then:
+The journal's store is a module like the others: a contract, **`JournalStorage`**, with five calls (the fifth, `fork`, which starts a new session as a copy of another up to a turn, is lesson 15's). In this lesson you write one that keeps the journal in the browser's `localStorage`. Then:
 
 - the conversation **outlives the page**: reload, and it is there;
-- the chat **finds it again** when the page loads, and closes a turn the page before it left open;
+- the chat **finds it again** when the page loads, and closes a turn the page before it left open: started, and stopped by the reload before it could store its end;
 - everything stored is **drawn again from the journal**: your messages, the answers, the tools' results.
 
 Say something, then reload the page.
@@ -35,10 +35,10 @@ A reload starts the page again, so it comes back on Echo. Pick your model again 
 
 <Step n={3} id="store" title="The store" focus="code" file="store">
 
-**store.ts** is the whole store. A session's header has a key of its own, and so has each of its events:
+**store.ts** is the whole store. A session's **header**, its own description (its id, its owner, its parent if it has one, its format), has a key of its own, and so has each of its **events**: the store's name for the records of its journal, not lesson 1's announcements:
 
 - **`create`** stores a header, once.
-- **`append`** stores one more event at the place after `expectedSeq`. It checks the place first: the one before must be taken, and this one free. That check is what keeps a journal in order when two writers meet.
+- **`append`** stores one more event at the **place** after `expectedSeq` (a place is an event's number in its journal). It checks the place first: the one before must be taken, and this one free. That check is what keeps a journal in order when two **writers**, programs that store records in the same journal, meet: two at once could take the same place.
 - **`read`** gives a header and its events in order.
 - **`list`** gives every header, by the time each session was created: how a program finds a conversation again.
 
@@ -56,7 +56,7 @@ How do you know a store is right? Its contract comes with a **kit**: the contrac
 
 <Kit />
 
-Eight checks. Seven ask what any store must do, **fork** among them: a branch starts as a copy of another session, which lesson 15 uses. The eighth, **reopens**, is only asked of a store whose journals outlive it: a second handle on the same storage must read what the first one wrote.
+Eight checks. Seven ask what any store must do, **fork** among them: a branch starts as a copy of another session, which lesson 15 uses. The eighth, **reopens**, is only asked of a store whose journals outlive it: a second **handle**, another store opened over the same storage, must read what the first one wrote.
 
 </Step>
 
@@ -64,13 +64,13 @@ Eight checks. Seven ask what any store must do, **fork** among them: a branch st
 
 **chat.ts** used to create a new session every time the page loaded. Now it asks **`resume`** which one to show:
 
-1. list the sessions, and keep yours: owned by `"learner"`, with no parent, in a format this kernel reads;
+1. list the sessions, and keep yours: owned by `"learner"` (the owner a header names: `"learner"` for your chats, a plugin's own name for a session of its own), with no parent, in a format this kernel reads;
 2. take the last one, or create one if there is none;
 3. **`recover`** it.
 
-`recover` is for a turn nobody will close. A page that is reloaded in the middle of a turn stores the turn's start and never its end, so the journal says a turn is open, and a session takes one turn at a time. The journal cannot tell whether that turn's writer is slow or gone. Your program can: this page is the store's one writer, and it has just started. So it says so, and `recover` closes the turn as **`Abandoned`**. On a session that is free it does nothing.
+`recover` is for a turn nobody will close. A page that is reloaded in the middle of a turn stores the turn's start and never its end, so the journal says a turn is open, and a session takes one turn at a time. The journal cannot tell whether that turn's writer is slow or gone. Your program can: this page is the store's one writer, and it has just started. So it says so, and `recover` closes the turn as **`Abandoned`**: closed by a later program because the one that ran it is gone, where **Interrupted** is a turn its own program stopped. On a session that is free it does nothing.
 
-The page keeps to one writer for you: open this lesson in a second tab and it waits until the first is closed. A page not served over https has no way to do that, and tells you to keep to one tab.
+The page keeps to one writer for you: open this lesson in a second tab and it waits until the first is closed. A page the browser does not count as secure, one that came neither over an encrypted connection (an address that starts with https) nor from your own computer, has no way to do that, and tells you to keep to one tab.
 
 **agent.ts** changed by one line of `main`: `store(localStorage, { prefix: "agent:" })` where `inProcessJournal()` was.
 

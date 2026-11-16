@@ -15,11 +15,11 @@ const experiments = [
   },
   {
     exp: "strict-gate", title: "A strict gate", button: "Add a strict gate",
-    text: "gates gains a second blocking gate, on the tool's grader, at 1: every trial calls the right tool with the right numbers, or none where none is asked for. Press Run evals. Echo passes both. echo-no-tools fails both: ✗ tool@1 called, blocking: measured 0.5 (Outside threshold). The run says The suite is blocked: echo-no-tools failed a blocking gate. A blocking gate is one a change must pass; a diagnostic one is reported and blocks nothing. At 1, one miss in twenty trials fails it.",
+    text: "gates gains a second blocking gate, on the tool's grader, at 1: every trial calls the right tool with the right numbers, or none where none is asked for. Press Run evals. Echo passes both. echo-no-tools fails both: ✗ tool@1 called, blocking: measured 0.5 (Outside threshold). A gate's threshold is the lowest pass rate it accepts, here 1. The run says The suite is blocked: echo-no-tools failed a blocking gate. A blocking gate is one a change must pass; a diagnostic one is reported and blocks nothing. At 1, one miss in twenty trials fails it.",
   },
   {
     exp: "baseline-misses", title: "A task Echo misses", button: "Add a task Echo misses",
-    text: "The dataset gains a task, day: Tuesday is the day of the meeting. When is the meeting? Its reference holds Tuesday. Echo has no rule for a sentence in that order, so it repeats the message, and the answer's grader fails the copy. Press Run evals. Echo reads 20 of 25 passed (0.61 to 0.91), day 0 of 5, and its gate passes at its threshold, measured 0.8. echo-no-tools fails day too, yet its regressions are still sum and product: a regression is a task the baseline passed and the candidate failed. Where Echo fails, the comparison says nothing. A baseline is worth comparing with on the tasks it passes, which is why the golden set's test asks Echo to pass every one.",
+    text: "The dataset gains a task, day: Tuesday is the day of the meeting. When is the meeting? Its reference holds Tuesday. Echo has no rule for a sentence in that order, so it repeats the message, and the answer's grader fails the copy. Press Run evals. Echo reads 20 of 25 passed (0.61 to 0.91), day 0 of 5, and its gate passes at its threshold, measured 0.8. echo-no-tools fails day too, yet its regressions are still sum and product: a regression is a task the baseline passed and the candidate failed. The baseline is the candidate the others are compared with, here Echo. Where Echo fails, the comparison says nothing. A baseline is worth comparing with on the tasks it passes, which is why the golden set's test asks Echo to pass every one.",
   },
 ]
 ---

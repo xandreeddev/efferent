@@ -175,7 +175,7 @@ describe("lesson 17's displayed program", () => {
       "      const session = yield* sessions.open(chat.session)",
       "      // Store your message, and every one that waited behind it: this turn answers them all.",
       "      for (const text of [message, ...waiting]) {",
-      "    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each turn.",
+      "    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.",
       "    yield* core.on(turnStartedEvent, ({ data }) => chat.status(`turn ${data.turn}`), {",
       "      name: \"boot\",",
       "      wait: true,",

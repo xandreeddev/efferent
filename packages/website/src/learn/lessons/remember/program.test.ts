@@ -164,7 +164,7 @@ describe("lesson 11's displayed program", () => {
     for (const [from] of REPLACED_IMPORTS) expect({ from, held: BASE_IMPORTS.split(from).length - 1 }).toEqual({ from, held: 1 })
     expect(changed(BASE_AGENT, DEFAULT_AGENT)).toEqual({
       gone: [
-        "    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each turn.",
+        "    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.",
         "    yield* core.on(turnStartedEvent, ({ data }) => chat.status(`turn ${data.turn}`), {",
         '      name: "boot",',
         "      wait: true,",
@@ -173,7 +173,7 @@ describe("lesson 11's displayed program", () => {
         "  Effect.provide(flatMemory), // what of the journal the model sees",
       ],
       come: [
-        "    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each",
+        "    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each",
         "    // turn of the conversation. A rememberFact call opens a turn too, on the memory session: the",
         "    // hook passes that one over.",
         "    yield* core.on(",

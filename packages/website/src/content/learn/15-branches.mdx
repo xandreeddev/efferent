@@ -11,7 +11,7 @@ import Experiments from '../../components/learn/branches/Experiments.astro'
 
 You asked something, and want to ask it another way, or go on from an earlier answer in another direction, and keep the conversation as it is. This lesson's agent makes a **branch**: a new conversation that starts as a copy of the one shown, up to the end of a turn you pick.
 
-The program is lesson 7's: the journal is kept in this browser's storage, so every chat survives a reload. One file is new, **branch.ts**, and one piece of chat.ts changed.
+The program is lesson 7's: the journal is kept in this browser's storage, so every chat survives a reload. A **chat** here is one stored conversation of yours: a row above the messages lists them, and one is shown. One file is new, **branch.ts**, and one piece of chat.ts changed.
 
 Send **My name is Ana.** and then **What is 12 * 3?** Under each answer is a button, **Branch after turn 1**, **Branch after turn 2**. Press **Branch after turn 1**. The row of chats above the messages now reads **Chat 1** and **Chat 1, branch after turn 1**. Chat 1 is still the one shown: making a branch does not switch to it.
 
@@ -23,7 +23,7 @@ Press **Chat 1, branch after turn 1**. The chat is drawn from the branch's journ
 
 This lesson runs on **Echo**. A branch is a journal, and any model reads it: the model you pick is sent the copied turns as it would be sent the chat's.
 
-With Qwen2.5 0.5B picked, on the GPU, a chat of **My name is Ana.** and **I live in Lisbon.** was branched after turn 1, and both were asked **Where do I live?** On the branch, cut before Lisbon was said, Qwen answered "You live in the city.": nothing in its journal names the city. On Chat 1 it answered "You live in Lisbon.". The two answers to **Where do I live?** took about a second each, and the records of Chat 1's answers name `qwen2.5-0.5b`.
+With Qwen2.5 0.5B picked, on the GPU, a chat of **My name is Ana.** and **I live in Lisbon.** was branched after turn 1, and both were asked **Where do I live?** On the branch, cut before Lisbon was said (its copy ends there), Qwen answered "You live in the city.": nothing in its journal names the city. On Chat 1 it answered "You live in Lisbon.". The two answers to **Where do I live?** took about a second each, and the records of Chat 1's answers name `qwen2.5-0.5b`.
 
 </Step>
 
@@ -75,7 +75,7 @@ The page compares the chat `resume` gave with the one it asked for. When they di
 
 A branch carries everything stored before the cut, because it is a copy, and every part reads it as it read the chat at the cut. In this lesson that is the messages, the answers and the tools' results. Pick **Chat 1** again, where you asked **What is 12 * 3?**, and press **Branch after turn 2**: the row gains **Chat 1, branch after turn 2**. Show it and send **Thanks.** The calculator's call and its result are in the prompt, as they would be in Chat 1's.
 
-ADR 0016 says the same of what later lessons store, and the kernel's tests (`branches.test.ts`) hold it for each memory, a summary, an approval and readResult:
+ADR 0016, the project's written decision on branches, says the same of what later lessons store, and the kernel's tests (`branches.test.ts`) hold it for each memory, a summary, an approval and readResult:
 
 - an **"Always" approval** (lesson 9): a tool in the branch acts with nobody asked, as you decided;
 - a **summary** a memory stored (lesson 5): the branch starts with it, and the summarizer is not asked again;

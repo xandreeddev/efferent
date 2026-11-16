@@ -9,7 +9,7 @@ import Experiments from '../../components/learn/background-tasks/Experiments.ast
 
 <Step n={1} id="build" title="What you will build" focus="chat">
 
-In [lesson 4](/learn/sub-agents/) a helper worked in a session of its own, but the call that asked it waited for its answer, and so did the conversation. This lesson hands work to a helper that works **in the background**: the turn that starts it ends at once, you go on chatting, and the helper's answer comes back later as a message of its own.
+In [lesson 4](/learn/sub-agents/) a helper worked in a session of its own, but the call that asked it waited for its answer, and so did the conversation. This lesson hands work to a helper that works **in the background**: the turn that starts it ends at once, you go on chatting, and the helper's answer comes back later as a message of its own. That work is a **task**: work for a helper in the background, not lesson 13's eval task.
 
 The program is the base one, lesson 2's loop on the kernel's `modelAnswer` and `callTool`, with the kernel's two task tools added to the tools it offers. One file is new, **helper.ts**: the work of one task.
 
@@ -34,7 +34,7 @@ Two sessions now call the model at once: the chat's turn and a helper's. On Echo
 
 With Qwen2.5 0.5B on the GPU, in one run on our machine, no task was started: asked *In the background, what is 6 * 7?* it answered *6 * 7 = 42* itself, and to *Start a task: work out 12 * 3.* and to a message naming `startTask` it answered with a question. A model this small seldom calls a tool; the lesson's walk is on Echo, which calls them by rule.
 
-We then started tasks from the program instead, with Qwen doing the work. A helper's answer and a chat answer took turns on the GPU and both came back whole, and a task cancelled while its helper was writing stopped and reported nothing, the next chat answer whole. In a longer run the GPU was lost: after a helper's call, the chat's turn made the model read its long history afresh, more new text in one request than this laptop GPU finishes in the time its driver allows (about 570 tokens for Qwen here). The page fell back to Echo and said so. That limit is the GPU's, not the tasks': a long message does the same in any lesson.
+We then started tasks from the program instead, with Qwen doing the work. A helper's answer and a chat answer took turns on the GPU and both came back whole, and a task cancelled while its helper was writing stopped and reported nothing, the next chat answer whole. In a longer run the GPU was lost: after a helper's call, the chat's turn made the model read its long history afresh, more new text in one request than this laptop GPU finishes in the time its driver, the software that runs the GPU, allows (about 570 tokens for Qwen here). The page fell back to Echo and said so. That limit is the GPU's, not the tasks': a long message does the same in any lesson.
 
 </Step>
 
@@ -46,13 +46,13 @@ We then started tasks from the program instead, with Qwen doing the work. A help
 - main provides `taskHandlers`, what the two tools do, and `tasks(helper)`, the kernel's tasks plugin over **helper.ts**'s helper. These come before `toolsLive`: the helper calls tools.ts's tools too, and a module can use only the ones given after it;
 - main provides `reportsOn(pane)`, the page's: where a task's report goes. Step 4 is about it.
 
-`startTask` asks the plugin to start a task, and answers at once with the task's id and its session. The plugin creates a session, a child of the chat's that its owner says is the plugin's (`plugin.tasks`), and runs one turn in it, on a fiber of its own: the turn that called `startTask` goes on, and ends. Open **Context** and pick **Task 1: what is 6 * 7?** in the row of sessions: the task's turn, drawn as lesson 4's helper's is, with its tool step: it was offered calculator, remember and recall, called the calculator, and answered from the result. Its words stay out of the chat.
+`startTask` asks the plugin to start a task, and answers at once with the task's id and its session. The plugin creates a session, a child of the chat's that its owner says is the plugin's (`plugin.tasks`), and runs one turn in it, on a fiber of its own (a separate line of work the program runs at the same time as others): the turn that called `startTask` goes on, and ends. Open **Context** and pick **Task 1: what is 6 * 7?** in the row of sessions: the task's turn, drawn as lesson 4's helper's is, with its tool step: it was offered calculator, remember and recall, called the calculator, and answered from the result. Its words stay out of the chat.
 
 **helper.ts** is that turn's work, a `TaskRun`: it stores the task as the first message of its own session, waits three seconds, then runs a small loop, lesson 4's helper agent on the kernel's `modelAnswer` and `callTool`. The model answers, or asks for tools.ts's tools; their results are stored in the task's session, and the model is asked again, three times at most. The helper's model is sent only the task's text, never the conversation. Its tools are tools.ts's, the same the chat uses, so it reads and writes the same notes. On Echo a helper answers at once, so without the wait its report would land right behind the turn that started it and you would see nothing happen meanwhile.
 
 A task running is not a turn running. While only tasks run, the status chip reads *waiting for a message*, Send is on, and the chips above the chat say how each task stands.
 
-The task tools declare `Tasks`, so a program that leaves out `tasks(helper)` does not compile: "Type 'Tasks' is not assignable to type 'never'". The plugin needs somewhere to put a report: without `reportsOn(pane)`, "Type 'TaskReports' is not assignable to type 'never'".
+The task tools declare `Tasks`, the contract for starting and cancelling tasks that `tasks(helper)` provides, so a program that leaves out `tasks(helper)` does not compile: "Type 'Tasks' is not assignable to type 'never'". The plugin needs somewhere to put a report: without `reportsOn(pane)`, "Type 'TaskReports' is not assignable to type 'never'".
 
 </Step>
 
@@ -90,7 +90,7 @@ A task's own text is at most **2,000 characters**: the helper sees nothing else.
 
 Send **In the background, what is 6 * 7?**, then **Cancel task t1.** before it reports. Echo answers in the kernel's words: *Cancelled t1. It reports nothing.* The chip reads *t1 cancelled*. The task's own turn ended stopped, and no report comes. Cancel it again: "No task "t1" is running: it ended, was cancelled, or never started."
 
-The tasks run on the plugin's scope, which closes with your program. **Rebuild**, **Stop** and **Clear context** each start the program again, so:
+The tasks run on the plugin's scope, which closes with your program. **Rebuild**, **Stop** and **Clear context** each start the program again. While only tasks run there is no **Stop**: it shows only while the chat's own turn runs, so press **Rebuild** or **Clear context**. When the program starts again:
 
 - a task still running is cut short and reports nothing. Its chip reads *t1 stopped with the program*;
 - a report already in the queue, waiting for its turn, is dropped. Its chip reads *t1 report dropped*. Your messages that wait are kept by Rebuild, as before;
@@ -102,11 +102,11 @@ The tasks run on the plugin's scope, which closes with your program. **Rebuild**
 
 A message you send while a turn runs steers it, as in lesson 2: the turn takes it with `chat.drain` between its steps. A report never joins a turn that runs: `drain` takes the messages waiting and leaves the reports in the queue, in their order, each for a turn of its own.
 
-So a report that arrives during a turn waits for it to end, and a message you send after the report still steers the turn that runs. The page's test holds a turn on its tool step to show it: the turn that started the task answers the message sent behind the report, *Started task t1: its answer comes as a message of its own. You also said: "Hi, I'm Ana.".*, and the report gets the next turn. The page never says a report was taken off the queue, as it says of a message: a report has no row waiting in the chat.
+So a report that arrives during a turn waits for it to end, and a message you send after the report still steers the turn that runs. The page's own tests hold a turn on its tool step to show it: the turn that started the task answers the message sent behind the report, *Started task t1: its answer comes as a message of its own. You also said: "Hi, I'm Ana.".*, and the report gets the next turn. The page never says a report was taken off the queue, as it says of a message: a report has no row waiting in the chat.
 
 Press **Send three at once**. The first turn takes all three: it starts two tasks and works out a sum, *Started task t1: its answer comes as a message of its own. Started task t2: its answer comes as a message of its own. The tool answered: calculator says 4.* Each report then comes in a turn of its own, in the order the tasks end.
 
-Why one queue: ADR 0018 turned down merging a stream of messages with a stream of reports, which reads ahead, so a message would leave the queue while a turn runs and could no longer steer it.
+Why one queue: ADR 0018, the project's written decision on tasks, turned down merging a stream of messages with a stream of reports, which reads ahead (takes items from the queue before they are needed), so a message would leave the queue while a turn runs and could no longer steer it.
 
 </Step>
 

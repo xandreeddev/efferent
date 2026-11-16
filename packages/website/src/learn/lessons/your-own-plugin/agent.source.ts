@@ -11,7 +11,7 @@ import { BASE_AGENT, IMPORTS as BASE_IMPORTS, replaced, typedModule } from "../b
 const BOOT_HOOK = `    const chat = yield* Chat
     const core = yield* Core
 
-    // On boot: hook an event, as a Neovim autocmd would. Here, the chat's status line names each turn.
+    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.
     yield* core.on(turnStartedEvent, ({ data }) => chat.status(\`turn \${data.turn}\`), {
       name: "boot",
       wait: true,
