@@ -203,6 +203,25 @@ The kernel gives these numbers question by question.
   which neither count nor recency favours. The kernel holds no word for "before" in any
   language.
 
+## Amended: what the walk did is said
+
+A reader of the links a request was sent sees only the result; why each was sent, and why
+others were not, was in the walk. `walked(links, question, options)` gives the walk step by
+step: the things named, each with how (`NamedThing`: its own words, a word a letter away, or
+the speaker's word) and the question's words that named it, then every link reached, best
+first, each with the thing it was reached from, how many links away, and the question's
+words its path met. `near` is its first `limit`, so the two cannot drift apart.
+
+`withGraph` says it for every request as `plugin.graph.recalled` (`recalledOf`), live and
+tagged `trace`, never stored: the question (its first `QUESTION_SHOWN`, 500, characters),
+the options, the names, and up to `RECALL_SHOWN` (100) links reached, each with the thing it
+was reached from and the link that led there, how often and when it was last said, and
+whether it was sent, the rest counted. Names are as the graph tells things apart, so a
+client matches them by `normalName`. It is said when nothing was named too, which is
+when a reader most needs to know why. It is said once per model call, since memory builds
+a context for each, so a turn with tools says it several times. A listener that fails is
+logged and costs the request nothing.
+
 ## What would reopen this
 
 - A graph too large to read for each request: an index of the links by thing, kept as a

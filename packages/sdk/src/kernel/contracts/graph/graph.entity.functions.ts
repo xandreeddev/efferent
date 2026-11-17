@@ -2,8 +2,8 @@ import { Option, Result, Schema } from "effect"
 import { dataOf, stored } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { framed, hostNote } from "../memory/memory.entity.functions.js"
-import { FOLLOW_LIMIT, LINK_THINGS, LinkId, linkedEvent, NAME_LIMIT, Relation, RELATION_LIMIT, restatedEvent, ThingName, unlinkedEvent } from "./graph.entity.js"
-import type { Followed, GraphOptions, Link, Naming, RestatedData, SaidLink, Speaker, Weights } from "./graph.entity.js"
+import { FOLLOW_LIMIT, LINK_THINGS, LinkId, linkedEvent, NAME_LIMIT, QUESTION_SHOWN, RECALL_SHOWN, Relation, RELATION_LIMIT, restatedEvent, ThingName, unlinkedEvent } from "./graph.entity.js"
+import type { Followed, GraphOptions, Link, NamedThing, Naming, RecalledData, RestatedData, SaidLink, Speaker, Walked, Weights } from "./graph.entity.js"
 
 /** `plugin.graph.linked`: a link, and where it was stored. */
 export const linked = (link: Link): StoredDraft => stored(linkedEvent, link)
@@ -136,19 +136,12 @@ const namesWord = (names: Naming) => (asked: string, own: string): boolean =>
 /** A text's words as a question under `names` reads them: accent marks off when loose. */
 const askedWords = (text: string, names: Naming): ReadonlyArray<string> => tokensOf(names === "loose" ? withoutMarks(text) : text)
 
-/** A thing a question names, how, and the question's words that named it. */
-interface Named {
-  readonly thing: string
-  readonly by: "words" | "loose" | "speaker"
-  readonly words: ReadonlyArray<string>
-}
-
 /** The things a question names under `names`, each with how it was named, in the order the links first name them. */
-const naming = (links: ReadonlyArray<Link>, question: string, speaker: Option.Option<Speaker>, names: Naming): ReadonlyArray<Named> => {
+const naming = (links: ReadonlyArray<Link>, question: string, speaker: Option.Option<Speaker>, names: Naming): ReadonlyArray<NamedThing> => {
   const asked = askedWords(question, names)
   const same = namesWord(names)
   const things = [...new Set(links.flatMap((link) => endsOf(link)))].filter((thing) => thing.length > 0)
-  const named = things.flatMap((thing): ReadonlyArray<Named> => {
+  const named = things.flatMap((thing): ReadonlyArray<NamedThing> => {
     const own = askedWords(thing, names)
     const runAt = (match: (asked: string, own: string) => boolean) =>
       asked.findIndex((_, start) => own.length > 0 && start + own.length <= asked.length && own.every((word, i) => match(asked[start + i]!, word)))
@@ -186,32 +179,31 @@ const wordsOf = (text: string, names: Naming): ReadonlyArray<string> => askedWor
 /** Two words meet when one starts the other: "work" and "works", "live" and "lives". */
 const meet = (a: string, b: string): boolean => a.startsWith(b) || b.startsWith(a)
 
-/** Where the walk reached something: how many links away, and which of the question's words the path there met. */
+/** Where the walk reached something: how many links away, which of the question's words the path there met. */
 interface Reached {
   readonly hops: number
   readonly met: ReadonlySet<string>
+  /** The link the walk reached it by; none for a thing the question named. */
+  readonly via: Option.Option<LinkId>
 }
 
 /**
- * Up to `limit` links near what a question names, best first (ADR 0019). The walk starts at the things the question
- * names (`namedIn`) and follows links from either end, up to `hops` links away. A link is ranked by its path: the
- * question's words (four letters or more, beyond the names it starts from) that the relations and names on the path
- * to it meet, so "Acme is in Lisbon", which shares no word with "In what city does Ana work?", ranks with "Ana works
- * at Acme", the link the path took. Then fewer links away, then, when `weigh` is given, the heavier (`weightOf`), then
- * the newer. With nothing named there are none. A pure function: the same links and question give the same list,
- * in the same order.
+ * The walk `near` takes, step by step (ADR 0019): the things the question names, each with how it was named, and
+ * every link the walk reached, best first, each with the thing it was reached from, how many links away, and the
+ * question's words its path met. `near` is its first `limit` links; a client draws the rest to show what was left out
+ * and why. With nothing named, nothing is reached. Pure, as `near` is.
  *
  * @public
  */
-export const near = (
+export const walked = (
   links: ReadonlyArray<Link>,
   question: string,
-  options: { readonly hops: number; readonly limit: number; readonly speaker?: Speaker; readonly names?: Naming; readonly weigh?: (link: Link) => number },
-): ReadonlyArray<Link> => {
+  options: { readonly hops: number; readonly speaker?: Speaker; readonly names?: Naming; readonly weigh?: (link: Link) => number },
+): Walked => {
   const speaker = Option.fromNullishOr(options.speaker)
   const names = options.names ?? "exact"
   const found = naming(links, question, speaker, names)
-  if (found.length === 0) return []
+  if (found.length === 0) return { named: [], reached: [] }
   const named = found.map((one) => one.thing)
   // The words that named a thing rank nothing: the question's own (which, named loosely, are not the thing's), the
   // thing's, and the speaker's.
@@ -226,13 +218,13 @@ export const near = (
     return asked.filter((word) => own.some((mine) => meet(word, mine)))
   }
   const weighed = (at: number): number => (options.weigh === undefined ? 0 : options.weigh(links[at]!))
-  const things = new Map<string, Reached>(named.map((thing) => [thing, { hops: 0, met: new Set<string>() }]))
-  const reached = new Map<LinkId, Reached & { readonly at: number }>()
+  const things = new Map<string, Reached>(named.map((thing) => [thing, { hops: 0, met: new Set<string>(), via: Option.none() }]))
+  const reached = new Map<LinkId, Omit<Reached, "via"> & { readonly at: number; readonly from: string; readonly via: Option.Option<LinkId> }>()
   let frontier: ReadonlyArray<string> = named
   for (let hop = 1; hop <= options.hops && frontier.length > 0; hop++) {
     const next: Array<string> = []
     for (const thing of frontier) {
-      const from = things.get(thing) ?? { hops: 0, met: new Set<string>() }
+      const from = things.get(thing) ?? { hops: 0, met: new Set<string>(), via: Option.none() }
       links.forEach((link, at) => {
         const [subject, object] = endsOf(link)
         if (subject !== thing && object !== thing) return
@@ -240,21 +232,75 @@ export const near = (
         const before = reached.get(link.id)
         // A link is ranked by its shortest paths: a better one of the same length replaces the first, a longer one
         // (back from a thing beyond it, to where the walk began) does not.
-        if (before === undefined || (before.hops === hop && met.size > before.met.size)) reached.set(link.id, { hops: hop, met, at })
+        if (before === undefined || (before.hops === hop && met.size > before.met.size)) reached.set(link.id, { hops: hop, met, at, from: thing, via: from.via })
         const other = subject === thing ? object : subject
         const there = things.get(other)
         if (there === undefined) {
-          things.set(other, { hops: hop, met })
+          things.set(other, { hops: hop, met, via: Option.some(link.id) })
           next.push(other)
-        } else if (there.hops === hop && met.size > there.met.size) things.set(other, { hops: hop, met })
+        } else if (there.hops === hop && met.size > there.met.size) things.set(other, { hops: hop, met, via: Option.some(link.id) })
       })
     }
     frontier = next
   }
-  return [...reached.values()]
-    .toSorted((a, b) => b.met.size - a.met.size || a.hops - b.hops || weighed(b.at) - weighed(a.at) || b.at - a.at)
-    .slice(0, Math.max(0, options.limit))
-    .map(({ at }) => links[at]!)
+  return {
+    named: found,
+    reached: [...reached.values()]
+      .toSorted((a, b) => b.met.size - a.met.size || a.hops - b.hops || weighed(b.at) - weighed(a.at) || b.at - a.at)
+      .map(({ at, from, via, hops, met }) => ({ link: links[at]!, from, via, hops, met: asked.filter((word) => met.has(word)) })),
+  }
+}
+
+/**
+ * Up to `limit` links near what a question names, best first (ADR 0019): the first `limit` of `walked`. The walk
+ * starts at the things the question names (`namedIn`) and follows links from either end, up to `hops` links away. A
+ * link is ranked by its path: the question's words (four letters or more, beyond the names it starts from) that the
+ * relations and names on the path to it meet, so "Acme is in Lisbon", which shares no word with "In what city does
+ * Ana work?", ranks with "Ana works at Acme", the link the path took. Then fewer links away, then, when `weigh` is
+ * given, the heavier (`weightOf`), then the newer. With nothing named there are none. A pure function: the same
+ * links and question give the same list, in the same order.
+ *
+ * @public
+ */
+export const near = (
+  links: ReadonlyArray<Link>,
+  question: string,
+  options: { readonly hops: number; readonly limit: number; readonly speaker?: Speaker; readonly names?: Naming; readonly weigh?: (link: Link) => number },
+): ReadonlyArray<Link> =>
+  walked(links, question, options).reached.slice(0, Math.max(0, options.limit)).map((one) => one.link)
+
+/**
+ * What one request's walk did, as `plugin.graph.recalled` says it: the question, the options, the things named, and
+ * the links reached, best first, the first `limit` of them sent, each with how often and when it was last said (a link
+ * `said` does not name counts once, said at 0).
+ *
+ * @public
+ */
+export const recalledOf = (question: string, options: GraphOptions, walk: Walked, said: ReadonlyArray<SaidLink>): RecalledData => {
+  const saying = new Map(said.map((one) => [one.link.id, one]))
+  const end = question.length <= QUESTION_SHOWN ? question.length : (question.charCodeAt(QUESTION_SHOWN - 1) & 0xfc00) === 0xd800 ? QUESTION_SHOWN - 1 : QUESTION_SHOWN
+  return {
+    question: end === question.length ? question : `${question.slice(0, end)} [… ${question.length - end} characters clipped]`,
+    hops: options.hops,
+    limit: options.limit,
+    names: options.names ?? "exact",
+    weights: options.weights ?? null,
+    named: walk.named.map((one) => ({ thing: one.thing, by: one.by, words: [...one.words] })),
+    reached: walk.reached.slice(0, RECALL_SHOWN).map((one, rank) => ({
+      id: one.link.id,
+      subject: one.link.subject,
+      relation: one.link.relation,
+      object: one.link.object,
+      from: one.from,
+      via: Option.getOrElse(one.via, () => null),
+      hops: one.hops,
+      met: [...one.met],
+      count: saying.get(one.link.id)?.count ?? 1,
+      last: saying.get(one.link.id)?.last ?? 0,
+      sent: rank < options.limit,
+    })),
+    more: Math.max(0, walk.reached.length - RECALL_SHOWN),
+  }
 }
 
 /** A link as a sentence: subject, relation, object, ending with a stop unless the object ends a sentence already. */

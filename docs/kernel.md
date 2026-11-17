@@ -853,6 +853,7 @@ when its writer has them.
 | `conversation.tool.result` | whoever runs the turn, after running a call | stored; bears the result, or the failure, and the call it answers | `conversation` |
 | `plugin.window.dropped` | the window memory, when whole turns leave the window | stored; may be skipped | `memory` |
 | `plugin.window.pressure` | the window memory, when a context came close to the budget | live only | `memory` |
+| `plugin.graph.recalled` | the graph's memory wrapper, for every model call, with what its walk did | live only | `trace` |
 | `plugin.inbox.queued` | the inbox, as it queues a message, with its ticket | live only; about the session, no turn | `ui` |
 | `core.listener.failed` | core, when a listener fails where nothing can fail for it | live only | `trace` |
 
@@ -1451,7 +1452,11 @@ pure function): the question's words of four letters or more that the
 relations and names on the path to it meet, then fewer links away, then, with
 `weights` (`"count"`, or `{ halfLifeDays }`), the link said in more turns, or
 more lately (`saidOf`, `weightOf`; a link said again in another turn is
-stored as `plugin.graph.restated`), then the newer. It sends at most `limit` of them, best first, a sentence each with its
+stored as `plugin.graph.restated`), then the newer. What the walk did, step
+by step (`walked`: the things named and how, every link reached with the
+thing it was reached from and the words its path met), is said live for
+every request as `plugin.graph.recalled` (`recalledOf`, never stored), so a
+client can show why each link was sent, and why others were not. It sends at most `limit` of them, best first, a sentence each with its
 id, framed as data (`linksNote`). With nothing named, nothing is added; the
 question is the user's last message in the conversation's journal
 (`questionOf`, the memory contract's). Nothing is stored, and a memory's

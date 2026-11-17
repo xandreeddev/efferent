@@ -4,7 +4,7 @@ import { assistantMessage, Seq, SessionId, TurnNumber, userMessage } from "@xand
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { relevant } from "../facts/facts.entity.functions.js"
 import { FactId, FactText } from "../facts/facts.entity.js"
-import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, namedIn, near, nextLinkId, noLinkWith, normalName, NOT_A_LINK, restated, saidIn, saidOf, sameLink, unlinked, weightOf } from "./graph.entity.functions.js"
+import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, namedIn, near, nextLinkId, noLinkWith, normalName, NOT_A_LINK, recalledOf, restated, saidIn, saidOf, sameLink, unlinked, walked, weightOf } from "./graph.entity.functions.js"
 import { LinkId, Relation, ThingName } from "./graph.entity.js"
 import type { Link } from "./graph.entity.js"
 
@@ -325,6 +325,52 @@ describe("how often a link was said, and its weight", () => {
     const heavy = (link: Link) => (link.id === "e1" ? 2 : link.id === "e3" ? 9 : 0)
     expect(said(near(links, "Where does Ana work?", two))).toEqual(["e2: Ana works at Globex", "e1: Ana works at Acme", "e3: Ana likes tea"])
     expect(said(near(links, "Where does Ana work?", { ...two, weigh: heavy }))).toEqual(["e1: Ana works at Acme", "e2: Ana works at Globex", "e3: Ana likes tea"])
+  })
+})
+
+describe("the walk, step by step", () => {
+  test("walked names each thing with how it was named and the question's words that did, a thing's own run before one a letter away", () => {
+    const links = graph(["Maria", "is the sister of", "Mario Rossi"], ["Joao", "works at", "Acme"], ["user", "lives in", "Porto"])
+    const speaker = { name: "user", words: ["i"] }
+    expect(walked(links, "Is Mario older than Maria?", { hops: 1, names: "loose" }).named).toEqual([{ thing: "maria", by: "words", words: ["maria"] }])
+    expect(walked(links, "Where does João work, and where do I live?", { hops: 1, names: "loose", speaker }).named).toEqual([
+      { thing: "joao", by: "words", words: ["joao"] }, { thing: "user", by: "speaker", words: ["i"] },
+    ])
+    expect(walked(links, "Where does Mariu live?", { hops: 1, names: "loose" }).named).toEqual([{ thing: "maria", by: "loose", words: ["mariu"] }])
+  })
+
+  test("walked reaches each link once, best first, with the thing it was reached from, the link that led there and the words its path met; near is its first limit", () => {
+    const walk = walked(seven, "In what city does Ana work?", { hops: 2 })
+    expect(walk.reached.map((one) => [String(one.link.id), one.from, one.hops, one.met])).toEqual([
+      ["e1", "ana", 1, ["work"]], ["e2", "acme", 2, ["work"]], ["e7", "ana", 1, []], ["e6", "ana", 1, []], ["e4", "ana", 1, []], ["e3", "ana", 1, []],
+    ])
+    expect(near(seven, "In what city does Ana work?", two)).toEqual(walk.reached.slice(0, 5).map((one) => one.link))
+    // Lisbon's link was reached from Acme, which the walk reached by e1: the path is Ana → e1 → Acme → e2.
+    expect(walk.reached.map((one) => Option.getOrElse(Option.map(one.via, String), () => "named"))).toEqual(["named", "e1", "named", "named", "named", "named"])
+  })
+
+  test("when two links join the same two things, via names the one the path took: the one the question's words meet, in either order stored", () => {
+    const viaLisbon = (links: ReadonlyArray<Link>) => {
+      const lisbon = walked(links, "In what city does Ana work?", { hops: 2 }).reached.find((one) => one.link.object === "Lisbon")
+      return Option.getOrElse(Option.flatMap(Option.fromNullishOr(lisbon), (one) => one.via), () => LinkId.make("none"))
+    }
+    const worksFirst = graph(["Ana", "works at", "Acme"], ["Ana", "founded", "Acme"], ["Acme", "is in", "Lisbon"])
+    const foundedFirst = graph(["Ana", "founded", "Acme"], ["Ana", "works at", "Acme"], ["Acme", "is in", "Lisbon"])
+    expect([worksFirst.find((one) => one.id === viaLisbon(worksFirst))?.relation, foundedFirst.find((one) => one.id === viaLisbon(foundedFirst))?.relation]).toEqual(["works at", "works at"])
+  })
+
+  test("recalledOf says the walk: the options, the names, each link with how often and when it was said, the first limit sent, the rest counted", () => {
+    const walk = walked(seven, "In what city does Ana work?", { hops: 2 })
+    const said = [{ link: seven[0]!, count: 3, last: 42 }]
+    const data = recalledOf("In what city does Ana work?", { hops: 2, limit: 2, weights: "count" }, walk, said)
+    expect([data.hops, data.limit, data.names, data.weights, data.more]).toEqual([2, 2, "exact", "count", 0])
+    expect(data.reached.map((one) => [String(one.id), one.count, one.last, one.sent])).toEqual([["e1", 3, 42, true], ["e2", 1, 0, true], ["e7", 1, 0, false], ["e6", 1, 0, false], ["e4", 1, 0, false], ["e3", 1, 0, false]])
+    const many = graph(...Array.from({ length: 130 }, (_, i) => ["Hub", "touches", `thing ${i}`] as const))
+    const wide = recalledOf("What does Hub touch?", { hops: 1, limit: 50 }, walked(many, "What does Hub touch?", { hops: 1 }), [])
+    expect([wide.reached.length, wide.more, wide.reached.filter((one) => one.sent).length]).toEqual([100, 30, 50])
+    expect(data.reached.map((one) => (one.via === null ? null : String(one.via)))).toEqual([null, "e1", null, null, null, null])
+    const long = recalledOf(`${"a".repeat(600)}?`, { hops: 2, limit: 2 }, { named: [], reached: [] }, [])
+    expect(long.question).toBe(`${"a".repeat(500)} [… 101 characters clipped]`)
   })
 })
 

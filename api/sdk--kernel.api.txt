@@ -65,14 +65,17 @@ const ModelScript
 const NAME_LIMIT
 const PATH_LIMIT
 const ProgressData
+const QUESTION_SHOWN
 const READ_FILE
 const READ_RESULT
 const READ_RESULT_PAGE
+const RECALL_SHOWN
 const RELATION_LIMIT
 const REMEMBER_FACT
 const REPORT_LIMIT
 const ReadFile
 const ReadResult
+const RecalledData
 const Relation
 const RememberFact
 const RememberedFact
@@ -158,6 +161,8 @@ const progressEvent
 const promptMessage
 const questionOf
 const readResult
+const recalledEvent
+const recalledOf
 const relevant
 const rememberedFacts
 const reportText
@@ -181,6 +186,7 @@ const turnsOf
 const unlinkedEvent
 const viewEvent
 const viewsOf
+const walked
 const webStorageJournal
 const weightOf
 const windowDroppedEvent
@@ -202,6 +208,7 @@ interface MemorySubject
 interface MemoryWrapperSubject
 interface MessageRead
 interface ModelToolCall
+interface NamedThing
 interface PointerOptions
 interface Queued
 interface ResultRead
@@ -218,6 +225,7 @@ interface SummarizerSubject
 interface SummaryOptions
 interface TasksOptions
 interface TurnRead
+interface Walked
 interface WebStorageJournalOptions
 interface WindowOptions
 type ApprovalRefusal
@@ -252,6 +260,7 @@ type Offered
 type OwnSkills
 type OwnTools
 type ProgressData
+type RecalledData
 type Relation
 type RememberedFact
 type RestatedData

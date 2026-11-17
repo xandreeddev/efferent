@@ -10,6 +10,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: what the graph's walk did is said. `walked(links,
+  question, options)` (`Walked`, `NamedThing`) gives the walk step by step:
+  the things named and how, and every link reached, best first, with the
+  thing it was reached from and the question's words its path met; `near`
+  is its first `limit`. `withGraph` says it for every request as
+  `plugin.graph.recalled` (`recalledEvent`, `RecalledData`, `recalledOf`),
+  live, tagged `trace`, never stored: the question (cut at
+  `QUESTION_SHOWN`), the options, the names, up to
+  `RECALL_SHOWN` links with the link that led to each (`via`), how often
+  and when each was said and whether it
+  was sent, also when nothing was named; a listener that fails costs the
+  request nothing.
 - `@xandreed/sdk/kernel`: how often and when a link was said, and links
   weighed by it. A link said again in a turn that had not said it is stored
   as `plugin.graph.restated` (`restatedEvent`, `RestatedData`; skippable);

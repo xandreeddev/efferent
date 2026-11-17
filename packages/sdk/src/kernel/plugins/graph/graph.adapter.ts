@@ -2,8 +2,8 @@ import { Effect, Layer, Option, Result, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
 import { currentFormat, Sessions } from "@xandreed/core/kernel"
 import type { InvalidSession, JournalStorageError, SessionHeader, SessionId, StoredEvent } from "@xandreed/core/kernel"
-import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, near, nextLinkId, restated, sameLink, saidIn, saidOf, unlinked, weightOf } from "../../contracts/graph/graph.entity.functions.js"
-import { Followed, FOLLOW_LIMIT, FOLLOW_THINGS, GRAPH_OWNER, LINK_THINGS, LinkedThings, NAME_LIMIT, RELATION_LIMIT, UNLINK_THINGS } from "../../contracts/graph/graph.entity.js"
+import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, nextLinkId, recalledOf, restated, sameLink, saidIn, saidOf, unlinked, walked, weightOf } from "../../contracts/graph/graph.entity.functions.js"
+import { Followed, FOLLOW_LIMIT, FOLLOW_THINGS, GRAPH_OWNER, LINK_THINGS, LinkedThings, NAME_LIMIT, recalledEvent, RELATION_LIMIT, UNLINK_THINGS } from "../../contracts/graph/graph.entity.js"
 import type { GraphOptions, Link, SaidLink } from "../../contracts/graph/graph.entity.js"
 import { questionOf } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
@@ -185,8 +185,9 @@ const weighing = (said: ReadonlyArray<SaidLink>, weights: NonNullable<GraphOptio
  * A wrapper of `Memory` (ADR 0005, ADR 0019): for each request it reads the links that stand in the graph session
  * and adds up to `limit` of those near what the question names (`near`), last, after the context the memory below
  * returned. The question is the user's last message in the conversation's journal. Nothing is stored; with nothing
- * named, or no link near it, nothing is added. Options that are none are refused here, where they are written: it
- * throws, as a definition does.
+ * named, or no link near it, nothing is added. What the walk did is said live for every request, `plugin.graph.recalled`
+ * (`recalledOf`), whether or not anything was named; a listener that fails is logged and costs the request nothing.
+ * Options that are none are refused here, where they are written: it throws, as a definition does.
  *
  * @public
  */
@@ -200,9 +201,14 @@ export const withGraph = (options: GraphOptions) => {
         context: Effect.fnUntraced(function* (session) {
           const context = yield* below.context(session)
           const journal = yield* Effect.provideService(graphJournal, Sessions, sessions)
+          const said = saidOf(journal)
           const weights = checked.weights
-          const weigh = weights === undefined ? undefined : weighing(saidOf(journal), weights)
-          const chosen = near(linksOf(journal), questionOf(yield* session.journal), { ...checked, ...(weigh === undefined ? {} : { weigh }) })
+          const weigh = weights === undefined ? undefined : weighing(said, weights)
+          const question = questionOf(yield* session.journal)
+          const walk = walked(linksOf(journal), question, { ...checked, ...(weigh === undefined ? {} : { weigh }) })
+          const chosen = walk.reached.slice(0, checked.limit).map((one) => one.link)
+          // What the walk did is said live, for a client to draw; a listener that fails costs the request nothing.
+          yield* session.publish(recalledEvent, recalledOf(question, checked, walk, said)).pipe(Effect.ignoreCause({ log: "Warn", message: "what the graph's walk did could not be said" }))
           return chosen.length === 0 ? context : [...context, { role: "user" as const, content: linksNote(chosen) }]
         }),
       })
