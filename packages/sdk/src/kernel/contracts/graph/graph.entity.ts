@@ -1,5 +1,5 @@
-import { Schema } from "effect"
-import { SessionId, storedEvent, TurnNumber } from "@xandreed/core/kernel"
+import { Option, Schema } from "effect"
+import { liveEvent, SessionId, storedEvent, TurnNumber } from "@xandreed/core/kernel"
 
 /**
  * A link's name: `e` and a number (`e3`), short enough for a model to write back. The graph session mints it, one
@@ -104,6 +104,30 @@ export interface SaidLink {
   readonly link: Link
   readonly count: number
   readonly last: number
+}
+
+/**
+ * A thing a question names, how (`"words"`: a run of the question's words, accent marks aside; `"loose"`: a word one
+ * letter away; `"speaker"`: one of the speaker's words), and the question's words that named it.
+ *
+ * @public
+ */
+export interface NamedThing {
+  readonly thing: string
+  readonly by: "words" | "loose" | "speaker"
+  readonly words: ReadonlyArray<string>
+}
+
+/**
+ * The walk `near` takes (`walked`): the things named, and every link reached, best first, each with the thing it was
+ * reached from and the link the walk reached that thing by (none for a thing the question named), how many links
+ * away, and the question's words its path met, in the question's order.
+ *
+ * @public
+ */
+export interface Walked {
+  readonly named: ReadonlyArray<NamedThing>
+  readonly reached: ReadonlyArray<{ readonly link: Link; readonly from: string; readonly via: Option.Option<LinkId>; readonly hops: number; readonly met: ReadonlyArray<string> }>
 }
 
 /**
@@ -227,3 +251,62 @@ export interface GraphOptions {
   readonly names?: Naming
   readonly weights?: Weights
 }
+
+/**
+ * The most links a `plugin.graph.recalled` event lists: at least twice the largest `limit`, so a link sent is never
+ * left out of it; the rest it counts in `more`.
+ *
+ * @public
+ */
+export const RECALL_SHOWN = 100
+
+/**
+ * The most characters of the question a `plugin.graph.recalled` event repeats: an event is said for every model call,
+ * and a client may forward `trace` events.
+ *
+ * @public
+ */
+export const QUESTION_SHOWN = 500
+
+/**
+ * The data of `plugin.graph.recalled`: what one request's walk did. The question (at most `QUESTION_SHOWN`
+ * characters, what was cut counted); the options it ran with; the things the question named and how; and the links it
+ * reached, best first (at most `RECALL_SHOWN`, the rest counted in `more`), each with the thing it was reached from
+ * and the link that led there (`via`, null for a thing the question named), how many links away, the question's
+ * words its path met, how many turns said it and when it was last said (in milliseconds), and whether the request
+ * was sent it. Names are as the graph tells things apart (`normalName`), accent marks off when naming is loose.
+ *
+ * @public
+ */
+export const RecalledData = Schema.Struct({
+  question: Schema.String,
+  hops: Schema.Number,
+  limit: Schema.Number,
+  names: Schema.Literals(["exact", "loose"]),
+  weights: Schema.NullOr(Schema.Union([Schema.Literal("count"), Schema.Struct({ halfLifeDays: Schema.Number })])),
+  named: Schema.Array(Schema.Struct({ thing: Schema.String, by: Schema.Literals(["words", "loose", "speaker"]), words: Schema.Array(Schema.String) })),
+  reached: Schema.Array(Schema.Struct({
+    id: LinkId,
+    subject: Schema.String,
+    relation: Schema.String,
+    object: Schema.String,
+    from: Schema.String,
+    via: Schema.NullOr(LinkId),
+    hops: Schema.Number,
+    met: Schema.Array(Schema.String),
+    count: Schema.Number,
+    last: Schema.Number,
+    sent: Schema.Boolean,
+  })),
+  more: Schema.Number,
+})
+export type RecalledData = typeof RecalledData.Type
+
+/**
+ * `plugin.graph.recalled`: what `withGraph`'s walk did for one request (ADR 0019, amended), said live about the turn
+ * and never stored, tagged `trace`. It is said for every model call the memory builds a context for, whether or not
+ * the question named anything, so a client can show why a request was sent the links it was, or none.
+ *
+ * @public
+ */
+export const recalledEvent = liveEvent("graph", "recalled", { tags: ["trace"], data: RecalledData })

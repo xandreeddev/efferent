@@ -1,14 +1,14 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Layer, Schema, Scope } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { JOURNAL_FORMAT, JournalStorage, kernel, messageOf, Owner, SessionId as SessionIdOf, Sessions, userMessage } from "@xandreed/core/kernel"
+import { Core, JOURNAL_FORMAT, JournalStorage, kernel, messageOf, Owner, SessionId as SessionIdOf, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { SessionId, StoredEvent } from "@xandreed/core/kernel"
 import { Option } from "effect"
 import {
   callTool, flatMemory, FollowThings, graphHandlers, graphSession, graphTools, GRAPH_OWNER, inProcessJournal, knownLinks, LinkThings, linksOf, Memory, memorySession, memoryWrapperConformance,
-  modelAnswer, scriptedModel, sessions, UnlinkThings, webStorageJournal, withFacts, withGraph,
+  modelAnswer, recalledEvent, scriptedModel, sessions, UnlinkThings, webStorageJournal, withFacts, withGraph,
 } from "./index.js"
-import type { KeyValueStore, ModelScript, ToolNeeds } from "./index.js"
+import type { KeyValueStore, ModelScript, RecalledData, ToolNeeds } from "./index.js"
 import { linked, saidOf } from "./contracts/graph/graph.entity.functions.js"
 import { LinkId } from "./contracts/graph/graph.entity.js"
 import { learned as learnedFact } from "./contracts/facts/facts.entity.functions.js"
@@ -48,7 +48,7 @@ interface Ran {
 }
 
 /** One process over a store: each list of messages is a conversation of its own, one message a turn. */
-const run = (script: ModelScript, conversations: ReadonlyArray<ReadonlyArray<string>>, journalLayer = inProcessJournal(), remembering: Layer.Layer<Memory, never, Sessions> = memory): Effect.Effect<Ran> => Effect.gen(function* () {
+const run = (script: ModelScript, conversations: ReadonlyArray<ReadonlyArray<string>>, journalLayer = inProcessJournal(), remembering: Layer.Layer<Memory, never, Sessions | Core> = memory): Effect.Effect<Ran> => Effect.gen(function* () {
   const { model, calls: sent } = yield* scriptedModel(script)
   const turn = (conversation: SessionId, message: string) => Effect.scoped(Effect.gen(function* () {
     const context = yield* Memory
@@ -193,6 +193,38 @@ describe("a memory that connects", () => {
     expect(plain.sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e2: Ana works at Globex.", "e1: Ana works at Acme.") })
     const weighed = await Effect.runPromise(run(script, asked, inProcessJournal(), withGraph({ hops: 2, limit: 5, weights: "count" })(flatMemory)))
     expect(weighed.sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e1: Ana works at Acme.", "e2: Ana works at Globex.") })
+  })
+
+  test("what the walk did is said live for every request, the names, each link reached with its path, and which were sent; nowhere stored", async () => {
+    const heard: Array<RecalledData> = []
+    const listener = Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(recalledEvent, (event) => Effect.sync(() => { heard.push(event.data) }), { wait: true, name: "heard" })))
+    const { conversations, graph } = await Effect.runPromise(run(
+      [calls(link("Ana", "works at", "Acme"), link("Acme", "is in", "Lisbon")), says("Noted."), says("In Lisbon.")],
+      [["Ana works at Acme, which is in Lisbon."], ["In what city does Ana work?"]],
+      inProcessJournal(),
+      Layer.merge(withGraph({ hops: 2, limit: 1 })(flatMemory), listener),
+    ))
+    // One event for each model call: two in the first turn (before and after its tool call), one in the second.
+    expect(heard.length).toBe(3)
+    // Before any link was stored, the first request's question named nothing, and that is said too.
+    expect(heard[0]).toEqual({ question: "Ana works at Acme, which is in Lisbon.", hops: 2, limit: 1, names: "exact", weights: null, named: [], reached: [], more: 0 })
+    const last = heard.at(-1)!
+    expect(last.named).toEqual([{ thing: "ana", by: "words", words: ["ana"] }])
+    expect(last.reached.map((one) => [String(one.id), one.from, one.via === null ? null : String(one.via), one.hops, one.met, one.count, one.sent])).toEqual([["e1", "ana", null, 1, ["work"], 1, true], ["e2", "acme", "e1", 2, ["work"], 1, false]])
+    expect(last.reached.every((one) => one.last > 0)).toBe(true)
+    const stored = [...graph, ...conversations.flatMap((one) => one.journal)].map((record) => String(record.name))
+    expect(stored.filter((name) => name === "plugin.graph.recalled")).toEqual([])
+  })
+
+  test("a listener of what the walk did that fails costs the request nothing: the links are sent", async () => {
+    const failing = Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(recalledEvent, () => Effect.die("the panel is gone"), { wait: true, name: "broken" })))
+    const { sent } = await Effect.runPromise(run(
+      [calls(link("Ana", "works at", "Acme")), says("Noted."), says("At Acme.")],
+      [["Ana works at Acme."], ["Where does Ana work?"]],
+      inProcessJournal(),
+      Layer.merge(withGraph({ hops: 2, limit: 5 })(flatMemory), failing),
+    ))
+    expect(sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e1: Ana works at Acme.") })
   })
 
   test("parts that make no link and an id no link has are failed results in fixed words, and store nothing", async () => {
