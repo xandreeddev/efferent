@@ -203,23 +203,22 @@ execution and measurement behavior, not model quality or provider compatibility.
 
 A run can cap what its trials spend on models: `--budget-usd <amount>` on
 `efferent-eval run` and `calibrate`, `spendBudget` in an `EvaluationSelection`.
-The run opens one `ModelSpend` ledger (`@xandreed/core`) and gives each trial
-its own account in it, which a runnable reads from its context and hands to
-whatever sends model requests: an agent with the models plugin's `spend`
-guard reserves each send's worst case in it before the send goes out and
-settles it at what the send cost.
+The run opens one `ModelSpend` ledger (`@xandreed/core/kernel`) and gives
+each trial its own account in it, which a runnable reads from its context.
+Whatever sends a model call reserves the call's worst case in it before the
+call goes out, and settles the hold at what the call cost, or releases it.
+No first-party model provider charges the ledger yet: a runnable that sends
+model calls itself reserves as below.
 
 ```ts
-const execute = (question: string) => Effect.scoped(Effect.gen(function* () {
+const execute = (question: string) => Effect.gen(function* () {
   const ledger = yield* ModelSpend // the trial's account in the run's ledger
-  const agent = yield* Agent.define({
-    plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin, { plugin: modelsPlugin, options: {
-      model: "provider:model", spend: { prices: { "provider:model": price } },
-    } }],
-    services: Context.make(ModelSpend, ledger),
-  })
-  // … one turn on `question`, its reply the trial's output
-}))
+  // One priced call: it holds its worst case, then settles at what it cost.
+  const hold = yield* ledger.reserve({ amount: worstCase, caps: {} })
+  const answer = yield* ask(question) // the call, with its observed cost
+  yield* ledger.settle(hold, answer.cost)
+  return { output: answer.text, evidence: {} }
+})
 ```
 
 Every reservation's total cap is the budget (or a lower cap the request

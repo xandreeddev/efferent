@@ -1,5 +1,5 @@
 import { Option } from "effect"
-import type { SpendAmount, SpendHoldId, SpendRequest, SpendTotals } from "@xandreed/core"
+import type { SpendAmount, SpendHoldId, SpendRequest, SpendTotals } from "@xandreed/core/kernel"
 import { TrialSpendState } from "./spend.entity.js"
 import type { RunSpend, TrialSpend } from "./spend.entity.js"
 

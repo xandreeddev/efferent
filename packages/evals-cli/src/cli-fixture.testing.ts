@@ -12,7 +12,7 @@ import {
   type TrialRecorder
 } from "@xandreed/evals"
 import { Effect, Layer, Option, Schema } from "effect"
-import type { ModelSpend } from "@xandreed/core"
+import type { ModelSpend } from "@xandreed/core/kernel"
 
 const FunctionRunnable = runnableExecutionPort<string, string, Schema.Json, Record<string, never>>("cli-fixture")
 const FunctionEnvironment = evaluationEnvironmentPort<string, Record<string, never>>("cli-fixture")

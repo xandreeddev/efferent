@@ -48,7 +48,7 @@ caught up.
 | Vocabulary | core | `SessionId`, `Seq`, `TurnNumber`, `Tag`; `Message`; `StoredEvent` and `KernelEvent` |
 | The conversation's records | core | `conversation.user.message` and `conversation.assistant.message`, `userMessage(text, { from? })` (`from`: the session that sent it, when not the person, ADR 0018) and `assistantMessage(text, meta?)`, `CONVERSATION_VOCABULARY` |
 | Event definitions | core for its own, and the folder of each contract or plugin for theirs | a name, what the event is for (its tags), the schema of the data, stored or live, and for a stored one whether it may be skipped |
-| Contracts | core | `JournalStorage`, `Sessions`, each with a kit |
+| Contracts | core | `JournalStorage`, `Sessions`, each with a kit; and `ModelSpend`, the spend ledger, with its kit and a ledger in memory (`modelSpendMemory`): no turn needs it, it is here for the eval packages (ADR 0020) |
 | Pure rules | core | a session's two transitions and the fold of a journal to its state, reading a journal |
 | `kernel({ capacity? })` | core | the layer that provides `Core`, and nothing of a workflow |
 | The memory contract | sdk, `contracts/memory` | `Memory` with its kit; `promptMessage`, `estimateTokens`, `estimateContext`, `Tokens` |
@@ -2043,6 +2043,22 @@ test("a model that fails once with a failure worth another try is tried again, a
 - **`ExecutionPlan` is marked unstable in Effect 4.0.7.** The kernel uses
   it as it is, and its tests pin the behaviours the kernel relies on.
 
+## What a model call costs
+
+The kernel calls no model, so it spends nothing itself. Whoever sends a model
+call charges the run's spend ledger, `ModelSpend` (ADR 0020): before the call
+goes out it holds the call's worst-case cost, and is refused, with nothing held,
+when that would take the ledger past its cap; once the call ends it settles
+the hold at what the call cost, or releases it. An evaluation run gives each
+trial an account in one ledger, under the run's budget.
+
+The ledger is no store beside the journal: it holds no conversation, and no
+part reads it to rebuild an agent. A part that charges it declares
+`ModelSpend` in its type, so a stack without a ledger does not compile; a host
+that wants no cap gives `modelSpendMemory` and names none. The kit,
+`modelSpendConformance`, holds any ledger to the contract: a shared one in a
+database passes the same checks as the one in memory.
+
 ## Replacing a part
 
 A part is replaced by giving the program a different layer for it: the
@@ -2106,6 +2122,7 @@ fail on a careless plugin written for it.
 | graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
+| `ModelSpend` | `modelSpendConformance` | |
 | `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |
 | `TaskReports` | none | the host's sink, one call that puts a report in its queue: the tests hold the plugin's side (a delivery that waits keeps its task's slot) |
 | planned calls | none | nothing a host implements: a plan is Effect's, and `planned` a function over a stream. The scripted model fails as its script says |

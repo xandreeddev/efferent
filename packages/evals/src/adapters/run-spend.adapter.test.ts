@@ -1,22 +1,21 @@
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option } from "effect"
-import { ModelSpend, ModelSpendMemoryLive, RunId } from "@xandreed/core"
-import type { SpendHold } from "@xandreed/core"
-import { modelSpendConformance } from "@xandreed/core/conformance"
+import { ModelSpend, modelSpendConformance, modelSpendMemory } from "@xandreed/core/kernel"
+import type { SpendHold } from "@xandreed/core/kernel"
 import { runSpendLedger } from "./run-spend.adapter.js"
 
 /** A fresh run's ledger over an in-memory `ModelSpend`, within `budget`. */
 const openRun = (budget: Option.Option<number>) =>
-  Layer.build(Layer.fresh(ModelSpendMemoryLive)).pipe(
+  Layer.build(Layer.fresh(modelSpendMemory)).pipe(
     Effect.flatMap((context) => runSpendLedger(Context.get(context, ModelSpend), budget)),
   )
 
 // A trial's account is a `ModelSpend` ledger: without a budget, or under one
 // above every amount the kit asks for, it keeps the whole contract.
 test.each([
-  ...modelSpendConformance({ open: () => openRun(Option.none()).pipe(Effect.flatMap((run) => run.trial), Effect.map((account) => account.ledger)) })
+  ...modelSpendConformance({ open: openRun(Option.none()).pipe(Effect.flatMap((run) => run.trial), Effect.map((account) => account.ledger)) })
     .map((check) => ({ ...check, name: `uncapped: ${check.name}` })),
-  ...modelSpendConformance({ open: () => openRun(Option.some(10_000_000)).pipe(Effect.flatMap((run) => run.trial), Effect.map((account) => account.ledger)) })
+  ...modelSpendConformance({ open: openRun(Option.some(10_000_000)).pipe(Effect.flatMap((run) => run.trial), Effect.map((account) => account.ledger)) })
     .map((check) => ({ ...check, name: `under a budget: ${check.name}` })),
 ])("trial account: $name", async (check) => {
   await Effect.runPromise(check.run)
@@ -29,7 +28,7 @@ test("trials share the run's ledger and budget, each settling apart, and a refus
     const second = yield* run.trial
     const unused = yield* run.trial
     const a = yield* first.ledger.reserve({ amount: 1, caps: {} })
-    const b = yield* second.ledger.reserve({ runId: RunId.make("turn"), amount: 0.5, caps: { turn: 4 } })
+    const b = yield* second.ledger.reserve({ amount: 0.5, caps: {} })
     yield* first.ledger.settle(a, 0.75)
     // Closing a hold again, or another account's hold, counts nothing.
     yield* first.ledger.settle(a, 0.75)
@@ -59,16 +58,6 @@ test("trials share the run's ledger and budget, each settling apart, and a refus
   expect(observed.totals).toEqual({ settled: 1, reserved: 0 })
 })
 
-test("a refusal under a turn's own cap is the trial's, and never stops the run", async () => {
-  const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const run = yield* openRun(Option.some(10))
-    const account = yield* run.trial
-    const refusal = yield* Effect.flip(account.ledger.reserve({ runId: RunId.make("turn"), amount: 2, caps: { turn: 1 } }))
-    return { reason: refusal._tag === "ModelSpendExceeded" ? refusal.reason : refusal._tag, refusal: yield* account.refusal, spend: yield* account.spend, stopped: yield* run.stopped }
-  })))
-  expect(observed).toEqual({ reason: "turn", refusal: Option.none(), spend: Option.some({ settled: 0 }), stopped: Option.none() })
-})
-
 test("what the trials settle reaching the budget stops the run, though nothing was refused", async () => {
   const stopped = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const run = yield* openRun(Option.some(1))
@@ -82,7 +71,7 @@ test("what the trials settle reaching the budget stops the run, though nothing w
 
 test("an interruption that lands while the shared ledger takes a hold leaves the hold in the trial's account, so its settlement counts", async () => {
   const observed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const inner = Context.get(yield* Layer.build(Layer.fresh(ModelSpendMemoryLive)), ModelSpend)
+    const inner = Context.get(yield* Layer.build(Layer.fresh(modelSpendMemory)), ModelSpend)
     const taken = yield* Deferred.make<SpendHold>()
     const answer = yield* Deferred.make<void>()
     // A shared ledger whose reply is still on its way once it has taken the hold.

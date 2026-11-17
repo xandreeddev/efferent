@@ -1,5 +1,5 @@
 import { EvalId, EvalPath, EvaluationExport, EvaluationError, EvaluationRunStore, TranscriptEvent, Trial, TrialRecorder, comparisonIssues, positiveAmount, positiveInt, type EvaluationApp } from "@xandreed/evals"
-import { ModelSpend } from "@xandreed/core"
+import { ModelSpend } from "@xandreed/core/kernel"
 import { spanRecorder } from "@xandreed/evals/testing/fixture.testing"
 import { afterEach, expect, test } from "bun:test"
 import { mkdir, mkdtemp as nativeMkdtemp, rm, readdir, readFile, stat, writeFile } from "node:fs/promises"

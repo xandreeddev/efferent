@@ -445,15 +445,15 @@ const config: typeof GateSuiteConfig.Encoded = {
   boundaries: {
     layers: [
       // The CLI's and the exporters' tests use the evals fixture, a testing module evals does not export.
-      ...testLayer("evals-cli", ["evals-cli", "evals", "core"], ["effect", "node:", "bun:test", "fast-check"]),
+      ...testLayer("evals-cli", ["evals-cli", "evals", "core/kernel"], ["effect", "node:", "bun:test", "fast-check"]),
       { name: "evals-cli", path: src("evals-cli"), canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api"] },
       ...testLayer("evals-langfuse", ["evals-langfuse", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langfuse", path: src("evals-langfuse"), canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:"] },
       ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
       // evals reaches core only for the ModelSpend ledger its runs share across their trials.
-      ...testLayer("evals", ["evals", "core"], ["effect", "effect/ai", "node:", "bun:test"]),
-      { name: "evals", path: src("evals"), canImport: ["core"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
+      ...testLayer("evals", ["evals", "core/kernel"], ["effect", "effect/ai", "node:", "bun:test"]),
+      { name: "evals", path: src("evals"), canImport: ["core/kernel"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
       // Core's kernel (`packages/core/src/kernel`, the entry `./kernel`) comes
       // before core's other layers: one layer for all its roles, which imports
       // nothing else of core and no runtime module, and which no other core
@@ -600,8 +600,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-graph", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks"], externals: [] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
-      // as written, so they import only what a consumer can. They import evals too:
-      // an evaluation run's trials run agents in eval-spend.journey.test.ts.
+      // as written, so they import only what a consumer can.
       ...testLayer(
         "sdk",
         [
@@ -620,7 +619,6 @@ const config: typeof GateSuiteConfig.Encoded = {
           "plugin-tasks",
           "plugin-models",
           "plugin-render",
-          "evals",
         ],
         ["effect", "effect/ai", "effect/testing", "node:", "bun:test"],
       ),

@@ -26,7 +26,7 @@ packages/
   evals-langsmith/src/# official SDK export adapter
 ```
 
-The core has no agent SDK, Docker, browser, database or provider client dependency; of the framework it imports only `@xandreed/core`, for the `ModelSpend` ledger a run shares across its trials. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
+The core has no agent SDK, Docker, browser, database or provider client dependency; of the framework it imports only `@xandreed/core/kernel`, for the `ModelSpend` ledger a run shares across its trials. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
 
 ## Entities and their relationships
 
@@ -198,9 +198,11 @@ Remote export does not change the local execution or grade revision.
 `efferent-eval run` and `calibrate` take `--budget-usd <amount>` (programmatically,
 `EvaluationSelection.spendBudget`): the most the run's trials may spend together on model
 sends, in the currency of the prices their ledgers reserve at. A run opens one `ModelSpend`
-ledger (`@xandreed/core`) for its trials, and every runnable reads its trial's account in it
-from its context (`yield* ModelSpend`) and gives it to the agents or clients it runs, such as
-the models plugin's `spend` guard (`Agent.define({ services: Context.make(ModelSpend, ledger) })`).
+ledger (`@xandreed/core/kernel`) for its trials, and every runnable reads its trial's account in
+it from its context (`yield* ModelSpend`). Whatever sends a model call reserves the call's worst
+case in it before the call goes out, and settles the hold at what the call cost, or releases it.
+No first-party model provider charges the ledger yet: a runnable that sends model calls itself
+reserves and settles them.
 Every reservation's total cap is the budget, or the lower cap the request names, and
 concurrent trials share it.
 

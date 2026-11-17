@@ -877,13 +877,16 @@ services it provides, so a model the host builds is never priced or capped
 by it, even beside the plugin in one agent (`Agent.define` or
 `stackPlugins`); a host model without `spend` is not guarded.
 
-An evaluation run is one run of spend too: `@xandreed/evals` opens one
-ledger per run and gives each trial its own account in it as the
-`ModelSpend` its runnable reads, so a runnable passes it to the agents it
-defines. `efferent-eval run --budget-usd <amount>` caps every reservation of
-every trial at the run's budget, starts no more trials once a send is
-refused under it, and records each trial's and the run's settled spend in
-the report ([a run's spend budget](composable-evaluations.md#a-runs-spend-budget)).
+An evaluation run is one run of spend too, in another ledger: the kernel's
+`ModelSpend` (`@xandreed/core/kernel`, ADR 0020), a separate service under
+its own key, which this plugin does not charge. `@xandreed/evals` opens one
+per run and gives each trial its own account in it as the `ModelSpend` its
+runnable reads. `efferent-eval run --budget-usd <amount>` caps every
+reservation of every trial at the run's budget, starts no more trials once
+a reservation is refused under it, and records each trial's and the run's
+settled spend in the report ([a run's spend budget](composable-evaluations.md#a-runs-spend-budget)).
+Until a kernel model provider charges that ledger, it holds what the
+runnables reserve themselves.
 
 ## Host-planned initial tool batch
 

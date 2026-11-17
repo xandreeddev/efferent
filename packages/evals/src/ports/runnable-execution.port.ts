@@ -2,7 +2,7 @@ import { Context } from "effect"
 import type { Effect } from "effect"
 import type { Candidate } from "../domain/candidate.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
-import type { ModelSpend } from "@xandreed/core"
+import type { ModelSpend } from "@xandreed/core/kernel"
 import type { TrialRecorder } from "./trial-recorder.port.js"
 
 /**

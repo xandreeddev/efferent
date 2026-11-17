@@ -1,16 +1,16 @@
 import { expect, test } from "bun:test"
 import { Option } from "effect"
-import { SpendHoldId } from "@xandreed/core"
-import type { SpendRequest } from "@xandreed/core"
+import { SpendHoldId } from "@xandreed/core/kernel"
+import type { SpendRequest } from "@xandreed/core/kernel"
 import { budgetStopOf, cappedAtBudget, held, refusalOf, refused, released, reserving, runSpendOf, settled, trialSpendOf, unmetered } from "./spend.entity.functions.js"
 
 const first = SpendHoldId.make("first")
 const second = SpendHoldId.make("second")
 
-test("a run's budget caps a reservation's total at the lower of the two, and leaves its other caps", () => {
-  const request: SpendRequest = { amount: 1, caps: { turn: 3 } }
+test("a run's budget caps a reservation's total at the lower of the two", () => {
+  const request: SpendRequest = { amount: 1, caps: {} }
   expect(cappedAtBudget(request, Option.none())).toEqual(request)
-  expect(cappedAtBudget(request, Option.some(5))).toEqual({ amount: 1, caps: { turn: 3, total: 5 } })
+  expect(cappedAtBudget(request, Option.some(5))).toEqual({ amount: 1, caps: { total: 5 } })
   expect(cappedAtBudget({ amount: 1, caps: { total: 2 } }, Option.some(5)).caps).toEqual({ total: 2 })
   expect(cappedAtBudget({ amount: 1, caps: { total: 8 } }, Option.some(5)).caps).toEqual({ total: 5 })
 })

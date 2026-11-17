@@ -4,6 +4,9 @@ class InvalidSession
 class JournalStorage
 class JournalStorageError
 class ListenerFailed
+class ModelSpend
+class ModelSpendExceeded
+class ModelSpendUnavailable
 class SessionRefused
 class Sessions
 class UnknownRecord
@@ -29,6 +32,12 @@ const Seq
 const SessionHeader
 const SessionId
 const SessionState
+const SpendAmount
+const SpendCaps
+const SpendHold
+const SpendHoldId
+const SpendRequest
+const SpendTotals
 const StoredDraft
 const StoredEvent
 const Tag
@@ -64,7 +73,10 @@ const kernel
 const listenerFailedEvent
 const live
 const liveEvent
+const makeModelSpendMemory
 const messageOf
+const modelSpendConformance
+const modelSpendMemory
 const newSession
 const originOf
 const outcomeOf
@@ -88,6 +100,7 @@ interface JournalStorageSubject
 interface KernelOptions
 interface ListenOptions
 interface LiveDefinition
+interface ModelSpendSubject
 interface OpenSession
 interface PluginFailure
 interface PublishOptions
@@ -119,6 +132,12 @@ type Seq
 type SessionHeader
 type SessionId
 type SessionState
+type SpendAmount
+type SpendCaps
+type SpendHold
+type SpendHoldId
+type SpendRequest
+type SpendTotals
 type StoredDelivery
 type StoredDraft
 type StoredEvent

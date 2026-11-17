@@ -2121,7 +2121,6 @@ Generated references are well controlled: regeneration in a disposable checkout 
 | `packages/sdk/src/context-overflow.journey.test.ts` | R |
 | `packages/sdk/src/durable-results.journey.test.ts` | R |
 | `packages/sdk/src/durable-steering.journey.test.ts` | R |
-| `packages/sdk/src/eval-spend.journey.test.ts` | R |
 | `packages/sdk/src/events-guide.test.ts` | R |
 | `packages/sdk/src/helper-executor-admission.journey.test.ts` | R |
 | `packages/sdk/src/helper-executor-recovery.journey.test.ts` | R |
