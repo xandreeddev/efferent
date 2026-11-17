@@ -121,6 +121,53 @@ Measured before deciding (17 November 2026):
 - A process that dies inside a turn on the graph session leaves it busy until the host
   recovers it, as for facts (ADR 0014).
 
+## Amended: a question may name a thing loosely
+
+A host may ask for loose naming, `withGraph({ hops, limit, names: "loose" })` (`Naming`;
+`"exact"`, the rule above, unless given). Under it a word of the question names a word of a
+thing when the two are equal once their accent marks are taken off ("Joao" names "João"), or
+when both are five letters or more, hold no digit, and are one letter added, taken away or
+changed apart ("Nowak" names "Novak", "Lisbon" names "Lisboa"). The words that rank a path
+lose their accent marks too, and the question's words that named a thing rank nothing, as
+the thing's own words did. Nothing else changes: a thing is still its normalised name, so
+Lisbon and Lisboa stay two things, a link is still stored, removed and followed by that
+name, and nothing is merged.
+
+Measured on a generated world of 557 links and 41 questions: 17 shaped the rule (the five
+letters among them), 15 were written before any run and held out from every choice, and nine
+more, written later, are answered by every rule alike (their codes are why a word with a
+digit names only itself). At limit 5 the walk answered 7 of the 17 and 10 of the 15 by exact
+naming, and 9 and 13 by loose naming. On those questions loose naming named six things exact
+naming did not, each the name variant its question was written for, and nothing else. It
+does not answer every one of them: of the four variants among the 17, two still miss,
+because the question's other words meet no link on the path (the Lisbon question names
+Lisboa and still ranks the answer late). The kernel's `near` gives the measuring script's eight links, in its order, for each of the
+41 questions.
+
+- **Five letters and no digit.** Shorter words are too alike ("Ana", "Ama"), so "Acme Lab"
+  does not name "Acme Labs". A word with a digit is a code, and a code one digit away is
+  another code ("QX-48213", "QX-48218"): it names only itself.
+- **Spelling cannot tell a typo from another name.** A word one letter from two things names
+  both: "Maria" names "Maria" and a "Mario" the graph holds, as "Lisbon" names both "Lisbon"
+  and "Lisboa". A rule that dropped the loose match when the same word named another thing
+  exactly would keep Mario out and Lisboa out with him. In the world measured, Lisbon and
+  Lisboa were the only two things a letter apart that were not codes, so that rule changed no
+  answer there, which says little either way. Both are named, and both walks are ranked by
+  the question's other words.
+- **An ordinary word can name a thing of one word.** Of the 95 words of five letters or more
+  in that world's sentences and questions that name no thing, one was a letter from a
+  thing's word ("loves", "Lopes"); that world's sentences are few and made from templates,
+  and its people have two-word names, so this says little. A thing is named by all of its
+  words, so "Who loves tea?" names a thing called "Lopes" and not one called "Rui Lopes",
+  but a graph of one-word things meets common words often: "while" names "Chile", "parts"
+  "Paris", "texts" "Texas", "names" "James". The walk then ranks that thing's links by the
+  question's other words, and the note says they are near the question, not that they
+  answer it. The word that named it ranks nothing: with a "Lopes" stored, "Ana loves what?"
+  no longer ranks "Ana loves tea" by "loves".
+- **What it does not fix.** A question whose word is not the link's ("Who employs Ana?"
+  against "Ana works at Acme") still ranks the answer late: that is a matter of meaning,
+  not spelling.
+
 ## What would reopen this
 
 - A graph too large to read for each request: an index of the links by thing, kept as a

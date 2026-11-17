@@ -72,6 +72,92 @@ describe("what a question names", () => {
   })
 })
 
+describe("what a question names, loosely", () => {
+  test("named exactly, as by default, a word without its accent marks or a letter away names nothing", () => {
+    const links = graph(["João", "works at", "Acme"], ["Eva Novak", "lives in", "Lisboa"])
+    expect(namedIn(links, "Where does Joao work?")).toEqual([])
+    expect(namedIn(links, "Where does Eva Nowak live?")).toEqual([])
+    expect(namedIn(links, "Who lives in Lisbon?")).toEqual([])
+  })
+
+  test("named loosely, accent marks are taken off both sides, and a word of five letters or more names one a letter away", () => {
+    const links = graph(["João", "works at", "Acme"], ["Eva Novak", "lives in", "Lisboa"], ["Carla Méndez", "owns", "a dog"])
+    expect(namedIn(links, "Where does Joao work?", Option.none(), "loose")).toEqual(["joão"])
+    expect(namedIn(links, "Where does Eva Nowak live?", Option.none(), "loose")).toEqual(["eva novak"])
+    expect(namedIn(links, "Who lives in Lisbon?", Option.none(), "loose")).toEqual(["lisboa"])
+    expect(namedIn(links, "Does Carla Mendes own a pet?", Option.none(), "loose")).toEqual(["carla méndez"])
+  })
+
+  test("a word of four letters or fewer is never a letter away: \"Ana\" does not name \"Ama\", nor \"Acme Lab\" \"Acme Labs\"", () => {
+    const links = graph(["Ama", "works at", "Acme Labs"])
+    expect(namedIn(links, "Where does Ana work?", Option.none(), "loose")).toEqual([])
+    expect(namedIn(links, "Who works at Acme Lab?", Option.none(), "loose")).toEqual([])
+  })
+
+  test("a word that holds a digit names only itself: one code does not name another a digit away", () => {
+    const links = graph(["order QX-48213", "was shipped to", "Ana"], ["order QX-48218", "was shipped to", "Bo"])
+    expect(namedIn(links, "Who got order QX-48213?", Option.none(), "loose")).toEqual(["order qx 48213"])
+    expect(namedIn(links, "Who got order QX-48210?", Option.none(), "loose")).toEqual([])
+  })
+
+  test("a word a letter away from two things names both: spelling cannot tell a typo from another name", () => {
+    const links = graph(["Maria", "lives in", "Porto"], ["Mario", "lives in", "Braga"], ["Lisbon", "is in", "Portugal"], ["Lisboa", "is in", "Portugal"])
+    expect(namedIn(links, "Where does Mariu live?", Option.none(), "loose")).toEqual(["maria", "mario"])
+    expect(namedIn(links, "Where does Maria live?", Option.none(), "loose")).toEqual(["maria", "mario"])
+    expect(namedIn(links, "How big is Lisbon?", Option.none(), "loose")).toEqual(["lisbon", "lisboa"])
+  })
+
+  test("named loosely, the speaker's words lose their accent marks as the question's do", () => {
+    const links = graph(["user", "lives in", "Madrid"])
+    const speaker = Option.some({ name: "user", words: ["mí", "yo"] })
+    expect(namedIn(links, "Where is mi house?", speaker, "loose")).toEqual(["user"])
+    expect(namedIn(links, "Where is mi house?", speaker)).toEqual([])
+  })
+
+  test("a letter written as parts is still one letter: two Korean syllables are two letters, too short to be a letter away", () => {
+    const links = graph(["서울", "is in", "Korea"])
+    expect(namedIn(links, "How big is 서울?", Option.none(), "loose")).toEqual(["서울"])
+    expect(namedIn(links, "How big is 서올?", Option.none(), "loose")).toEqual([])
+  })
+
+  test("an ordinary word a letter from a thing of one word names it: the cost of naming by spelling", () => {
+    const links = graph(["Chile", "borders", "Peru"], ["Lopes", "plays", "padel"], ["Rui Lopes", "owns", "a boat"])
+    expect(namedIn(links, "What happened while you were out?", Option.none(), "loose")).toEqual(["chile"])
+    expect(namedIn(links, "Who loves tea?", Option.none(), "loose")).toEqual(["lopes"])
+    expect(namedIn(links, "Who loves tea?")).toEqual([])
+  })
+
+  test("naming loosely changes no thing: Lisbon and Lisboa stay two things, each with its own links", () => {
+    const links = graph(["Ana", "lives in", "Lisbon"], ["Bo", "lives in", "Lisboa"])
+    expect(followed(links, "Lisbon").links.map((link) => link.subject)).toEqual(["Ana"])
+    expect(followed(links, "Lisboa").links.map((link) => link.subject)).toEqual(["Bo"])
+  })
+})
+
+describe("the links near a question, named loosely", () => {
+  test("a question that names a thing only loosely walks from it; named exactly it reaches nothing", () => {
+    const links = graph(["João", "works at", "Acme"], ["Acme", "is in", "Porto"], ["Bo", "works at", "Globex"])
+    expect(said(near(links, "In what city does Joao work?", two))).toEqual([])
+    expect(said(near(links, "In what city does Joao work?", { ...two, names: "loose" }))).toEqual(["e1: João works at Acme", "e2: Acme is in Porto"])
+  })
+
+  test("the words that rank a path lose their accent marks too: \"cafe\" meets \"café\"", () => {
+    const links = graph(["Ana", "likes the café", "Bica"], ["Ana", "lives in", "Porto"])
+    expect(said(near(links, "Which cafe is Ana's?", two))).toEqual(["e2: Ana lives in Porto", "e1: Ana likes the café Bica"])
+    expect(said(near(links, "Which cafe is Ana's?", { ...two, names: "loose" }))).toEqual(["e1: Ana likes the café Bica", "e2: Ana lives in Porto"])
+  })
+
+  test("a thing's own words win over an earlier run a letter away: \"Mario\" ranks the path though \"Maria\" is named", () => {
+    const links = graph(["Maria", "is the sister of", "Mario Rossi"], ["Maria", "lives in", "Porto"])
+    expect(said(near(links, "Is Mario older than Maria?", { ...two, names: "loose" }))).toEqual(["e1: Maria is the sister of Mario Rossi", "e2: Maria lives in Porto"])
+  })
+
+  test("the question's word that named a thing loosely ranks nothing, as the thing's own words rank nothing", () => {
+    const links = graph(["Eva Novak", "lives in", "Porto"], ["Eva Novak", "visited", "Nowak Street"])
+    expect(said(near(links, "Where does Eva Nowak live?", { ...two, names: "loose" }))).toEqual(["e1: Eva Novak lives in Porto", "e2: Eva Novak visited Nowak Street"])
+  })
+})
+
 describe("the links near a question", () => {
   test("two links away, the path the question follows comes first: the link it reaches through ranks with the link it took", () => {
     expect(said(near(seven, "In what city does Ana work?", two))).toEqual([
@@ -209,5 +295,12 @@ describe("the options", () => {
     expect(checkedOptions({ hops: 2, limit: 51 })).toEqual(Result.fail("withGraph needs a limit, a whole number from 1 to 50: the most links a request is sent. It was given 51"))
     expect(Result.isFailure(checkedOptions({ hops: 2, limit: 8, speaker: { name: "!!", words: ["me"] } }))).toBe(true)
     expect(Result.isFailure(checkedOptions({ hops: 2, limit: 8, speaker: { name: "user", words: ["my own"] } }))).toBe(true)
+  })
+
+  test("names is \"exact\" or \"loose\"; any other value, which untyped code can give, is refused in words", () => {
+    expect(Result.isSuccess(checkedOptions({ hops: 2, limit: 8, names: "loose" }))).toBe(true)
+    expect(Result.isSuccess(checkedOptions({ hops: 2, limit: 8, names: "exact" }))).toBe(true)
+    const untyped: { readonly hops: number; readonly limit: number; readonly names?: never } = JSON.parse('{"hops":2,"limit":8,"names":"fuzzy"}')
+    expect(checkedOptions(untyped)).toEqual(Result.fail('withGraph\'s names is "exact" or "loose": how a question names a thing. It was given "fuzzy"'))
   })
 })

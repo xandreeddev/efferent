@@ -241,6 +241,7 @@ type LinkedThings
 type LoadedSkill
 type MemoryFailure
 type ModelScript
+type Naming
 type Offered
 type OwnSkills
 type OwnTools
