@@ -26,6 +26,7 @@ import {
   EvaluationServicesLive,
   evaluationEnvironmentPort,
   EvidenceProjector,
+  gate,
   graderFromEvaluator,
   gradingContext,
   runEvaluation,
@@ -78,7 +79,7 @@ export const candidateName = (id: string): string => id.replace(/[/@]/g, ":")
 const runnableNames = {
   Effect, Fiber, Layer, Option, Queue, Schema, kernel, Sessions, inProcessJournal, sessions, turnsOf,
   compareDecisionTrials, decisionTrialOf, defineRunnable, EvalId, EvaluationError, EvaluationRunStore, EvaluationServicesLive,
-  evaluationEnvironmentPort, EvidenceProjector, graderFromEvaluator, gradingContext, runEvaluation, runnableExecutionPort,
+  evaluationEnvironmentPort, EvidenceProjector, gate, graderFromEvaluator, gradingContext, runEvaluation, runnableExecutionPort,
   tasksFromDataset, TrialRecorder,
 }
 

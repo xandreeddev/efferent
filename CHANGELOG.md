@@ -24,6 +24,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   passed is the caller's. It never gives `failed`: a trial that did not
   complete is never a regression. Lesson 13 of the docs site calls it in
   place of the mapping it wrote out.
+- `@xandreed/evals`: `gate(options)` and `GateOptions`, a suite's gate
+  from what it needs said: the grader, the metric, and a minimum, a maximum
+  or both as plain numbers (the type asks for one); `aggregate` defaults to
+  `passRate`, `mode` to `blocking`, `requiresReviewedReference` to true.
+  Lesson 13 of the docs site writes its gates in that form
+  (`{ grader: "answer@1", metric: "holds", minimum: 0.8 }`), passes each
+  to `gate` in runnable.ts, and refuses at the build a gate with no number
+  for its bound, or a `mode` or `aggregate` outside its words (the run
+  would take a misspelt aggregate for the pass rate); evals.ts no longer
+  imports `Option`. Its comments now say what a reviewed reference does: a
+  gate does not pass while any of its trials' references is provisional
+  (a page test pins it).
 
 - `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
   between two things ("Ana", "works at", "Acme") is a record of a graph

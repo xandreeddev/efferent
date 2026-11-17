@@ -96,6 +96,7 @@ const evaluationFingerprint
 const executionFingerprint
 const exportableScores
 const fingerprint
+const gate
 const gradeEvaluation
 const gradeTrial
 const graderFromEvaluator
@@ -172,6 +173,7 @@ type EvidenceProjection
 type ExportReceipt
 type ExportedScore
 type Gate
+type GateOptions
 type Grade
 type Grader
 type GradingContext

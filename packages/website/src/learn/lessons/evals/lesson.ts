@@ -7,7 +7,7 @@
 // "Run evals" runs it (`Lesson.evals`), taking turns with the chat as
 // lesson 12's checks do. The eval package is loaded only when it is pressed,
 // by `load`, so no other lesson's page carries it.
-import { Effect, Option, Predicate, Result, Schema } from "effect"
+import { Effect, Predicate, Result, Schema } from "effect"
 import { DEFAULT_MEMORY, memoryDocumentOf } from "../tools/memory.source.ts"
 import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsDocumentOf } from "../tools/tools.source.ts"
 import { CHAT } from "../test-your-agent/chat.source.ts"
@@ -21,7 +21,7 @@ import { runnableDocumentOf } from "./runnable.source.ts"
 import { baselineMisses, lenient, once, strictGate } from "./config-edit.ts"
 
 /** What evals.ts imports. */
-const evalsNames = { Effect, Option, Schema }
+const evalsNames = { Effect, Schema }
 
 /** What evals.ts made, each held to the guard of its kind. */
 export interface EvalsMade {
@@ -36,7 +36,16 @@ export interface EvalsMade {
 const NO_DATASET = "evals.ts did not run: dataset is not a dataset. It should be { id, version, input, reference, cases }, with input and reference schemas and cases a list."
 const NO_EVALUATORS = "evals.ts did not run: evaluators is not a list of graders. It should be an array, each entry { id, version, metrics, run }."
 const NO_REPETITIONS = "evals.ts did not run: repetitions is not a whole number of at least 1."
-const NO_GATES = "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, aggregate, mode, minimum, maximum, requiresReviewedReference }."
+const NO_GATES = "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, minimum } or { grader, metric, maximum }, each bound a number; aggregate (\"passRate\" or \"mean\"), mode (\"blocking\" or \"diagnostic\") and requiresReviewedReference (true or false) may be given too."
+
+/** Whether a value of evals.ts is a gate as the package's gate takes it: a grader, a metric, and a bound that is a number. */
+const isGate = (entry: unknown): boolean => {
+  const bound = (key: string) => typeof named(entry, key) === "number"
+  const absent = (key: string) => named(entry, key) === undefined || bound(key)
+  const oneOf = (key: string, words: ReadonlyArray<unknown>) => named(entry, key) === undefined || words.includes(named(entry, key))
+  return typeof named(entry, "grader") === "string" && typeof named(entry, "metric") === "string" && (bound("minimum") || bound("maximum")) && absent("minimum") && absent("maximum") &&
+    oneOf("aggregate", ["passRate", "mean"]) && oneOf("mode", ["blocking", "diagnostic"]) && oneOf("requiresReviewedReference", [true, false])
+}
 
 /** One case of the dataset: its id, or why it is no case, in words that name the file. */
 const caseIdOf = (entry: unknown, index: number): Result.Result<string, string> => {
@@ -66,7 +75,7 @@ export const evalsMade = (evals: string): Result.Result<EvalsMade, string> =>
     const repetitions = named(made, "repetitions")
     if (typeof repetitions !== "number" || !Number.isInteger(repetitions) || repetitions < 1) return Result.fail(NO_REPETITIONS)
     const gates = named(made, "gates")
-    if (!Array.isArray(gates)) return Result.fail(NO_GATES)
+    if (!Array.isArray(gates) || !gates.every(isGate)) return Result.fail(NO_GATES)
     const listed: ReadonlyArray<unknown> = evaluators
     const bounds: ReadonlyArray<unknown> = gates
     return Result.map(Result.all(entries.map(caseIdOf)), (tasks) => ({ dataset, evaluators: listed, repetitions, gates: bounds, tasks }))

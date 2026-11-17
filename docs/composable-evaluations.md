@@ -185,7 +185,10 @@ each candidate's trials (`mean` or `passRate`) and checks it against a minimum,
 a maximum or both (a gate needs at least one), `blocking` or `diagnostic`, so a new semantic metric can stay
 diagnostic. The run records each one as a `GateFinding` in `EvaluationRun`'s
 `gates`. A gate with `requiresReviewedReference` does not pass while any of its
-trials' reference labels is provisional.
+trials' reference labels is provisional. `gate({ grader, metric, minimum })`
+writes one with the rest by default (`passRate`, `blocking`, reviewed references
+required), each bound a plain number; its type asks for a minimum, a maximum or
+both.
 
 A run preserves completed trials when a candidate fails and reports that failure
 separately. Regrading saved evidence uses `gradeEvaluation` (`efferent-eval grade

@@ -7,7 +7,7 @@
 import { replaced } from "../base/agent.source.ts"
 
 /** Read-only: where each name the file uses comes from. */
-export const EVALS_IMPORTS = `import { Effect, Option, Schema } from "effect"`
+export const EVALS_IMPORTS = `import { Effect, Schema } from "effect"`
 
 /** Everything before the editable part. */
 export const EVALS_HEADER = `${EVALS_IMPORTS}\n\n`
@@ -18,7 +18,8 @@ const CASES = `    {
       // A family is a kind of task: these two call a tool, the other two answer from the message.
       family: "tool",
       split: "validation",
-      // Someone read this reference and agrees with it. The gate below counts reviewed ones only.
+      // Someone read this reference and agrees with it. The gate below does not pass while any
+      // of its trials' references is "provisional", one no one has reviewed yet.
       review: "reviewed",
       input: "What is 2 + 3?",
       reference: { call: { name: "calculator", input: { a: 2, op: "+", b: 3 } }, holds: "5" },
@@ -70,11 +71,7 @@ export const ANSWER_CHECK = `      const message = messageOf(turns)
 export const GATE = `  {
     grader: "answer@1",
     metric: "holds",
-    aggregate: "passRate",
-    mode: "blocking",
-    minimum: Option.some(0.8),
-    maximum: Option.none(),
-    requiresReviewedReference: true,
+    minimum: 0.8,
   },
 `
 
@@ -148,8 +145,11 @@ ${ANSWER_CHECK}      return Effect.succeed({ metrics: [{ kind: "boolean", name: 
 ${REPETITIONS}
 
 // The gates: what a candidate must reach. This one asks that at least 80 % of a candidate's
-// trials have an answer that holds the reference. A blocking gate fails the suite; a diagnostic
-// one is reported and fails nothing.
+// trials have an answer that holds the reference. A gate names a grader, its metric, and a
+// minimum, a maximum or both; runnable.ts passes each to the package's gate, which fills in the
+// rest: it counts the share of trials that passed, it is blocking (it fails the suite), and it
+// does not pass while any of its trials' references is provisional. mode: "diagnostic" makes
+// one that is reported and fails nothing.
 export const gates = [
 ${GATE}]`
 
@@ -172,12 +172,12 @@ export const TYPED: ReadonlyArray<readonly [string, string]> = [
   ["const callsOf = (turns) =>", 'const callsOf = (turns: Graded["turns"]) =>'],
   ["const listed = (calls) =>", "const listed = (calls: ReadonlyArray<string>) =>"],
   ["export const evaluators = [", "export const evaluators: ReadonlyArray<Evaluator<Graded>> = ["],
-  ["export const gates = [", 'export const gates: Suite["gates"] = ['],
+  ["export const gates = [", "export const gates: ReadonlyArray<GateOptions> = ["],
 ]
 
 /** The same file as a module a test can compile: its imports, the types it is held to, and the text typed. */
 export const evalsModuleOf = (evals: string): string => `${EVALS_IMPORTS}
-import type { Dataset, Evaluator, Suite } from "@xandreed/evals"
+import type { Dataset, Evaluator, GateOptions } from "@xandreed/evals"
 import type { Graded } from "./runnable.ts"
 
 ${replaced(evals, TYPED)}

@@ -36,6 +36,7 @@ import {
   EvaluationServicesLive,
   evaluationEnvironmentPort,
   EvidenceProjector,
+  gate,
   graderFromEvaluator,
   gradingContext,
   runEvaluation,
@@ -193,12 +194,12 @@ const tasks = tasksFromDataset(dataset, {
 // Whether a trial passed: each gate's grader scored it, and said yes. The page's table counts
 // these, and the comparison below reads them.
 const passed = (trial: Trial) =>
-  gates.every((gate) =>
+  gates.every((one) =>
     trial.grades.some(
       (grade) =>
-        \`\${grade.grader}@\${grade.version}\` === gate.grader &&
+        \`\${grade.grader}@\${grade.version}\` === one.grader &&
         grade.status === "scored" &&
-        grade.metrics.some((metric) => metric.name === gate.metric && metric.value === true),
+        grade.metrics.some((metric) => metric.name === one.metric && metric.value === true),
     ),
   )
 
@@ -295,7 +296,8 @@ const app: EvaluationApp = {
       description: "the program on the lesson's tasks",
       tasks,
       candidates,
-      gates,
+      // Each gate of evals.ts as the suite holds it: the package's gate fills in what it left out.
+      gates: gates.map(gate),
       repetitions,
       // One trial at a time: a model on your machine answers one message at a time.
       concurrency: 1,

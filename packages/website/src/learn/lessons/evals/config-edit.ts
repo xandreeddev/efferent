@@ -30,11 +30,7 @@ export const STRICT_GATE = `  // Strict: every trial calls the right tool with t
   {
     grader: "tool@1",
     metric: "called",
-    aggregate: "passRate",
-    mode: "blocking",
-    minimum: Option.some(1),
-    maximum: Option.none(),
-    requiresReviewedReference: true,
+    minimum: 1,
   },
 `
 
