@@ -564,7 +564,13 @@ check` (tsc over the learn code, the build, the link check) and
   sum to the calculator, "ask a helper" to `delegate`, "show a table of" to
   `show`, a summarizer's request summarized by count; it reads past every
   host note. A new rule gets a test in `models/models.test.ts` that fails
-  without it. Real models run in the browser (WebLLM on WebGPU, a CPU
+  without it. A sum is two numbers and an operator, neither number part of
+  a longer one (a date, a phone number) and an x only between spaces; a
+  table's size is the number after "to"; a message that starts with
+  "remember" is `remember`'s, saved without its "to" or "that", before the
+  rule that sends a message about notes to `recall` (a sum in it still
+  comes first); a helper's answer is said as a sentence that ends, with the
+  step's other results after it. Real models run in the browser (WebLLM on WebGPU, a CPU
   worker, Chrome's Prompt API). When the GPU stops running a WebLLM model (its
   driver reset the device), the chat says so in `gpuLostWords`
   (`models/gpu-lost.ts`): one request gave the model more new text to read

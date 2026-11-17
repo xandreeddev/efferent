@@ -95,7 +95,7 @@ const page = async (sources: Record<string, string> = SOURCES) => {
 
 const NOTES = ["Remember to buy milk.", "Remember to call Ana."]
 const SAVED = ['The tool answered: remember says "Saved. 1 notes so far.".', 'The tool answered: remember says "Saved. 2 notes so far.".']
-const BOTH = 'The tool answered: recall says ["to buy milk.","to call Ana."].'
+const BOTH = 'The tool answered: recall says ["buy milk.","call Ana."].'
 const NOT_APPROVED = "I did not delete anything: you did not approve it."
 const outcomes = async (runtime: LessonRuntime) => (await runtime.journal()).flatMap((event) => Option.toArray(dataOf(turnEndedEvent, event))).map((ended) => ended.outcome._tag)
 
@@ -287,11 +287,11 @@ describe("lesson 9 on the page (the kernel, Echo)", () => {
     expect((await names()).slice(12)).toEqual(["13 core.session.turn.started", "14 conversation.user.message", "15 conversation.assistant.message", "16 core.session.turn.ended"])
     expect(await outcomes(runtime)).toEqual(["Completed", "Completed", "Interrupted"])
     // forget did not run: the notes the test holds are both there.
-    expect(globalThis.approvalsLessonNotes).toEqual(["to buy milk.", "to call Ana."])
+    expect(globalThis.approvalsLessonNotes).toEqual(["buy milk.", "call Ana."])
     // An answer that comes after the question was dropped does nothing.
     runtime.decide(question.id, { _tag: "Approved" })
     await say("What are my notes?")
-    expect(globalThis.approvalsLessonNotes).toEqual(["to buy milk.", "to call Ana."])
+    expect(globalThis.approvalsLessonNotes).toEqual(["buy milk.", "call Ana."])
     expect(stored(decidedEvent.name)).toEqual([])
   })
 
@@ -308,12 +308,12 @@ describe("lesson 9 on the page (the kernel, Echo)", () => {
     expect(stored(decidedEvent.name)).toEqual([])
     expect(forgotten()).toEqual([])
     expect(await outcomes(runtime)).toEqual(["Completed", "Completed", "Interrupted"])
-    expect(globalThis.approvalsLessonNotes).toEqual(["to buy milk.", "to call Ana."])
+    expect(globalThis.approvalsLessonNotes).toEqual(["buy milk.", "call Ana."])
     // The call no result answers is not sent again: the next turn's prompt holds the message and the model's words, no call.
     await say("Hello again.")
     expect(prompts().at(-1)!.messages.slice(-3).map((message) => [message.role, message.text])).toEqual([["user", "Forget my notes."], ["assistant", "Let me work that out."], ["user", "Hello again."]])
     expect(forgotten()).toEqual([])
-    expect(globalThis.approvalsLessonNotes).toEqual(["to buy milk.", "to call Ana."])
+    expect(globalThis.approvalsLessonNotes).toEqual(["buy milk.", "call Ana."])
   })
 
   test("Clear context while a question waits: the row goes, no answer is stored, and forget does not run", async () => {
@@ -333,7 +333,7 @@ describe("lesson 9 on the page (the kernel, Echo)", () => {
     expect(stored(decidedEvent.name)).toEqual([])
     expect(forgotten()).toEqual([])
     expect(await runtime.journal()).toEqual([])
-    expect(globalThis.approvalsLessonNotes).toEqual(["to buy milk.", "to call Ana."])
+    expect(globalThis.approvalsLessonNotes).toEqual(["buy milk.", "call Ana."])
   })
 
   test("a decision for an id nothing waits under does nothing, and a question is answered once", async () => {
@@ -432,7 +432,7 @@ describe("lesson 9 on the page (the kernel, Echo)", () => {
     expect([sum.action, sum.detail]).toEqual(["tool.calculator", 'Call calculator with {"a":12,"op":"*","b":3}.'])
     await answer(sum.id, { _tag: "Approved" })
     const note = await ask("Remember to buy milk.")
-    expect([note.action, note.detail]).toEqual(["tool.remember", 'Call remember with {"note":"to buy milk."}.'])
+    expect([note.action, note.detail]).toEqual(["tool.remember", 'Call remember with {"note":"buy milk."}.'])
     await answer(note.id, { _tag: "Approved" })
     // forget: the loop asks whether to call it, and then the tool asks whether to delete.
     const byLoop = await ask("Forget my notes.")
@@ -477,7 +477,7 @@ describe("lesson 9 on the page (the kernel, Echo)", () => {
     approvals.three.forEach((text) => three.send(text))
     await done
     // One answer for the three messages: none is left unanswered, and nothing waits for a person.
-    expect(three.replies()).toEqual(['The tools answered: remember says "Saved. 1 notes so far."; remember says "Saved. 2 notes so far."; recall says ["to buy milk.","to call Ana."].'])
+    expect(three.replies()).toEqual(['The tools answered: remember says "Saved. 1 notes so far."; remember says "Saved. 2 notes so far."; recall says ["buy milk.","call Ana."].'])
     expect(three.questions()).toEqual([])
     expect(await outcomes(three.runtime)).toEqual(["Completed"])
     // The tools offered with every prompt: lesson 2's three, and forget.

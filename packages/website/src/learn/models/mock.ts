@@ -157,6 +157,13 @@ const showTable = (match: RegExpExecArray): EchoCall => {
 
 const OPS: Record<string, string> = { "+": "+", "-": "-", "*": "*", x: "*", "×": "*", "/": "/", "÷": "/" }
 
+/**
+ * A sum in a message: two numbers and an operator between them. A number that is part of a longer one is none: a
+ * date (2026-11-14, 14/11/2026) or a phone number (555-123-4567) is no sum. An x is the operator only with a space
+ * on each side ("6 x 7"), so "2x4" is no sum.
+ */
+const SUM = /(?<![\d\/])(?<!\d[.\/-])(-?\d+(?:\.\d+)?)\s*([-+*×/÷]|(?<=\s)x(?=\s))\s*(-?\d+(?:\.\d+)?)(?!\d|[.\/-]\d)/
+
 /** The first sentence of a text, on one line: up to its first full stop, question mark or exclamation mark; all of it when it has none. */
 const firstSentence = (text: string): string => {
   const flat = text.replace(/\s+/g, " ").trim()
@@ -687,10 +694,13 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     while (first > 0 && prompt.content[first - 1]?.role === "tool") first--
     const parts = prompt.content.slice(first, at + 1).flatMap((message) => (message.role === "tool" ? message.content : []))
     const helped = parts.flatMap((part) => (part.type === "tool-result" && part.name === "delegate" && !part.isFailure && typeof part.result === "object" && part.result !== null && "answer" in part.result ? [String(part.result.answer)] : []))
-    if (helped.length > 0) return `The helper answered: ${helped.join(" ")}`
+    // A helper's answer, as a sentence that ends; the step's other results, if any, are said after it.
+    const helper = helped.length === 0 ? [] : [`The helper answered: ${helped.map((answer) => (/[.!?]$/.test(answer.trim()) ? answer.trim() : `${answer.trim()}.`)).join(" ")}`]
+    const others = parts.filter((part) => !(part.type === "tool-result" && part.name === "delegate" && !part.isFailure))
+    if (helper.length > 0 && !others.some((part) => part.type === "tool-result")) return helper[0]!
     // A result of lookup or readResult (lesson 8) and a refused forget (lesson 9) are answered in words of their own;
     // any other, and any other failure, as the tool's.
-    const every = parts.flatMap((part) => (part.type === "tool-result" ? [part] : []))
+    const every = others.flatMap((part) => (part.type === "tool-result" ? [part] : []))
     // The ids linkThings answered in this step (lesson 18), in one sentence before the rest: a link said again is
     // not stored again, and its id is answered, so the sentence names ids and says nothing of what was stored.
     const linked = every.flatMap((part) => linkedBy(part) ?? [])
@@ -699,8 +709,8 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const paramsOf = paramsOfCall(prompt.content)
     const read = [...stored, ...results.flatMap((part) => readingOf(part, paramsOf) ?? [])]
     const all = results.flatMap((part) => (readingOf(part, paramsOf) === undefined ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
-    if (read.length > 0 && all.length === 0) return read.join(" ")
-    return [...read, `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`].join(" ")
+    if (read.length > 0 && all.length === 0) return [...helper, ...read].join(" ")
+    return [...helper, ...read, `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`].join(" ")
   }
   // Every message sent since its last answer: the turn's own, and any that steered it.
   const since = prompt.content.length - 1 - prompt.content.slice().reverse().findIndex((message) => message.role === "assistant" || message.role === "tool")
@@ -772,7 +782,8 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const file = fileCallFor(asked, offered)
     if (file !== undefined) return [file]
     // "Show a table of squares to 8", "show the times table of 7": a table, shown under an id named for what it holds.
-    const table = /\btable of (squares|cubes)(?:\D+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
+    // The size is the number after "to" ("to 8", "up to 8"): a number anywhere else in the message is not it.
+    const table = /\btable of (squares|cubes)(?:\s+(?:up\s+)?to\s+(\d+))?/i.exec(asked) ?? /\btimes table of (\d+)/i.exec(asked)
     if (table !== null && offered.includes("show")) return [showTable(table)]
     // "Ask a helper: …", "have a helper work out …": the rest is the helper's task.
     const handed = /\b(?:ask|have|get) a helper\b[\s:,-]*(?:to\s+)?(.+)/i.exec(asked)
@@ -785,10 +796,15 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     // "Forget my notes", "delete the notes", "clear all notes": forget, which asks a person before it deletes. It
     // goes before the rule under it, which takes any message about notes for a question.
     if (/\b(?:forget|delete|clear)\s+(?:all\s+(?:(?:my|the)\s+)?|my\s+|the\s+)notes\b/i.test(asked) && offered.includes("forget")) return [{ name: "forget", params: {} }]
+    const sum = SUM.exec(asked)
+    // "Remember to call Ana.", "remember that …": a note, saved without its "to" or "that". A message that starts so
+    // is remember's even when it mentions notes ("Remember to tidy my notes."); with a sum in it the sum comes first,
+    // as below ("Remember that 2 + 2 is 4." is a sum here).
+    const note = /\bremember (?:that |to )?(.+)/i.exec(asked)
+    const startsWithRemember = /^\s*remember\b/i.test(asked)
+    if (note !== null && startsWithRemember && sum === null && offered.includes("remember")) return [{ name: "remember", params: { note: note[1]?.trim() ?? "" } }]
     if (/\b(notes?|what did i ask you to remember)\b/i.test(asked) && offered.includes("recall")) return [{ name: "recall", params: {} }]
-    const sum = /(-?\d+(?:\.\d+)?)\s*([-+*x×/÷])\s*(-?\d+(?:\.\d+)?)/.exec(asked)
     if (sum !== null && offered.includes("calculator")) return [{ name: "calculator", params: { a: Number(sum[1]), op: OPS[sum[2] ?? "+"] ?? "+", b: Number(sum[3]) } }]
-    const note = /\bremember (?:that )?(.+)/i.exec(asked)
     if (note !== null && offered.includes("remember")) return [{ name: "remember", params: { note: note[1]?.trim() ?? "" } }]
     return []
   }
