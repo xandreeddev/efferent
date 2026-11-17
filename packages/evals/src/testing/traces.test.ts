@@ -15,7 +15,7 @@ const store = Layer.succeed(EvaluationRunStore, {
 })
 const trialKeys = ["eval.run.id", "eval.trial.id", "eval.suite.id", "eval.task.id", "eval.candidate.id", "eval.sample"]
 
-test("a run is one eval.run span: each trial under it, the grading under eval.regrade and each grade under that, all carrying the trial's ids", async () => {
+test("a run is one eval.run span: each trial under it, and each trial's grading under it as the trial ends, all carrying the trial's ids", async () => {
   const { tracer, named, parentOf } = spanRecorder()
   const annotations: Array<Record<string, unknown>> = []
   const app = fixture(() =>
@@ -37,8 +37,8 @@ test("a run is one eval.run span: each trial under it, the grading under eval.re
   expect(run?.attributes.get("eval.run.id")).toBe("run")
   expect(Option.isNone(run!.parent)).toBe(true)
   expect(named("eval.trial").map(parentOf)).toEqual(["eval.run"])
-  expect(named("eval.regrade").map(parentOf)).toEqual(["eval.run"])
-  expect(named("eval.grade").map(parentOf)).toEqual(["eval.regrade"])
+  expect(named("eval.regrade")).toEqual([])
+  expect(named("eval.grade").map(parentOf)).toEqual(["eval.run"])
   expect(["eval.trial", "eval.grade"].map((name) => trialKeys.map((key) => named(name)[0]?.attributes.get(key)))).toEqual([ids, ids])
   // The runnable's logs carry the trial's ids as annotations, under the same keys.
   expect(annotations.map((each) => trialKeys.map((key) => each[key]))).toEqual([ids])

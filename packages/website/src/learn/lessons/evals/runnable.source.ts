@@ -311,9 +311,10 @@ const app: EvaluationApp = {
   graders,
 }
 
-// The run: the suite once for each candidate, one after the other, so a candidate's trials are
-// graded and its gates decided as soon as they have all run. Then every trial is compared with
-// Echo's: the same task and repetition, passed by Echo and failed here, is a regression.
+// The run: the suite once for each candidate, one after the other, so a candidate's gates are
+// decided as soon as its trials have all run; each trial is graded as it ends. Then every trial
+// is compared with Echo's: the same task and repetition, passed by Echo and failed here, is a
+// regression.
 export const evaluation = Effect.forEach(
   candidates,
   (candidate) =>

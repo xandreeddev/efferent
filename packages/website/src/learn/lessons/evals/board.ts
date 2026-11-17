@@ -163,13 +163,18 @@ export class EvalsBoard {
     }
   }
 
-  /** The line of a set of trials: passes of the count once each is graded, else how many ran. */
+  /**
+   * The line of a set of trials: passes of the count once each is graded; before that, how many ran and, of those
+   * graded (each trial is graded as it ends), how many passed.
+   */
   private line(trials: ReadonlyArray<Trial>, of: number): string {
     const verdicts = trials.flatMap((trial) => Option.toArray(this.passed(trial)))
-    if (verdicts.length === of) return passesLine(verdicts.filter((passed) => passed).length, of)
+    const passes = verdicts.filter((passed) => passed).length
+    if (verdicts.length === of) return passesLine(passes, of)
     const count = trials.filter(ran).length
-    const left = this.ending._tag === "Running" ? "" : ", not graded"
-    return count === 0 && this.ending._tag === "Running" ? "waiting" : `ran ${count} of ${of}${left}`
+    const running = this.ending._tag === "Running"
+    if (verdicts.length > 0) return `ran ${count} of ${of}, ${passes} of ${verdicts.length} graded passed${running ? " so far" : ""}`
+    return count === 0 && running ? "waiting" : `ran ${count} of ${of}${running ? "" : ", not graded"}`
   }
 
   private gatesOf(candidate: string): ReadonlyArray<GateView> {
@@ -201,7 +206,7 @@ export class EvalsBoard {
     switch (this.ending._tag) {
       case "Running": return `${ran}.`
       case "Done": return `Done: ${ran}, each graded.`
-      case "Stopped": return `Stopped: ${ran}. A candidate's trials are graded once they have all run, so a candidate cut short has none graded.`
+      case "Stopped": return `Stopped: ${ran}. Trials are graded as they end, and one whose grading was cut short is not graded. A candidate cut short has no gates, and there is no comparison.`
       case "Failed": return `The evals did not run to the end: ${this.ending.message}`
     }
   }

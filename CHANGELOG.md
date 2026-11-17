@@ -42,6 +42,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   keys: reports recorded by earlier releases decode unchanged, as
   `run-compat.test.ts` checks. Lesson 13's table says them ("answer@1
   holds at least 0.8, blocking: measured 1").
+- `@xandreed/evals`: `runEvaluation` grades each trial as it ends, in place
+  of every trial once all have run, so a trial's grades reach the store as
+  it ends and a run cut short keeps the grades of the trials it finished.
+  One grade at a time across the run, as before; grading still draws on no
+  spend budget. The report is the one a regrade of the run's execution
+  gives (a test holds the two equal), its `startedAt` the execution's. A
+  run's `eval.grade` spans are now under `eval.run`; `eval.regrade` is
+  `gradeEvaluation`'s alone, over saved work. Lesson 13's table fills with
+  passes trial by trial, and Stop leaves the cut candidate's finished
+  trials graded ("ran 1 of 4, 0 of 1 graded passed").
 
 - `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
   between two things ("Ana", "works at", "Acme") is a record of a graph

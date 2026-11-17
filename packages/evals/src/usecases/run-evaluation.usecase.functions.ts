@@ -413,6 +413,10 @@ const scheduledTrial = (
     })
   )
 
+/** How long a grader may take on a trial of a suite: the suite's own deadline as the app declares it, as a regrade reads it. */
+const gradingTimeout = (app: EvaluationApp, suite: Suite) =>
+  app.suites.concat(app.calibrations.map((entry) => entry.suite)).find((entry) => entry.id === suite.id)?.timeoutMs ?? suite.timeoutMs
+
 /** What a run reports as failed: trials that did not complete, but those its budget skipped. */
 const unfinished = (trial: Trial) => trial.status !== "completed" && trial.status !== "skipped"
 
@@ -452,6 +456,73 @@ export const executionFingerprint = (run: EvaluationRun) =>
     )
   })
 
+/**
+ * The graded run of an executed one: its graded trials, the fingerprints that name the grading and the execution it
+ * graded, the gates of the suites it ran (`matches` picks the graders a regrade selected), and its failures. Written
+ * to the store, and returned. `runEvaluation` and `gradeEvaluation` both end here.
+ */
+const gradedRunOf = Effect.fnUntraced(function* (
+  app: EvaluationApp,
+  source: EvaluationRun,
+  id: EvalId,
+  suites: ReadonlyArray<Suite>,
+  matches: (grader: string) => boolean,
+  trials: ReadonlyArray<Trial>,
+  startedAt: number
+) {
+  const run: EvaluationRun = {
+    ...source,
+    id,
+    phase: "graded",
+    startedAt,
+    endedAt: yield* Clock.currentTimeMillis,
+    trials,
+    fingerprints: {
+      ...source.fingerprints,
+      gradingConfiguration: fingerprint({
+        graders: app.graders.map((grader) => grader.definition),
+        projections: app.projections.map(({ definition }) => definition)
+      }),
+      sourceRun: source.id,
+      sourceExecution:
+        source.fingerprints.sourceExecution ?? executionFingerprint(source)
+    },
+    gates: runGates(
+      suites.map((suite) => ({
+        ...suite,
+        gates: suite.gates.filter((gate) => matches(gate.grader))
+      })),
+      trials
+    ),
+    failures: trials.flatMap((trial) => [
+      ...(unfinished(trial)
+        ? [`${trial.id}: ${trial.reason}`]
+        : []),
+      ...trial.grades
+        .filter(
+          (grade) =>
+            grade.status === "error" || grade.status === "unavailable"
+        )
+        .map((grade) => `${trial.id}/${grade.grader}: ${grade.reason}`)
+    ])
+  }
+  const store = yield* EvaluationRunStore
+  yield* store.writeRun(run)
+  return run
+})
+
+/** The suites a run's trials ran, each with the candidates that ran it, as a graded run's gates are decided over. */
+const suitesRun = (suites: ReadonlyArray<Suite>, trials: ReadonlyArray<Trial>): ReadonlyArray<Suite> =>
+  suites
+    .filter((suite) => trials.some((trial) => trial.suiteId === suite.id))
+    .map((suite) => ({
+      ...suite,
+      candidates: trials
+        .filter((trial) => trial.suiteId === suite.id)
+        .map((trial) => trial.candidate)
+        .filter((candidate, index, entries) => entries.findIndex((entry) => entry.id === candidate.id) === index)
+    }))
+
 /** Regrades captured work. This use case never opens an environment or invokes a runnable. */
 export const gradeEvaluation = Effect.fn("eval.regrade")(
   function* (
@@ -476,20 +547,7 @@ export const gradeEvaluation = Effect.fn("eval.regrade")(
     const allSuites = app.suites.concat(
       app.calibrations.map((entry) => entry.suite)
     )
-    const suites = allSuites
-      .filter((suite) =>
-        source.trials.some((trial) => trial.suiteId === suite.id)
-      )
-      .map((suite) => ({
-        ...suite,
-        candidates: source.trials
-          .filter((trial) => trial.suiteId === suite.id)
-          .map((trial) => trial.candidate)
-          .filter(
-            (candidate, index, entries) =>
-              entries.findIndex((entry) => entry.id === candidate.id) === index
-          )
-      }))
+    const suites = suitesRun(allSuites, source.trials)
     const requested = selection.graders ?? []
     // A grader key is `<id>@<version>`; a selection names a key or a registered id.
     const selects = (key: string, selected: string) =>
@@ -561,45 +619,7 @@ export const gradeEvaluation = Effect.fn("eval.regrade")(
       }),
       { concurrency: 1 }
     )
-    const run: EvaluationRun = {
-      ...source,
-      id,
-      phase: "graded",
-      startedAt,
-      endedAt: yield* Clock.currentTimeMillis,
-      trials,
-      fingerprints: {
-        ...source.fingerprints,
-        gradingConfiguration: fingerprint({
-          graders: app.graders.map((grader) => grader.definition),
-          projections: app.projections.map(({ definition }) => definition)
-        }),
-        sourceRun: source.id,
-        sourceExecution:
-          source.fingerprints.sourceExecution ?? executionFingerprint(source)
-      },
-      gates: runGates(
-        suites.map((suite) => ({
-          ...suite,
-          gates: suite.gates.filter((gate) => matches(gate.grader))
-        })),
-        trials
-      ),
-      failures: trials.flatMap((trial) => [
-        ...(unfinished(trial)
-          ? [`${trial.id}: ${trial.reason}`]
-          : []),
-        ...trial.grades
-          .filter(
-            (grade) =>
-              grade.status === "error" || grade.status === "unavailable"
-          )
-          .map((grade) => `${trial.id}/${grade.grader}: ${grade.reason}`)
-      ])
-    }
-    const store = yield* EvaluationRunStore
-    yield* store.writeRun(run)
-    return run
+    return yield* gradedRunOf(app, source, id, suites, matches, trials, startedAt)
   },
   (effect, ...[, , runId]) => annotated({ "eval.run.id": runId })(effect)
 )
@@ -694,6 +714,9 @@ export const runEvaluation = Effect.fn("eval.run")(
       )
     const startedAt = yield* Clock.currentTimeMillis
     const services = yield* EvaluationServices
+    // One grade at a time across the run, as a regrade grades: a trial's grading may overlap the next trial's run
+    // only where the suite runs trials at once.
+    const grading = yield* Semaphore.make(1)
     const { trials, totals } = yield* Effect.scoped(Effect.gen(function* () {
       const spend = yield* services.spend(budget)
       const trials = yield* Effect.forEach(suites, (suite) => {
@@ -729,13 +752,23 @@ export const runEvaluation = Effect.fn("eval.run")(
               )
             ),
           ({ task, candidate, sample }) =>
-            scheduledTrial(app, id, suite, task, candidate, sample, selection, spend),
+            scheduledTrial(app, id, suite, task, candidate, sample, selection, spend).pipe(
+              // Each trial is graded as it ends, so its grades reach the store then, and a run cut short keeps the
+              // grades of the trials it finished. A trial the budget skipped has nothing measured to grade.
+              Effect.flatMap((ran) =>
+                selection.executeOnly || ran.status === "skipped"
+                  ? Effect.succeed({ ran, graded: ran })
+                  : grading.withPermits(1)(gradeTrial(app, ran, () => Effect.void, gradingTimeout(app, suite))).pipe(
+                    Effect.map((graded) => ({ ran, graded }))
+                  )
+              )
+            ),
           { concurrency: suite.concurrency }
         )
       }, { concurrency: 1 })
       return { trials, totals: yield* spend.totals }
     }))
-    const settled = trials.flat()
+    const settled = trials.flat().map(({ ran }) => ran)
     const run: EvaluationRun = {
       version: 1,
       id,
@@ -756,7 +789,9 @@ export const runEvaluation = Effect.fn("eval.run")(
     }
     const store = yield* EvaluationRunStore
     yield* store.writeRun(run)
-    return selection.executeOnly ? run : yield* gradeEvaluation(app, run, id)
+    if (selection.executeOnly) return run
+    const graded = trials.flat().map(({ graded }) => graded)
+    return yield* gradedRunOf(app, run, id, suitesRun(app.suites.concat(app.calibrations.map((entry) => entry.suite)), settled), () => true, graded, startedAt)
   },
   (effect, ...[, runId]) => annotated({ "eval.run.id": runId })(effect)
 )

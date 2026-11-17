@@ -30,7 +30,7 @@ The table fills as trials end: a trial is one run of one task by one model. Echo
 
 With Echo picked, the eval compares two **candidates**: Echo, and echo-no-tools. Pick another model and it is a third, run on the same tasks and compared with Echo. The candidates differ by their model alone: the program, its tools and its memory are the same for all, so a broken tool breaks every candidate alike.
 
-A trial on a model in your browser is slow: the run is one trial at a time, up to two minutes each, and with a third candidate it holds sixty trials. The line above the table counts them as they end. **Stop** interrupts the run where it is: the candidates it finished keep their table, and the one it cut short says so.
+A trial on a model in your browser is slow: the run is one trial at a time, up to two minutes each, and with a third candidate it holds sixty trials. The line above the table counts them as they end. Each trial is graded as it ends, so the table fills with passes as the run goes. **Stop** interrupts the run where it is: each trial keeps the grades it was given before Stop, the candidates it finished keep their gates, and the one it cut short says how many of its graded trials passed, with no gates.
 
 With Qwen2.5 0.5B on the GPU, in one run on our machine, the sixty trials took about thirty seconds. Qwen read **12 of 20 passed (0.39 to 0.78)**, and failed the gate at 0.6. It called no tool in any of its twenty trials.
 
@@ -77,7 +77,7 @@ In that run Qwen's five trials agreed on three tasks and not on the sum: it answ
 
 <Step n={6} id="compare" title="Compare models with Echo" focus="code" file="runnable">
 
-runnable.ts runs the suite once for each candidate, one after the other, so a candidate's trials are graded and its gates decided as soon as they have all run. Then it compares every trial with Echo's, with the package's `compareDecisionTrials(rows, "echo")`. A **regression** is a task and repetition Echo passed and the candidate failed. Under the table, echo-no-tools reads *10 of 20 passed; regressions against Echo: sum, product*.
+runnable.ts runs the suite once for each candidate, one after the other, so a candidate's gates are decided as soon as its trials have all run (each trial is graded as it ends). Then it compares every trial with Echo's, with the package's `compareDecisionTrials(rows, "echo")`. A **regression** is a task and repetition Echo passed and the candidate failed. Under the table, echo-no-tools reads *10 of 20 passed; regressions against Echo: sum, product*.
 
 The package's `decisionTrialOf` makes the row it compares from a trial, and runnable.ts's `rowOf` is one call of it: how the trial ended, whether it passed (every gate's grader said yes, which runnable.ts decides), and how long it took. The table counts the same rows, so the two never disagree.
 
