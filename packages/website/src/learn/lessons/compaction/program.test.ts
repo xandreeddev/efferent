@@ -96,7 +96,10 @@ describe("lesson 5's displayed program", () => {
     expect(result.calls).toHaveLength(7)
     expect(result.calls[5]?.[0]).toEqual({ role: "system", text: "You write short summaries of conversations." })
     expect(result.calls[5]?.[1]?.text).toContain("<conversation-transcript>\nuser: Tell me about fibers.\nassistant: About fibers, in a few words.\n")
-    expect(result.calls[5]?.[1]?.text).toContain("assistant: About streams, in a few words.\n</conversation-transcript>\n\nReply with the summary only.")
+    // The request opens with what it asks for and ends with its one directive, the word limit on that last line: a
+    // small model keeps to a limit there, and not to one in the first line (lesson 5's real-model note).
+    expect(result.calls[5]?.[1]?.text.startsWith("Summarize the conversation below for a model that will continue it without seeing it. Keep what the user asked for, what was decided, and the facts and numbers the answers gave.\n\n")).toBe(true)
+    expect(result.calls[5]?.[1]?.text.endsWith("assistant: About streams, in a few words.\n</conversation-transcript>\n\nReply with the summary only, in at most 40 words.")).toBe(true)
     // The turn's prompt: the system text, the summary, the latest finished turn whole, and the message it answers.
     expect(result.calls[6]).toEqual([
       { role: "system", text: SYSTEM },

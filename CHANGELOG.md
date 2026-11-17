@@ -501,6 +501,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site, lesson 5: the summarizer's request ends "Reply with the
+  summary only, in at most 40 words." in place of asking, in its first
+  line, for "at most three short sentences". On a fixed transcript, over
+  two runs of ten Qwen2.5 0.5B summaries each, the longest fell from 475
+  tokens to 26 (a limit in the first line did not hold: 268), and of five
+  DeepSeek V4.1 Flash summaries from 203 to 91. On the page, at the starting budget of
+  200, DeepSeek now compacts in 3 runs of 3 (before, five presses in a row
+  ended `OverBudget`) and Qwen in 5 of 5, so the page no longer asks a
+  reader on a real model to raise the budget to 300 first. Qwen's short
+  summaries often list only the topics asked: the page says so.
+
 - Docs site: Lesson 19, "Grade the grader", at `/learn/grade-the-grader`.
   A grader is code that can be wrong too: labels.ts holds eight answers a
   person labelled right or wrong, graders.ts three graders as the eval
