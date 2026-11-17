@@ -2,14 +2,17 @@ import { Option, Result, Schema } from "effect"
 import { dataOf, stored } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { framed, hostNote } from "../memory/memory.entity.functions.js"
-import { FOLLOW_LIMIT, LINK_THINGS, LinkId, linkedEvent, NAME_LIMIT, Relation, RELATION_LIMIT, ThingName, unlinkedEvent } from "./graph.entity.js"
-import type { Followed, GraphOptions, Link, Naming, Speaker } from "./graph.entity.js"
+import { FOLLOW_LIMIT, LINK_THINGS, LinkId, linkedEvent, NAME_LIMIT, Relation, RELATION_LIMIT, restatedEvent, ThingName, unlinkedEvent } from "./graph.entity.js"
+import type { Followed, GraphOptions, Link, Naming, RestatedData, SaidLink, Speaker, Weights } from "./graph.entity.js"
 
 /** `plugin.graph.linked`: a link, and where it was stored. */
 export const linked = (link: Link): StoredDraft => stored(linkedEvent, link)
 
 /** `plugin.graph.unlinked`: a link that no longer stands. */
 export const unlinked = (id: LinkId): StoredDraft => stored(unlinkedEvent, { id })
+
+/** `plugin.graph.restated`: a standing link said again, by the turn that said it. */
+export const restated = (data: RestatedData): StoredDraft => stored(restatedEvent, data)
 
 /**
  * The links that stand in a graph session's journal, in the order they were stored: each `plugin.graph.linked`,
@@ -25,6 +28,53 @@ export const linksOf = (journal: ReadonlyArray<StoredEvent>): ReadonlyArray<Link
   }
   return [...standing.values()]
 }
+
+/** Where a link was said: one conversation's turn. */
+const originOf = (from: { readonly session: string; readonly turn: number }): string => `${from.session}:${from.turn}`
+
+/**
+ * The links that stand, in the order stored, each with how many turns said it and when it was last said (`SaidLink`):
+ * its `plugin.graph.linked` and each `plugin.graph.restated` of it, a turn counted once however often it said the
+ * link. A pure fold of the same journal `linksOf` reads.
+ *
+ * @public
+ */
+export const saidOf = (journal: ReadonlyArray<StoredEvent>): ReadonlyArray<SaidLink> => {
+  const standing = new Map<LinkId, { link: Link; origins: Set<string>; last: number }>()
+  for (const event of journal) {
+    Option.map(dataOf(linkedEvent, event), (link) => standing.set(link.id, { link, origins: new Set([originOf(link.from)]), last: event.at }))
+    Option.map(dataOf(restatedEvent, event), ({ id, from }) => {
+      const said = standing.get(id)
+      if (said !== undefined) {
+        said.origins.add(originOf(from))
+        said.last = Math.max(said.last, event.at)
+      }
+    })
+    Option.map(dataOf(unlinkedEvent, event), ({ id }) => standing.delete(id))
+  }
+  return [...standing.values()].map(({ link, origins, last }) => ({ link, count: origins.size, last }))
+}
+
+/** Whether a turn already said a standing link: its record, or one of its `plugin.graph.restated`, names that turn. */
+export const saidIn = (journal: ReadonlyArray<StoredEvent>, id: LinkId, from: { readonly session: string; readonly turn: number }): boolean => {
+  const origin = originOf(from)
+  return journal.some((event) =>
+    Option.exists(dataOf(linkedEvent, event), (link) => link.id === id && originOf(link.from) === origin) ||
+    Option.exists(dataOf(restatedEvent, event), (again) => again.id === id && originOf(again.from) === origin))
+}
+
+/** A day, in milliseconds: a half-life is given in days. */
+const DAY = 86_400_000
+
+/**
+ * A number that orders links by weight, the higher the stronger (`Weights`). By `"count"` it is ln(1 + count). By a
+ * half-life it is the logarithm of ln(1 + count) × ½^(age / half-life): written as ln(ln(1 + count)) + last × ln 2 /
+ * half-life, which orders links as that weight does at any moment, so it needs no clock, and cannot overflow.
+ *
+ * @public
+ */
+export const weightOf = (said: SaidLink, weights: Weights): number =>
+  weights === "count" ? Math.log1p(said.count) : Math.log(Math.log1p(said.count)) + (said.last * Math.LN2) / (weights.halfLifeDays * DAY)
 
 /** The id of the next link a graph session stores: one more than the number it ever stored, removed ones included. */
 export const nextLinkId = (journal: ReadonlyArray<StoredEvent>): LinkId =>
@@ -147,15 +197,16 @@ interface Reached {
  * names (`namedIn`) and follows links from either end, up to `hops` links away. A link is ranked by its path: the
  * question's words (four letters or more, beyond the names it starts from) that the relations and names on the path
  * to it meet, so "Acme is in Lisbon", which shares no word with "In what city does Ana work?", ranks with "Ana works
- * at Acme", the link the path took. Then fewer links away, then the newer. With nothing named there are none. A pure
- * function: the same links and question give the same list, in the same order.
+ * at Acme", the link the path took. Then fewer links away, then, when `weigh` is given, the heavier (`weightOf`), then
+ * the newer. With nothing named there are none. A pure function: the same links and question give the same list,
+ * in the same order.
  *
  * @public
  */
 export const near = (
   links: ReadonlyArray<Link>,
   question: string,
-  options: { readonly hops: number; readonly limit: number; readonly speaker?: Speaker; readonly names?: Naming },
+  options: { readonly hops: number; readonly limit: number; readonly speaker?: Speaker; readonly names?: Naming; readonly weigh?: (link: Link) => number },
 ): ReadonlyArray<Link> => {
   const speaker = Option.fromNullishOr(options.speaker)
   const names = options.names ?? "exact"
@@ -174,6 +225,7 @@ export const near = (
     const own = wordsOf(`${link.subject} ${link.relation} ${link.object}`, names)
     return asked.filter((word) => own.some((mine) => meet(word, mine)))
   }
+  const weighed = (at: number): number => (options.weigh === undefined ? 0 : options.weigh(links[at]!))
   const things = new Map<string, Reached>(named.map((thing) => [thing, { hops: 0, met: new Set<string>() }]))
   const reached = new Map<LinkId, Reached & { readonly at: number }>()
   let frontier: ReadonlyArray<string> = named
@@ -200,7 +252,7 @@ export const near = (
     frontier = next
   }
   return [...reached.values()]
-    .toSorted((a, b) => b.met.size - a.met.size || a.hops - b.hops || b.at - a.at)
+    .toSorted((a, b) => b.met.size - a.met.size || a.hops - b.hops || weighed(b.at) - weighed(a.at) || b.at - a.at)
     .slice(0, Math.max(0, options.limit))
     .map(({ at }) => links[at]!)
 }
@@ -281,6 +333,8 @@ export const checkedOptions = (options: GraphOptions): Result.Result<GraphOption
   if (!whole(options.limit, 1, 50)) return Result.fail(`withGraph needs a limit, a whole number from 1 to 50: the most links a request is sent. It was given ${String(options.limit)}`)
   if (options.names !== undefined && options.names !== "exact" && options.names !== "loose")
     return Result.fail(`withGraph's names is "exact" or "loose": how a question names a thing. It was given ${JSON.stringify(options.names) ?? String(options.names)}`)
+  if (options.weights !== undefined && options.weights !== "count" && !(typeof options.weights === "object" && options.weights !== null && Number.isFinite(options.weights.halfLifeDays) && options.weights.halfLifeDays > 0))
+    return Result.fail(`withGraph's weights is "count" or { halfLifeDays }, a number of days above 0: how links are weighed. It was given ${JSON.stringify(options.weights) ?? String(options.weights)}`)
   if (options.speaker !== undefined && (normalName(options.speaker.name).length === 0 || options.speaker.words.some((word) => tokensOf(word).length !== 1 || tokensOf(word)[0] !== word.toLowerCase())))
     return Result.fail("withGraph's speaker needs a name with a letter or a digit, and words that are each one word, such as \"me\"")
   return Result.succeed(options)

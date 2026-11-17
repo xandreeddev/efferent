@@ -46,7 +46,7 @@ DeepSeek V4.1 Flash, through the gateway, called `linkThings` once for each of t
 
 **tools.ts** is lesson 11's with the graph's three tools in place of the two that remember: `Toolkit.merge(Toolkit.make(calculator), graphTools)`.
 
-- `linkThings({ subject, relation, object })` stores the link and answers its id. A link that says what a stored one says, in other capitals, is not stored again: the stored one's id is answered.
+- `linkThings({ subject, relation, object })` stores the link and answers its id. A link that says what a stored one says, in other capitals, is not stored again: the stored one's id is answered. Said again in a later message, it adds a small record of its own, `plugin.graph.restated`, so the graph knows how often each link was said.
 - `unlinkThings({ id })` says that the link no longer stands, and answers what it removed.
 - `followThings({ name })` reads the links that name the thing, at either end, the newest first. It stores nothing.
 

@@ -76,6 +76,7 @@ const ReadResult
 const Relation
 const RememberFact
 const RememberedFact
+const RestatedData
 const ResultPage
 const START_TASK
 const ScriptedAnswer
@@ -160,8 +161,11 @@ const readResult
 const relevant
 const rememberedFacts
 const reportText
+const restatedEvent
 const resultText
 const retryable
+const saidLinks
+const saidOf
 const scriptedModel
 const sessions
 const showView
@@ -178,6 +182,7 @@ const unlinkedEvent
 const viewEvent
 const viewsOf
 const webStorageJournal
+const weightOf
 const windowDroppedEvent
 const windowMemory
 const windowPressureEvent
@@ -201,6 +206,7 @@ interface PointerOptions
 interface Queued
 interface ResultRead
 interface RunningTurn
+interface SaidLink
 interface SessionsOptions
 interface Shown
 interface Skill
@@ -248,6 +254,7 @@ type OwnTools
 type ProgressData
 type Relation
 type RememberedFact
+type RestatedData
 type ResultPage
 type ScriptedAnswer
 type ScriptedCalls
@@ -267,6 +274,7 @@ type UnlinkedData
 type View
 type ViewData
 type ViewId
+type Weights
 type WindowDroppedData
 type WindowPressureData
 type WrittenData

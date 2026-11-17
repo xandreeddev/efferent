@@ -9,7 +9,7 @@ import {
   modelAnswer, scriptedModel, sessions, UnlinkThings, webStorageJournal, withFacts, withGraph,
 } from "./index.js"
 import type { KeyValueStore, ModelScript, ToolNeeds } from "./index.js"
-import { linked } from "./contracts/graph/graph.entity.functions.js"
+import { linked, saidOf } from "./contracts/graph/graph.entity.functions.js"
 import { LinkId } from "./contracts/graph/graph.entity.js"
 import { learned as learnedFact } from "./contracts/facts/facts.entity.functions.js"
 import { FactId } from "./contracts/facts/facts.entity.js"
@@ -143,7 +143,7 @@ describe("a memory that connects", () => {
     expect(Tool.getJsonSchema(FollowThings)).toMatchObject({ properties: { name: { type: "string", description: "The thing's name, as a link writes it, such as \"Acme\"." } }, required: ["name"] })
   })
 
-  test("a link said again is not stored again: its id is answered; a removed link is sent in no later request", async () => {
+  test("a link said again in its turn is not stored again: its id is answered; a removed link is sent in no later request", async () => {
     const { conversations, graph, sent } = await Effect.runPromise(run(
       [calls(link("Ana", "works at", "Acme"), link("ana", "Works at", " ACME ")), says("Noted."), calls({ name: "unlinkThings", params: { id: "e1" } }), says("Removed."), says("I do not know.")],
       [["Ana works at Acme."], ["Ana left Acme."], ["Where does Ana work?"]],
@@ -153,6 +153,46 @@ describe("a memory that connects", () => {
     // The link said again opened no turn: the graph session holds two turns, one link and one removal.
     expect(names(graph)).toEqual(["core.session.turn.started", "plugin.graph.linked", "core.session.turn.ended", "core.session.turn.started", "plugin.graph.unlinked", "core.session.turn.ended"])
     expect(sent.at(-1)?.some((message) => message.text.includes("known-links"))).toBe(false)
+  })
+
+  test("a link said again in another turn is stored as said again: its id is answered, and the turns that said it are counted", async () => {
+    const { conversations, graph } = await Effect.runPromise(run(
+      [calls(link("Ana", "works at", "Acme")), says("Noted."), calls(link("ana", "works at", "Acme"), link("Ana", "works at", "Acme")), says("Noted again.")],
+      [["Ana works at Acme."], ["Ana still works at Acme."]],
+    ))
+    expect(results(conversations[1]?.journal ?? [])).toEqual([["linkThings", { id: "e1" }, false], ["linkThings", { id: "e1" }, false]])
+    // Said twice in the second turn, stored once: a turn counts once.
+    expect(names(graph).filter((name) => name.startsWith("plugin."))).toEqual(["plugin.graph.linked", "plugin.graph.restated"])
+    expect(saidOf(graph).map((one) => [String(one.link.id), one.count])).toEqual([["e1", 2]])
+  })
+
+  test("a link that stands is answered by its id while another turn writes to the graph session: the saying again is not counted", async () => {
+    const storage = storageOf()
+    const base = () => sessions().pipe(Layer.provideMerge(webStorageJournal(storage, { prefix: "agent:" })), Layer.provideMerge(kernel()))
+    await Effect.runPromise(Effect.gen(function* () {
+      const all = yield* Sessions
+      const id = yield* graphSession
+      const left = yield* Scope.make()
+      const session = yield* all.open(id).pipe(Effect.provideService(Scope.Scope, left))
+      yield* session.append(linked({ id: LinkId.make("e1"), subject: "Ana", relation: "works at", object: "Acme", from: { session: id, turn: session.turn } }))
+    }).pipe(Effect.provide(base())))
+    const busy = await Effect.runPromise(run([calls(link("Ana", "works at", "Acme")), says("Noted.")], [["Ana works at Acme."]], webStorageJournal(storage, { prefix: "agent:" })))
+    expect(results(busy.conversations[0]?.journal ?? [])).toEqual([["linkThings", { id: "e1" }, false]])
+    expect(names(busy.graph).filter((name) => name.startsWith("plugin."))).toEqual(["plugin.graph.linked"])
+  })
+
+  test("weighed by count, a link said in more turns ranks first where the walk ties; unweighed, the newer does", async () => {
+    const script = [
+      calls(link("Ana", "works at", "Acme")), says("Noted."),
+      calls(link("Ana", "works at", "Acme")), says("Noted."),
+      calls(link("Ana", "works at", "Globex")), says("Noted."),
+      says("At Acme, or Globex."),
+    ]
+    const asked = [["Ana works at Acme."], ["Ana works at Acme, still."], ["Ana works at Globex too."], ["Where does Ana work?"]]
+    const plain = await Effect.runPromise(run(script, asked))
+    expect(plain.sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e2: Ana works at Globex.", "e1: Ana works at Acme.") })
+    const weighed = await Effect.runPromise(run(script, asked, inProcessJournal(), withGraph({ hops: 2, limit: 5, weights: "count" })(flatMemory)))
+    expect(weighed.sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e1: Ana works at Acme.", "e2: Ana works at Globex.") })
   })
 
   test("parts that make no link and an id no link has are failed results in fixed words, and store nothing", async () => {

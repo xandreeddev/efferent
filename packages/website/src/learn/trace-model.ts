@@ -7,7 +7,7 @@
 import { Option, Predicate } from "effect"
 import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, FACTS_OWNER, forgottenEvent, GRAPH_OWNER, learnedEvent, linkedEvent, resultText, TASKS_OWNER, turnsOf, unlinkedEvent } from "@xandreed/sdk/kernel"
+import { estimateTokens, FACTS_OWNER, forgottenEvent, GRAPH_OWNER, learnedEvent, linkedEvent, restatedEvent, resultText, TASKS_OWNER, turnsOf, unlinkedEvent } from "@xandreed/sdk/kernel"
 import type { ClosedRead, TurnRead } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
@@ -154,6 +154,8 @@ export const summaryOf = (record: Pick<StoredEvent, "name" | "data" | "tags" | "
       if (Option.isSome(linked)) return clip(`link ${linked.value.id}, from turn ${linked.value.from.turn} of conversation ${linked.value.from.session.slice(0, 8)}: ${linked.value.subject} ${linked.value.relation} ${linked.value.object}`)
       const unlinked = dataOf(unlinkedEvent, record)
       if (Option.isSome(unlinked)) return `link ${unlinked.value.id} no longer stands`
+      const restated = dataOf(restatedEvent, record)
+      if (Option.isSome(restated)) return `link ${restated.value.id} said again, in turn ${restated.value.from.turn} of conversation ${restated.value.from.session.slice(0, 8)}`
       if (record.name === turnStartedEvent.name && typeof data === "object" && data !== null && "turn" in data) return `turn ${String(data.turn)} opened`
       if (record.name === turnEndedEvent.name && typeof data === "object" && data !== null && "outcome" in data) {
         const outcome = data.outcome
@@ -573,7 +575,8 @@ const keptLabel = (record: StoredEvent): string =>
     : Option.isSome(dataOf(forgottenEvent, record)) ? "Fact forgotten"
       : Option.isSome(dataOf(linkedEvent, record)) ? "Link stored"
         : Option.isSome(dataOf(unlinkedEvent, record)) ? "Link removed"
-          : "Record stored"
+          : Option.isSome(dataOf(restatedEvent, record)) ? "Link said again"
+            : "Record stored"
 
 /**
  * One turn of the memory session (lesson 11) or the graph session (lesson 18): it was opened by a call of a tool

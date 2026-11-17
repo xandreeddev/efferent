@@ -53,7 +53,8 @@ Measured before deciding (17 November 2026):
   facts.
 - **Two records**: `plugin.graph.linked` (the link's id, its subject, relation and object as
   the model wrote them, and the conversation and turn it came from) and
-  `plugin.graph.unlinked` (the id). Both tagged `memory`, neither skippable. A link's id is
+  `plugin.graph.unlinked` (the id). Both tagged `memory`, neither skippable (a third,
+  `plugin.graph.restated`, came later: see "how often and when a link was said" below). A link's id is
   `e` and a number, never given twice. A name is one line of 1 to 80 characters, a relation
   of 1 to 40, refused in words the model reads when it is not, never cut.
 - **The model writes links with a tool**, `linkThings`, as it writes facts: the kernel calls
@@ -63,7 +64,8 @@ Measured before deciding (17 November 2026):
 - **A thing is its normalised name**: its words in lower case (`normalName`). Nothing is
   merged by meaning (the embedding numbers above); an alias is a link like any other ("NYC
   is New York"), which keeps every record true and is undone by removing it. A link said
-  again, once normalised, is not stored again: its id is answered.
+  again, once normalised, is not stored again: its id is answered (and, in a turn that had
+  not said it, counted: see below).
 - **The wrapper walks from what the question names**, `withGraph({ hops, limit, speaker? })`:
   each thing whose words are a run of the question's, and the speaker's thing when the
   question holds one of the speaker's words, which the host gives in its own language (the
@@ -167,6 +169,39 @@ Lisboa and still ranks the answer late). The kernel's `near` gives the measuring
 - **What it does not fix.** A question whose word is not the link's ("Who employs Ana?"
   against "Ana works at Acme") still ranks the answer late: that is a matter of meaning,
   not spelling.
+
+## Amended: how often and when a link was said, and its weight
+
+A link said again in a turn that had not said it is stored as `plugin.graph.restated` (its
+id, and the conversation and turn that said it), tagged `memory` and skippable: a reader that
+does not know it reads the same links, without how often each was said. A link said again in
+the turn that already said it stores nothing, as before. While another turn writes to the
+graph session, a link that stands is still answered by its id and that saying is not
+counted: the model's answer does not wait on a count.
+
+`saidOf(journal)` gives each standing link with how many turns said it and when its latest
+record was stored. A host may weigh links, `withGraph({ ..., weights })`: `"count"`, ln(1 +
+count); or `{ halfLifeDays }`, that count halved for every half-life since the link was last
+said. The weight ranks links that the question's words and the walk leave tied, before the
+newer: words met, then fewer links away, then the heavier, then the newer. With one half-life
+for every link, the decay multiplies every weight by the same factor at a given moment, so
+the order needs no clock: `weightOf` orders by ln(ln(1 + count)) + last × ln 2 / half-life,
+which is that order and cannot overflow. Without `weights`, nothing changes.
+
+Measured on the same generated world (654 facts, 557 links, 44 said more than once, each
+repeat a turn of its own on its fact's date), over nine pairs whose questions have one gold
+link and one rival (a stale and a current employer, a link said often and one said once, a
+past and a current plan), the walk uncut: the gold link ranked above its rival in 6 of 9
+unweighed, 8 by count, and 6, 6, 7, 9 and 8 at half-lives of 30, 90, 180, 365 and 730 days.
+The kernel gives these numbers question by question.
+
+- **Count alone puts a stale fact said often first.** An employer said three times ranks above
+  the one that replaced it, said once: recency fixes it, and too short a half-life undoes
+  what count fixed. The best half-life (a year, there) came from the dates that world was
+  given; it is a host's choice, not a constant.
+- **No weight answers "before".** A question about what was so earlier wants the older link,
+  which neither count nor recency favours. The kernel holds no word for "before" in any
+  language.
 
 ## What would reopen this
 

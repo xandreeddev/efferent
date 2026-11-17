@@ -10,6 +10,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: how often and when a link was said, and links
+  weighed by it. A link said again in a turn that had not said it is stored
+  as `plugin.graph.restated` (`restatedEvent`, `RestatedData`; skippable);
+  said again in the same turn, nothing is stored, as before; while another
+  turn writes to the graph session, a link that stands is answered by its id
+  and not counted. `saidOf(journal)` and `saidLinks` give each standing link
+  with its count and last time (`SaidLink`); `withGraph({ ..., weights })`
+  (`Weights`: `"count"` or `{ halfLifeDays }`) and `near`'s `weigh` rank
+  links the question's words and the walk leave tied, before the newer
+  (`weightOf`, which needs no clock). Unweighed, nothing changes. ADR 0019
+  amended with what was measured (9 rival pairs: 6 unweighed, 8 by count, 9
+  at a half-life of a year) and what count alone gets wrong (a stale fact
+  said often).
 - `@xandreed/sdk/kernel`: the graph can name things loosely. `withGraph`
   and `near` take `names: "loose"` (`Naming`; `"exact"`, today's rule, unless
   given), and `namedIn` a fourth argument: a question's word also names a
@@ -88,11 +101,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 - `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
   between two things ("Ana", "works at", "Acme") is a record of a graph
-  session of its own (`plugin.graph.linked`, `plugin.graph.unlinked`),
+  session of its own (`plugin.graph.linked`, `plugin.graph.unlinked`,
+  and `plugin.graph.restated` for a link said again in another turn),
   written by the model with `linkThings`, removed with `unlinkThings`,
   read one thing at a time with `followThings`, and folded by `linksOf`.
   A thing is its name's words in lower case (`normalName`); a link said
-  again is not stored again. `withGraph({ hops, limit, speaker? })`
+  again is not stored again, and its id is answered. `withGraph({ hops, limit, speaker? })`
   walks from the things the question names, from either end of a link,
   and ranks each link by the question's words its path meets, then by
   distance, then the newest (`near`): "Acme is in Lisbon" is sent right

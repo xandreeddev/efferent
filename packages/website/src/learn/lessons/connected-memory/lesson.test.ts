@@ -296,17 +296,20 @@ describe("lesson 18 on the page (the kernel, Echo)", () => {
     expect(relevant(facts, QUESTION, 5).map((fact) => fact.text)).toEqual(["Ana drives a red car.", "Ana is the sister of Eva.", "Ana likes tea.", "Ana lives in Porto.", "Ana works at Acme."])
   })
 
-  test("a link said again, in other capitals, is not stored again: its id is answered; a name longer than 80 characters is refused in words the model reads, and nothing is stored", async () => {
+  test("a link said again, in other capitals, is not stored again: its id is answered, and the saying again is a record of its own; a name longer than 80 characters is refused in words the model reads, and nothing is stored", async () => {
     expect([NAME_LIMIT, RELATION_LIMIT]).toEqual([80, 40])
     const { say, replies, rows, graph } = await page()
     await say("Ana works at Acme.", "ANA works at  acme.")
     expect(rows().at(-2)).toBe(linked("ANA", "works at", "acme", "e1"))
     expect(replies()).toEqual(["The link's id: e1.", "The link's id: e1."])
-    expect(turnNumbersOf(graph())).toEqual([1])
+    // The second message said it in a turn of its own: one link, said in two turns.
+    expect(turnNumbersOf(graph())).toEqual([1, 2])
+    expect(graph().records.filter((record) => String(record.name).startsWith("plugin.")).map((record) => String(record.name))).toEqual(["plugin.graph.linked", "plugin.graph.restated"])
+    expect(viewOf(graph(), 2).steps.map((step) => step.label)).toEqual(["Turn opened", "Link said again", "Turn closed"])
     const long = "x".repeat(81)
     await say(`Ana works at ${long}.`)
     expect(replies().at(-1)).toBe(`The tool answered: linkThings failed: ${JSON.stringify(NOT_A_LINK)}.`)
-    expect(turnNumbersOf(graph())).toEqual([1])
+    expect(turnNumbersOf(graph())).toEqual([1, 2])
   })
 
   test("walking one link (an experiment), the question is sent Ana's own links and not the city: Echo's answer has none", async () => {

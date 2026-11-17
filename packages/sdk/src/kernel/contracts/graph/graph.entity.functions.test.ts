@@ -4,7 +4,7 @@ import { assistantMessage, Seq, SessionId, TurnNumber, userMessage } from "@xand
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { relevant } from "../facts/facts.entity.functions.js"
 import { FactId, FactText } from "../facts/facts.entity.js"
-import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, namedIn, near, nextLinkId, noLinkWith, normalName, NOT_A_LINK, sameLink, unlinked } from "./graph.entity.functions.js"
+import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, namedIn, near, nextLinkId, noLinkWith, normalName, NOT_A_LINK, restated, saidIn, saidOf, sameLink, unlinked, weightOf } from "./graph.entity.functions.js"
 import { LinkId, Relation, ThingName } from "./graph.entity.js"
 import type { Link } from "./graph.entity.js"
 
@@ -288,6 +288,46 @@ describe("what the model reads", () => {
   })
 })
 
+describe("how often a link was said, and its weight", () => {
+  const DAY = 86_400_000
+  /** Records stored at the given days, one turn each. */
+  const dated = (...drafts: ReadonlyArray<readonly [StoredDraft, number]>): ReadonlyArray<StoredEvent> =>
+    drafts.map(([draft, day], index) => ({ ...draft, seq: Seq.make(index + 1), at: day * DAY, turn: TurnNumber.make(index + 1) }))
+  const at = (turn: number) => ({ session: from.session, turn: TurnNumber.make(turn) })
+  const [ana, bo] = graph(["Ana", "works at", "Acme"], ["Bo", "works at", "Globex"])
+
+  test("a link is counted once for each turn that said it, its last time the latest of its records', stored in any order; a removed link is not said", () => {
+    const journal = dated(
+      [linked(ana!), 10], [restated({ id: ana!.id, from: at(2) }), 25], [restated({ id: ana!.id, from: at(2) }), 20],
+      [restated({ id: LinkId.make("e9"), from: at(3) }), 26], [linked({ ...bo!, from: at(4) }), 30], [unlinked(bo!.id), 31],
+    )
+    expect(saidOf(journal).map((one) => [String(one.link.id), one.count, one.last / DAY])).toEqual([["e1", 2, 25]])
+    expect(saidIn(journal, ana!.id, at(2))).toBe(true)
+    expect(saidIn(journal, ana!.id, at(1))).toBe(true)
+    expect(saidIn(journal, ana!.id, at(7))).toBe(false)
+  })
+
+  test("by count, a link said in more turns weighs more; by a half-life, it orders as count times the decay does at any moment", () => {
+    const old = { link: ana!, count: 3, last: 100 * DAY }
+    const fresh = { link: bo!, count: 1, last: 400 * DAY }
+    expect(weightOf(old, "count")).toBeGreaterThan(weightOf(fresh, "count"))
+    const now = 500 * DAY
+    const decayed = (said: typeof old, days: number) => Math.log1p(said.count) * 0.5 ** ((now - said.last) / (days * DAY))
+    for (const days of [30, 90, 180, 365, 730])
+      expect(Math.sign(weightOf(old, { halfLifeDays: days }) - weightOf(fresh, { halfLifeDays: days }))).toBe(Math.sign(decayed(old, days) - decayed(fresh, days)))
+    // A link last said decades ago weighs a finite number, not none.
+    expect(Number.isFinite(weightOf({ link: ana!, count: 1, last: 0 }, { halfLifeDays: 1 }))).toBe(true)
+    expect(Number.isFinite(weightOf({ link: ana!, count: 1, last: 4_000_000_000_000 }, { halfLifeDays: 1 }))).toBe(true)
+  })
+
+  test("a weight ranks links the question's words and the walk leave tied, and nothing they do not", () => {
+    const links = graph(["Ana", "works at", "Acme"], ["Ana", "works at", "Globex"], ["Ana", "likes", "tea"])
+    const heavy = (link: Link) => (link.id === "e1" ? 2 : link.id === "e3" ? 9 : 0)
+    expect(said(near(links, "Where does Ana work?", two))).toEqual(["e2: Ana works at Globex", "e1: Ana works at Acme", "e3: Ana likes tea"])
+    expect(said(near(links, "Where does Ana work?", { ...two, weigh: heavy }))).toEqual(["e1: Ana works at Acme", "e2: Ana works at Globex", "e3: Ana likes tea"])
+  })
+})
+
 describe("the options", () => {
   test("hops from 1 to 3, a limit from 1 to 50 and a speaker of one-word words are taken; anything else is refused in words", () => {
     expect(Result.isSuccess(checkedOptions({ hops: 2, limit: 8, speaker: { name: "user", words: ["i", "me"] } }))).toBe(true)
@@ -302,5 +342,14 @@ describe("the options", () => {
     expect(Result.isSuccess(checkedOptions({ hops: 2, limit: 8, names: "exact" }))).toBe(true)
     const untyped: { readonly hops: number; readonly limit: number; readonly names?: never } = JSON.parse('{"hops":2,"limit":8,"names":"fuzzy"}')
     expect(checkedOptions(untyped)).toEqual(Result.fail('withGraph\'s names is "exact" or "loose": how a question names a thing. It was given "fuzzy"'))
+  })
+
+  test("weights is \"count\" or a half-life of days above 0; anything else is refused in words", () => {
+    expect(Result.isSuccess(checkedOptions({ hops: 2, limit: 8, weights: "count" }))).toBe(true)
+    expect(Result.isSuccess(checkedOptions({ hops: 2, limit: 8, weights: { halfLifeDays: 365 } }))).toBe(true)
+    expect(checkedOptions({ hops: 2, limit: 8, weights: { halfLifeDays: 0 } })).toEqual(Result.fail('withGraph\'s weights is "count" or { halfLifeDays }, a number of days above 0: how links are weighed. It was given {"halfLifeDays":0}'))
+    const untyped: { readonly hops: number; readonly limit: number; readonly weights?: never } = JSON.parse('{"hops":2,"limit":8,"weights":"often"}')
+    expect(Result.isFailure(checkedOptions(untyped))).toBe(true)
+    expect(Result.isFailure(checkedOptions({ hops: 2, limit: 8, weights: { halfLifeDays: Number.POSITIVE_INFINITY } }))).toBe(true)
   })
 })
