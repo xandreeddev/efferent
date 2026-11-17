@@ -33,8 +33,11 @@ export interface TaskChip {
 
 export interface TaskChips {
   readonly chips: ReadonlyArray<TaskChip>
-  /** The parameters of each tool call the chat's model made, by the call's id: a task's text, a cancel's id. */
-  readonly calls: ReadonlyMap<string, unknown>
+  /**
+   * The parameters of the tool calls still waiting for their results, by id, in the order asked (a task's text, a
+   * cancel's id): the kernel's rule, as the chat's (`ChatBoard.calls`).
+   */
+  readonly calls: ReadonlyMap<string, ReadonlyArray<unknown>>
   /**
    * What was heard of a session before its task's start was: a fast helper's turn can end before the chat's
    * journal stores `startTask`'s result. Each change waits here, by session, and is made when the chip is.
@@ -54,6 +57,26 @@ const change = (all: TaskChips, session: string, to: (chip: TaskChip) => TaskChi
 
 /** A state that nothing after it changes: the task is over, and the conversation knows how. */
 const settled = (state: TaskState): boolean => state === "reported" || state === "cancelled" || state === "dropped"
+
+/**
+ * The chips after a tool's result that did not fail, `params` its call's: a task started, or one cancelled. Any other
+ * tool's result changes nothing.
+ */
+const answered = (all: TaskChips, name: string, result: unknown, params: unknown): TaskChips => {
+  if (name === START_TASK && typeof result === "object" && result !== null && "task" in result && "session" in result) {
+    const session = String(result.session)
+    const started: TaskChip = { session, task: String(result.task), text: textParam(params, "task"), state: "running", failed: false }
+    const chip = (all.early.get(session) ?? []).reduce((now, to) => to(now), started)
+    return { ...all, chips: [...all.chips.filter((one) => one.session !== session), chip], early: new Map([...all.early].filter(([id]) => id !== session)) }
+  }
+  if (name === CANCEL_TASK) {
+    // The task cancelled is the latest one started under that id: ids start again with each program.
+    const id = textParam(params, "task").trim()
+    const latest = all.chips.findLast((chip) => chip.task === id)
+    return latest === undefined ? all : change(all, latest.session, (chip) => (settled(chip.state) ? chip : { ...chip, state: "cancelled" }))
+  }
+  return all
+}
 
 /** The chips after one more trace of the page's, for the conversation `chat` shows. */
 export const heardTask = (all: TaskChips, trace: Trace, chat: string): TaskChips => {
@@ -75,23 +98,17 @@ export const heardTask = (all: TaskChips, trace: Trace, chat: string): TaskChips
   }
   const message = event.message
   if (event.name === assistantMessageEvent.name && message?._tag === "Assistant") {
-    return { ...all, calls: new Map([...all.calls, ...message.toolCalls.map((call) => [call.id, call.input] as const)]) }
+    const asked = new Map<string, ReadonlyArray<unknown>>()
+    for (const call of message.toolCalls) asked.set(call.id, [...(asked.get(call.id) ?? []), call.input])
+    return { ...all, calls: new Map([...all.calls, ...asked]) }
   }
-  if (event.name === toolResultEvent.name && message?._tag === "ToolResult" && !message.isFailure) {
-    const result = message.result
-    if (message.name === START_TASK && typeof result === "object" && result !== null && "task" in result && "session" in result) {
-      const session = String(result.session)
-      const started: TaskChip = { session, task: String(result.task), text: textParam(all.calls.get(message.id), "task"), state: "running", failed: false }
-      const chip = (all.early.get(session) ?? []).reduce((now, to) => to(now), started)
-      return { ...all, chips: [...all.chips.filter((one) => one.session !== session), chip], early: new Map([...all.early].filter(([id]) => id !== session)) }
-    }
-    if (message.name === CANCEL_TASK) {
-      // The task cancelled is the latest one started under that id: ids start again with each program.
-      const id = textParam(all.calls.get(message.id), "task").trim()
-      const latest = all.chips.findLast((chip) => chip.task === id)
-      return latest === undefined ? all : change(all, latest.session, (chip) => (settled(chip.state) ? chip : { ...chip, state: "cancelled" }))
-    }
-    return all
+  if (event.name === toolResultEvent.name && message?._tag === "ToolResult") {
+    // Any result, a failed one too, answers the first call of its id still waiting, which it takes.
+    const [params, ...rest] = all.calls.get(message.id) ?? []
+    const calls = new Map(all.calls)
+    if (rest.length > 0) calls.set(message.id, rest)
+    else calls.delete(message.id)
+    return message.isFailure ? { ...all, calls } : answered({ ...all, calls }, message.name, message.result, params)
   }
   // The conversation took a task's report: a message whose `from` is the task's session.
   if (event.name === userMessageEvent.name && message?._tag === "User" && typeof event.data === "object" && event.data !== null && "from" in event.data && typeof event.data.from === "string") {

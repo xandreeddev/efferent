@@ -1079,6 +1079,20 @@ describe("Echo's rules for skills (lesson 10)", () => {
     expect(step([...turn, call("c2", "convert", { value: 5, from: "km", to: "mi" }), result("c2", "convert", 5 / 1.609344)], withConvert)).toEqual({ text: "5 km is 3.1 mi.", calls: [] })
   })
 
+  test("results are read with the calls they answer, in the order asked: one answer may ask twice under one id", () => {
+    const turn = [{ role: "user", content: "How far is 5 km in miles?" }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", { skill: "units", instructions: units.instructions })] as const
+    const twice = { role: "assistant", content: [{ type: "tool-call", id: "c2", name: "convert", params: { value: 5, from: "km", to: "mi" } }, { type: "tool-call", id: "c2", name: "convert", params: { value: 10, from: "mi", to: "km" } }] } as const
+    const answers = { role: "tool", content: [{ type: "tool-result", id: "c2", name: "convert", isFailure: false, result: 5 / 1.609344 }, { type: "tool-result", id: "c2", name: "convert", isFailure: false, result: 10 * 1.609344 }] } as const
+    expect(step([...turn, twice, answers], withConvert)).toEqual({ text: "5 km is 3.1 mi. 10 mi is 16.1 km.", calls: [] })
+  })
+
+  test("a newer answer's call of an id replaces an older answer's that still waits: the result is read with the newer call", () => {
+    const turn = [{ role: "user", content: "How far is 5 km in miles?" }, call("c1", "loadSkill", { skill: "units" }), result("c1", "loadSkill", { skill: "units", instructions: units.instructions })] as const
+    const older = call("c2", "convert", { value: 5, from: "km", to: "mi" })
+    const newer = call("c2", "convert", { value: 10, from: "mi", to: "km" })
+    expect(step([...turn, older, newer, result("c2", "convert", 10 * 1.609344)], withConvert)).toEqual({ text: "10 mi is 16.1 km.", calls: [] })
+  })
+
   test("going on, a call the turn has already made is not made again, and a message that covers a second skill loads it next", () => {
     // A sum and a length sent together: one step asked for the calculator and the load. The next asks for convert alone.
     const together = [

@@ -47,8 +47,12 @@ export interface ChatBoard {
   readonly rows: ReadonlyArray<ChatRow>
   /** The id the next row takes. */
   readonly next: number
-  /** The tool calls the model made, by id, as the chat words them. */
-  readonly calls: ReadonlyMap<string, string>
+  /**
+   * The tool calls still waiting for their results, by id, as the chat words them, in the order asked: the kernel's
+   * rule (`paired`). Inside one answer, the results of an id answer its calls of that id in order; a newer answer's
+   * calls of an id replace an older answer's that still wait.
+   */
+  readonly calls: ReadonlyMap<string, ReadonlyArray<string>>
   /** The place of the last record taken: a record at or before it was taken already, and is passed over. */
   readonly last: number
   /** When each record taken was stored, by its place: what tells one journal from another that holds the same places. */
@@ -166,7 +170,9 @@ export const stored = (before: ChatBoard, record: StoredEvent): ChatBoard => {
       : change(open, waiting.id, ({ waiting: _waiting, taken: _taken, ...row }) => Option.some({ ...row, text: message.text, ...at }))
   }
   if (record.name === assistantMessageEvent.name && message?._tag === "Assistant") {
-    const calls = new Map([...board.calls, ...message.toolCalls.map((call) => [call.id, `${call.name}(${JSON.stringify(call.input)})`] as const)])
+    const asked = new Map<string, ReadonlyArray<string>>()
+    for (const call of message.toolCalls) asked.set(call.id, [...(asked.get(call.id) ?? []), `${call.name}(${JSON.stringify(call.input)})`])
+    const calls = new Map([...board.calls, ...asked])
     const known = { ...board, calls }
     // An answer that only asks for tools has no row: its calls show with their results.
     const shown = message.text.length > 0 || message.toolCalls.length === 0
@@ -180,8 +186,13 @@ export const stored = (before: ChatBoard, record: StoredEvent): ChatBoard => {
     })
   }
   if (record.name === toolResultEvent.name && message?._tag === "ToolResult") {
-    const text = `${board.calls.get(message.id) ?? message.name} ${message.isFailure ? "failed:" : "→"} ${JSON.stringify(message.result)}`
-    return add(board, { kind: "tool", text, ...at, ...(message.isFailure ? { failed: true as const } : {}) })
+    // The result answers the first call of its id still waiting, which it takes.
+    const [first, ...rest] = board.calls.get(message.id) ?? []
+    const calls = new Map(board.calls)
+    if (rest.length > 0) calls.set(message.id, rest)
+    else calls.delete(message.id)
+    const text = `${first ?? message.name} ${message.isFailure ? "failed:" : "→"} ${JSON.stringify(message.result)}`
+    return add({ ...board, calls }, { kind: "tool", text, ...at, ...(message.isFailure ? { failed: true as const } : {}) })
   }
   // An approval's answer is a record of the turn: a note, drawn from it now and whenever the chat is drawn again.
   const decided = dataOf(decidedEvent, record)

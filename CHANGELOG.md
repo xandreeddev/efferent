@@ -480,6 +480,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the learn track's chat, its task chips and Echo pair a tool's
+  result with its call by the kernel's rule, as `paired` and `turnsOf` do:
+  inside one answer, the results of an id answer its calls of that id in the
+  order asked, and a newer answer's calls of an id replace an older answer's
+  that still wait. They matched by id alone, so of one answer that asked
+  twice under one id, both results read the second call's parameters.
+  Unreachable with the page's own models, which mint ids that never repeat;
+  a hosted model's ids are its provider's. A test each, failing on the old
+  code.
+
 - Docs site: Lesson 18, "A memory that connects", at
   `/learn/connected-memory`. Lesson 11's program with the graph in place of
   the facts: the kernel's three graph tools merged into the toolkit
