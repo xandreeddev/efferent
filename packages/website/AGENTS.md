@@ -230,7 +230,13 @@ check` (tsc over the learn code, the build, the link check) and
   `playground.ts`, lesson 6's redraw button). The messages still waiting
   are the chat's last rows and a new row goes before them, so the stored
   rows are always in the journal's order. The pane renders the rows it
-  is given, by the row's id, and never reorders an element. Views are not rows: `views.ts` folds the same
+  is given, by the row's id, and never reorders an element. A tool's row
+  is worded from the call its result answers, paired by the kernel's rule
+  (`paired`), never by id alone: inside one answer, the results of an id
+  answer its calls of that id in the order asked, and a newer answer's
+  calls of an id replace an older answer's that still wait. The task chips
+  (`task-chips.ts`) and Echo (`paramsOfCall`) pair the same way, each with
+  a test of both cases. Views are not rows: `views.ts` folds the same
   records with `viewsOf`. A new kind of thing in the chat is a case of
   `stored` when it has a record, with a test in `chat-model.test.ts`.
   - A question a tool asks (lesson 9) is a row of kind `ask` with no

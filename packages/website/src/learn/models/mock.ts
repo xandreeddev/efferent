@@ -416,7 +416,7 @@ const rememberedBy = (part: ResultPart): string | undefined =>
  * (`paramsOf`). Of a `rememberFact` that stored a fact (lesson 11): that it will remember, and the fact's id.
  * Nothing for any other tool's result, or any other failure: those are answered as the tool's.
  */
-const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string | undefined => {
+const readingOf = (part: ResultPart, paramsOf: (part: object) => unknown): string | undefined => {
   if (part.name === "forget" && part.isFailure && part.result === APPROVAL_REFUSED) return NOT_APPROVED
   if (part.isFailure) return undefined
   const started = taskStartedBy(part)
@@ -429,13 +429,13 @@ const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string 
   const remembered = rememberedBy(part)
   if (remembered !== undefined) return `I will remember that: it is fact ${remembered}.`
   if (part.name === FOLLOW_THINGS && typeof part.result === "object" && part.result !== null && "links" in part.result && Array.isArray(part.result.links)) {
-    const params = paramsOf(part.id)
+    const params = paramsOf(part)
     const name = typeof params === "object" && params !== null && "name" in params && typeof params.name === "string" ? params.name : "it"
     const sentences: ReadonlyArray<string> = part.result.links.flatMap((link: unknown) => followedSentence(link) ?? [])
     return sentences.length === 0 ? `No link names ${name}.` : `Following ${name}: ${sentences.slice(0, 2).join(" ")}`
   }
   if (part.name === "convert" && typeof part.result === "number") {
-    const params = paramsOf(part.id)
+    const params = paramsOf(part)
     return typeof params === "object" && params !== null && "value" in params && typeof params.value === "number"
       && "from" in params && typeof params.from === "string" && "to" in params && typeof params.to === "string"
       ? `${params.value} ${params.from} is ${part.result.toFixed(1)} ${params.to}.`
@@ -537,9 +537,30 @@ const fileCallFor = (asked: string, offered: ReadonlyArray<string>): EchoCall | 
   return undefined
 }
 
-/** The parameters of the call a prompt holds under an id: the last one, since an id can repeat. */
-const paramsOfCall = (messages: Prompt.Prompt["content"]) => (id: string): unknown =>
-  messages.flatMap((message) => (message.role === "assistant" ? message.content : [])).flatMap((part) => (part.type === "tool-call" && part.id === id ? [part.params] : [])).at(-1)
+/**
+ * The parameters of the call each result of a prompt answers, by the result part itself: the kernel's rule
+ * (`paired`). Inside one answer, the results of an id answer its calls of that id in the order asked; a newer
+ * answer's calls of an id replace an older answer's that still wait. A result with no call waiting has none.
+ */
+const paramsOfCall = (messages: Prompt.Prompt["content"]) => {
+  const answered = new Map<object, unknown>()
+  const waiting = new Map<string, Array<unknown>>()
+  for (const message of messages) {
+    if (message.role === "assistant") {
+      const asked = new Map<string, Array<unknown>>()
+      for (const part of message.content) if (part.type === "tool-call") asked.set(part.id, [...(asked.get(part.id) ?? []), part.params])
+      for (const [id, params] of asked) waiting.set(id, params)
+    }
+    if (message.role === "tool") {
+      for (const part of message.content) {
+        if (part.type !== "tool-result") continue
+        const queue = waiting.get(part.id) ?? []
+        if (queue.length > 0) answered.set(part, queue.shift())
+      }
+    }
+  }
+  return (part: object): unknown => answered.get(part)
+}
 
 /** Where "read more" reads on from: a result and a character, or the end of a result that was read through. */
 type ReadOn = { readonly _tag: "At"; readonly result: number; readonly from: number } | { readonly _tag: "End" }
@@ -550,9 +571,10 @@ type ReadOn = { readonly _tag: "At"; readonly result: number; readonly from: num
  * Whichever of the two comes later in the prompt wins, so a new lookup is what "read more" reads next.
  */
 const readOnFrom = (messages: Prompt.Prompt["content"]): ReadOn | undefined => {
-  /** The result a `readResult` call asked for: the call's own parameter, found by the call's id. */
-  const askedFor = (id: string): number | undefined => {
-    const params = paramsOfCall(messages)(id)
+  /** The result a `readResult` call asked for: the parameter of the call this result answers. */
+  const paramsOf = paramsOfCall(messages)
+  const askedFor = (answer: object): number | undefined => {
+    const params = paramsOf(answer)
     return typeof params === "object" && params !== null && "result" in params && typeof params.result === "number" ? params.result : undefined
   }
   for (let at = messages.length - 1; at >= 0; at--) {
@@ -564,7 +586,7 @@ const readOnFrom = (messages: Prompt.Prompt["content"]): ReadOn | undefined => {
       const page = part.name === "readResult" && !part.isFailure ? pageIn(part.result) : undefined
       if (page !== undefined) {
         if (page.to >= page.total) return { _tag: "End" }
-        const result = askedFor(part.id)
+        const result = askedFor(part)
         if (result !== undefined) return { _tag: "At", result, from: page.to }
       }
       const pointer = pointerIn(part.result)

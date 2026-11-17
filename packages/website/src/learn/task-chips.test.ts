@@ -30,6 +30,26 @@ const fold = (traces: ReadonlyArray<Trace>): TaskChips => traces.reduce((all, tr
 const lines = (all: TaskChips) => all.chips.map(chipLine)
 
 describe("task chips (lesson 17)", () => {
+  test("two tasks one answer started under one call id each keep the text they were asked: results answer calls in order", () => {
+    const id = ToolCallId.make("c1")
+    const both = assistantMessage("", { toolCalls: [{ id, name: "startTask", params: { task: "first" } }, { id, name: "startTask", params: { task: "second" } }] })
+    const all = fold([
+      storedIn(CHAT, both),
+      storedIn(CHAT, toolResult({ id, name: "startTask" }, { task: "t1", session: "s1" })),
+      storedIn(CHAT, toolResult({ id, name: "startTask" }, { task: "t2", session: "s2" })),
+    ])
+    expect(all.chips.map((chip) => [chip.task, chip.text])).toEqual([["t1", "first"], ["t2", "second"]])
+  })
+
+  test("a newer answer's call of an id replaces an older answer's that still waits: the task keeps the newer call's text", () => {
+    const all = fold([
+      storedIn(CHAT, call("c1", "startTask", { task: "first" })),
+      storedIn(CHAT, call("c1", "startTask", { task: "second" })),
+      storedIn(CHAT, toolResult({ id: ToolCallId.make("c1"), name: "startTask" }, { task: "t1", session: "s1" })),
+    ])
+    expect(all.chips.map((chip) => [chip.task, chip.text])).toEqual([["t1", "second"]])
+  })
+
   test("a task runs from startTask's result, ends as its session's turn ends, waits, and is reported; keyed by its session", () => {
     const steps = [...started("c1", "what is 6 * 7?", "s1"), storedIn("s1", turnStarted(TurnNumber.make(1)))]
     expect(lines(fold(steps))).toEqual(["t1 running"])

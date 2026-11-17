@@ -207,6 +207,33 @@ describe("the chat's rows, record by record", () => {
     expect(final.rows.at(-1)?.id).toBe(live.id)
   })
 
+  test("results answer the calls of their id in the order asked, as the kernel pairs them: one answer may ask twice under one id", () => {
+    const id = ToolCallId.make("c1")
+    const records = journal([
+      turnStarted(one),
+      userMessage("Add them."),
+      assistantMessage("", { toolCalls: [{ id, name: "add", params: { a: 1, b: 2 } }, { id, name: "add", params: { a: 3, b: 4 } }] }),
+      toolResult({ id, name: "add" }, 3),
+      toolResult({ id, name: "add" }, 7),
+    ])
+    expect(records.reduce(stored, emptyChat).rows.map(told).slice(1)).toEqual([
+      'tool: add({"a":1,"b":2}) → 3',
+      'tool: add({"a":3,"b":4}) → 7',
+    ])
+  })
+
+  test("a newer answer's calls of an id replace an older answer's that still wait: its result is the newer call's", () => {
+    const id = ToolCallId.make("c1")
+    const records = journal([
+      turnStarted(one),
+      userMessage("Add them."),
+      assistantMessage("", { toolCalls: [{ id, name: "add", params: { a: 1, b: 2 } }] }),
+      assistantMessage("", { toolCalls: [{ id, name: "add", params: { a: 3, b: 4 } }] }),
+      toolResult({ id, name: "add" }, 7),
+    ])
+    expect(records.reduce(stored, emptyChat).rows.map(told).slice(1)).toEqual(['tool: add({"a":3,"b":4}) → 7'])
+  })
+
   test("a turn stopped while its answer was being written keeps what was written, marked, and then the turn's line", () => {
     const [started, asked, , ended] = journal([turnStarted(one), userMessage("Tell me about loops."), assistantMessage("never stored"), turnEnded(one, { _tag: "Interrupted" })])
     const writing = piece(piece(piece([started!, asked!].reduce(stored, emptyChat), 1, ""), 1, "A loop is"), 1, " a turn that")
