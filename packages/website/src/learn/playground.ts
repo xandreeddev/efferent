@@ -25,6 +25,8 @@ import { mountChat } from "./panes/chat.ts"
 import { mountEditor } from "./panes/editor.ts"
 import { mountEvals } from "./panes/evals.ts"
 import type { EvalsPane } from "./panes/evals.ts"
+import { mountGraders } from "./panes/graders.ts"
+import type { GradersPane } from "./panes/graders.ts"
 import { mountFiles } from "./panes/files.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
@@ -81,8 +83,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
   /** The buttons of the kits that run alone: off while a turn runs or a message waits for one, while a model loads, and while such a kit runs. */
   const aloneButtons = [
     ...[...document.querySelectorAll<HTMLButtonElement>("[data-kit]")].filter((button) => lesson.kits?.[button.dataset.kit ?? ""]?.alone === true),
-    // Lesson 13's "Run evals" takes turns with the chat too.
+    // Lesson 13's "Run evals" takes turns with the chat too, and so does lesson 19's "Check the graders".
     ...document.querySelectorAll<HTMLButtonElement>('[data-evals="run"]'),
+    ...document.querySelectorAll<HTMLButtonElement>('[data-graders="run"]'),
   ]
 
   // ── panes ───────────────────────────────────────────────────────────────
@@ -120,7 +123,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     chat.setState({
       ready, running: busy() || waitingCount(board) > 0,
       hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…"
-        : checking() ? `The ${lesson.evals === undefined ? "checks are" : "evals are"} running. The chat takes messages again when they are done.` : "Your program is not running. Fix it, then press Rebuild.",
+        : checking() ? `${lesson.evals !== undefined ? "The evals are running" : lesson.calibration !== undefined ? "The graders are being checked" : "The checks are running"}. The chat takes messages again when they are done.` : "Your program is not running. Fix it, then press Rebuild.",
     })
     models.setBusy(state.loading || busy() || checking())
     // A kit that runs alone and the chat take turns: its button is off while a turn runs or a message waits for one.
@@ -742,6 +745,34 @@ function boot(root: HTMLElement, lesson: Lesson) {
     if (Result.isFailure(ran)) pane.say(`The evals did not run: ${ran.failure}`)
   }))
   document.querySelectorAll<HTMLButtonElement>('[data-evals="stop"]').forEach((button) => button.addEventListener("click", () => void state.runtime?.stopAlone()))
+  // Lesson 19: check the graders against the labels over the code as it stands, and fill the table under the button
+  // as checks end. The part of the page that runs them, with the eval package, is loaded on the first press. Stop
+  // interrupts the run.
+  const gradersPanes = new Map<HTMLElement, GradersPane>()
+  document.querySelectorAll<HTMLButtonElement>('[data-graders="run"]').forEach((button) => button.addEventListener("click", async () => {
+    const calibration = lesson.calibration
+    const scope = button.closest("[data-step]") ?? document
+    const host = scope.querySelector<HTMLElement>("[data-graders-results]")
+    if (calibration === undefined || host === null) return
+    const pane = gradersPanes.get(host) ?? mountGraders(host)
+    gradersPanes.set(host, pane)
+    const stops = [...scope.querySelectorAll<HTMLButtonElement>('[data-graders="stop"]')]
+    button.disabled = true
+    const runtime = await ensureRuntime()
+    const running = runtime.runAlone(calibration.start(editor.sources(), (view) => {
+      pane.draw(view)
+      stops.forEach((stop) => { stop.hidden = !view.status.startsWith("Checking") })
+    }))
+    // The check takes turns with the chat: Send goes off, and comes back on when the check is over.
+    refresh()
+    const ran = await running
+    stops.forEach((stop) => { stop.hidden = true })
+    button.disabled = false
+    refresh()
+    // A check that did not start says why; one that ran drew its every ending, a stop included.
+    if (Result.isFailure(ran)) pane.say(`The graders were not checked: ${ran.failure}`)
+  }))
+  document.querySelectorAll<HTMLButtonElement>('[data-graders="stop"]').forEach((button) => button.addEventListener("click", () => void state.runtime?.stopAlone()))
   // Lesson 7: reload the page as it stands, a turn in progress included.
   document.querySelectorAll<HTMLButtonElement>("[data-reload]").forEach((button) => button.addEventListener("click", () => window.location.reload()))
   // Lesson 7: forget everything this lesson stored (its journals and the edits kept for a reload), and start again.

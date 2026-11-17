@@ -19,6 +19,8 @@ const NO_FAILURES = "failures.ts did not run: failures is not a list of failures
 const NO_GRAPH_MEMORY = "memory.ts did not run: memory is not a layer. It should be withGraph({ hops, limit, speaker })(flatMemory)."
 const NO_HOPS = "memory.ts did not run: withGraph needs hops, a whole number from 1 to 3: how many links away from what a question names it walks. It was given"
 const NO_DATASET = "evals.ts did not run: dataset is not a dataset. It should be { id, version, input, reference, cases }, with input and reference schemas and cases a list."
+const NO_LABELS = "labels.ts did not run: labels is not a list of labelled answers. It should be an array, each entry { id, question, reference, answer, label }, with label true or false."
+const NO_GRADERS = 'graders.ts did not run: graders is not a list of graders. It should be an array, each entry { id, version, kind, metrics, run }, kind "code" or "model".'
 /** Lesson 13's evals.ts with a dataset of no case: what the cases after it change is held alone. */
 const EMPTY_SET = 'const dataset = { id: "d", version: "1", input: Schema.String, reference: Schema.String, cases: [] }'
 /** tools.ts making two names that are no toolkit and no layer. */
@@ -172,6 +174,22 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), graphTools)."],
     ["tools", "const tools = graphTools\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be Toolkit.make(calculator).toLayer({ … })."],
     ["agent", "const main = 42", NO_PROGRAM],
+  ],
+  "grade-the-grader": [
+    // labels.ts makes one list, each entry a labelled answer, held to its fields before anything is checked.
+    ["labels", "export const labels = 42", NO_LABELS],
+    ["labels", "export const labels = { id: \"1\" }", NO_LABELS],
+    [
+      "labels", "export const labels = [{ id: \"1\", question: \"What is 2 + 3?\", reference: \"5\", answer: \"5\", label: \"yes\" }]",
+      "labels.ts did not run: entry 1 of labels is not a labelled answer. It should be { id, question, reference, answer, label }, with id, question, reference and answer text, and label true or false.",
+    ],
+    // graders.ts makes one list of graders, each with an Evaluator's fields.
+    ["graders", "export const graders = 42", NO_GRADERS],
+    ["graders", "export const graders = [{ id: \"text\", version: \"1\", metrics: [\"correct\"] }]", NO_GRADERS],
+    // The judge is read inside a grader's run: read at the top of the file, the build says why.
+    ["graders", "const key = SemanticJudge.key\nexport const graders = []", "graders.ts did not run: SemanticJudge is given when Check the graders is pressed, not when the program is built: read it inside a grader's run, as the starter does."],
+    // A grader says what it is: a kind other than "code" or "model" is refused.
+    ["graders", "export const graders = [{ id: \"text\", version: \"1\", kind: \"human\", metrics: [\"correct\"], run: () => 1 }]", NO_GRADERS],
   ],
 }
 

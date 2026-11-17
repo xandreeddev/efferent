@@ -12,15 +12,18 @@ check` (tsc over the learn code, the build, the link check) and
 - **The kernel alone.** The track runs on `@xandreed/core/kernel` and
   `@xandreed/sdk/kernel`, never the old engine; `src/learn/imports.test.ts`
   fails on any other `@xandreed/` specifier, in the page's code or in a
-  source a lesson shows. Lesson 13 alone may also name the eval package,
-  `@xandreed/evals` and `@xandreed/evals/stats`, in its own files
-  (`lessons/evals/`, `components/learn/evals/`, `13-evals.mdx`): the
-  package brings core's root with it, for its `ModelSpend` ledger, which
-  no other lesson loads. The page loads it only when "Run evals" is
-  pressed (a dynamic import of `lessons/evals/run.ts`), so no other
-  lesson's page carries it. The dependencies that part brings are listed in
-  `astro.config.mjs`'s `optimizeDeps.include`: found only when the
-  button is pressed, the dev server would reload the page and lose the
+  source a lesson shows. Lessons 13 and 19 alone may also name the eval
+  package, `@xandreed/evals` and `@xandreed/evals/stats`, each in its own
+  files (`lessons/evals/`, `components/learn/evals/`, `13-evals.mdx`;
+  `lessons/grade-the-grader/`, `components/learn/grade-the-grader/`,
+  `19-grade-the-grader.mdx`): the package brings core's root with it, for
+  its `ModelSpend` ledger, which no other lesson loads. The page loads it
+  only when the lesson's button is pressed ("Run evals", "Check the
+  graders": a dynamic import of the lesson's `run.ts`), so no other
+  lesson's page carries it; a lesson's `lesson.ts`, which every page
+  imports, names no value of it. The dependencies that part brings are
+  listed in `astro.config.mjs`'s `optimizeDeps.include`: found only when
+  the button is pressed, the dev server would reload the page and lose the
   press.
 - **A lesson** is `src/content/learn/NN-<slug>.mdx` (its steps, `Step`
   components that focus a pane and a file) and `src/learn/lessons/<slug>/`:
@@ -523,6 +526,54 @@ check` (tsc over the learn code, the build, the link check) and
     run says so: every trial keeps the grades it was given (the package
     grades each trial as it ends; a grading cut short gives none), the candidates it finished keep their gates,
     and the one it cut short reads how many of its graded trials passed.
+- **Lesson 19's check of the graders** (`Lesson.calibration`, "Check the
+  graders", a `data-graders` button with its `data-graders-results` table
+  and a `data-graders="stop"` button). labels.ts (answers a person
+  labelled, each `{ id, question, reference, answer, label }`) and
+  graders.ts (the package's `Evaluator`s, each giving one boolean metric,
+  `correct`, and its reason) are plain JavaScript the learner edits;
+  graders.ts's typed module holds each name to the package's types
+  (`TYPED`). The build runs both and guards what they made (`labelsMade`,
+  `gradersMade`), so one that makes no list refuses the build in words that
+  name it. graders.ts imports `SemanticJudge` from the package, which the
+  build does not load: it runs the file with `SemanticJudge` undefined, as
+  a grader reads it only when it runs, and the press runs the file again
+  with the package's own.
+  - calibration.ts is read-only, and nothing of the check is hidden in the
+    page: what a grader is handed (`Case`, never the label), each label as
+    a calibration's case (reviewed, one boolean metric at tolerance 0), the
+    table's row of each check (`rowOf`: the grader's observed verdict and
+    reason, and the agreement, false pass and false fail of the package's
+    agreement grade), the judge (`SemanticJevLive({ evaluate })`), one
+    `defineGraderCalibration` per grader and `calibrateGrader` for each.
+    The page runs it with its types taken out by named pieces (`TYPES`,
+    `calibrationBodyOf`); `evaluate` and `hear` are the page's, said in a
+    comment and the parameters of the typed module's `run`.
+  - The judge: `run.ts`'s `judgeOf(keyOf, fetchFn)`, read when the button
+    is pressed. With a gateway key kept, the real Jev: `jevTransport`
+    (`jev.ts`) maps the package's `SemanticInput` to `decide`'s predicates
+    and the answers back (`predicatesOf`, `answersOf`), yes-or-no
+    questions alone, a score or a choice question refused in the page's
+    words with nothing sent, and passes the package's signal on, so Stop
+    and the judge's deadline abort the request. Without a key, the
+    stand-in (`stand-in.ts`): one data value, `RECORDED`, Jev's answers to
+    the starter's sixteen requests in each of five runs, recorded on 17
+    November 2026, and one lookup, `recordedAnswers`, which answers with
+    each median and is keyed on the whole request (the text and every
+    question's name, kind and words, in order); a test pins the medians,
+    that every verdict at the starter's bars held in all five runs, and
+    case 4's spread of `commits`. Any other request is
+    refused in its words (`NOT_RECORDED`), which the package's judge says
+    after "Jev request failed: ". A check whose request failed leaves the
+    grader's observation `error`: its cell reads "no grade", and the
+    package counts it as a disagreement. The line under the table says who
+    answered, and what a press with a key costs (16 requests, less than a
+    tenth of a cent). No test reaches the gateway: the real path runs over
+    a fake `fetch` shaped like `/v1/decisions`.
+  - The table is `GradersBoard` (`lessons/grade-the-grader/board.ts`, no
+    DOM, holding rows to its own `Row` schema), drawn by
+    `panes/graders.ts`. It is run with `runtime.runAlone`, as lesson 13's
+    evals, and needs no model.
 - **A hosted model through the Vercel AI Gateway**, with the learner's
   own key (`models/gateway.ts`, the last card of the model list).
   - The wire is pure and holds no key (`gateway-wire.ts`: `wireMessages`,

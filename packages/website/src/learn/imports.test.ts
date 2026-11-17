@@ -1,9 +1,10 @@
 // The learn track runs on the kernel alone: every `@xandreed/` specifier its
 // code names, the lessons' shown sources included, is one of the two kernel
-// entries. The old engine is never imported, nor shown to a learner. Lesson
-// 13 alone also names the eval package (`@xandreed/evals` and its
+// entries. The old engine is never imported, nor shown to a learner. Lessons
+// 13 and 19 alone also name the eval package (`@xandreed/evals` and its
 // `/stats`), which brings core's root with it for its `ModelSpend` ledger:
-// only in that lesson's files, which the page loads when its evals run.
+// only in their own files, which the page loads when their button is pressed
+// (13's evals, 19's check of the graders).
 import { describe, expect, test } from "bun:test"
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -11,14 +12,15 @@ import { fileURLToPath } from "node:url"
 
 const ALLOWED = new Set(["@xandreed/core/kernel", "@xandreed/sdk/kernel"])
 
-/** The eval package's two entries, which lesson 13's files may name beside the kernel's. */
+/** The eval package's two entries, which lessons 13's and 19's files may name beside the kernel's. */
 const EVALS = new Set(["@xandreed/evals", "@xandreed/evals/stats"])
 
-/** Lesson 13's files: its folder of the track's code, its components and its page. */
+/** Lessons 13's and 19's files: each one's folder of the track's code, its components and its page. */
 const evalsLessonFile = (file: string): boolean =>
-  file.startsWith("learn/lessons/evals/") || file.startsWith("components/learn/evals/") || file === "content/learn/13-evals.mdx"
+  file.startsWith("learn/lessons/evals/") || file.startsWith("components/learn/evals/") || file === "content/learn/13-evals.mdx" ||
+  file.startsWith("learn/lessons/grade-the-grader/") || file.startsWith("components/learn/grade-the-grader/") || file === "content/learn/19-grade-the-grader.mdx"
 
-/** Whether a file may name a specifier: the kernel's two entries anywhere, the eval package's in lesson 13's files alone. */
+/** Whether a file may name a specifier: the kernel's two entries anywhere, the eval package's in lessons 13's and 19's files alone. */
 const allowedIn = (file: string, specifier: string): boolean => ALLOWED.has(specifier) || (EVALS.has(specifier) && evalsLessonFile(file))
 
 /** Every `@xandreed/…` module a text names in an import or export, written as code or inside a shown source string. */
@@ -40,15 +42,20 @@ describe("the learn track's imports", () => {
     const named = files.flatMap((file) => specifiersOf(readFileSync(file, "utf8")).map((specifier) => ({ specifier, file: file.slice(root.length) })))
     expect(named.length).toBeGreaterThan(20)
     expect(named.filter(({ specifier, file }) => !allowedIn(file, specifier)).map(({ specifier, file }) => `${specifier} in ${file}`)).toEqual([])
-    // Lesson 13 names the eval package, in its shown sources and its page code; no other file of the track does.
+    // Lessons 13 and 19 name the eval package, in their shown sources and their page code; no other file of the track does.
     const evals = named.filter(({ specifier }) => EVALS.has(specifier))
     expect(evals.length).toBeGreaterThan(3)
     expect(evals.filter(({ file }) => !evalsLessonFile(file))).toEqual([])
+    expect(evals.some(({ file }) => file.startsWith("learn/lessons/grade-the-grader/"))).toBe(true)
   })
 
-  test("the eval package is allowed in lesson 13's files alone, and core's root nowhere", () => {
+  test("the eval package is allowed in lessons 13's and 19's files alone, and core's root nowhere", () => {
     expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/evals")).toBe(true)
     expect(allowedIn("learn/lessons/evals/board.ts", "@xandreed/evals/stats")).toBe(true)
+    expect(allowedIn("learn/lessons/grade-the-grader/run.ts", "@xandreed/evals")).toBe(true)
+    expect(allowedIn("components/learn/grade-the-grader/Graders.astro", "@xandreed/evals")).toBe(true)
+    expect(allowedIn("learn/lessons/connected-memory/lesson.ts", "@xandreed/evals")).toBe(false)
+    expect(allowedIn("learn/panes/graders.ts", "@xandreed/evals")).toBe(false)
     expect(allowedIn("learn/lessons/test-your-agent/lesson.ts", "@xandreed/evals")).toBe(false)
     expect(allowedIn("learn/playground.ts", "@xandreed/evals/stats")).toBe(false)
     expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/core")).toBe(false)

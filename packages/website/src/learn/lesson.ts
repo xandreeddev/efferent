@@ -9,6 +9,7 @@ import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xan
 import type { Approval, Files, KeyValueStore, Memory, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 import type { EvalsView } from "./lessons/evals/board.ts"
+import type { GradersView } from "./lessons/grade-the-grader/board.ts"
 import type { LoadedModel } from "./models/types.ts"
 import type { KitResult } from "./runtime.ts"
 
@@ -251,5 +252,17 @@ export interface Lesson {
      * none, in words. `changed` is told the table as it fills, and once more when the run is over, however it ended.
      */
     readonly start: (sources: Sources, changed: (view: EvalsView) => void) => (model: Option.Option<LoadedModel>) => Promise<Result.Result<Effect.Effect<EvalsView>, string>>
+  }
+  /**
+   * The lesson's check of its graders against labels a person wrote (lesson 19, "Check the graders", a `data-graders`
+   * button). As lesson 13's evals: the part of the page that runs it, with the eval package, is loaded when the button
+   * is pressed, and the run takes turns with the chat (`runtime.runAlone`).
+   */
+  readonly calibration?: {
+    /**
+     * What `runtime.runAlone` is handed: the check of the files as they stand, or why there is none, in words. It
+     * needs no model. `changed` is told the table as it fills, and once more when the run is over, however it ended.
+     */
+    readonly start: (sources: Sources, changed: (view: GradersView) => void) => (model: Option.Option<LoadedModel>) => Promise<Result.Result<Effect.Effect<GradersView>, string>>
   }
 }

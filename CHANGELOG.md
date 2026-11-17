@@ -480,6 +480,30 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Lesson 19, "Grade the grader", at `/learn/grade-the-grader`.
+  A grader is code that can be wrong too: labels.ts holds eight answers a
+  person labelled right or wrong, graders.ts three graders as the eval
+  package's `Evaluator`s (lesson 13's text rule, and two that ask Jev, a
+  decision model, through the package's `SemanticJudge`: one question, or
+  three in one request), and calibration.ts, read-only, checks each one
+  against the labels with `defineGraderCalibration` and `calibrateGrader`,
+  reading each check's agreement, false pass and false fail from the
+  package's agreement grade. "Check the graders" fills a table as checks
+  end: text agrees with 2 of 8, asked-once with 5 of 8, asked-thrice with
+  7 of 8, each case's verdict against its label and the grader's reason on
+  demand. The judge is the package's `SemanticJevLive`, whose transport the
+  page binds: with an AI Gateway key kept, the real Jev through the page's
+  `decide` (yes-or-no questions alone: a score or a choice question is
+  refused in the page's words); without one, a stand-in that answers with
+  Jev's recorded answers to the starter's sixteen requests (the median of
+  five runs, recorded on 17 November 2026), keyed on the whole request, and
+  refuses any other request in words that ask for a key, so a check of a
+  case of the learner's own gets no grade and counts as a disagreement.
+  Four experiments: a hedged answer labelled wrong, a bar lowered to fit
+  the labels, a case of the learner's own, and a stricter bar that keeps
+  its false passes. The eval package is loaded only when the button is
+  pressed: `imports.test.ts` allows it in lesson 19's own files as in lesson
+  13's. Lesson 18's page links here.
 - Docs site: the page's model adapters hold no `as never`. Echo's, the CPU
   model's, WebLLM's and Chrome's answers were cast because `settledParts`
   returned a read-only array (itself cast with `as unknown as`); it now

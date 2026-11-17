@@ -1,0 +1,109 @@
+---
+title: Grade the grader
+description: A grader is code that can be wrong too. People write labels, and each grader is checked against them before its numbers are trusted.
+minutes: 30
+---
+
+import Step from '../../components/learn/Step.astro'
+import Graders from '../../components/learn/grade-the-grader/Graders.astro'
+import Experiments from '../../components/learn/grade-the-grader/Experiments.astro'
+
+<Step n={1} id="build" title="What you will build" focus="code" file="labels">
+
+The evals of [lesson 13](/learn/evals/) measured models with **graders**: code that reads an answer and says whether it is right. An eval's rates are only as good as its graders, and a grader is code that can be wrong too. This lesson checks graders before their numbers are trusted.
+
+A person reads some answers and marks each one right or wrong by hand. That mark is a **label**. Each grader is then run on the same answers, and its verdict is compared with each label. That check is a **calibration**, and how many of its verdicts match the labels is its **agreement**.
+
+Two files you edit:
+
+- **labels.ts**: eight answers, each with a label a person wrote;
+- **graders.ts**: three graders, as the eval package's `Evaluator`s, each saying yes or no with a reason.
+
+A third, **calibration.ts**, is read-only: how the page checks each grader against the labels, with the package's calibration. agent.ts and the files it imports are lesson 13's, read-only: the chat answers as it did there. Press **Check the graders**.
+
+<Graders />
+
+The table says, for each grader, how many labels it agrees with: **text** agrees with **2 of 8**, **asked-once** with **5 of 8**, **asked-thrice** with **7 of 8**. Under them, a row for each labelled answer: the label, and each grader's verdict, ✓ where it matches the label and ✗ where it does not. Open a cell for the grader's reason. Nothing was said in the chat: the check runs the graders, not your program.
+
+</Step>
+
+<Step n={2} id="labels" title="Labels are written by people" focus="code" file="labels">
+
+Each case of labels.ts is a question, the reference answer written beside it, an answer an agent might give, and `label`: `true` when a person read the answer and found it right, `false` when wrong. Four are right, four are wrong:
+
+- right: *2 + 3 = 5.*, *Five.*, *Lisboa.*, and *I think it might be 5, but I am not sure.*;
+- wrong: *5, because 2 + 3 is the same as 2 times 3.* (a false reason), *Lisbon, which is also the capital of Spain.* (something false beside the answer), *Probably under the mat or in the drawer.* (two places, and no choice), and *Porto, not Lisbon.*
+
+A grader never sees a label. calibration.ts hands it the question, the reference and the answer (`Case`), and the package puts the label beside its verdict afterwards. A grader that could read the label would agree with every one, and the check would say nothing.
+
+</Step>
+
+<Step n={3} id="text" title="The text grader" focus="code" file="graders">
+
+The first grader, `text`, is the first half of lesson 13's answer rule: an answer is right when it holds the reference's text. It agrees with **2 of 8**.
+
+Where a grader and a label disagree, there are two ways. A **false pass** is a grader's yes where the label says wrong; a **false fail** is a grader's no where the label says right. text's false passes are **5, 6, 7, 8**: each holds the reference's text and is wrong. *Porto, not Lisbon.* holds *Lisbon*. Its false fails are **2, 3**: *Five.* holds no *5*, and *Lisboa.* no *Lisbon*, though both are right.
+
+These eight cases were written to break the text rule: answers right in other words, and wrong ones that hold the right words. In lesson 13 it passed Echo's answers, which hold their reference's text letter for letter. A grader's agreement holds for answers like the ones it was checked on, so it is checked on the answers it will meet.
+
+</Step>
+
+<Step n={4} id="jev" title="A model grader" focus="code" file="graders">
+
+A rule over letters cannot read meaning. A model can: the other two graders ask **Jev**, a **decision model**. A decision model reads one text and answers questions about it. It writes no reply. Each question here is a **predicate**: a statement about the text that is true or false, such as *Does the agent's answer give the reference answer, in any words?* Jev answers each with a **probability**: a number from 0 to 1, how likely it finds the statement true.
+
+In graders.ts a model grader gets `SemanticJudge` with `yield* SemanticJudge`. It is the eval package's **judge**: the part that puts questions to a model and hands back its answers. The grader calls the judge's `evaluate` once, with the text Jev reads (the question, the reference answer and the agent's answer, a line each) and its questions by name. It holds each probability to a **bar**, at the top of the file: the number a probability must reach (or, for "says something false", stay under) for the grader to say yes. Its reason gives the probabilities.
+
+In calibration.ts the judge is the package's own, `SemanticJevLive`. It is handed a function from the page, also named `evaluate`, that sends one request to Jev. Jev is reached through the AI Gateway, the service the model list's last card reaches hosted models through, with a key you keep there. Without a key, the page's **stand-in** answers for Jev with Jev's own answers, recorded earlier: step 8 says how. `defineGraderCalibration` makes one calibration for each grader over the labels, and `calibrateGrader` runs it.
+
+</Step>
+
+<Step n={5} id="once" title="Asked once" focus="code" file="graders">
+
+`asked-once` asks Jev one question, whether the answer gives the reference answer, and passes at 0.5. It agrees with **5 of 8**. It reads *Five.* and *Lisboa.* as right: 0.98 and 0.7.
+
+Its false passes are **5, 6 and 7**, at **0.94**, **0.98** and **0.95**. Each answer does give the reference answer: *5*, *Lisbon*, *under the mat*. What is wrong with each is something else: a false reason, a false claim, a second place. Jev answers the question it is asked, and asked-once never asks about those. *Porto, not Lisbon.* gets **0.37**, and fails.
+
+</Step>
+
+<Step n={6} id="thrice" title="Asked three things" focus="code" file="graders">
+
+`asked-thrice` asks three questions in one request: does the answer give the reference answer, does it say anything false, and does it commit to one answer. It passes when the first is at least 0.5, the second under 0.5, and the third at least 0.5. It agrees with **7 of 8**.
+
+The three false passes of asked-once fail here: case 5 says something false at **0.94**, case 6 at **0.98**, and case 7 commits at **0.08**. Case 8 still fails: it gives the reference answer at **0.37**.
+
+</Step>
+
+<Step n={7} id="hedge" title="A grader, or a label" focus="code" file="labels">
+
+asked-thrice's one disagreement is case 4: *I think it might be 5, but I am not sure.* It **hedges**: it gives an answer and holds back from standing by it. Jev gives it 0.93 for giving the reference answer and 0.11 for saying something false, under that bar, but **0.29** for committing to one answer, so it fails. The label says right: a **false fail**.
+
+Is a hedged right answer right? That is a question about the label, not only about the grader. If the person who wrote the label would accept it, the grader asks too much. If not, the label is wrong, and the grader is right. A disagreement says where to look; a person decides which side changes. The first experiment changes the label.
+
+</Step>
+
+<Step n={8} id="key" title="With your key" focus="model">
+
+The page has no Jev of its own. Without a key, the **stand-in** answers for it: Jev's own answers to the sixteen requests the starter makes, recorded through the gateway on **17 November 2026**. Each request was sent five times, and for each question the stand-in gives the middle of its five probabilities. Every verdict at the starter's bars was the same in all five. The line under the table says which answered.
+
+The stand-in knows each request by its whole text: the case, and every question's name and words, letter for letter. A question you edit, an answer you change or a case of your own was never recorded, and the stand-in refuses it: the cell says no grade, with the reason. The package counts a verdict with no grade as a disagreement.
+
+With an AI Gateway key kept in the model list's gateway card, the real Jev answers instead, through the gateway with your key. A press with the starter's files sends it 16 requests, eight for asked-once and eight for asked-thrice, and costs **less than a tenth of a cent**.
+
+With a key, on 17 November 2026, the real Jev gave the same verdicts as the stand-in: text **2 of 8**, asked-once **5 of 8**, asked-thrice **7 of 8**. Then a case of our own, *How many legs does a spider have?*, reference *8*, answer *Eight.*, labelled right: text failed it (the answer holds no *8*), and Jev gave it **0.98** for giving the reference answer, **0.02** for saying something false and **0.97** for committing, so both model graders passed it: **6 of 9** and **8 of 9** (tried once).
+
+A model grader is a model too, and lesson 13 compared models. There, DeepSeek through the gateway passed lesson 13's starter 20 of 20, as Echo did: a tie says nothing about which is better. Comparing models needs tasks that tell them apart, and graders checked on answers like theirs.
+
+</Step>
+
+<Step n={9} id="experiments" title="Experiments" focus="code" file="labels">
+
+**Check the graders** runs labels.ts and graders.ts as they stand in the editor. The check and the chat take turns: while the graders are being checked, the chat takes no message, and while a turn runs in the chat, **Check the graders** is off. **Stop** interrupts the check where it is.
+
+Each experiment edits the starter's text, so two in a row add up: press **Reset** in the Code pane before each one.
+
+<Experiments />
+
+A calibration is the eval package's: its cases, its agreement, and the gates a grader must pass, all in [calibrations and journeys](https://github.com/xandreeddev/efferent/blob/main/docs/composable-evaluations.md).
+
+</Step>
