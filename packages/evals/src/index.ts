@@ -125,7 +125,7 @@ export {
 } from "./completeness.entity.js"
 export { assessCompleteness } from "./completeness.entity.functions.js"
 export { DecisionCaseId, DecisionComparison, DecisionDelta, DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
-export { compareDecisionTrials, selectionMetrics } from "./decision-comparison.entity.functions.js"
+export { compareDecisionTrials, decisionTrialOf, selectionMetrics } from "./decision-comparison.entity.functions.js"
 
 export { EvidenceProjection } from "./domain/evidence-projection.entity.js"
 export { type RunnableExecution, runnableExecutionPort } from "./ports/runnable-execution.port.js"

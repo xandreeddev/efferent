@@ -85,6 +85,7 @@ const contextualPrecision
 const contextualRecall
 const contextualRelevancy
 const csv
+const decisionTrialOf
 const defineEvaluationApp
 const defineGraderCalibration
 const defineRunnable

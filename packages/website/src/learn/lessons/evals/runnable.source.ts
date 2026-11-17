@@ -28,7 +28,7 @@ import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk/kernel"
 import type { TurnRead } from "@xandreed/sdk/kernel"
 import {
   compareDecisionTrials,
-  DecisionCaseId,
+  decisionTrialOf,
   defineRunnable,
   EvalId,
   EvaluationError,
@@ -202,23 +202,15 @@ const passed = (trial: Trial) =>
     ),
   )
 
-// A trial as compareDecisionTrials reads it. The package has no function from a trial to this
-// row, so here it is: how the trial ended, whether it passed, and how long it took. A model whose
-// call fails gives no answer: its turn ends failed, the trial completes, and the graders fail it.
-// A trial that did not complete (its stack did not run, or the page stopped it) is no finding
-// about the model: it is "infrastructure", which the comparison counts apart and never takes for
-// a regression, and the table says "error".
-export const rowOf = (trial: Trial): DecisionTrial => ({
-  candidate: trial.candidate.id,
-  caseId: DecisionCaseId.make(trial.task.id),
-  group: trial.task.family,
-  sample: trial.sample,
-  status: trial.status === "completed" ? "completed" : "infrastructure",
-  passed: passed(trial),
-  quality: null,
-  latencyMs: trial.endedAt - trial.startedAt,
-  costUsd: null,
-})
+// A trial as compareDecisionTrials reads it, made by the package's decisionTrialOf: how the trial
+// ended, whether it passed (every gate's grader said yes, which passed above decides) and how
+// long it took. A model whose call fails gives no answer: its turn ends failed,
+// the trial completes, and the graders fail it. A trial that did not complete (its stack did not
+// run, or the page stopped it) is no finding about the model: it is "infrastructure", which the
+// comparison counts apart and never takes for a regression, and the table says "error". A trial
+// still running is no row yet.
+export const rowOf = (trial: Trial): Option.Option<DecisionTrial> =>
+  decisionTrialOf(trial, { passed: passed(trial) })
 `
 
 /** Where the names the page gives start: the comment above the candidates. Everything above it is at a typed module's top. */
@@ -333,7 +325,7 @@ export const evaluation = Effect.forEach(
   Effect.map((runs) => ({
     runs,
     comparison: compareDecisionTrials(
-      runs.flatMap((run) => run.trials.map(rowOf)),
+      runs.flatMap((run) => run.trials.flatMap((trial) => Option.toArray(rowOf(trial)))),
       "echo",
     ),
   })),
@@ -361,7 +353,7 @@ export const TYPES: ReadonlyArray<readonly [string, string]> = [
   ['runnableExecutionPort<string, string, typeof Evidence.Type, null>("lesson-program")', 'runnableExecutionPort("lesson-program")'],
   ['evaluationEnvironmentPort<string, null>("lesson-program")', 'evaluationEnvironmentPort("lesson-program")'],
   ["const passed = (trial: Trial) =>", "const passed = (trial) =>"],
-  ["export const rowOf = (trial: Trial): DecisionTrial =>", "export const rowOf = (trial) =>"],
+  ["export const rowOf = (trial: Trial): Option.Option<DecisionTrial> =>", "export const rowOf = (trial) =>"],
   ["const app: EvaluationApp = {", "const app = {"],
 ]
 
