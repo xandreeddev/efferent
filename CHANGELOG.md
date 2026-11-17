@@ -480,6 +480,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: Echo's early rules no longer misread a message. A date
+  (2026-11-14, 14/11/2026), a phone number or "2x4" is no sum: a number that
+  is part of a longer one is none, and an x is the operator only between
+  spaces. A table's size is the number after "to", not any number in the
+  message. A message that starts with "remember" is a note even when it
+  mentions notes ("Remember to tidy my notes."), and is saved without its
+  "to": lessons 2, 9 and 12 now store "buy milk." for "Remember to buy
+  milk.". A helper's answer ends with a full stop, and a calculator's result
+  in the same step is said after it, where it was dropped. Every message the
+  track sends was run through main's Echo and this one: only those differ.
+
 - Docs site: the learn track's chat, its task chips and Echo pair a tool's
   result with its call by the kernel's rule, as `paired` and `turnsOf` do:
   inside one answer, the results of an id answer its calls of that id in the

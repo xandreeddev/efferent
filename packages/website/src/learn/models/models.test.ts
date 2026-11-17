@@ -589,8 +589,8 @@ describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
     expect(asked("What is 120 ÷ 8?")).toEqual(calling(sum(120, "/", 8)))
   })
 
-  test("\"remember …\" saves the rest of the message as a note, without a leading \"that\"", () => {
-    expect(asked("Remember to buy milk.")).toEqual(calling({ name: "remember", params: { note: "to buy milk." } }))
+  test("\"remember …\" saves the rest of the message as a note, without a leading \"that\" or \"to\"", () => {
+    expect(asked("Remember to buy milk.")).toEqual(calling({ name: "remember", params: { note: "buy milk." } }))
     expect(asked("Please remember that the sky is blue.")).toEqual(calling({ name: "remember", params: { note: "the sky is blue." } }))
   })
 
@@ -640,6 +640,39 @@ describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
     expect(asked("Remember that 2 + 2 is 4.")).toEqual(calling(sum(2, "+", 2)))
   })
 
+  test("a number that is part of a longer one makes no sum: a date, a phone number, 2x4", () => {
+    for (const text of ["What is 2026-11-14?", "On 14/11/2026 I paid.", "Call 555-123-4567.", "Buy a 2x4."]) expect(asked(text, ["calculator"]).calls).toEqual([])
+    // Still sums: no spaces, a negative number on either side, a sentence's full stop after the second number.
+    expect(asked("What is 2+2?")).toEqual(calling(sum(2, "+", 2)))
+    expect(asked("What is -5 + 3?")).toEqual(calling(sum(-5, "+", 3)))
+    expect(asked("What is 5 - -3?")).toEqual(calling(sum(5, "-", -3)))
+    expect(asked("Work out 120 / 8.")).toEqual(calling(sum(120, "/", 8)))
+  })
+
+  test("a table's size is the number after \"to\": another number in the message is not it", () => {
+    expect(asked("Show a table of squares, I am 30.")).toEqual(calling({ name: "show", params: { id: "squares", table: "squares", n: 5 } }))
+    expect(asked("Show a table of cubes up to 4.")).toEqual(calling({ name: "show", params: { id: "cubes", table: "cubes", n: 4 } }))
+  })
+
+  test("a message that starts with \"remember\" is a note, without its \"to\" or \"that\", even when it mentions notes", () => {
+    expect(asked("Remember to buy milk.")).toEqual(calling({ name: "remember", params: { note: "buy milk." } }))
+    expect(asked("Remember to tidy my notes.")).toEqual(calling({ name: "remember", params: { note: "tidy my notes." } }))
+    // A question about notes is still recall's, and a sum after "remember" still the calculator's.
+    expect(asked("What are my notes?")).toEqual(calling({ name: "recall", params: {} }))
+    expect(asked("Remember that 2 + 2 is 4.")).toEqual(calling(sum(2, "+", 2)))
+  })
+
+  test("a helper's answer is said as a sentence that ends, and the step's other results after it", () => {
+    const step = (messages: Parameters<typeof Prompt.make>[0]) => echoStep(Prompt.make(messages), every)
+    const asks = [{ role: "user", content: "Ask a helper: what is 6 * 7?" }, call("c1", "delegate", { task: "what is 6 * 7?" })] as const
+    expect(step([...asks, result("c1", "delegate", { answer: "42" })])).toEqual({ text: "The helper answered: 42.", calls: [] })
+    const both = { role: "tool", content: [
+      { type: "tool-result", id: "c1", name: "delegate", isFailure: false, result: { answer: "42" } },
+      { type: "tool-result", id: "c2", name: "calculator", isFailure: false, result: 5 },
+    ] } as const
+    expect(step([...asks, both])).toEqual({ text: "The helper answered: 42. The tool answered: calculator says 5.", calls: [] })
+  })
+
   test("each message waiting since its last answer gets its own call, and the text says how many", () => {
     const sent = Prompt.make([
       { role: "user", content: "Remember to buy milk." },
@@ -648,7 +681,7 @@ describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
     ])
     expect(echoStep(sent, every)).toEqual({
       text: "Let me use 3 tools.",
-      calls: [{ name: "remember", params: { note: "to buy milk." } }, sum(12, "*", 3), { name: "recall", params: {} }],
+      calls: [{ name: "remember", params: { note: "buy milk." } }, sum(12, "*", 3), { name: "recall", params: {} }],
     })
   })
 
@@ -674,15 +707,15 @@ describe("Echo's tool rules (lessons 2, 4 and 6)", () => {
     const messages = [
       { role: "user", content: "Remember to buy milk." },
       { role: "user", content: "What are my notes?" },
-      { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "remember", params: { note: "to buy milk." } }, { type: "tool-call", id: "c2", name: "recall", params: {} }] },
+      { role: "assistant", content: [{ type: "tool-call", id: "c1", name: "remember", params: { note: "buy milk." } }, { type: "tool-call", id: "c2", name: "recall", params: {} }] },
     ] as const
-    const answer = { text: 'The tools answered: remember says "Saved. 1 notes so far."; recall says ["to buy milk."].', calls: [] }
-    expect(echoStep(Prompt.make([...messages, result("c1", "remember", "Saved. 1 notes so far."), result("c2", "recall", ["to buy milk."])]), every)).toEqual(answer)
+    const answer = { text: 'The tools answered: remember says "Saved. 1 notes so far."; recall says ["buy milk."].', calls: [] }
+    expect(echoStep(Prompt.make([...messages, result("c1", "remember", "Saved. 1 notes so far."), result("c2", "recall", ["buy milk."])]), every)).toEqual(answer)
     expect(echoStep(Prompt.make([...messages, {
       role: "tool",
       content: [
         { type: "tool-result", id: "c1", name: "remember", isFailure: false, result: "Saved. 1 notes so far." },
-        { type: "tool-result", id: "c2", name: "recall", isFailure: false, result: ["to buy milk."] },
+        { type: "tool-result", id: "c2", name: "recall", isFailure: false, result: ["buy milk."] },
       ],
     }]), every)).toEqual(answer)
   })
@@ -1226,7 +1259,7 @@ describe("Echo's rules for facts (lesson 11)", () => {
     // Both offered: a fact goes to the kernel's tool, and what only lesson 2's rule takes goes to lesson 2's.
     const both = [...lesson2, "rememberFact", "forgetFact"]
     expect(asked("Remember that the door is green.", [], both)).toEqual(remembering("The user said: the door is green."))
-    expect(asked("Remember to buy milk.", [], both)).toEqual({ text: "Let me work that out.", calls: [{ name: "remember", params: { note: "to buy milk." } }] })
+    expect(asked("Remember to buy milk.", [], both)).toEqual({ text: "Let me work that out.", calls: [{ name: "remember", params: { note: "buy milk." } }] })
   })
 
   test("the rule comes before the sum's: \"Remember that 2 + 2 is 4.\" is a fact where rememberFact is offered, and a sum where it is not", () => {

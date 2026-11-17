@@ -59,7 +59,7 @@ describe("lesson 2 on the page (the kernel, Echo)", () => {
     const second = replies(runtime)
     runtime.send("What are my notes?")
     await second
-    expect(replyTexts(heard)).toEqual(["The tool answered: remember says \"Saved. 1 notes so far.\".", "The tool answered: recall says [\"to buy milk.\"]."])
+    expect(replyTexts(heard)).toEqual(["The tool answered: remember says \"Saved. 1 notes so far.\".", "The tool answered: recall says [\"buy milk.\"]."])
   })
 
   test("a failure is an answer: dividing by zero, and a broken calculator", async () => {

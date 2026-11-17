@@ -190,7 +190,7 @@ describe("lesson 12 on the page (the kernel, Echo)", () => {
     expect(await seen()).toEqual(before)
     expect(heard.filter((trace) => trace._tag === "Taken")).toHaveLength(1)
     await say("What are my notes?")
-    expect(replies().at(-1)).toBe('The tool answered: recall says ["to buy milk."].')
+    expect(replies().at(-1)).toBe('The tool answered: recall says ["buy milk."].')
     expect((await runtime.list()).map((header) => header.owner)).toEqual(["learner"])
   })
 
@@ -390,10 +390,10 @@ describe("lesson 12 on the page (the kernel, Echo)", () => {
     expect(testYourAgent.chips).toEqual([SUM, "What is 12 * 3?", "Remember to buy milk.", "What are my notes?"])
     const { together, replies, rows, runtime } = await page()
     await together(testYourAgent.three)
-    expect(replies()).toEqual(['The tools answered: remember says "Saved. 1 notes so far."; calculator says 5; recall says ["to buy milk."].'])
+    expect(replies()).toEqual(['The tools answered: remember says "Saved. 1 notes so far."; calculator says 5; recall says ["buy milk."].'])
     expect(rows().slice(3)).toEqual([
-      "agent: Let me use 3 tools.", 'tool: remember({"note":"to buy milk."}) → "Saved. 1 notes so far."', 'tool: calculator({"a":2,"op":"+","b":3}) → 5', 'tool: recall({}) → ["to buy milk."]',
-      'agent: The tools answered: remember says "Saved. 1 notes so far."; calculator says 5; recall says ["to buy milk."].',
+      "agent: Let me use 3 tools.", 'tool: remember({"note":"buy milk."}) → "Saved. 1 notes so far."', 'tool: calculator({"a":2,"op":"+","b":3}) → 5', 'tool: recall({}) → ["buy milk."]',
+      'agent: The tools answered: remember says "Saved. 1 notes so far."; calculator says 5; recall says ["buy milk."].',
     ])
     expect(await outcomes(runtime)).toEqual(["Completed"])
     for (const [id, experiment] of Object.entries(testYourAgent.experiments)) {
