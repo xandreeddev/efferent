@@ -22,10 +22,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   distance, then the newest (`near`): "Acme is in Lisbon" is sent right
   after "Ana works at Acme" for "In what city does Ana work?", where
   lesson 11's word ranking, at the same limit, left it out. The speaker's
-  words ("I", "me") are the host's option. Measured first: the order
-  helps a small model without making it reliable (Qwen2.5 0.5B named the
-  city in 1 and 3 tries of 5 with the path first, never with another link
-  first; DeepSeek V4.1 Flash either way, and from the final note), and a
+  words ("I", "me") are the host's option. Measured: the order helps a
+  small model (on the same six links, Qwen2.5 0.5B named the city 4
+  times of 5 with the path first and never with it last; DeepSeek V4.1
+  Flash either way), and a
   small embedding model (run in Node on the library the site ships for
   its browser models) was left out: it scored Lisbon nearer Paris than
   Lisboa. `questionOf` moves to the memory
@@ -436,6 +436,32 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - Nothing in either entry imports a `node:` or `bun:` module.
 
 ### Repository
+
+- Docs site: Lesson 18, "A memory that connects", at
+  `/learn/connected-memory`. Lesson 11's program with the graph in place of
+  the facts: the kernel's three graph tools merged into the toolkit
+  (`Toolkit.merge(Toolkit.make(calculator), graphTools)`), `graphHandlers`
+  provided, and memory.ts the flat memory wrapped with `withGraph({ hops:
+  2, limit: 5, speaker })`, "I", "me" and "my" naming the thing called
+  "user"; tools.ts and agent.ts derive from lesson 11's texts by named
+  pieces. The page's main path stores seven links in one message and asks
+  "In what city does Ana work?": the note sends "Ana works at Acme" then
+  "Acme is in Lisbon" first. The page also shows the walk's limit: "Acme
+  sells paint." ranks before the city and Echo's answer misses it, until
+  `unlinkThings` removes it. The Context tab names the graph session
+  "Graph" (a session the graph plugin owns with no parent, `kindOf`), keeps
+  it across Clear context as it keeps the memory session, and draws each of
+  its turns as three steps ("Link stored", "Link removed"). Echo learns
+  links: each sentence "thing, relation, thing." with a relation of a fixed
+  list is one `linkThings` call, all in one answer, after lesson 11's rules
+  ("I live in Lisbon." stays a fact where both tools are offered); "Follow
+  X." and "What is X linked to?" call `followThings`, before the rule that
+  answers a question from the note's first two lines; "Unlink e2." calls
+  `unlinkThings`; the note of links is read past as the facts' is.
+  Experiments walk one link, rank by distance alone with a wrapper of the
+  learner's own over `knownLinks`, `namedIn`, `near` and `linksNote`, and
+  take the wrapper away. Lesson 17's page links here. No published package
+  changes.
 
 - Docs site: every lesson can run on a hosted model, through the Vercel
   AI Gateway with the learner's own key: the last card of the model list

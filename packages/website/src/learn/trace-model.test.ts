@@ -15,6 +15,7 @@ import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { tools } from "./lessons/tools/lesson.ts"
 import { pointers } from "./lessons/pointers/lesson.ts"
 import { remember } from "./lessons/remember/lesson.ts"
+import { connectedMemory } from "./lessons/connected-memory/lesson.ts"
 import { skillsLesson } from "./lessons/skills/lesson.ts"
 import { subAgents } from "./lessons/sub-agents/lesson.ts"
 import { yourOwnPlugin } from "./lessons/your-own-plugin/lesson.ts"
@@ -276,6 +277,9 @@ describe("the Context tab's row of sessions", () => {
     expect(kindOf("s1", "chat", header("plugin.facts"))).toBe("memory")
     // The memory session continues no other, as the kernel finds it: one the plugin owns under a parent is a child.
     expect(kindOf("s1", "chat", header("plugin.facts", "chat"))).toBe("helper")
+    // The graph session (lesson 18): the graph plugin owns it, and it continues no other, as the memory session.
+    expect(kindOf("s1", "chat", header("plugin.graph"))).toBe("graph")
+    expect(kindOf("s1", "chat", header("plugin.graph", "chat"))).toBe("helper")
     // A background task's session (lesson 17): the tasks plugin owns it, and it is a child. Without a parent it is another.
     expect(kindOf("s1", "chat", header("plugin.tasks", "chat"))).toBe("task")
     expect(kindOf("s1", "chat", header("plugin.tasks"))).toBe("other")
@@ -388,6 +392,42 @@ describe("the Context tab's row of sessions", () => {
       [1, "not-conversation", "turn 1 opened", false], [2, "fact", expect.stringContaining("fact f1, from turn 1 of conversation "), false], [3, "not-conversation", "turn 1 closed: Completed", false],
       [4, "not-conversation", "turn 2 opened", true], [5, "fact", "fact f1 no longer stands", true], [6, "not-conversation", "turn 2 closed: Completed", true],
     ])
+  })
+
+  test("lesson 18: the graph session is a button of its own, \"Graph\", whose title says it holds the links; each link stored is a turn of three steps, and no model call", async () => {
+    const { runtime, heard, all } = await boardsAfter(connectedMemory, ["Ana works at Acme. Acme is in Lisbon.", "Unlink e2."])
+    const chat = runtime.conversation
+    const named = heard.flatMap((trace) => (trace._tag === "Session" ? [trace] : []))
+    expect(named.map((trace) => [trace.owner, trace.parent])).toEqual([["plugin.graph", undefined]])
+    const graph = named[0]!.session
+    expect(sessionRow(all)).toEqual([
+      { session: chat, kind: "chat", label: "Chat", title: "The chat's session" },
+      { session: graph, kind: "graph", label: "Graph", title: `The graph session: it holds the links between things the agent knows, in a journal of its own, for every conversation: ${graph}` },
+    ])
+    const board = all.boards.get(graph)!
+    expect(turnNumbersOf(board)).toEqual([1, 2, 3])
+    const first = viewOf(board, 1)
+    expect(first.steps.map((step) => [step.id, step.label, step.state, step.code, step.seqs])).toEqual([
+      ["opened", "Turn opened", "done", "sessions.turn(yield* graphSession, …)", [1]],
+      ["stored-record-1", "Link stored", "done", "session.append(…)", [2]],
+      ["closed", "Turn closed", "done", "the scope ends", [3]],
+    ])
+    expect(first.steps[0]?.detail).toBe("Record #1, core.session.turn.started. A call of linkThings or unlinkThings is one turn on the graph session, opened while the conversation's own turn is open.")
+    expect([first.calls[0]?.memory, first.calls[0]?.prompt]).toEqual([Option.none(), Option.none()])
+    // The link's row says where it came from; its payload holds the conversation and the turn. The removal is a row of its own.
+    const removed = viewOf(board, 3)
+    expect(removed.steps.map((step) => [step.id, step.label, step.seqs])).toEqual([["opened", "Turn opened", [7]], ["stored-record-1", "Link removed", [8]], ["closed", "Turn closed", [9]]])
+    expect(removed.calls[0]?.journal.map((row) => [row.seq, row.use, row.summary])).toEqual([
+      [1, "not-conversation", "turn 1 opened"], [2, "link", `link e1, from turn 1 of conversation ${chat.slice(0, 8)}: Ana works at Acme`], [3, "not-conversation", "turn 1 closed: Completed"],
+      [4, "not-conversation", "turn 2 opened"], [5, "link", `link e2, from turn 1 of conversation ${chat.slice(0, 8)}: Acme is in Lisbon`], [6, "not-conversation", "turn 2 closed: Completed"],
+      [7, "not-conversation", "turn 3 opened"], [8, "link", "link e2 no longer stands"], [9, "not-conversation", "turn 3 closed: Completed"],
+    ])
+    expect(first.calls[0]?.journal[1]?.payload).toBe(JSON.stringify({ id: "e1", subject: "Ana", relation: "works at", object: "Acme", from: { session: chat, turn: 1 } }, null, 2))
+    // A new conversation keeps the graph session's board, as it keeps the memory session's.
+    const next = startedOver(all, "the-next-conversation")
+    expect(labels(next)).toEqual(["chat: Chat", "graph: Graph"])
+    expect(next.boards.get(graph)).toBe(board)
+    expect(next.retired.has(graph)).toBe(false)
   })
 
   test("a new conversation keeps the memory session's board, with its records, and retires every other session with the old chat's", async () => {

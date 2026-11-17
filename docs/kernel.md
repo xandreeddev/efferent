@@ -1449,10 +1449,10 @@ id, framed as data (`linksNote`). With nothing named, nothing is added; the
 question is the user's last message in the conversation's journal
 (`questionOf`, the memory contract's). Nothing is stored, and a memory's
 budget does not count the links: they are bounded by `limit` and by a name's
-length. The order helps a small model: Qwen2.5 0.5B named the right city more
-often with the path first than with another link about Ana first, though not
-reliably in the note's own shape; DeepSeek V4.1 Flash named it either way
-(ADR 0019 has the counts). A word of four letters that carries no meaning,
+length. The order helps a small model: on the same six links, Qwen2.5 0.5B
+named the right city in four tries of five with the path first, and in none
+with it last; DeepSeek V4.1 Flash named it either way (ADR 0019 has the
+counts). A word of four letters that carries no meaning,
 such as "does", is a word like any other: it meets a relation that holds it.
 
 What it costs: a link beyond a thing the path reached ranks with every other

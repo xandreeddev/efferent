@@ -219,6 +219,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     later: "written after the context",
     "not-conversation": "not conversation: memory skips it",
     fact: "a fact's record: what withFacts reads for each request, in every conversation",
+    link: "a link's record: what withGraph reads for each request, in every conversation",
   }
   /**
    * The session a stored result names: a delegate's, the helper's (ADR 0006: the link from the call to the helper's
@@ -271,11 +272,14 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const renderMemory = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>, after: ReadonlyArray<JournalRow>) => {
     Option.match(view.memory, {
       onNone: () => {
-        // A turn on the memory session stores a fact's record: no memory builds a context from that journal.
-        const quiet = board.kind === "memory"
+        // A turn on the memory session stores a fact's record, and one on the graph session a link's: no memory builds
+        // a context from either journal.
+        const quiet = board.kind === "memory" || board.kind === "graph"
         memoryHead.textContent = quiet ? "none: no model is called" : Option.match(restored, { onNone: () => "not asked yet", onSome: (words) => words.head })
-        patch(memoryBox, [[quiet ? "memory-session" : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
-          quiet ? "A turn on the memory session stores one record and calls no model: no memory builds a context from this journal. The facts it holds are read by withFacts, for each request of a conversation."
+        patch(memoryBox, [[quiet ? `${board.kind}-session` : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
+          quiet ? (board.kind === "graph"
+            ? "A turn on the graph session stores one record and calls no model: no memory builds a context from this journal. The links it holds are read by withGraph, for each request of a conversation."
+            : "A turn on the memory session stores one record and calls no model: no memory builds a context from this journal. The facts it holds are read by withFacts, for each request of a conversation.")
             : Option.match(restored, { onNone: () => "Memory has not been asked for this turn's context yet.", onSome: (words) => words.detail }))]])
       },
       onSome: (rows) => {
@@ -311,10 +315,12 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const renderPrompt = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>) => {
     Option.match(view.prompt, {
       onNone: () => {
-        const quiet = board.kind === "memory"
+        const quiet = board.kind === "memory" || board.kind === "graph"
         promptHead.textContent = quiet ? "none: no model is called" : Option.match(restored, { onNone: () => "not sent yet", onSome: (words) => words.head })
-        patch(promptBox, [[quiet ? "memory-session" : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
-          quiet ? "No prompt is sent in a turn on the memory session. Open the Chat session to read the prompt that was sent the facts."
+        patch(promptBox, [[quiet ? `${board.kind}-session` : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
+          quiet ? (board.kind === "graph"
+            ? "No prompt is sent in a turn on the graph session. Open the Chat session to read the prompt that was sent the links."
+            : "No prompt is sent in a turn on the memory session. Open the Chat session to read the prompt that was sent the facts.")
             : Option.match(restored, { onNone: () => "No prompt has been sent in this turn yet.", onSome: (words) => words.detail }))]])
       },
       onSome: (rows) => {

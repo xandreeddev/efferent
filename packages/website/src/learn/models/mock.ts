@@ -4,7 +4,10 @@
 // sent, which is what makes it useful for seeing what an agent's memory holds.
 import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
-import { APPROVAL_REFUSED, CANCEL_TASK, catalogue, EDIT_FILE, factsNote, FORGET_FACT, LIST_FILES, LOAD_SKILL, READ_FILE, REMEMBER_FACT, START_TASK, WRITE_FILE } from "@xandreed/sdk/kernel"
+import {
+  APPROVAL_REFUSED, CANCEL_TASK, catalogue, EDIT_FILE, factsNote, FOLLOW_THINGS, FORGET_FACT, LINK_THINGS, linksNote, LIST_FILES, LOAD_SKILL, READ_FILE, REMEMBER_FACT, START_TASK,
+  UNLINK_THINGS, WRITE_FILE,
+} from "@xandreed/sdk/kernel"
 import type { ChatMessage } from "../prompt-map.ts"
 import { reportIn } from "../reports.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
@@ -39,8 +42,19 @@ const FACTS_CLOSE = "\n</remembered-facts>"
 const isFactsNote = (text: string): boolean => text.startsWith(FACTS_OPEN) && text.endsWith(FACTS_CLOSE)
 /** The note of remembered facts (lesson 11): code's, as the clock's is, and not a message of the conversation. */
 const isFacts = (message: ChatMessage): boolean => message.role === "user" && isFactsNote(message.content)
-/** What a wrapper added for this request and never stored: the clock's note, or the facts'. */
-const isAdded = (message: ChatMessage): boolean => isClock(message) || isFacts(message)
+/**
+ * The first line of the kernel's note of links (lesson 18), word for word: a message that starts with it and frames
+ * its lines lists the links a memory wrapper added for this request, best first.
+ */
+const LINKS_HEAD = linksNote([]).split("\n")[0] ?? ""
+const LINKS_OPEN = `${LINKS_HEAD}\n<known-links>\n`
+const LINKS_CLOSE = "\n</known-links>"
+/** Whether a text is the kernel's note of links: its first line, then the frame, and nothing after it. */
+const isLinksNote = (text: string): boolean => text.startsWith(LINKS_OPEN) && text.endsWith(LINKS_CLOSE)
+/** The note of links (lesson 18): code's, as the facts' is, and not a message of the conversation. */
+const isLinks = (message: ChatMessage): boolean => message.role === "user" && isLinksNote(message.content)
+/** What a wrapper added for this request and never stored: the clock's note, the facts' or the links'. */
+const isAdded = (message: ChatMessage): boolean => isClock(message) || isFacts(message) || isLinks(message)
 /**
  * A background task's report (lesson 17), known by the kernel's words: a message of the conversation, but not one
  * the person said, and no note that older turns were condensed.
@@ -321,6 +335,72 @@ const NO_SUCH_FACT = "I remember no fact about that."
 /** A question about everything Echo remembers: "what do you remember", "what do you know". */
 const ASKS_WHAT_IS_REMEMBERED = /\bwhat do you (?:remember|know)\b/i
 
+/**
+ * The relations Echo writes a link with (lesson 18), and no other: a sentence "<thing> <relation> <thing>." with one
+ * of these between its two things is a link: the first of them the sentence holds, from its start.
+ */
+export const LINK_RELATIONS = ["works at", "is in", "lives in", "likes", "drives", "sells", "is the sister of"] as const
+
+/** A sentence that is a link: its subject, then the first relation of the list it holds, then its object. */
+const LINK_SAID = new RegExp(`^(.+?)\\s+(${LINK_RELATIONS.join("|")})\\s+(.+)$`, "i")
+/** "I work at X", "I live in X": a link whose subject is the person, the thing called "user". */
+const SPEAKER_SAID = /^I\s+(work at|live in)\s+(.+)$/i
+
+/** A link a message asks Echo to store: its three parts, as `linkThings` takes them. */
+interface LinkSaid {
+  readonly subject: string
+  readonly relation: string
+  readonly object: string
+}
+
+/**
+ * The links a message tells Echo of (lesson 18): each of its sentences of the form "<thing> <relation> <thing>.",
+ * the relation one of `LINK_RELATIONS`, in order, and "I work at X." and "I live in X." with the subject "user". A
+ * sentence of another form is passed over. A message that ends with a question mark tells it nothing.
+ */
+const linksSaid = (asked: string): ReadonlyArray<LinkSaid> => {
+  if (/\?\s*$/.test(asked)) return []
+  return asked.trim().split(/(?<=[.!])\s+/).flatMap((sentence): ReadonlyArray<LinkSaid> => {
+    const plain = sentence.replace(/[.!]+$/, "").trim()
+    const self = SPEAKER_SAID.exec(plain)
+    if (self !== null) return [{ subject: "user", relation: self[1]?.toLowerCase() === "work at" ? "works at" : "lives in", object: self[2]?.trim() ?? "" }]
+    const link = LINK_SAID.exec(plain)
+    return link === null ? [] : [{ subject: link[1]?.trim() ?? "", relation: link[2]?.toLowerCase() ?? "", object: link[3]?.trim() ?? "" }]
+  })
+}
+
+/** "Follow Acme.", "What is Acme linked to?": the thing to call `followThings` with (lesson 18). */
+const FOLLOW_ASKED = /^\s*(?:follow\s+(.+?)|what is\s+(.+?)\s+linked to)\s*[.!?]?\s*$/i
+/** "Unlink e2.": the id to call `unlinkThings` with (lesson 18). */
+const UNLINK_ASKED = /^\s*(?:please\s+)?unlink\s+(e[1-9][0-9]*)\b/i
+
+/**
+ * The links a prompt's note of links lists, as sentences, best first: read from the last user message that is the
+ * kernel's note (its first line, then the frame), a line each, `id: sentence`. No other message is read.
+ */
+const linksIn = (messages: Prompt.Prompt["content"]): ReadonlyArray<string> => {
+  const note = messages
+    .flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : []))
+    .findLast(isLinksNote)
+  if (note === undefined) return []
+  return note.slice(LINKS_OPEN.length, note.length - LINKS_CLOSE.length).split("\n").flatMap((line) => {
+    const entry = /^e[1-9][0-9]*: (.+)$/.exec(line)
+    return entry === null ? [] : [entry[1] ?? ""]
+  })
+}
+
+/** The id a successful result of `linkThings` gives. */
+const linkedBy = (part: ResultPart): string | undefined =>
+  part.name === LINK_THINGS && !part.isFailure && typeof part.result === "object" && part.result !== null && "id" in part.result && typeof part.result.id === "string"
+    ? part.result.id
+    : undefined
+
+/** A link as `followThings` answers it, read as a sentence; none for anything else. */
+const followedSentence = (link: unknown): string | undefined =>
+  typeof link === "object" && link !== null && "subject" in link && typeof link.subject === "string" && "relation" in link && typeof link.relation === "string" && "object" in link && typeof link.object === "string"
+    ? `${link.subject} ${link.relation} ${link.object}.`
+    : undefined
+
 /** The id a successful result of `rememberFact` gives. */
 const rememberedBy = (part: ResultPart): string | undefined =>
   part.name === REMEMBER_FACT && !part.isFailure && typeof part.result === "object" && part.result !== null && "id" in part.result && typeof part.result.id === "string"
@@ -348,6 +428,12 @@ const readingOf = (part: ResultPart, paramsOf: (id: string) => unknown): string 
   if (loaded !== undefined) return `Loaded ${loaded}.`
   const remembered = rememberedBy(part)
   if (remembered !== undefined) return `I will remember that: it is fact ${remembered}.`
+  if (part.name === FOLLOW_THINGS && typeof part.result === "object" && part.result !== null && "links" in part.result && Array.isArray(part.result.links)) {
+    const params = paramsOf(part.id)
+    const name = typeof params === "object" && params !== null && "name" in params && typeof params.name === "string" ? params.name : "it"
+    const sentences: ReadonlyArray<string> = part.result.links.flatMap((link: unknown) => followedSentence(link) ?? [])
+    return sentences.length === 0 ? `No link names ${name}.` : `Following ${name}: ${sentences.slice(0, 2).join(" ")}`
+  }
   if (part.name === "convert" && typeof part.result === "number") {
     const params = paramsOf(part.id)
     return typeof params === "object" && params !== null && "value" in params && typeof params.value === "number"
@@ -553,6 +639,17 @@ const READ_LENGTH = 400
  * offered, anchored at the message's start, and ahead of every other rule. A startTask that started a task is
  * answered "Started task t1: its answer comes as a message of its own.", a cancelTask in its own words, and a
  * failure of either as the tool's.
+ *
+ * Lesson 18's rules, for links, each asleep where its tool is not offered, placed after lesson 11's rules (so where
+ * a program offers both, "I live in Lisbon." is a fact) and before lesson 16's. In a message that is no question,
+ * each sentence "<thing> <relation> <thing>." whose relation is one of `LINK_RELATIONS` is one linkThings call, all
+ * in one answer; "I work at X." and "I live in X." have the subject "user". "Follow X." and "What is X linked to?"
+ * call followThings with X, and "Unlink e2." calls unlinkThings with that id. The ids linkThings answered in one
+ * step are answered "The links' ids: e1, e2." ("The link's id: e1." for one); a followThings result with "Following X: " and the sentences of its first two
+ * links; an unlinkThings result, and any failure, as the tool's. With no call to make, one question sent with the
+ * kernel's note of links (`linksNote`: its first line, word for word, then the frame) is answered from the note's
+ * first two lines, whatever it asks: "From what I know: Ana works at Acme. Acme is in Lisbon.". The follow rule is
+ * a call, so it comes before that reading: "What is Acme linked to?" names Acme, and is sent a note too.
  */
 export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): { readonly text: string; readonly calls: ReadonlyArray<EchoCall> } => {
   // A task's report (lesson 17) is answered before anything else, and calls nothing. It starts with a host note, which
@@ -571,9 +668,14 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     if (helped.length > 0) return `The helper answered: ${helped.join(" ")}`
     // A result of lookup or readResult (lesson 8) and a refused forget (lesson 9) are answered in words of their own;
     // any other, and any other failure, as the tool's.
-    const results = parts.flatMap((part) => (part.type === "tool-result" ? [part] : []))
+    const every = parts.flatMap((part) => (part.type === "tool-result" ? [part] : []))
+    // The ids linkThings answered in this step (lesson 18), in one sentence before the rest: a link said again is
+    // not stored again, and its id is answered, so the sentence names ids and says nothing of what was stored.
+    const linked = every.flatMap((part) => linkedBy(part) ?? [])
+    const stored = linked.length === 0 ? [] : [linked.length === 1 ? `The link's id: ${linked[0]}.` : `The links' ids: ${linked.join(", ")}.`]
+    const results = every.filter((part) => linkedBy(part) === undefined)
     const paramsOf = paramsOfCall(prompt.content)
-    const read = results.flatMap((part) => readingOf(part, paramsOf) ?? [])
+    const read = [...stored, ...results.flatMap((part) => readingOf(part, paramsOf) ?? [])]
     const all = results.flatMap((part) => (readingOf(part, paramsOf) === undefined ? [`${part.name} ${part.isFailure ? "failed: " : "says "}${JSON.stringify(part.result)}`] : []))
     if (read.length > 0 && all.length === 0) return read.join(" ")
     return [...read, `The ${all.length > 1 ? "tools" : "tool"} answered: ${all.join("; ")}.`].join(" ")
@@ -630,6 +732,18 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     if (fact !== undefined && offered.includes(REMEMBER_FACT)) return [{ name: REMEMBER_FACT, params: { fact } }]
     // "What do you remember?": the tool that reads the facts, where a lesson offers one (lesson 11's recall-tool).
     if (ASKS_WHAT_IS_REMEMBERED.test(asked) && offered.includes("recallFacts")) return [{ name: "recallFacts", params: {} }]
+    // "Ana works at Acme. Acme is in Lisbon.", "I work at Acme.": one linkThings call for each sentence that is a link
+    // (lesson 18), all in one answer. It comes after lesson 11's rules: where a program offers both tools, "I live in
+    // Lisbon." is a fact.
+    const links = offered.includes(LINK_THINGS) ? linksSaid(asked) : []
+    if (links.length > 0) return links.map((link) => ({ name: LINK_THINGS, params: { ...link } }))
+    // "Follow Acme.", "What is Acme linked to?": followThings, with the thing named. Such a question names the thing,
+    // so a note of links is sent with it too: this call is made before the note is read.
+    const follow = FOLLOW_ASKED.exec(asked)
+    if (follow !== null && offered.includes(FOLLOW_THINGS)) return [{ name: FOLLOW_THINGS, params: { name: (follow[1] ?? follow[2] ?? "").trim() } }]
+    // "Unlink e2.": unlinkThings, with that id.
+    const unlink = UNLINK_ASKED.exec(asked)
+    if (unlink !== null && offered.includes(UNLINK_THINGS)) return [{ name: UNLINK_THINGS, params: { id: unlink[1]?.toLowerCase() ?? "" } }]
     // "List the files", "read notes/todo.md", "write a.txt: hello", "in notes/todo.md replace milk with eggs": the
     // file tools (lesson 16), each where it is offered. They go before the rules of lessons 2 to 9: a path under
     // notes/ is no question about notes, a number in a text is no sum, and "remember" in a text is no note.
@@ -702,6 +816,10 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const about = factAbout(known, question)
     if (about !== undefined) return { text: `I remember: "${about.text}" That is fact ${about.id}.`, calls: [] }
   }
+  // One question, with links listed for this request (lesson 18): answered from the note's first two lines, the
+  // best, in fixed words that quote them. Whatever the question asks, these two lines are the answer.
+  const linked = linksIn(sent.content)
+  if (question !== undefined && linked.length > 0) return { text: `From what I know: ${linked.slice(0, 2).join(" ")}`, calls: [] }
   // An answer of Echo's own, with no tool to call and no result to pass on: in the haiku skill's form while it is loaded.
   if (loaded.includes(HAIKU_SKILL)) return { text: HAIKU, calls: [] }
   return { text: echoReply(toChatMessages(sent)), calls: [] }
