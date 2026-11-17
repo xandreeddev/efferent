@@ -165,8 +165,19 @@ export interface Speaker {
 }
 
 /**
+ * How a question names a thing (ADR 0019). `"exact"`: the thing's words are a run of the question's, as written.
+ * `"loose"`: the same, with accent marks taken off both sides ("Joao" names "João"), and a word of five letters or
+ * more naming a word one letter away that is five or more too ("Nowak" names "Novak", "Lisbon" names "Lisboa"); a
+ * word holding a digit is never one letter away from another, so "QX-48213" names no other code.
+ *
+ * @public
+ */
+export type Naming = "exact" | "loose"
+
+/**
  * The options of `withGraph`: how many links away from a thing the question names it walks (1 to 3), at most how
- * many links a request is sent (1 to 50), and, when the host gives one, the speaker.
+ * many links a request is sent (1 to 50), when the host gives one, the speaker, and how a question names a thing
+ * (`"exact"` unless given).
  *
  * @public
  */
@@ -174,4 +185,5 @@ export interface GraphOptions {
   readonly hops: number
   readonly limit: number
   readonly speaker?: Speaker
+  readonly names?: Naming
 }

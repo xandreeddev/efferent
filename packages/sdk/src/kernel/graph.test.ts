@@ -188,6 +188,15 @@ describe("a memory that connects", () => {
     expect(sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e1: user works at Acme.", "e2: Acme is in Lisbon.") })
   })
 
+  test("named loosely, a question written without accent marks reaches the links of the thing written with them", async () => {
+    const script = [calls(link("João", "works at", "Acme"), link("Acme", "is in", "Porto")), says("Noted."), says("At Acme, in Porto.")]
+    const asked = [["João works at Acme, which is in Porto."], ["Where does Joao work?"]]
+    const exact = await Effect.runPromise(run(script, asked))
+    expect(exact.sent.at(-1)?.some((message) => message.text.includes("known-links"))).toBe(false)
+    const loose = await Effect.runPromise(run(script, asked, inProcessJournal(), withGraph({ hops: 2, limit: 5, names: "loose" })(flatMemory)))
+    expect(loose.sent.at(-1)?.at(-1)).toEqual({ role: "user", text: noteOf("e1: João works at Acme.", "e2: Acme is in Porto.") })
+  })
+
   test("a question that names nothing the links hold is sent no links", async () => {
     const { sent } = await Effect.runPromise(run(
       [calls(link("Ana", "works at", "Acme")), says("Noted."), says("Hello.")],

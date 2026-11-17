@@ -10,6 +10,18 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: the graph can name things loosely. `withGraph`
+  and `near` take `names: "loose"` (`Naming`; `"exact"`, today's rule, unless
+  given), and `namedIn` a fourth argument: a question's word also names a
+  thing's word without its accent marks ("Joao" names "João"), or one letter
+  away when both are five letters or more and hold no digit ("Nowak" names
+  "Novak", "Lisbon" names "Lisboa", "QX-48213" names no other code); the words
+  that rank a path lose their marks too. Things are not merged: Lisbon and
+  Lisboa stay two things. `withGraph` refuses any other `names` where it is
+  written. ADR 0019 amended with what was measured (answers at limit 5 on 15
+  held-out questions: 10 named exactly, 13 loosely) and what it costs (a word
+  one letter from two names names both; an ordinary word can name a thing of
+  one word, "while" naming "Chile").
 - `@xandreed/core/kernel`: the spend ledger, `ModelSpend` (`reserve`,
   `settle`, `release`, `totals`), with its data (`SpendRequest`, `SpendHold`,
   `SpendTotals`, `SpendCaps`, `ModelSpendExceeded`, `ModelSpendUnavailable`),

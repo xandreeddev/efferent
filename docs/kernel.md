@@ -1438,9 +1438,12 @@ merged by meaning: a small embedding model, run on the library the site
 ships for its browser models, scored Lisbon nearer Paris than Lisboa (ADR
 0019).
 
-`withGraph({ hops, limit, speaker? })` finds the things the question names
-(`namedIn`: a thing whose words are a run of the question's; the speaker's
-words, given by the host, name the speaker's thing), walks their links from
+`withGraph({ hops, limit, speaker?, names? })` finds the things the question
+names (`namedIn`: a thing whose words are a run of the question's; the
+speaker's words, given by the host, name the speaker's thing; with `names:
+"loose"`, a word also names one without its accent marks, or, both five
+letters or more and without a digit, one letter away, so "Joao" names "João"
+and "Lisbon" names "Lisboa", each still a thing of its own), walks their links from
 either end up to `hops` away, and ranks each link by its path (`near`, a
 pure function): the question's words of four letters or more that the
 relations and names on the path to it meet, then fewer links away, then the
