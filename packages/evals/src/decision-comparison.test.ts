@@ -1,6 +1,7 @@
 import { expect, test } from "bun:test"
 import { compareDecisionTrials, selectionMetrics } from "./decision-comparison.entity.functions.js"
-import { DecisionCaseId } from "./decision-comparison.entity.js"
+import { Schema } from "effect"
+import { DecisionCaseId, DecisionComparison } from "./decision-comparison.entity.js"
 import type { DecisionTrial } from "./decision-comparison.entity.js"
 const row = (candidate: string, caseId: string, values: Partial<DecisionTrial> = {}): DecisionTrial => ({ candidate, caseId: DecisionCaseId.make(caseId), group: caseId, sample: 1, status: "completed", passed: true, quality: 1, latencyMs: 100, costUsd: 0.01, ...values })
 test("missing costs and pairs cannot become free wins", () => {
@@ -34,4 +35,11 @@ test("bootstrap samples groups independently, including repeated selections", ()
   const report = compareDecisionTrials([row("base", "a"), row("base", "b"), row("next", "a", { latencyMs: 50 }), row("next", "b", { latencyMs: 200 })], "base")[1]!
   expect(report.latency.low).toBe(-50)
   expect(report.latency.high).toBe(100)
+})
+test("every row the comparison gives decodes with DecisionComparison, so a caller holding it untyped can check it", () => {
+  const rows = compareDecisionTrials([
+    row("base", "a"), row("base", "b"), row("next", "a", { passed: false, costUsd: 0.002 }), row("next", "b", { status: "infrastructure", passed: false }),
+  ], "base")
+  expect(rows.map((one) => Schema.is(DecisionComparison)(one))).toEqual([true, true])
+  expect(Schema.is(DecisionComparison)({ ...rows[1], regressions: [1] })).toBe(false)
 })

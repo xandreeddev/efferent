@@ -10,6 +10,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/evals`: `DecisionComparison` and `DecisionDelta`, the schemas of
+  what `compareDecisionTrials` gives (one row per candidate, and its
+  spreads against the baseline). The function is now typed by them, and a
+  caller that holds a comparison untyped decodes it; lesson 13 of the docs
+  site does, in place of a schema of its own that read five fields.
+
 - `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
   between two things ("Ana", "works at", "Acme") is a record of a graph
   session of its own (`plugin.graph.linked`, `plugin.graph.unlinked`),

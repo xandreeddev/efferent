@@ -16,6 +16,7 @@ import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk/kernel"
 import {
   compareDecisionTrials,
   DecisionCaseId,
+  DecisionComparison,
   DecisionTrial,
   defineRunnable,
   EvalId,
@@ -50,11 +51,8 @@ export const NO_TOOLS = "echo-no-tools"
 /** The baseline's name: Echo, the reference solution, which passes every task of the starter's dataset. */
 export const BASELINE = "echo"
 
-/** One candidate against Echo, as the board draws it: what `compareDecisionTrials` gives, the fields read. */
-const ComparedRow = Schema.Struct({ candidate: Schema.String, attempts: Schema.Number, successes: Schema.Number, infrastructure: Schema.Number, regressions: Schema.Array(Schema.String) })
-
-/** What the run gives: each candidate's run, and the comparison. */
-const Outcome = Schema.Struct({ runs: Schema.Array(EvaluationRun), comparison: Schema.Array(ComparedRow) })
+/** What the run gives: each candidate's run, and the comparison with Echo, in the package's own schema. */
+const Outcome = Schema.Struct({ runs: Schema.Array(EvaluationRun), comparison: Schema.Array(DecisionComparison) })
 
 /**
  * The models compared, by name, each as it was loaded and not as the page watches it, so the page hears no prompt of

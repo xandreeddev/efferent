@@ -124,7 +124,7 @@ export {
   TraceStepId,
 } from "./completeness.entity.js"
 export { assessCompleteness } from "./completeness.entity.functions.js"
-export { DecisionCaseId, DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
+export { DecisionCaseId, DecisionComparison, DecisionDelta, DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
 export { compareDecisionTrials, selectionMetrics } from "./decision-comparison.entity.functions.js"
 
 export { EvidenceProjection } from "./domain/evidence-projection.entity.js"
