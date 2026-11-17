@@ -880,7 +880,7 @@ export const loadEcho = (callId: () => string = echoCallId, name: string = echoC
     generateText: (options) => Effect.sync(() => {
       const messages = toChatMessages(options.prompt)
       const reply = echoReply(messages)
-      return settledParts(reply, usageOf(messages, reply)) as never
+      return settledParts(reply, usageOf(messages, reply))
     }),
     streamText: (options) => {
       const messages = toChatMessages(options.prompt)
@@ -898,7 +898,7 @@ export const loadEcho = (callId: () => string = echoCallId, name: string = echoC
         Stream.takeWhile(() => !answer.stopped),
         Stream.map(streamDelta),
         (deltas) => Stream.concat(Stream.concat(Stream.make(streamStart), deltas), Stream.suspend(() => Stream.fromIterable([streamEnd, ...(answer.stopped ? [] : asked), streamFinish(usageOf(messages, reply))]))),
-      )))) as never
+      ))))
     },
   }, "native")
   return { choice: echoChoice, model, interrupt: () => { writing.forEach((answer) => { answer.stopped = true }) }, dispose: () => {} }

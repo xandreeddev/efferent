@@ -480,6 +480,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Repository
 
+- Docs site: the page's model adapters hold no `as never`. Echo's, the CPU
+  model's, WebLLM's and Chrome's answers were cast because `settledParts`
+  returned a read-only array (itself cast with `as unknown as`); it now
+  returns the parts `generateText` takes, and the stream casts needed nothing.
+  The CPU worker holds its tokenizer as transformers.js's own
+  `PreTrainedTokenizer`, and a model's `dtype` is the library's `DataType`, so
+  a wrong one in `cpuChoices` does not compile. Each changed file transpiles
+  to the same JavaScript as before.
+
 - Docs site: Echo's early rules no longer misread a message. A date
   (2026-11-14, 14/11/2026), a phone number or "2x4" is no sum: a number that
   is part of a longer one is none, and an x is the operator only between

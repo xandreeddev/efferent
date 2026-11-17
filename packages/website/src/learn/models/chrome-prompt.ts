@@ -88,7 +88,7 @@ export const loadChrome = async (onProgress: (progress: LoadProgress) => void, a
         const { session, input } = await sessionFor(messages, controller.signal)
         try {
           const reply = await session.prompt(input, { signal: controller.signal })
-          return settledParts(reply, usageOf(messages, reply)) as never
+          return settledParts(reply, usageOf(messages, reply))
         } finally {
           session.destroy()
         }
@@ -123,7 +123,7 @@ export const loadChrome = async (onProgress: (progress: LoadProgress) => void, a
           }
         })()
         return () => controller.abort()
-      }) as never
+      })
     },
   })
 
