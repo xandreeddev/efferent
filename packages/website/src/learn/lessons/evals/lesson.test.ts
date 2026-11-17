@@ -104,6 +104,8 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     expect(counts[0]).toBe(0)
     expect(counts.every((count, index) => index === 0 || count >= (counts[index - 1] ?? 0))).toBe(true)
     expect(views.some((view) => view.candidates[0]?.line === "20 of 20 passed (0.84 to 1)" && /^ran \d+ of 20$/.test(view.candidates[1]?.line ?? ""))).toBe(true)
+    // Each trial is graded as it ends, so a candidate's line counts its graded passes while it still runs.
+    expect(views.some((view) => /^ran \d+ of 20, \d+ of [1-9]\d* graded passed so far$/.test(view.candidates[1]?.line ?? ""))).toBe(true)
     // The page heard nothing of forty trials: no trace, no record, no session in its store.
     expect(await seen()).toEqual(before)
   })
@@ -167,8 +169,9 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     expect(await seen()).toEqual(before)
   })
 
-  test("Stop interrupts a run: the run says so, the candidates it finished stay graded, and the model's stream is cancelled", async () => {
-    // A model that starts an answer and never ends it, built as the page's models are: over a source with a cancel.
+  test("Stop interrupts a run: the run says so, every trial that ended is graded, the cut candidate's included, and the model's stream is cancelled", async () => {
+    // A model that answers its first request and never ends its second, built as the page's models are: over a
+    // source with a cancel.
     let started = 0
     let cancelled = 0
     /** What the test does once the stalled model has started its answer: Stop, as the button does. */
@@ -177,28 +180,36 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
       choice: { id: "stalled", kind: "echo", label: "Stalled", blurb: "A model that never ends its answer.", memoryMB: 0 },
       model: makeBrowserModel("stalled", {
         generateText: () => Effect.die("the stalled model only streams"),
-        streamText: () => modelStream("Stalled", (sink) => { started++; sink.push("One"); onStart(); return () => { cancelled++ } }) as never,
+        streamText: () => modelStream("Stalled", (sink) => {
+          started++
+          sink.push("One")
+          if (started === 1) sink.end({ inputTokens: { total: 1 }, outputTokens: { total: 1 } })
+          else onStart()
+          return () => { cancelled++ }
+        }) as never,
       }, "native"),
       interrupt: () => {},
       dispose: () => {},
     }
     const { runtime, run } = await page(applied("once"), stalled)
-    // Stop once the stalled model has started its first answer, in its first trial.
+    // Stop once the stalled model has started its second answer, in its second trial.
     let stopping: Promise<void> | undefined
     onStart = () => { stopping = runtime.stopAlone() }
     const { ran, last } = await run(applied("once"))
     await stopping
     expect(Result.isSuccess(ran) && Exit.hasInterrupts(ran.success)).toBe(true)
-    expect(last?.status).toBe("Stopped: 8 of 12 trials ran. A candidate's trials are graded once they have all run, so a candidate cut short has none graded.")
+    expect(last?.status).toBe("Stopped: 9 of 12 trials ran. Trials are graded as they end, and one whose grading was cut short is not graded. A candidate cut short has no gates, and there is no comparison.")
     expect(table(last).map((candidate) => [candidate.candidate, candidate.line])).toEqual([
       ["echo", "4 of 4 passed (0.51 to 1)"], ["echo-no-tools", "2 of 4 passed (0.15 to 0.85)"], ["stalled", last?.candidates[2]?.line ?? ""],
     ])
-    expect(last?.candidates[2]?.line).toBe("ran 0 of 4, not graded")
+    // Its first trial ended, and was graded as it ended: its answer, "One", holds no reference.
+    expect(last?.candidates[2]?.line).toBe("ran 1 of 4, 0 of 1 graded passed")
     // The trial cut short says so, with the runner's reason.
-    expect(last?.candidates[2]?.tasks[0]?.trials.map((trial) => [trial.label, trial.reason])).toEqual([["sample 1: cancelled", "cancelled: interrupted"]])
+    expect(last?.candidates[2]?.tasks[0]?.trials.map((trial) => [trial.label, trial.reason])).toEqual([["sample 1: failed", ""]])
+    expect(last?.candidates[2]?.tasks[1]?.trials.map((trial) => [trial.label, trial.reason])).toEqual([["sample 1: cancelled", "cancelled: interrupted"]])
     // No verdict and no comparison: the run did not end.
     expect([last?.verdict, last?.comparison]).toEqual(["", []])
-    expect([started, cancelled]).toEqual([1, 1])
+    expect([started, cancelled]).toEqual([2, 2])
     expect(runtime.checking).toBe(false)
   })
 

@@ -207,9 +207,10 @@ eval.calibrate         calibrateGrader: eval.calibration.id, eval.run.id
 └─ eval.run            runEvaluation: eval.run.id
    ├─ eval.trial       one trial: eval.run.id, eval.trial.id, eval.suite.id, eval.task.id, eval.candidate.id, eval.sample
    │  └─ (the runnable's own spans; a calibration's eval.calibration.execute)
-   └─ eval.regrade     gradeEvaluation, also on its own over saved work: eval.run.id
-      └─ eval.grade    gradeTrial, one trial's grades: the trial's ids
-         └─ (the projection's and graders' spans: eval.calibration.project, eval.retrieval.assess, eval.evaluator)
+   └─ eval.grade       gradeTrial, one trial's grades, as the trial ends: the trial's ids
+      └─ (the projection's and graders' spans: eval.calibration.project, eval.retrieval.assess, eval.evaluator)
+eval.regrade           gradeEvaluation, on its own over saved work: eval.run.id
+└─ eval.grade          one trial's grades: the trial's ids
 ```
 
 Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. An evaluator behind a grader opens `eval.evaluator` under its grade, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.

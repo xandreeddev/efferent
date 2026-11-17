@@ -514,9 +514,9 @@ check` (tsc over the learn code, the build, the link check) and
     (`@xandreed/evals/stats`), each candidate's gates once its run is
     graded (each with the bounds its finding says it was held to, `heldTo`), the suite's verdict, and the comparison with Echo. A trial
     opens on demand to its grades' reasons and its transcript. A stopped
-    run says so: the candidates it finished stay graded, and the one it
-    cut short is not graded (the package grades a run's trials once they
-    have all run).
+    run says so: every trial keeps the grades it was given (the package
+    grades each trial as it ends; a grading cut short gives none), the candidates it finished keep their gates,
+    and the one it cut short reads how many of its graded trials passed.
 - **A hosted model through the Vercel AI Gateway**, with the learner's
   own key (`models/gateway.ts`, the last card of the model list).
   - The wire is pure and holds no key (`gateway-wire.ts`: `wireMessages`,

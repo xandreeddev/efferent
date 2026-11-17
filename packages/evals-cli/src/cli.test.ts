@@ -84,8 +84,8 @@ test("a command over a loaded app is one eval.cli span in the app's observabilit
   expect(named("eval.cli").map((span) => [span.attributes.get("eval.command"), Option.isNone(span.parent)])).toEqual([["run", true]])
   expect(named("eval.run").map(parentOf)).toEqual(["eval.cli"])
   expect(named("eval.trial").map(parentOf)).toEqual(["eval.run"])
-  expect(named("eval.regrade").map(parentOf)).toEqual(["eval.run"])
-  expect(named("eval.grade").map(parentOf)).toEqual(["eval.regrade"])
+  expect(named("eval.regrade")).toEqual([])
+  expect(named("eval.grade").map(parentOf)).toEqual(["eval.run"])
   // The layer closed with the command, once every span had ended: what it flushes is the whole trace.
   expect(openAtClose).toEqual([[]])
   // inspect loads no app, so it opens no span.
