@@ -77,6 +77,45 @@ export type Link = LinkedData
 export const linkedEvent = storedEvent("graph", "linked", { data: LinkedData, skippable: false, tags: ["memory"] })
 
 /**
+ * The data of `plugin.graph.restated`: a standing link said again, and the conversation and turn that said it.
+ *
+ * @public
+ */
+export const RestatedData = Schema.Struct({ id: LinkId, from: Schema.Struct({ session: SessionId, turn: TurnNumber }) })
+export type RestatedData = typeof RestatedData.Type
+
+/**
+ * `plugin.graph.restated`: a link that stands was said again, in a turn that had not said it (ADR 0019, amended).
+ * Stored in the graph session, tagged `memory`, skippable: a reader that does not know it reads the same links, only
+ * without how often each was said.
+ *
+ * @public
+ */
+export const restatedEvent = storedEvent("graph", "restated", { data: RestatedData, skippable: true, tags: ["memory"] })
+
+/**
+ * A link that stands, with how often and when it was last said: `count` is how many turns said it (the one that
+ * stored it, and each that said it again), `last` the time the latest of those records was stored, in milliseconds.
+ * What `saidOf` gives.
+ *
+ * @public
+ */
+export interface SaidLink {
+  readonly link: Link
+  readonly count: number
+  readonly last: number
+}
+
+/**
+ * How links are weighed, when a host asks for it: `"count"`, by how many turns said a link; or `{ halfLifeDays }`, by
+ * that count with each link's weight halved for every `halfLifeDays` since it was last said, so an old link said
+ * often can rank below a newer one said once. A weight ranks links that a question's words and the walk leave tied.
+ *
+ * @public
+ */
+export type Weights = "count" | { readonly halfLifeDays: number }
+
+/**
  * The data of `plugin.graph.unlinked`: the link that no longer stands.
  *
  * @public
@@ -176,8 +215,8 @@ export type Naming = "exact" | "loose"
 
 /**
  * The options of `withGraph`: how many links away from a thing the question names it walks (1 to 3), at most how
- * many links a request is sent (1 to 50), when the host gives one, the speaker, and how a question names a thing
- * (`"exact"` unless given).
+ * many links a request is sent (1 to 50), when the host gives one, the speaker, how a question names a thing
+ * (`"exact"` unless given), and how links are weighed (not at all unless given).
  *
  * @public
  */
@@ -186,4 +225,5 @@ export interface GraphOptions {
   readonly limit: number
   readonly speaker?: Speaker
   readonly names?: Naming
+  readonly weights?: Weights
 }

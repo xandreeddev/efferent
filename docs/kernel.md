@@ -64,7 +64,7 @@ caught up.
 | `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
 | The skill contract | sdk, `contracts/skill` | `defineSkill`, `catalogue`, `loadedOf`: a skill is a value, and it is loaded where a result of `loadSkill` is stored |
 | The facts contract | sdk, `contracts/facts` | `factsOf`, `relevant`; the `plugin.facts.learned` and `plugin.facts.forgotten` records, kept in a session of their own |
-| The graph contract | sdk, `contracts/graph` | `linksOf`, `near`, `linksNote`; the `plugin.graph.linked` and `plugin.graph.unlinked` records, kept in a session of their own |
+| The graph contract | sdk, `contracts/graph` | `linksOf`, `near`, `linksNote`; the `plugin.graph.linked`, `plugin.graph.unlinked` and `plugin.graph.restated` records, kept in a session of their own |
 | `factTools`, `factHandlers`, `withFacts({ limit })` | sdk, `plugins/facts` | what an agent knows across conversations: two tools that write facts to the memory session, and a memory wrapper that reads them for each request |
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
@@ -1427,7 +1427,9 @@ expect(sent[2]).toEqual([
 `linkThings({ subject, relation, object })` stores `plugin.graph.linked` in a
 turn on the graph session, with the conversation and turn it came from, and
 answers the link's id; a link that says what a standing one says, once its
-parts are normalised, is not stored again and its id is answered.
+parts are normalised, is not stored again and its id is answered, and said in
+a turn that had not said it, it adds `plugin.graph.restated`, so `saidOf`
+counts the turns that said each link.
 `unlinkThings({ id })` stores `plugin.graph.unlinked`. `followThings({ name })`
 reads a thing's links, newest first, at most twenty and how many more, and
 stores nothing: a model reaches further with it than a request was sent.
@@ -1438,7 +1440,7 @@ merged by meaning: a small embedding model, run on the library the site
 ships for its browser models, scored Lisbon nearer Paris than Lisboa (ADR
 0019).
 
-`withGraph({ hops, limit, speaker?, names? })` finds the things the question
+`withGraph({ hops, limit, speaker?, names?, weights? })` finds the things the question
 names (`namedIn`: a thing whose words are a run of the question's; the
 speaker's words, given by the host, name the speaker's thing; with `names:
 "loose"`, a word also names one without its accent marks, or, both five
@@ -1446,8 +1448,10 @@ letters or more and without a digit, one letter away, so "Joao" names "João"
 and "Lisbon" names "Lisboa", each still a thing of its own), walks their links from
 either end up to `hops` away, and ranks each link by its path (`near`, a
 pure function): the question's words of four letters or more that the
-relations and names on the path to it meet, then fewer links away, then the
-newer. It sends at most `limit` of them, best first, a sentence each with its
+relations and names on the path to it meet, then fewer links away, then, with
+`weights` (`"count"`, or `{ halfLifeDays }`), the link said in more turns, or
+more lately (`saidOf`, `weightOf`; a link said again in another turn is
+stored as `plugin.graph.restated`), then the newer. It sends at most `limit` of them, best first, a sentence each with its
 id, framed as data (`linksNote`). With nothing named, nothing is added; the
 question is the user's last message in the conversation's journal
 (`questionOf`, the memory contract's). Nothing is stored, and a memory's

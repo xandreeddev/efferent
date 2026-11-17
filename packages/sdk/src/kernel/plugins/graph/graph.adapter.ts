@@ -1,10 +1,10 @@
 import { Effect, Layer, Option, Result, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
 import { currentFormat, Sessions } from "@xandreed/core/kernel"
-import type { InvalidSession, JournalStorageError, SessionHeader, SessionId } from "@xandreed/core/kernel"
-import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, near, nextLinkId, sameLink, unlinked } from "../../contracts/graph/graph.entity.functions.js"
+import type { InvalidSession, JournalStorageError, SessionHeader, SessionId, StoredEvent } from "@xandreed/core/kernel"
+import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, near, nextLinkId, restated, sameLink, saidIn, saidOf, unlinked, weightOf } from "../../contracts/graph/graph.entity.functions.js"
 import { Followed, FOLLOW_LIMIT, FOLLOW_THINGS, GRAPH_OWNER, LINK_THINGS, LinkedThings, NAME_LIMIT, RELATION_LIMIT, UNLINK_THINGS } from "../../contracts/graph/graph.entity.js"
-import type { GraphOptions, Link } from "../../contracts/graph/graph.entity.js"
+import type { GraphOptions, Link, SaidLink } from "../../contracts/graph/graph.entity.js"
 import { questionOf } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import { CurrentTurn } from "../../contracts/turn/current-turn.port.js"
@@ -40,11 +40,22 @@ export const graphSession: Effect.Effect<SessionId, InvalidSession | JournalStor
  *
  * @public
  */
-export const knownLinks: Effect.Effect<ReadonlyArray<Link>, JournalStorageError, Sessions> = Effect.gen(function* () {
+export const knownLinks: Effect.Effect<ReadonlyArray<Link>, JournalStorageError, Sessions> = Effect.suspend(() => Effect.map(graphJournal, linksOf))
+
+/**
+ * The links that stand, each with how many turns said it and when it was last said (`saidOf`), read from the graph
+ * session: what a host draws or weighs links by. With no graph session there are none, and none is created.
+ *
+ * @public
+ */
+export const saidLinks: Effect.Effect<ReadonlyArray<SaidLink>, JournalStorageError, Sessions> = Effect.suspend(() => Effect.map(graphJournal, saidOf))
+
+/** The graph session's journal, or none when there is no graph session: reading stores nothing. */
+const graphJournal: Effect.Effect<ReadonlyArray<StoredEvent>, JournalStorageError, Sessions> = Effect.gen(function* () {
   const sessions = yield* Sessions
   return yield* Option.match(graphAmong(yield* sessions.list), {
-    onNone: () => Effect.succeed<ReadonlyArray<Link>>([]),
-    onSome: (id) => Effect.map(sessions.read(id), (journal) => linksOf(journal.events)),
+    onNone: () => Effect.succeed<ReadonlyArray<StoredEvent>>([]),
+    onSome: (id) => Effect.map(sessions.read(id), (journal) => journal.events),
   })
 })
 
@@ -105,12 +116,16 @@ export const FollowThings = Tool.make(FOLLOW_THINGS, {
  */
 export const graphTools = Toolkit.make(LinkThings, UnlinkThings, FollowThings)
 
+/** Whether a failure is the graph session being written to by another turn. */
+const isBusy = (error: string | { readonly _tag: string; readonly reason?: string }): boolean =>
+  typeof error !== "string" && error._tag === "SessionRefused" && error.reason === "SessionBusy"
+
 /**
  * What a failed call says to the model: a refusal of the tool's own in its words, a graph session another turn is
  * writing to in fixed words; any other failure of the store or the session is a defect, as for facts.
  */
 const said = (error: string | { readonly _tag: string; readonly reason?: string }): Effect.Effect<never, string> =>
-  typeof error === "string" ? Effect.fail(error) : error._tag === "SessionRefused" && error.reason === "SessionBusy" ? Effect.fail(GRAPH_BUSY) : Effect.die(error)
+  typeof error === "string" ? Effect.fail(error) : isBusy(error) ? Effect.fail(GRAPH_BUSY) : Effect.die(error)
 
 /**
  * What the three tools do: each write is one turn on the graph session, which stores the record with the
@@ -124,19 +139,28 @@ export const graphHandlers = graphTools.toLayer({
     const sessions = yield* Sessions
     const caller = yield* CurrentTurn
     const parts = yield* Effect.fromResult(linkFrom(subject, relation, object))
-    // A link said again opens no turn: read first; read again inside the turn, where nothing else writes.
-    const standing = sameLink(yield* knownLinks, parts)
-    if (Option.isSome(standing)) return { id: standing.value.id }
-    return yield* sessions.turn(yield* graphSession, (session) => Effect.gen(function* () {
+    const from = { session: caller.id, turn: caller.turn }
+    // A link this turn already said opens no turn: read first; read again inside the turn, where nothing else writes.
+    const before = yield* graphJournal
+    const standing = sameLink(linksOf(before), parts)
+    if (Option.isSome(standing) && saidIn(before, standing.value.id, from)) return { id: standing.value.id }
+    const written = sessions.turn(yield* graphSession, (session) => Effect.gen(function* () {
       const journal = yield* session.journal
       return yield* Option.match(sameLink(linksOf(journal), parts), {
-        onSome: (known) => Effect.succeed({ id: known.id }),
+        // Said again in another turn: how often a link was said is a record of its own, for a host that weighs links.
+        onSome: (known) => (saidIn(journal, known.id, from) ? Effect.succeed({ id: known.id }) : Effect.as(session.append(restated({ id: known.id, from })), { id: known.id })),
         onNone: () => {
           const id = nextLinkId(journal)
-          return Effect.as(session.append(linked({ id, ...parts, from: { session: caller.id, turn: caller.turn } })), { id })
+          return Effect.as(session.append(linked({ id, ...parts, from })), { id })
         },
       })
     }))
+    // A link that stands is answered by its id, whether or not its saying again could be stored: the graph session
+    // busy with another turn costs the link one count, never the model its answer.
+    return yield* Option.match(standing, {
+      onNone: () => written,
+      onSome: (known) => written.pipe(Effect.catch((error) => (isBusy(error) ? Effect.succeed({ id: known.id }) : Effect.fail(error)))),
+    })
   }).pipe(Effect.catch(said)),
   unlinkThings: ({ id }) => Effect.gen(function* () {
     const sessions = yield* Sessions
@@ -150,6 +174,12 @@ export const graphHandlers = graphTools.toLayer({
   }).pipe(Effect.catch(said)),
   followThings: ({ name }) => Effect.map(knownLinks, (links) => followed(links, name)).pipe(Effect.catch(said)),
 })
+
+/** A link's weight, from what was said of it; a link no record names (none, in a fold of the same journal) weighs 0. */
+const weighing = (said: ReadonlyArray<SaidLink>, weights: NonNullable<GraphOptions["weights"]>) => {
+  const byId = new Map(said.map((one) => [one.link.id, weightOf(one, weights)]))
+  return (link: Link): number => byId.get(link.id) ?? 0
+}
 
 /**
  * A wrapper of `Memory` (ADR 0005, ADR 0019): for each request it reads the links that stand in the graph session
@@ -169,8 +199,10 @@ export const withGraph = (options: GraphOptions) => {
       return Memory.of({
         context: Effect.fnUntraced(function* (session) {
           const context = yield* below.context(session)
-          const links = yield* Effect.provideService(knownLinks, Sessions, sessions)
-          const chosen = near(links, questionOf(yield* session.journal), checked)
+          const journal = yield* Effect.provideService(graphJournal, Sessions, sessions)
+          const weights = checked.weights
+          const weigh = weights === undefined ? undefined : weighing(saidOf(journal), weights)
+          const chosen = near(linksOf(journal), questionOf(yield* session.journal), { ...checked, ...(weigh === undefined ? {} : { weigh }) })
           return chosen.length === 0 ? context : [...context, { role: "user" as const, content: linksNote(chosen) }]
         }),
       })

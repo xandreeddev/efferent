@@ -702,7 +702,7 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     // any other, and any other failure, as the tool's.
     const every = others.flatMap((part) => (part.type === "tool-result" ? [part] : []))
     // The ids linkThings answered in this step (lesson 18), in one sentence before the rest: a link said again is
-    // not stored again, and its id is answered, so the sentence names ids and says nothing of what was stored.
+    // answered by the id it was stored under, so the sentence names ids and says nothing of what was stored.
     const linked = every.flatMap((part) => linkedBy(part) ?? [])
     const stored = linked.length === 0 ? [] : [linked.length === 1 ? `The link's id: ${linked[0]}.` : `The links' ids: ${linked.join(", ")}.`]
     const results = every.filter((part) => linkedBy(part) === undefined)
