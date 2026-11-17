@@ -1104,7 +1104,12 @@ is a `TurnError`).
 `@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
 `compareDecisionTrials` and `selectionMetrics`. Each row `compareDecisionTrials`
 gives is a `DecisionComparison` (its spreads `DecisionDelta`s), a schema, so a
-caller that holds a comparison untyped decodes it. Comparisons pair case/repetition,
+caller that holds a comparison untyped decodes it. `decisionTrialOf(trial, { passed })`
+makes a trial the row the comparison reads: whether it passed is the caller's
+(which grade decides is a suite's choice); a trial that ended in an error, was
+cancelled or skipped is `infrastructure`, never a regression (no row is `failed`);
+one still running is no row; its latency is a completed trial's alone; its cost is
+what it settled (in the run's price unit, usually USD), or none when it reserved nothing. Comparisons pair case/repetition,
 bootstrap scenario groups, preserve infrastructure failures, and leave missing
 costs/intervals unavailable. Choice Brier scores require a unique categorical gold
 label; multiple acceptable options support accepted-error metrics but have no

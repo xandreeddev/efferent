@@ -79,7 +79,7 @@ In that run Qwen's five trials agreed on three tasks and not on the sum: it answ
 
 runnable.ts runs the suite once for each candidate, one after the other, so a candidate's trials are graded and its gates decided as soon as they have all run. Then it compares every trial with Echo's, with the package's `compareDecisionTrials(rows, "echo")`. A **regression** is a task and repetition Echo passed and the candidate failed. Under the table, echo-no-tools reads *10 of 20 passed; regressions against Echo: sum, product*.
 
-The package has no function from a trial to the row it compares, so runnable.ts has one, `rowOf`: how the trial ended, whether it passed (every gate's grader said yes), and how long it took. The table counts the same rows, so the two never disagree.
+The package's `decisionTrialOf` makes the row it compares from a trial, and runnable.ts's `rowOf` is one call of it: how the trial ended, whether it passed (every gate's grader said yes, which runnable.ts decides), and how long it took. The table counts the same rows, so the two never disagree.
 
 This is how a model is chosen: the same tasks, the same graders, the same program, and a rate for each model with its interval. A model is better than another on these tasks when its interval sits above the other's, not when it passed one run more.
 

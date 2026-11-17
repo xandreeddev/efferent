@@ -482,10 +482,11 @@ check` (tsc over the learn code, the build, the link check) and
     opens no world; the projection hands each grader the turns and the
     task's reference; the candidates are the models the page gives; and
     it runs the suite once for each candidate, then compares every trial
-    with Echo's (`compareDecisionTrials`). The package has no function
-    from a trial to that row: runnable.ts's `rowOf` is it, and a trial
-    passes when every gate's grader scored it yes. The page decodes the
-    comparison with the package's `DecisionComparison`. The lines that run a
+    with Echo's (`compareDecisionTrials`), each trial made a row by the
+    package's `decisionTrialOf` (runnable.ts's `rowOf`, one call; a trial
+    still running is no row), and a trial passes when every gate's grader
+    scored it yes. The page decodes the comparison with the package's
+    `DecisionComparison`. The lines that run a
     trial are lesson 12's `turnsAfter` (`TURNS_AFTER`), derived by named
     pieces. The page runs the text with its types taken out by named
     pieces (`TYPES`, `runnableBodyOf`), as lesson 12's chat.ts; the two

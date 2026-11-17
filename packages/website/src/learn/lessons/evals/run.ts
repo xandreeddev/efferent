@@ -15,7 +15,7 @@ import { kernel, Sessions } from "@xandreed/core/kernel"
 import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk/kernel"
 import {
   compareDecisionTrials,
-  DecisionCaseId,
+  decisionTrialOf,
   DecisionComparison,
   DecisionTrial,
   defineRunnable,
@@ -77,7 +77,7 @@ export const candidateName = (id: string): string => id.replace(/[/@]/g, ":")
 /** What runnable.ts imports, but the page's two names and what the other files made. */
 const runnableNames = {
   Effect, Fiber, Layer, Option, Queue, Schema, kernel, Sessions, inProcessJournal, sessions, turnsOf,
-  compareDecisionTrials, DecisionCaseId, defineRunnable, EvalId, EvaluationError, EvaluationRunStore, EvaluationServicesLive,
+  compareDecisionTrials, decisionTrialOf, defineRunnable, EvalId, EvaluationError, EvaluationRunStore, EvaluationServicesLive,
   evaluationEnvironmentPort, EvidenceProjector, graderFromEvaluator, gradingContext, runEvaluation, runnableExecutionPort,
   tasksFromDataset, TrialRecorder,
 }
@@ -119,7 +119,7 @@ export const evalsOf = (sources: Sources, picked: LoadedModel, changed: (view: E
           if (!Predicate.isFunction(row)) return Result.fail("runnable.ts did not run: rowOf is not a function.")
           rowOf = (trial) => {
             const made: unknown = Reflect.apply(row, undefined, [trial])
-            return Schema.is(DecisionTrial)(made) ? Option.some(made) : Option.none()
+            return Option.isOption(made) ? Option.filter(made, Schema.is(DecisionTrial)) : Option.none()
           }
           return Result.mapBoth(programOf(named(ran, "evaluation")), {
             onFailure: () => "runnable.ts did not run: evaluation is not an Effect.",

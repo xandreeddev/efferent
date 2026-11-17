@@ -1,4 +1,7 @@
+import { Option } from "effect"
+import { DecisionCaseId } from "./decision-comparison.entity.js"
 import type { DecisionComparison, DecisionDelta, DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
+import type { Trial } from "./domain/trial.entity.js"
 
 const sampleIndex = (draw: number, position: number, length: number) => {
   const seed = (Math.imul(draw + 1, 0x9e3779b1) + Math.imul(position + 1, 0x85ebca6b)) >>> 0
@@ -55,3 +58,30 @@ export const compareDecisionTrials = (rows: ReadonlyArray<DecisionTrial>, baseli
     }
   })
 }
+
+/**
+ * A trial as `compareDecisionTrials` reads it: its candidate, its task (the case) and the task's family (the group),
+ * its sample, how it ended, whether it passed, how long it took and what it settled. Whether it passed is the
+ * caller's to say (`passed`): which grade decides is a suite's choice, not the trial's. A trial that completed is
+ * `completed`; one that ended in an error, was cancelled or was skipped by the run's spend budget measured nothing
+ * about the candidate and is `infrastructure`, which the comparison counts apart and never takes for a regression;
+ * no row is `failed` (a caller that tells a failure of the candidate's own from the infrastructure's writes its row).
+ * A trial still running is no row yet. Its latency is how long a completed trial took, and none for one that measured
+ * nothing (so it does not pull the comparison's percentiles toward zero). Its cost is what its sends settled, in the
+ * unit of the run's price table (usually USD), or none when it reserved nothing (unknown, not zero); its quality is the
+ * caller's, or none.
+ *
+ * @public
+ */
+export const decisionTrialOf = (trial: Trial, options: { readonly passed: boolean; readonly quality?: number }): Option.Option<DecisionTrial> =>
+  trial.status === "running" ? Option.none() : Option.some({
+    candidate: trial.candidate.id,
+    caseId: DecisionCaseId.make(trial.task.id),
+    group: trial.task.family,
+    sample: trial.sample,
+    status: trial.status === "completed" ? "completed" : "infrastructure",
+    passed: trial.status === "completed" && options.passed,
+    quality: options.quality ?? null,
+    latencyMs: trial.status === "completed" ? Math.max(0, trial.endedAt - trial.startedAt) : null,
+    costUsd: trial.spend === undefined ? null : trial.spend.settled,
+  })

@@ -15,6 +15,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   spreads against the baseline). The function is now typed by them, and a
   caller that holds a comparison untyped decodes it; lesson 13 of the docs
   site does, in place of a schema of its own that read five fields.
+- `@xandreed/evals`: `decisionTrialOf(trial, { passed, quality? })`, a
+  trial as `compareDecisionTrials` reads it: the candidate, the task as the
+  case and its family as the group, the sample, `completed` or
+  `infrastructure` (an error, a cancel, a trial the spend budget skipped),
+  a completed trial's latency (none for one that measured nothing), and the
+  cost the trial settled (none when it reserved nothing); a trial still running is no row (`Option.none()`). Whether it
+  passed is the caller's. It never gives `failed`: a trial that did not
+  complete is never a regression. Lesson 13 of the docs site calls it in
+  place of the mapping it wrote out.
 
 - `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
   between two things ("Ana", "works at", "Acme") is a record of a graph
