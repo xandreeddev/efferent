@@ -10,6 +10,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
+  between two things ("Ana", "works at", "Acme") is a record of a graph
+  session of its own (`plugin.graph.linked`, `plugin.graph.unlinked`),
+  written by the model with `linkThings`, removed with `unlinkThings`,
+  read one thing at a time with `followThings`, and folded by `linksOf`.
+  A thing is its name's words in lower case (`normalName`); a link said
+  again is not stored again. `withGraph({ hops, limit, speaker? })`
+  walks from the things the question names, from either end of a link,
+  and ranks each link by the question's words its path meets, then by
+  distance, then the newest (`near`): "Acme is in Lisbon" is sent right
+  after "Ana works at Acme" for "In what city does Ana work?", where
+  lesson 11's word ranking, at the same limit, left it out. The speaker's
+  words ("I", "me") are the host's option. Measured first: the order
+  helps a small model without making it reliable (Qwen2.5 0.5B named the
+  city in 1 and 3 tries of 5 with the path first, never with another link
+  first; DeepSeek V4.1 Flash either way, and from the final note), and a
+  small embedding model (run in Node on the library the site ships for
+  its browser models) was left out: it scored Lisbon nearer Paris than
+  Lisboa. `questionOf` moves to the memory
+  contract, still exported from the kernel's entry.
+
 - `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
   every other part a plain Effect layer, as two new entries beside the
   existing engine, which neither imports nor is imported by it. It is a

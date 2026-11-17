@@ -1,5 +1,5 @@
 import { Option, Result, Schema } from "effect"
-import { dataOf, messageOf, stored, userMessageEvent } from "@xandreed/core/kernel"
+import { dataOf, stored } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { framed, hostNote } from "../memory/memory.entity.functions.js"
 import { FACT_LIMIT, FactId, FactText, forgottenEvent, learnedEvent, REMEMBER_FACT } from "./facts.entity.js"
@@ -47,21 +47,6 @@ export const relevant = (facts: ReadonlyArray<Fact>, question: string, limit: nu
   const ranked = facts.map((fact, at) => ({ fact, at, shared: [...wordsOf(fact.text)].filter((word) => asked.has(word)).length }))
   return ranked.toSorted((a, b) => b.shared - a.shared || b.at - a.at).slice(0, Math.max(0, limit)).map(({ fact }) => fact)
 }
-
-/**
- * The question a context is built for: the text of the last `conversation.user.message` in the conversation's
- * journal (never a report another session sent, ADR 0018), or no text when there is none. It is read from the journal by the record's name, never by a message's
- * role: a wrapper's note in a context is a user-role message, and so is one a plugin stores in the conversation
- * under a record of its own.
- *
- * @public
- */
-export const questionOf = (journal: ReadonlyArray<StoredEvent>): string =>
-  journal
-    // The person's messages only: a report another session sent (ADR 0018) names it in `from`, and is no question.
-    .flatMap((event) => (Option.exists(dataOf(userMessageEvent, event), (data) => data.from === undefined) ? Option.toArray(messageOf(event)) : []))
-    .flatMap((message) => (message._tag === "User" ? [message.text] : []))
-    .at(-1) ?? ""
 
 /**
  * What a request is sent of the facts: a note that they are remembered from earlier conversations and are data,

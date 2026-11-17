@@ -64,6 +64,7 @@ caught up.
 | `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
 | The skill contract | sdk, `contracts/skill` | `defineSkill`, `catalogue`, `loadedOf`: a skill is a value, and it is loaded where a result of `loadSkill` is stored |
 | The facts contract | sdk, `contracts/facts` | `factsOf`, `relevant`; the `plugin.facts.learned` and `plugin.facts.forgotten` records, kept in a session of their own |
+| The graph contract | sdk, `contracts/graph` | `linksOf`, `near`, `linksNote`; the `plugin.graph.linked` and `plugin.graph.unlinked` records, kept in a session of their own |
 | `factTools`, `factHandlers`, `withFacts({ limit })` | sdk, `plugins/facts` | what an agent knows across conversations: two tools that write facts to the memory session, and a memory wrapper that reads them for each request |
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
@@ -1366,6 +1367,104 @@ its process recovers the memory session (`memorySession`,
 `Sessions.recover`) as it recovers its conversation. Every agent on one
 store shares its facts.
 
+### A graph: what an agent knows, connected
+
+Facts are sentences that do not know of each other: "Ana works at Acme." and
+"Acme is in Lisbon." never meet, and a question that shares no word with the
+second ("In what city does Ana work?") ranks it last, behind every newer fact
+about Ana. A graph keeps what an agent knows as links between things (ADR
+0019): a link is a record in a session of its own, the graph session, and two
+links that name one thing are connected through it. Three tools of the
+kernel's write and read it:
+
+<!-- pinned: packages/sdk/src/kernel/graph.test.ts#tools -->
+
+```ts
+// The agent's own tool, and the three of the graph: one toolkit, each tool with its own type.
+const Add = Tool.make("add", { parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }), success: Schema.Number, failure: Schema.String, failureMode: "return" })
+const tools = Toolkit.merge(Toolkit.make(Add), graphTools)
+const toolsLive = Toolkit.make(Add).toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
+// What the three tools do is the kernel's: each link stored is a turn on the graph session.
+const handlers = Layer.mergeAll(toolsLive, graphHandlers)
+```
+
+A wrapper of `Memory` reads it. For each request it walks from the things the
+question names and adds the links near them, last:
+
+<!-- pinned: packages/sdk/src/kernel/graph.test.ts#memory -->
+
+```ts
+// The memory a conversation reads with, wrapped: each request is sent the conversation, then up to five links
+// near what the question names, two links away at most. "I", "me" and "my" name the thing called "user".
+const memory = withGraph({ hops: 2, limit: 5, speaker: { name: "user", words: ["i", "me", "my"] } })(flatMemory)
+```
+
+So the link that answers reaches the request through the one the question
+names, ranked with the link the path took:
+
+<!-- pinned: packages/sdk/src/kernel/graph.test.ts#connect -->
+
+```ts
+const { conversations, graph, sent } = await Effect.runPromise(run(
+  [
+    calls(link("Ana", "works at", "Acme"), link("Acme", "is in", "Lisbon"), link("Ana", "lives in", "Porto")), says("Noted."),
+    says("Ana works in Lisbon."),
+  ],
+  [["Ana works at Acme, which is in Lisbon. She lives in Porto."], ["In what city does Ana work?"]],
+))
+// The conversation holds the calls and their results, the links' ids: it stored no record of the links.
+expect(results(conversations[0]?.journal ?? [])).toEqual([["linkThings", { id: "e1" }, false], ["linkThings", { id: "e2" }, false], ["linkThings", { id: "e3" }, false]])
+// Each link is a record of the graph session, each in a turn of its own.
+expect(names(graph).filter((name) => name.startsWith("plugin."))).toEqual(["plugin.graph.linked", "plugin.graph.linked", "plugin.graph.linked"])
+// The question names Ana: the path to Lisbon is sent first, though "Acme is in Lisbon" shares no word with it.
+expect(sent[2]).toEqual([
+  { role: "system", text: SYSTEM },
+  { role: "user", text: "In what city does Ana work?" },
+  { role: "user", text: noteOf("e1: Ana works at Acme.", "e2: Acme is in Lisbon.", "e3: Ana lives in Porto.") },
+])
+```
+
+`linkThings({ subject, relation, object })` stores `plugin.graph.linked` in a
+turn on the graph session, with the conversation and turn it came from, and
+answers the link's id; a link that says what a standing one says, once its
+parts are normalised, is not stored again and its id is answered.
+`unlinkThings({ id })` stores `plugin.graph.unlinked`. `followThings({ name })`
+reads a thing's links, newest first, at most twenty and how many more, and
+stores nothing: a model reaches further with it than a request was sent.
+`linksOf(journal)` folds the records into the links that stand. A thing is
+its name's words in lower case (`normalName`): "Acme" and "ACME" are one
+thing, "NYC" and "New York" two until a link says they are one. Nothing is
+merged by meaning: a small embedding model, run on the library the site
+ships for its browser models, scored Lisbon nearer Paris than Lisboa (ADR
+0019).
+
+`withGraph({ hops, limit, speaker? })` finds the things the question names
+(`namedIn`: a thing whose words are a run of the question's; the speaker's
+words, given by the host, name the speaker's thing), walks their links from
+either end up to `hops` away, and ranks each link by its path (`near`, a
+pure function): the question's words of four letters or more that the
+relations and names on the path to it meet, then fewer links away, then the
+newer. It sends at most `limit` of them, best first, a sentence each with its
+id, framed as data (`linksNote`). With nothing named, nothing is added; the
+question is the user's last message in the conversation's journal
+(`questionOf`, the memory contract's). Nothing is stored, and a memory's
+budget does not count the links: they are bounded by `limit` and by a name's
+length. The order helps a small model: Qwen2.5 0.5B named the right city more
+often with the path first than with another link about Ana first, though not
+reliably in the note's own shape; DeepSeek V4.1 Flash named it either way
+(ADR 0019 has the counts). A word of four letters that carries no meaning,
+such as "does", is a word like any other: it meets a relation that holds it.
+
+What it costs: a link beyond a thing the path reached ranks with every other
+link of that thing ("Acme sells paint" with "Acme is in Lisbon"), the newer
+first, since nothing in "In what city" meets "Lisbon": enough such links cut
+the answer at the limit. The walk reads every link of the graph session for each
+request, and a hub (a thing with many links, such as the speaker) is cut by
+`limit`, the links the question meets first. As for facts, a process that
+dies inside a turn on the graph session leaves it busy until the host
+recovers it (`graphSession`, `Sessions.recover`), and every agent on one
+store shares its graph.
+
 ## The inbox: queueing messages for a turn
 
 The inbox is a plugin over the host's own turn, and the proof that a plugin
@@ -2004,6 +2103,7 @@ fail on a careless plugin written for it.
 | `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
+| graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
 | `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |

@@ -1,6 +1,7 @@
-import { Match, Predicate, Result } from "effect"
+import { Match, Option, Predicate, Result } from "effect"
 import type { Prompt } from "effect/ai"
-import type { Message } from "@xandreed/core/kernel"
+import { dataOf, messageOf, userMessageEvent } from "@xandreed/core/kernel"
+import type { Message, StoredEvent } from "@xandreed/core/kernel"
 import { InvalidBudget, Tokens } from "./memory.entity.js"
 import type { OverBudget } from "./memory.entity.js"
 
@@ -174,3 +175,18 @@ export const budgetOf = (budgetTokens: number): Result.Result<Tokens, InvalidBud
  * @public
  */
 export const isOverBudget = (error: unknown): error is OverBudget => Predicate.isTagged(error, "OverBudget")
+
+/**
+ * The question a context is built for: the text of the last `conversation.user.message` in the conversation's
+ * journal (never a report another session sent, ADR 0018), or no text when there is none. It is read from the journal by the record's name, never by a message's
+ * role: a wrapper's note in a context is a user-role message, and so is one a plugin stores in the conversation
+ * under a record of its own.
+ *
+ * @public
+ */
+export const questionOf = (journal: ReadonlyArray<StoredEvent>): string =>
+  journal
+    // The person's messages only: a report another session sent (ADR 0018) names it in `from`, and is no question.
+    .flatMap((event) => (Option.exists(dataOf(userMessageEvent, event), (data) => data.from === undefined) ? Option.toArray(messageOf(event)) : []))
+    .flatMap((message) => (message._tag === "User" ? [message.text] : []))
+    .at(-1) ?? ""
