@@ -512,7 +512,7 @@ check` (tsc over the learn code, the build, the link check) and
     board keeps the latest of each and counts, per candidate and task,
     the passes of N with their Wilson interval
     (`@xandreed/evals/stats`), each candidate's gates once its run is
-    graded, the suite's verdict, and the comparison with Echo. A trial
+    graded (each with the bounds its finding says it was held to, `heldTo`), the suite's verdict, and the comparison with Echo. A trial
     opens on demand to its grades' reasons and its transcript. A stopped
     run says so: the candidates it finished stay graded, and the one it
     cut short is not graded (the package grades a run's trials once they

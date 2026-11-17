@@ -15,7 +15,7 @@ const experiments = [
   },
   {
     exp: "strict-gate", title: "A strict gate", button: "Add a strict gate",
-    text: "gates gains a second blocking gate, on the tool's grader, at 1: every trial calls the right tool with the right numbers, or none where none is asked for. Press Run evals. Echo passes both. echo-no-tools fails both: ✗ tool@1 called, blocking: measured 0.5 (Outside threshold). A gate's threshold is the lowest pass rate it accepts, here 1. The run says The suite is blocked: echo-no-tools failed a blocking gate. A blocking gate is one a change must pass; a diagnostic one is reported and blocks nothing. At 1, one miss in twenty trials fails it.",
+    text: "gates gains a second blocking gate, on the tool's grader, at 1: every trial calls the right tool with the right numbers, or none where none is asked for. Press Run evals. Echo passes both. echo-no-tools fails both: ✗ tool@1 called at least 1, blocking: measured 0.5 (Outside threshold). A gate's threshold is the lowest pass rate it accepts, here 1. The run says The suite is blocked: echo-no-tools failed a blocking gate. A blocking gate is one a change must pass; a diagnostic one is reported and blocks nothing. At 1, one miss in twenty trials fails it.",
   },
   {
     exp: "baseline-misses", title: "A task Echo misses", button: "Add a task Echo misses",

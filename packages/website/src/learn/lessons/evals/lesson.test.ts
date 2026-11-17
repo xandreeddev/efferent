@@ -71,8 +71,8 @@ const table = (view: EvalsView | undefined) => (view?.candidates ?? []).map((can
 
 const ALL_PASSED = ["sum: 5 of 5 passed (0.57 to 1)", "product: 5 of 5 passed (0.57 to 1)", "meeting: 5 of 5 passed (0.57 to 1)", "keys: 5 of 5 passed (0.57 to 1)"]
 const NO_TOOLS = ["sum: 0 of 5 passed (0 to 0.43)", "product: 0 of 5 passed (0 to 0.43)", "meeting: 5 of 5 passed (0.57 to 1)", "keys: 5 of 5 passed (0.57 to 1)"]
-const ECHO_GATE = "✓ answer@1 holds, blocking: measured 1 (Passed)"
-const NO_TOOLS_GATE = "✗ answer@1 holds, blocking: measured 0.5 (Outside threshold)"
+const ECHO_GATE = "✓ answer@1 holds at least 0.8, blocking: measured 1 (Passed)"
+const NO_TOOLS_GATE = "✗ answer@1 holds at least 0.8, blocking: measured 0.5 (Outside threshold)"
 const BLOCKED = "The suite is blocked: echo-no-tools failed a blocking gate."
 const STARTER_TABLE = [
   { candidate: "echo", line: "20 of 20 passed (0.84 to 1)", tasks: ALL_PASSED, gates: [ECHO_GATE] },
@@ -219,7 +219,7 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     const { last } = await run()
     expect(table(last)).toEqual([
       { candidate: "echo", line: "20 of 20 passed (0.84 to 1)", tasks: ALL_PASSED, gates: [ECHO_GATE] },
-      { candidate: "echo-no-tools", line: "20 of 20 passed (0.84 to 1)", tasks: ALL_PASSED, gates: ["✓ answer@1 holds, blocking: measured 1 (Passed)"] },
+      { candidate: "echo-no-tools", line: "20 of 20 passed (0.84 to 1)", tasks: ALL_PASSED, gates: ["✓ answer@1 holds at least 0.8, blocking: measured 1 (Passed)"] },
     ])
     expect(last?.verdict).toBe("Every candidate passed every blocking gate.")
     expect(last?.comparison).toEqual(["echo (the baseline): 20 of 20 passed", "echo-no-tools: 20 of 20 passed; no regression against Echo"])
@@ -245,8 +245,8 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     const { run } = await page(applied("strict-gate"))
     const { last } = await run()
     expect(table(last).map((candidate) => [candidate.candidate, candidate.line, candidate.gates])).toEqual([
-      ["echo", "20 of 20 passed (0.84 to 1)", [ECHO_GATE, "✓ tool@1 called, blocking: measured 1 (Passed)"]],
-      ["echo-no-tools", "10 of 20 passed (0.3 to 0.7)", [NO_TOOLS_GATE, "✗ tool@1 called, blocking: measured 0.5 (Outside threshold)"]],
+      ["echo", "20 of 20 passed (0.84 to 1)", [ECHO_GATE, "✓ tool@1 called at least 1, blocking: measured 1 (Passed)"]],
+      ["echo-no-tools", "10 of 20 passed (0.3 to 0.7)", [NO_TOOLS_GATE, "✗ tool@1 called at least 1, blocking: measured 0.5 (Outside threshold)"]],
     ])
     expect(last?.verdict).toBe(BLOCKED)
   })
@@ -257,8 +257,8 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     const { run } = await page({ ...SOURCES, evals })
     const { last } = await run()
     expect(table(last).map((candidate) => [candidate.candidate, candidate.gates])).toEqual([
-      ["echo", ["✗ answer@1 holds, blocking: measured 1 (Reference labels need review)"]],
-      ["echo-no-tools", ["✗ answer@1 holds, blocking: measured 0.5 (Reference labels need review)"]],
+      ["echo", ["✗ answer@1 holds at least 0.8, blocking: measured 1 (Reference labels need review)"]],
+      ["echo-no-tools", ["✗ answer@1 holds at least 0.8, blocking: measured 0.5 (Reference labels need review)"]],
     ])
   })
 
@@ -266,8 +266,8 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     const { run } = await page(applied("baseline-misses"))
     const { last } = await run()
     expect(table(last)).toEqual([
-      { candidate: "echo", line: "20 of 25 passed (0.61 to 0.91)", tasks: [...ALL_PASSED, "day: 0 of 5 passed (0 to 0.43)"], gates: ["✓ answer@1 holds, blocking: measured 0.8 (Passed)"] },
-      { candidate: "echo-no-tools", line: "10 of 25 passed (0.23 to 0.59)", tasks: [...NO_TOOLS, "day: 0 of 5 passed (0 to 0.43)"], gates: ["✗ answer@1 holds, blocking: measured 0.4 (Outside threshold)"] },
+      { candidate: "echo", line: "20 of 25 passed (0.61 to 0.91)", tasks: [...ALL_PASSED, "day: 0 of 5 passed (0 to 0.43)"], gates: ["✓ answer@1 holds at least 0.8, blocking: measured 0.8 (Passed)"] },
+      { candidate: "echo-no-tools", line: "10 of 25 passed (0.23 to 0.59)", tasks: [...NO_TOOLS, "day: 0 of 5 passed (0 to 0.43)"], gates: ["✗ answer@1 holds at least 0.8, blocking: measured 0.4 (Outside threshold)"] },
     ])
     expect(last?.candidates[0]?.tasks[4]?.trials[0]?.grades[0]).toBe("answer@1: the answer repeats the message")
     expect(last?.comparison).toEqual(["echo (the baseline): 20 of 25 passed", "echo-no-tools: 10 of 25 passed; regressions against Echo: sum, product"])

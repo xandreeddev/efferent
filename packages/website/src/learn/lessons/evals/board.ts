@@ -68,6 +68,12 @@ export interface Compared {
 /** A share as the table writes it: at most two decimals, and no trailing zero ("0.57", "1"). */
 export const share = (value: number): string => String(Number(value.toFixed(2)))
 
+/** The bounds a finding says its gate held the metric to, as words: " at least 0.8", " at most 1", " from 0.5 to 0.9"; none for a finding that does not say. */
+export const heldTo = (finding: { readonly minimum?: number; readonly maximum?: number }): string =>
+  finding.minimum !== undefined && finding.maximum !== undefined ? ` from ${share(finding.minimum)} to ${share(finding.maximum)}`
+    : finding.minimum !== undefined ? ` at least ${share(finding.minimum)}`
+      : finding.maximum !== undefined ? ` at most ${share(finding.maximum)}` : ""
+
 /** Passes of a count, with the interval they leave: "4 of 5 passed (0.38 to 0.96)". */
 export const passesLine = (passes: number, of: number): string => {
   const interval = wilsonInterval(passes, of)
@@ -169,7 +175,7 @@ export class EvalsBoard {
   private gatesOf(candidate: string): ReadonlyArray<GateView> {
     return this.runs.flatMap((run) => run.gates).filter((gate) => gate.candidate === candidate).map((gate) => ({
       passed: gate.passed,
-      line: `${gate.passed ? "✓" : "✗"} ${gate.grader} ${gate.metric}, ${gate.mode}: ${Option.match(gate.value, { onNone: () => "not measured", onSome: (value) => `measured ${share(value)}` })} (${gate.reason})`,
+      line: `${gate.passed ? "✓" : "✗"} ${gate.grader} ${gate.metric}${heldTo(gate)}, ${gate.mode}: ${Option.match(gate.value, { onNone: () => "not measured", onSome: (value) => `measured ${share(value)}` })} (${gate.reason})`,
     }))
   }
 

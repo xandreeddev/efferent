@@ -36,6 +36,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   imports `Option`. Its comments now say what a reviewed reference does: a
   gate does not pass while any of its trials' references is provisional
   (a page test pins it).
+- `@xandreed/evals`: a `GateFinding` holds its gate's `aggregate` and the
+  bounds it held the metric to (`minimum`, `maximum`, each present when the
+  gate has it), so a finding reads without its suite. They are optional
+  keys: reports recorded by earlier releases decode unchanged, as
+  `run-compat.test.ts` checks. Lesson 13's table says them ("answer@1
+  holds at least 0.8, blocking: measured 1").
 
 - `@xandreed/sdk/kernel`: a memory that connects (ADR 0019). A link
   between two things ("Ana", "works at", "Acme") is a record of a graph

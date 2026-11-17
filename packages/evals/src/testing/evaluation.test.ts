@@ -557,6 +557,31 @@ test("a gate needs a bound, and a finding keeps its gate's mode", async () => {
   expect(Result.isFailure(decode({ ...encoded, gates: encoded.gates.map((gate) => ({ ...gate, mode: "Blocking" })) }))).toBe(true)
 })
 
+test("a finding holds the aggregate and the bounds its gate held it to, and a report written before it held them still decodes", async () => {
+  const app = fixture()
+  const held = { ...app, suites: app.suites.map((suite) => ({ ...suite, gates: suite.gates.map((gate) => ({ ...gate, minimum: Option.some(0.5), maximum: Option.some(0.9) })) })) }
+  const report = await Effect.runPromise(run(app))
+  const [gate] = app.suites[0]?.gates ?? []
+  expect(runGates(app.suites, report.trials).map((finding) => [finding.aggregate, finding.minimum, finding.maximum]))
+    .toEqual([[gate?.aggregate, Option.getOrUndefined(gate?.minimum ?? Option.none()), Option.getOrUndefined(gate?.maximum ?? Option.none())]])
+  expect(runGates(held.suites, report.trials).map((finding) => [finding.minimum, finding.maximum])).toEqual([[0.5, 0.9]])
+  // A bound the gate does not have is no key of its finding.
+  const onlyMinimum = runGates(app.suites.map((suite) => ({ ...suite, gates: suite.gates.map((one) => ({ ...one, minimum: Option.some(1), maximum: Option.none<number>() })) })), report.trials)
+  expect(onlyMinimum.map((finding) => Object.hasOwn(finding, "maximum"))).toEqual([false])
+  const encoded = Schema.encodeSync(EvaluationRun)({ ...report, gates: runGates(held.suites, report.trials) })
+  const older = { ...encoded, gates: encoded.gates.map(({ aggregate: _aggregate, minimum: _minimum, maximum: _maximum, ...rest }) => rest) }
+  expect(Result.isSuccess(Schema.decodeUnknownResult(EvaluationRun)(older))).toBe(true)
+  // Through JSON text, as a report file holds it, the keys come back.
+  const text = JSON.stringify(encoded)
+  const back = Schema.decodeUnknownResult(Schema.fromJsonString(EvaluationRun))(text)
+  expect(Result.map(back, (decoded) => decoded.gates.map((finding) => [finding.aggregate, finding.minimum, finding.maximum]))).toEqual(Result.succeed([[gate?.aggregate, 0.5, 0.9]]))
+  // A bound JSON cannot write is no key of the finding, so its report still reads back.
+  const endless = runGates(app.suites.map((suite) => ({ ...suite, gates: suite.gates.map((one) => ({ ...one, minimum: Option.some(0), maximum: Option.some(Number.POSITIVE_INFINITY) })) })), report.trials)
+  expect(endless.map((finding) => [finding.minimum, Object.hasOwn(finding, "maximum")])).toEqual([[0, false]])
+  const endlessText = JSON.stringify(Schema.encodeSync(EvaluationRun)({ ...report, gates: endless }))
+  expect(Result.isSuccess(Schema.decodeUnknownResult(Schema.fromJsonString(EvaluationRun))(endlessText))).toBe(true)
+})
+
 const breaks = (app: EvaluationApp) => evaluationAppViolations(app).map((entry) => [entry.rule, entry.path])
 const refusedBy = async (value: unknown) =>
   (await Effect.runPromise(parseEvaluationApp(value).pipe(Effect.flip))).violations?.map((entry) => [entry.rule, entry.path])
