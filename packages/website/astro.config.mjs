@@ -24,7 +24,7 @@ export default defineConfig({
     resolve: {
       dedupe: ["effect"],
     },
-    // Lesson 13 loads the eval package when "Run evals" is pressed. Named here, the dev server prepares
+    // Lessons 13 and 19 load the eval package when "Run evals" or "Check the graders" is pressed. Named here, the dev server prepares
     // what it brings before the page loads; found then, it would reload the page and lose the press.
     optimizeDeps: {
       include: ["@xandreed/evals > @noble/hashes/sha2.js", "@xandreed/evals > @noble/hashes/utils.js", "effect/encoding"],

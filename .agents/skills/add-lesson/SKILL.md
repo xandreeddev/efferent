@@ -14,14 +14,21 @@ checks.
 - What the lesson needs from the kernel lands first, with its tests, an ADR
   when it decides something (skill `kernel-architecture`) and a section of
   `docs/kernel.md` quoting a pinned test region.
-- The lesson imports only the two kernel entries (`imports.test.ts`). Lesson
-  13 alone may also name the eval package (`@xandreed/evals`,
-  `@xandreed/evals/stats`), in its own files, and the page loads it only
-  when its evals run (a dynamic import), so no other page carries it. A
-  lesson that needs another package names it the same way: in its own
-  files alone, loaded when it is used, with `imports.test.ts` widened for
-  that lesson and no other, and the built JS of another lesson's page
-  compared before and after.
+- The lesson imports only the two kernel entries (`imports.test.ts`).
+  Lessons 13 and 19 alone may also name the eval package
+  (`@xandreed/evals`, `@xandreed/evals/stats`), each in its own files, and
+  the page loads it only when the lesson's button is pressed (a dynamic
+  import of its `run.ts`), so no other page carries it. A lesson that needs
+  another package names it the same way: in its own files alone, loaded
+  when it is used, with `imports.test.ts` widened for that lesson and no
+  other, and the built JS of another lesson's page compared before and
+  after. A file the learner edits that imports such a package is run by
+  the build without it (a name read only when the code runs), and again
+  with it when the button is pressed.
+- A lesson that needs a model's judgement with no model in the page (lesson
+  19's Jev) has a stand-in of recorded answers, keyed on the whole request,
+  that refuses any other request in words that ask for a key; it never
+  invents answers. The real path runs over a fake `fetch` in tests.
 
 ## 2. The files the learner sees
 

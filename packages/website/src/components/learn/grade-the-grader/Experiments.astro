@@ -1,0 +1,38 @@
+---
+// Step 9: each button rewrites the learner's labels.ts or graders.ts and builds the program again (see
+// learn/playground.ts, `data-exp`). The graders are checked with the button under the list, over the code as it then
+// stands. Every number here is pinned by lessons/grade-the-grader/lesson.test.ts, on the stand-in.
+import Graders from "./Graders.astro"
+
+const experiments = [
+  {
+    exp: "hedge-is-wrong", title: "A hedge is wrong", button: "Label the hedge wrong",
+    text: "Case 4's label becomes false: a person now says a hedged answer is wrong, even when its number is right. Press Check the graders. asked-thrice agrees with 8 of 8, and asked-once with 4 of 8: it passes case 4, now a false pass. The text grader falls to 1 of 8. No grader changed. The labels decide what right means, so the people who write them decide it first.",
+  },
+  {
+    exp: "commit-lower", title: "A bar moved to fit", button: "Lower the bar for commits",
+    text: "asked-thrice's bar for commits falls from 0.5 to 0.25. Press Check the graders. Case 4 committed with 0.29, so it passes, and asked-thrice agrees with 8 of 8 against the starter's labels. That is fitting, not checking: the bar was moved until these eight labels agreed, and eight labels say little about the next answer. Over Jev's five runs, case 4's commits was between 0.28 and 0.31: with your key, a bar at 0.3 would pass it on some presses and fail it on others. The stand-in always gives the middle, 0.29.",
+  },
+  {
+    exp: "your-own-case", title: "A case of your own", button: "Add a case of your own",
+    text: "labels.ts gains a ninth case: How many legs does a spider have? Its reference is 8, and its answer Eight., labelled right. Press Check the graders. The text grader fails it, since Eight. holds no 8: a false fail, and it agrees with 2 of 9. The stand-in never heard this request, so asked-once and asked-thrice give it no grade, and the cell's reason says why: Jev request failed: the stand-in has no recorded answer to this request. The package counts a verdict with no grade as a disagreement: asked-once agrees with 5 of 9, asked-thrice with 7 of 9. With a key kept, the real Jev answers it.",
+  },
+  {
+    exp: "once-stricter", title: "A stricter bar", button: "Raise asked-once's bar",
+    text: "asked-once's bar rises from 0.5 to 0.8. Press Check the graders. Lisboa., which Jev gave 0.7, now fails: a false fail, and asked-once agrees with 4 of 8. Its three false passes stay, since Jev gave each 0.94 or more. A higher bar did not stop them: what is wrong with them is a question asked-once does not ask.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>
+<Graders />

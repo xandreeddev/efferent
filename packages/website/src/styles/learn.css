@@ -169,6 +169,10 @@ body.app {
   cursor: pointer;
   transition: background 0.15s, border-color 0.15s;
 }
+/* A button the page hides (a Stop while nothing runs) stays hidden: `display` above would show it. */
+.btn[hidden] {
+  display: none;
+}
 .btn:hover:not(:disabled) {
   background: var(--surface-2);
   border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
@@ -1243,6 +1247,63 @@ body.app {
 .evals-comparison {
   margin: 0.25rem 0;
   padding-left: 1.2rem;
+  color: var(--text-dim);
+}
+/* Lesson 19's table: each grader's line, then a row for each labelled answer and a cell for each
+   grader, its reason on demand. The table scrolls sideways inside its box on a narrow screen. */
+.graders-lines {
+  margin: 0;
+  padding-left: 1.2rem;
+  color: var(--text-dim);
+}
+.graders-lines strong {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+.graders-scroll {
+  overflow-x: auto;
+  min-width: 0;
+}
+.graders-table {
+  border-collapse: collapse;
+  font-size: 0.8rem;
+}
+.graders-table th,
+.graders-table td {
+  padding: 0.3rem 0.45rem;
+  border-bottom: 1px solid var(--hairline);
+  text-align: left;
+  vertical-align: top;
+}
+.graders-table th {
+  font-family: var(--font-mono);
+  font-weight: 600;
+  color: var(--text);
+}
+/* A grader's name in the head may break after its hyphen (the pane marks where): the evals tables' rule keeps theirs on one line. */
+.graders-table thead th {
+  white-space: normal;
+}
+/* A case's question and answer: a row of its own, across the table, in the text's face; its marks are the row under it. */
+.graders-table tr.graders-case th {
+  font-family: inherit;
+  font-weight: 400;
+  color: var(--text-dim);
+  border-bottom: none;
+  padding-top: 0.55rem;
+}
+.graders-table td[data-agrees="false"] summary {
+  color: #d9534f;
+}
+.graders-table summary {
+  cursor: pointer;
+  font-family: var(--font-mono);
+  white-space: nowrap;
+}
+.graders-table details p {
+  margin: 0.25rem 0 0;
+  max-width: 18rem;
   color: var(--text-dim);
 }
 .evals-transcript {
