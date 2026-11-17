@@ -14,7 +14,7 @@ import { Effect, Layer, Option, Schema } from "effect"
 import type { LanguageModel } from "effect/ai"
 import { scriptedModel } from "@xandreed/sdk/kernel"
 import type { ModelScript } from "@xandreed/sdk/kernel"
-import { EvaluationRun, Trial } from "@xandreed/evals"
+import { DecisionComparison, EvaluationRun, Trial } from "@xandreed/evals"
 import { wilsonInterval } from "@xandreed/evals/stats"
 import { formatRegion } from "../../format.ts"
 import { applyExperiment } from "../../lesson.ts"
@@ -87,7 +87,7 @@ const ECHO_LIKE: ModelScript = [
 /** What the run gives: each candidate's run, and the comparison. */
 const Outcome = Schema.Struct({
   runs: Schema.Array(EvaluationRun),
-  comparison: Schema.Array(Schema.Struct({ candidate: Schema.String, attempts: Schema.Number, successes: Schema.Number, infrastructure: Schema.Number, regressions: Schema.Array(Schema.String) })),
+  comparison: Schema.Array(DecisionComparison),
 })
 
 /** Run the suite of the files written at `at`, each candidate a scripted model: what the run gave, and every trial written. */
@@ -248,7 +248,7 @@ describe("lesson 13's displayed program", () => {
     expect(run.heard).toHaveLength(160)
     expect([run.passes("echo"), run.passes("broken")]).toEqual([20, 0])
     expect(run.gates).toEqual([["echo", "answer@1", true, 1, "Passed"], ["broken", "answer@1", false, 0, "Outside threshold"]])
-    expect(run.comparison).toEqual([["echo", 20, 20, []], ["broken", 0, 20, ["sum", "product", "meeting", "keys"]]])
+    expect<unknown>(run.comparison).toEqual([["echo", 20, 20, []], ["broken", 0, 20, ["sum", "product", "meeting", "keys"]]])
     expect(run.reasons("echo", "sum")).toEqual(['answer: the answer holds "5"', 'tool: it called calculator({"a":2,"op":"+","b":3})'])
     expect(run.reasons("broken", "sum")).toEqual(['answer: the answer does not hold "5"', 'tool: it called no tool, not calculator({"a":2,"op":"+","b":3})'])
     expect(run.reasons("broken", "meeting")).toEqual(['answer: the answer does not hold "Tuesday"', "tool: it called no tool"])
@@ -277,7 +277,7 @@ describe("lesson 13's displayed program", () => {
     const run = await ran(write("down"), { echo: ECHO_LIKE, down: failing })
     expect(run.statuses("down")).toEqual(["completed"])
     expect(run.reasons("down", "meeting")).toEqual(['answer: the answer does not hold "Tuesday"', "tool: it called no tool"])
-    expect(run.comparison).toEqual([["echo", 20, 20, []], ["down", 0, 20, ["sum", "product", "meeting", "keys"]]])
+    expect<unknown>(run.comparison).toEqual([["echo", 20, 20, []], ["down", 0, 20, ["sum", "product", "meeting", "keys"]]])
     expect(run.infrastructure).toEqual([["echo", 0], ["down", 0]])
   })
 

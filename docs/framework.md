@@ -1102,7 +1102,9 @@ and fails a turn's run with `loop.truncated` as it is too (a `HarnessError`
 is a `TurnError`).
 
 `@xandreed/evals` provides `DecisionTrial`, `SelectionObservation`,
-`compareDecisionTrials` and `selectionMetrics`. Comparisons pair case/repetition,
+`compareDecisionTrials` and `selectionMetrics`. Each row `compareDecisionTrials`
+gives is a `DecisionComparison` (its spreads `DecisionDelta`s), a schema, so a
+caller that holds a comparison untyped decodes it. Comparisons pair case/repetition,
 bootstrap scenario groups, preserve infrastructure failures, and leave missing
 costs/intervals unavailable. Choice Brier scores require a unique categorical gold
 label; multiple acceptable options support accepted-error metrics but have no

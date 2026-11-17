@@ -1,4 +1,4 @@
-import type { DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
+import type { DecisionComparison, DecisionDelta, DecisionTrial, SelectionObservation } from "./decision-comparison.entity.js"
 
 const sampleIndex = (draw: number, position: number, length: number) => {
   const seed = (Math.imul(draw + 1, 0x9e3779b1) + Math.imul(position + 1, 0x85ebca6b)) >>> 0
@@ -27,7 +27,7 @@ export const selectionMetrics = (rows: ReadonlyArray<SelectionObservation>) => {
  *
  * @public
  */
-export const compareDecisionTrials = (rows: ReadonlyArray<DecisionTrial>, baseline: string) => {
+export const compareDecisionTrials = (rows: ReadonlyArray<DecisionTrial>, baseline: string): ReadonlyArray<DecisionComparison> => {
   const base = rows.filter((r) => r.candidate === baseline)
   return [...new Set(rows.map((r) => r.candidate))].map((candidate) => {
     const current = rows.filter((r) => r.candidate === candidate)
@@ -35,7 +35,7 @@ export const compareDecisionTrials = (rows: ReadonlyArray<DecisionTrial>, baseli
       const b = base.find((v) => v.caseId === r.caseId && v.sample === r.sample)
       return b ? [{ b, r }] : []
     })
-    const deltas = (field: "quality" | "latencyMs" | "costUsd") => {
+    const deltas = (field: "quality" | "latencyMs" | "costUsd"): DecisionDelta => {
       const valid = pairs.filter(({ b, r }) => b.status !== "infrastructure" && r.status !== "infrastructure" && b[field] !== null && r[field] !== null)
       const groups = [...new Set(valid.map(({ r }) => r.group))].map((group) => mean(valid.filter(({ r }) => r.group === group).map(({ b, r }) => (r[field] ?? 0) - (b[field] ?? 0))) ?? 0)
       const draws = groups.length < 2 ? [] : Array.from({ length: 1000 }, (_, n) => mean(Array.from({ length: groups.length }, (_, k) => groups[sampleIndex(n, k, groups.length)] ?? 0)) ?? 0)

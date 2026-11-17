@@ -19,6 +19,8 @@ const Candidate
 const CompletenessEvidence
 const ContextBudget
 const DecisionCaseId
+const DecisionComparison
+const DecisionDelta
 const DecisionTrial
 const EvalId
 const EvalPath
@@ -158,6 +160,8 @@ type Candidate
 type CompletenessEvidence
 type ContextBudget
 type DecisionCaseId
+type DecisionComparison
+type DecisionDelta
 type DecisionTrial
 type EvalId
 type EvalPath
