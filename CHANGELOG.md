@@ -26,8 +26,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   helps a small model without making it reliable (Qwen2.5 0.5B named the
   city in 1 and 3 tries of 5 with the path first, never with another link
   first; DeepSeek V4.1 Flash either way, and from the final note), and a
-  browser embedding model was left out (it scored Lisbon nearer Paris
-  than Lisboa). `questionOf` moves to the memory
+  small embedding model (run in Node on the library the site ships for
+  its browser models) was left out: it scored Lisbon nearer Paris than
+  Lisboa. `questionOf` moves to the memory
   contract, still exported from the kernel's entry.
 
 - `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with

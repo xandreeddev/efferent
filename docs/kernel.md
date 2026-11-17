@@ -1400,7 +1400,7 @@ const memory = withGraph({ hops: 2, limit: 5, speaker: { name: "user", words: ["
 ```
 
 So the link that answers reaches the request through the one the question
-names, and comes before the links that do not lead to an answer:
+names, ranked with the link the path took:
 
 <!-- pinned: packages/sdk/src/kernel/graph.test.ts#connect -->
 
@@ -1434,8 +1434,9 @@ stores nothing: a model reaches further with it than a request was sent.
 `linksOf(journal)` folds the records into the links that stand. A thing is
 its name's words in lower case (`normalName`): "Acme" and "ACME" are one
 thing, "NYC" and "New York" two until a link says they are one. Nothing is
-merged by meaning: a small embedding model in the browser scored Lisbon
-nearer Paris than Lisboa (ADR 0019).
+merged by meaning: a small embedding model, run on the library the site
+ships for its browser models, scored Lisbon nearer Paris than Lisboa (ADR
+0019).
 
 `withGraph({ hops, limit, speaker? })` finds the things the question names
 (`namedIn`: a thing whose words are a run of the question's; the speaker's
@@ -1454,7 +1455,10 @@ reliably in the note's own shape; DeepSeek V4.1 Flash named it either way
 (ADR 0019 has the counts). A word of four letters that carries no meaning,
 such as "does", is a word like any other: it meets a relation that holds it.
 
-What it costs: the walk reads every link of the graph session for each
+What it costs: a link beyond a thing the path reached ranks with every other
+link of that thing ("Acme sells paint" with "Acme is in Lisbon"), the newer
+first, since nothing in "In what city" meets "Lisbon": enough such links cut
+the answer at the limit. The walk reads every link of the graph session for each
 request, and a hub (a thing with many links, such as the speaker) is cut by
 `limit`, the links the question meets first. As for facts, a process that
 dies inside a turn on the graph session leaves it busy until the host

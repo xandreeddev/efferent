@@ -124,6 +124,9 @@ export const graphHandlers = graphTools.toLayer({
     const sessions = yield* Sessions
     const caller = yield* CurrentTurn
     const parts = yield* Effect.fromResult(linkFrom(subject, relation, object))
+    // A link said again opens no turn: read first; read again inside the turn, where nothing else writes.
+    const standing = sameLink(yield* knownLinks, parts)
+    if (Option.isSome(standing)) return { id: standing.value.id }
     return yield* sessions.turn(yield* graphSession, (session) => Effect.gen(function* () {
       const journal = yield* session.journal
       return yield* Option.match(sameLink(linksOf(journal), parts), {

@@ -22,7 +22,9 @@ Measured before deciding (17 November 2026):
   in Porto.". Qwen2.5 0.5B on WebGPU named Lisbon in 0 tries of 5 with the Porto line
   first, and in 5 of 5 with the chain first. As its own last message with ids (lesson 11's
   shape), the chain first gave Lisbon in 1 of 5 with three lines and 3 of 5 with five; the
-  model often repeated a line or the question. DeepSeek V4.1 Flash, through the AI Gateway,
+  model often repeated a line or the question. Those lines were lesson 11's facts, each
+  starting "The user said:", and the Lisbon one read "Acme is in Lisbon, the city." so that
+  lesson 11's ranking would put it second: not this decision's note. DeepSeek V4.1 Flash, through the AI Gateway,
   named Lisbon in 3 of 3 with Porto first and 3 of 3 with the chain first; sent this
   decision's own note (`linksNote` over the seven links above), it answered both "In what
   city does Ana work?" (Lisbon) and "Where does Ana live?" (Porto) right in 3 of 3. The note
@@ -30,9 +32,11 @@ Measured before deciding (17 November 2026):
 - **Writing.** DeepSeek V4.1 Flash, offered a calculator, lesson 2's `remember` and
   `recall`, and `linkThings` and `followThings`, called `linkThings` in 9 tries of 9 and
   never `remember`: "Ana works at Acme, and Acme is in Lisbon." gave the two links each
-  time, and "I work at Acme." gave `user works at Acme` each time.
+  time, and "I work at Acme." gave `user works at Acme` each time. Sent this decision's own
+  tool descriptions and schemas, it did the same in 3 of 3 for each message.
 - **Embeddings.** `all-MiniLM-L6-v2` (8-bit, 23 MB) loaded in 3.4 seconds and embedded
-  twenty names in 45 milliseconds, on the library the site already ships. As a test of one
+  twenty names in 45 milliseconds, in Node, on the library the site already ships for its
+  browser models (not run in a browser). As a test of one
   name for another it failed: Lisbon~Lisboa 0.47, below Lisbon~Paris 0.58 and
   Lisbon~London 0.51; Porto~Oporto 0.29; only New York~NYC (0.93) was clear.
 
@@ -88,6 +92,10 @@ Measured before deciding (17 November 2026):
   model, which leans on the first lines, and does not make it reliable: in the note's own
   shape Qwen2.5 0.5B named the city in 1 of 5 and 3 of 5 tries with the chain first, and in
   none with another link first.
+- A link beyond a thing the path reached ranks with every other link of that thing: for "In
+  what city does Ana work?", "Acme sells paint" ranks with "Acme is in Lisbon", the newer
+  first, since no word of the question meets "Lisbon". Enough such links cut the answer at
+  the limit. The walk knows words, not what a city is.
 - A question word of four letters that carries no meaning ("does", "with", "what") meets a
   relation that holds it, so "Where does Ana go?" ranks "Ana does not like coffee" first.
   The kernel holds no list of such words in any language; a host that minds writes its own

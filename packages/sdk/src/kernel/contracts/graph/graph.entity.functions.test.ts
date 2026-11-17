@@ -86,6 +86,11 @@ describe("the links near a question", () => {
     ])
   })
 
+  test("a newer link beyond the thing the path reached ranks with the one that answers: the walk cannot tell which (ADR 0019)", () => {
+    const eight = [...seven, ...graph(["Acme", "sells", "paint"]).map((link) => ({ ...link, id: LinkId.make("e8") }))]
+    expect(said(near(eight, "In what city does Ana work?", two)).slice(0, 3)).toEqual(["e1: Ana works at Acme", "e8: Acme sells paint", "e2: Acme is in Lisbon"])
+  })
+
   test("another question over the same links puts its own path first", () => {
     expect(said(near(seven, "Where does Ana live?", two)).slice(0, 2)).toEqual(["e3: Ana lives in Porto", "e7: Ana drives a red car"])
   })
