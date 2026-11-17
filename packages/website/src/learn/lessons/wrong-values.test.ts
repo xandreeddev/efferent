@@ -114,8 +114,14 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 2.5, gates = []`, "evals.ts did not run: repetitions is not a whole number of at least 1."],
     [
       "evals", `${EMPTY_SET}, evaluators = [], repetitions = 5, gates = {}`,
-      "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, aggregate, mode, minimum, maximum, requiresReviewedReference }.",
+      "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, minimum } or { grader, metric, maximum }, each bound a number; aggregate (\"passRate\" or \"mean\"), mode (\"blocking\" or \"diagnostic\") and requiresReviewedReference (true or false) may be given too.",
     ],
+    // A gate with no bound, and one written as a suite holds it (each bound an Option), are refused at the build.
+    ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 5, gates = [{ grader: "answer@1", metric: "holds" }]`, "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, minimum } or { grader, metric, maximum }, each bound a number; aggregate (\"passRate\" or \"mean\"), mode (\"blocking\" or \"diagnostic\") and requiresReviewedReference (true or false) may be given too."],
+    ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 5, gates = [{ grader: "answer@1", metric: "holds", minimum: { _tag: "Some", value: 0.8 } }]`, "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, minimum } or { grader, metric, maximum }, each bound a number; aggregate (\"passRate\" or \"mean\"), mode (\"blocking\" or \"diagnostic\") and requiresReviewedReference (true or false) may be given too."],
+    // A misspelt mode or aggregate would be passed over silently by the run: the build refuses it.
+    ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 5, gates = [{ grader: "answer@1", metric: "holds", minimum: 0.8, mode: "blocked" }]`, "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, minimum } or { grader, metric, maximum }, each bound a number; aggregate (\"passRate\" or \"mean\"), mode (\"blocking\" or \"diagnostic\") and requiresReviewedReference (true or false) may be given too."],
+    ["evals", `${EMPTY_SET}, evaluators = [], repetitions = 5, gates = [{ grader: "answer@1", metric: "holds", minimum: 0.8, aggregate: "average" }]`, "evals.ts did not run: gates is not a list of gates. It should be an array, each entry { grader, metric, minimum } or { grader, metric, maximum }, each bound a number; aggregate (\"passRate\" or \"mean\"), mode (\"blocking\" or \"diagnostic\") and requiresReviewedReference (true or false) may be given too."],
   ],
   "model-failures": [
     ["memory", "42", NO_MEMORY], ["tools", TWO_NUMBERS, NO_HANDLERS], ["agent", "const main = 42", NO_PROGRAM],

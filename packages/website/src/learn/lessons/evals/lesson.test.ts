@@ -251,6 +251,17 @@ describe("lesson 13 on the page (the kernel, Echo)", () => {
     expect(last?.verdict).toBe(BLOCKED)
   })
 
+  test("a reference no one has reviewed: the gate gate() made does not pass while one of its trials' references is provisional, Echo's included", async () => {
+    const evals = SOURCES.evals?.replace('review: "reviewed"', 'review: "provisional"') ?? ""
+    expect(evals).toContain('review: "provisional"')
+    const { run } = await page({ ...SOURCES, evals })
+    const { last } = await run()
+    expect(table(last).map((candidate) => [candidate.candidate, candidate.gates])).toEqual([
+      ["echo", ["✗ answer@1 holds, blocking: measured 1 (Reference labels need review)"]],
+      ["echo-no-tools", ["✗ answer@1 holds, blocking: measured 0.5 (Reference labels need review)"]],
+    ])
+  })
+
   test("a task Echo misses (an experiment): Echo's rate falls, and no candidate regresses on it, since the baseline failed it too", async () => {
     const { run } = await page(applied("baseline-misses"))
     const { last } = await run()

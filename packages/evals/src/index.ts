@@ -10,6 +10,7 @@ export { ContextBudget, GradingContext } from "./domain/grading-context.entity.j
 export { Grade, Grader } from "./domain/grader.entity.js"
 export { Trial } from "./domain/trial.entity.js"
 export { Gate, Suite } from "./domain/suite.entity.js"
+export { gate, type GateOptions } from "./domain/suite.entity.functions.js"
 export { Calibration } from "./domain/calibration.entity.js"
 export { EvaluationRun, GateFinding } from "./domain/evaluation-run.entity.js"
 export { RunSpend, TrialSpend } from "./domain/spend.entity.js"

@@ -203,7 +203,7 @@ describe("lesson 13's displayed program", () => {
   })
 
   test("evals.ts: its imports, the lines that take a type in the module a test compiles, and the pieces its experiments change", async () => {
-    expect(EVALS_IMPORTS).toBe('import { Effect, Option, Schema } from "effect"')
+    expect(EVALS_IMPORTS).toBe('import { Effect, Schema } from "effect"')
     expect(evalsDocumentOf(DEFAULT_EVALS)).toBe(`${EVALS_IMPORTS}\n\n${DEFAULT_EVALS}\n`)
     for (const [from] of TYPED) expect({ from, held: times(DEFAULT_EVALS, from) }).toEqual({ from, held: 1 })
     for (const piece of [ANSWER_CHECK, CASES_END, GATE, REPETITIONS]) expect({ piece, held: times(DEFAULT_EVALS, piece) }).toEqual({ piece, held: 1 })
