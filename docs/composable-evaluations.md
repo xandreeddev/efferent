@@ -184,7 +184,9 @@ from assessment: a suite's `Gate` names a grader's metric, aggregates it over
 each candidate's trials (`mean` or `passRate`) and checks it against a minimum,
 a maximum or both (a gate needs at least one), `blocking` or `diagnostic`, so a new semantic metric can stay
 diagnostic. The run records each one as a `GateFinding` in `EvaluationRun`'s
-`gates`. A gate with `requiresReviewedReference` does not pass while any of its
+`gates`, with the gate's `aggregate` and the bounds it held the metric to
+(`minimum`, `maximum`, each present when the gate has it), so a finding reads
+without its suite; reports recorded before these keys decode unchanged. A gate with `requiresReviewedReference` does not pass while any of its
 trials' reference labels is provisional. `gate({ grader, metric, minimum })`
 writes one with the rest by default (`passRate`, `blocking`, reviewed references
 required), each bound a plain number; its type asks for a minimum, a maximum or

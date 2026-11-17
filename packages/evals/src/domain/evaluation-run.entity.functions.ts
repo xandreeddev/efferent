@@ -24,7 +24,13 @@ export const runGates = (suites: ReadonlyArray<Suite>, trials: EvaluationRun["tr
   const complete = relevant.length > 0 && relevant.every((trial) => trial.status === "completed") && values.length === relevant.length
   const bounded = Option.isSome(gate.minimum) || Option.isSome(gate.maximum)
   const passed = bounded && reviewed && complete && Option.isSome(value) && Option.match(gate.minimum, { onNone: () => true, onSome: (minimum) => value.value >= minimum }) && Option.match(gate.maximum, { onNone: () => true, onSome: (maximum) => value.value <= maximum })
-  return { candidate: candidate.id, grader: gate.grader, metric: gate.metric, mode: gate.mode, passed, measured: values.length, value, reason: !bounded ? "Gate has no minimum or maximum" : !reviewed ? "Reference labels need review" : !complete ? "Incomplete trial or measurement coverage" : passed ? "Passed" : "Outside threshold" }
+  const bounds = {
+    aggregate: gate.aggregate,
+    // A bound JSON cannot write (an infinity) is left out: the report it goes to is JSON.
+    ...Option.match(Option.filter(gate.minimum, Number.isFinite), { onNone: () => ({}), onSome: (minimum) => ({ minimum }) }),
+    ...Option.match(Option.filter(gate.maximum, Number.isFinite), { onNone: () => ({}), onSome: (maximum) => ({ maximum }) }),
+  }
+  return { candidate: candidate.id, grader: gate.grader, metric: gate.metric, mode: gate.mode, ...bounds, passed, measured: values.length, value, reason: !bounded ? "Gate has no minimum or maximum" : !reviewed ? "Reference labels need review" : !complete ? "Incomplete trial or measurement coverage" : passed ? "Passed" : "Outside threshold" }
 })))
 
 /** What a trial measured, apart from the candidate it measured. */
