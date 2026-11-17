@@ -10,6 +10,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/core/kernel`: the spend ledger, `ModelSpend` (`reserve`,
+  `settle`, `release`, `totals`), with its data (`SpendRequest`, `SpendHold`,
+  `SpendTotals`, `SpendCaps`, `ModelSpendExceeded`, `ModelSpendUnavailable`),
+  a ledger kept in memory (`modelSpendMemory`, `makeModelSpendMemory`) and its
+  kit (`modelSpendConformance`, seven checks, with careless ledgers in its
+  test). Whoever sends a model call holds its worst case before the call goes
+  out and settles it after (ADR 0020). It has the total cap alone: the old
+  ledger's per-turn cap, and the `forget` the old engine's turn called, come
+  back with a provider that names a turn. Its key is
+  `@xandreed/core/kernel/ModelSpend`, apart from old core's.
+- `@xandreed/evals`, `@xandreed/evals-cli`: a run's spend ledger is the
+  kernel's, imported from `@xandreed/core/kernel`; the eval packages no longer
+  import core's root. A trial's account has no `forget`, and `totals` takes no
+  argument. **Migration:** a runnable that reserves imports `ModelSpend` from
+  `@xandreed/core/kernel` and names no `runId` or `caps.turn`. The old models
+  plugin's `spend` guard charges old core's ledger, a separate service, so it
+  no longer charges an eval run's: until a kernel model provider charges the
+  ledger, a run's budget caps what its runnables reserve themselves. The sdk's
+  journey of an old-engine send under an eval budget
+  (`eval-spend.journey.test.ts`) goes with that link.
+
 - `@xandreed/evals`: `DecisionComparison` and `DecisionDelta`, the schemas of
   what `compareDecisionTrials` gives (one row per candidate, and its
   spreads against the baseline). The function is now typed by them, and a

@@ -32,7 +32,7 @@ The package has four entries, each an `index.ts` of explicit named exports:
 | `@xandreed/core` (`src/index.ts`) | entities, ports, events and journal kinds, `define*`, errors and their guards, model-text frames, References, in-memory adapters | yes | every package |
 | `./conformance` (`src/conformance/index.ts`) | every kit of core's ports but the `ToolRegistry`'s (`@xandreed/sdk/conformance`: it runs its turns over `TurnLive`), `ConformanceCheck`, `ConformanceFailure` and `check`, the helper a kit's checks are built with | yes | every package |
 | `./internal` (`src/internal/index.ts`) | what first-party packages use of the provider mapping, the stream fold, tool schemas, invocation receipts and the id helper, and what the sdk's turn engine reads of core | none | plugin-agent-loop, plugin-models, plugin-tool-discovery, sdk |
-| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0003-journal-holds-the-conversation.md`, `docs/adr/0004-tool-traffic-is-conversation.md`): what every agent has whatever its workflow. Ids, `Message` (`UserMessage`, `AssistantMessage` with its `ToolCall`s, `ToolResult`), the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `conversation.tool.result`, `userMessage`, `assistantMessage`, `toolResult`, `toolResultEvent`, `ToolResultData`, `CONVERSATION_VOCABULARY`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, and `Core` (publish, on, events) with `kernel`, the layer that provides it. No loop, memory, system text or model request: memory is the sdk's kernel contract, and the loop is the host's own program | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel only (`core/kernel`) |
+| `./kernel` (`src/kernel/index.ts`) | the kernel, a small core beside the rest of this package (`docs/kernel.md`, `docs/adr/0002-core-owns-state-plugins-own-workflows.md`, `docs/adr/0003-journal-holds-the-conversation.md`, `docs/adr/0004-tool-traffic-is-conversation.md`): what every agent has whatever its workflow. Ids, `Message` (`UserMessage`, `AssistantMessage` with its `ToolCall`s, `ToolResult`), the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `conversation.tool.result`, `userMessage`, `assistantMessage`, `toolResult`, `toolResultEvent`, `ToolResultData`, `CONVERSATION_VOCABULARY`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (publish, on, events) with `kernel`, the layer that provides it, and the spend ledger `ModelSpend` with `modelSpendMemory` and its kit (ADR 0020). No loop, memory, system text or model request: memory is the sdk's kernel contract, and the loop is the host's own program | a first cut: it changes as the parts it leaves out return; a name removed or changed in `api/core--kernel.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel (`core/kernel`), and the eval packages for the spend ledger |
 
 A package reaches `./internal` only when its boundaries layer grants
 `core/internal` (the core entry layer's `restricted`). The root does not
@@ -87,7 +87,8 @@ ports, the logic and the kits also `effect/ai`.
 so no model type and no runtime module (`node:`, `bun:`) enters it; the
 model call is the sdk's loop plugin's. No other layer of core may import
 it, by a relative path or as `@xandreed/core/kernel`: `./kernel` is a
-`restricted` subpath, granted to the sdk's kernel alone. The rest of this
+`restricted` subpath, granted to the sdk's kernel, and to the eval
+packages for the spend ledger alone. The rest of this
 file describes the existing engine's side of core, not the kernel. The
 kernel's rules:
 
@@ -251,6 +252,17 @@ kernel's rules:
   A fork announces nothing and claims nothing. The storage kit's `fork` and
   the sessions kit's `fork` hold both; a branch of a journal of another
   format is refused in the sessions kit's `format`.
+- The spend ledger (ADR 0020) is the one contract here that no turn needs:
+  `ModelSpend` (`model-spend.port.ts`), its data and pure transitions
+  (`model-spend.entity.ts` and its functions), the ledger in memory
+  (`modelSpendMemory`, `model-spend.adapter.ts`) and its kit
+  (`modelSpendConformance`, with its careless ledgers in its test). It sits
+  here because the eval packages take it and nothing else of the framework,
+  and must not depend on the sdk. It holds no conversation and calls no
+  model: whoever sends a model call reserves. It has the total cap alone; a
+  per-turn cap comes with the provider that names a turn and forgets it.
+  Old core's own `ModelSpend` (`@xandreed/core/ModelSpend`, below) is
+  another service, the old engine's, until that engine goes.
 - Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
   kernel's own helpers (`conformance.entity.ts` and its functions, which
   are not exported), not core's `src/conformance.functions.ts`. A check

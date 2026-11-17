@@ -1,5 +1,5 @@
 import { Cause, Clock, Effect, Exit, Option, Ref, Schema, Semaphore } from "effect"
-import { ModelSpend } from "@xandreed/core"
+import { ModelSpend } from "@xandreed/core/kernel"
 import { isUnavailable, reasonOf } from "../domain/identity.entity.functions.js"
 import type {
   EvaluationApp,

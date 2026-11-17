@@ -16,8 +16,9 @@ check` (tsc over the learn code, the build, the link check) and
   package, `@xandreed/evals` and `@xandreed/evals/stats`, each in its own
   files (`lessons/evals/`, `components/learn/evals/`, `13-evals.mdx`;
   `lessons/grade-the-grader/`, `components/learn/grade-the-grader/`,
-  `19-grade-the-grader.mdx`): the package brings core's root with it, for
-  its `ModelSpend` ledger, which no other lesson loads. The page loads it
+  `19-grade-the-grader.mdx`). The package takes only the kernel's
+  `ModelSpend` ledger of the framework, which no other lesson loads. The
+  page loads it
   only when the lesson's button is pressed ("Run evals", "Check the
   graders": a dynamic import of the lesson's `run.ts`), so no other
   lesson's page carries it; a lesson's `lesson.ts`, which every page

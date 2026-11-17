@@ -1,6 +1,6 @@
 import { Cause, Effect, Option, Ref } from "effect"
-import { ModelSpend } from "@xandreed/core"
-import type { ModelSpendUnavailable, SpendAmount } from "@xandreed/core"
+import { ModelSpend } from "@xandreed/core/kernel"
+import type { ModelSpendUnavailable, SpendAmount } from "@xandreed/core/kernel"
 import { EvaluationError } from "../domain/identity.entity.js"
 import { reasonOf } from "../domain/identity.entity.functions.js"
 import type { TrialSpendState } from "../domain/spend.entity.js"
@@ -21,7 +21,7 @@ export const runSpendLedger = Effect.fnUntraced(function* (
   budget: Option.Option<SpendAmount>,
 ): Effect.fn.Return<RunSpendLedger> {
   const stop = yield* Ref.make(Option.none<string>())
-  const totals = ledger.totals(Option.none()).pipe(Effect.mapError(unavailable))
+  const totals = ledger.totals.pipe(Effect.mapError(unavailable))
   const trial = Effect.gen(function* (): Effect.fn.Return<TrialSpendAccount> {
     const state = yield* Ref.make<TrialSpendState>(unmetered)
     const account = ModelSpend.of({
@@ -30,15 +30,12 @@ export const runSpendLedger = Effect.fnUntraced(function* (
       reserve: (request) => Effect.uninterruptible(Ref.update(state, reserving).pipe(
         Effect.andThen(ledger.reserve(cappedAtBudget(request, budget))),
         Effect.tap((hold) => Ref.update(state, (current) => held(current, hold.id))),
-        Effect.tapErrorTag("ModelSpendExceeded", (error) => error.reason === "total"
-          ? Ref.update(state, (current) => refused(current, error.message)).pipe(
-              Effect.andThen(Ref.update(stop, Option.orElse(() => Option.some(error.message)))),
-            )
-          : Effect.void),
+        Effect.tapErrorTag("ModelSpendExceeded", (error) => Ref.update(state, (current) => refused(current, error.message)).pipe(
+          Effect.andThen(Ref.update(stop, Option.orElse(() => Option.some(error.message)))),
+        )),
       )),
       settle: (hold, cost) => ledger.settle(hold, cost).pipe(Effect.andThen(Ref.update(state, (current) => settled(current, hold.id, cost)))),
       release: (hold) => ledger.release(hold).pipe(Effect.andThen(Ref.update(state, (current) => released(current, hold.id)))),
-      forget: ledger.forget,
       totals: ledger.totals,
     })
     return {

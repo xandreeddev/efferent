@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
-import type { ModelSpend, SpendAmount, SpendTotals } from "@xandreed/core"
+import type { ModelSpend, SpendAmount, SpendTotals } from "@xandreed/core/kernel"
 import type { EvaluationError } from "../domain/identity.entity.js"
 import type { TrialSpend } from "../domain/spend.entity.js"
 import type { TrialExecution } from "./trial-execution.port.js"

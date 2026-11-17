@@ -190,10 +190,11 @@ plugin reserves uninterruptibly, so a hold the ledger has taken always
 reaches the attempt that closes it: such a ledger bounds its own wait on
 the store and fails with `ModelSpendUnavailable` past it.
 
-In an evaluation run, `@xandreed/evals` builds that ledger and gives each
-trial's runnable its account in it as `ModelSpend`; pass it to the agent the
-trial defines, and `efferent-eval run --budget-usd` caps the whole run
-([spend budget](/docs/concepts/evals/#spend-budget)).
+An evaluation run's ledger is another service: the kernel's `ModelSpend`
+(`@xandreed/core/kernel`, ADR 0020), which this plugin does not charge. An
+agent the trial defines with this plugin is not held to the run's
+`--budget-usd`; a runnable that sends model calls reserves in the run's
+ledger itself ([spend budget](/docs/concepts/evals/#spend-budget)).
 
 ### A compat model the host builds
 

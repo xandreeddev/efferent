@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
-import { ModelSpend, RunId } from "@xandreed/core"
-import type { SpendCaps } from "@xandreed/core"
+import { ModelSpend } from "@xandreed/core/kernel"
+import type { SpendCaps } from "@xandreed/core/kernel"
 import {
   EvalId,
   EvaluationError,
@@ -24,7 +24,7 @@ import { fixture } from "./fixture.testing.js"
  */
 const spending = (worst: number, cost: number, caps: SpendCaps = {}) => fixture(() => Effect.gen(function* () {
   const ledger = yield* ModelSpend
-  const hold = yield* ledger.reserve({ runId: RunId.make("turn"), amount: worst, caps })
+  const hold = yield* ledger.reserve({ amount: worst, caps })
   yield* ledger.settle(hold, cost)
   return { output: "answer", evidence: { facts: ["source"] } }
 }).pipe(Effect.mapError((error) => new EvaluationError({ code: "provider", message: error.message, cause: error }))))
@@ -90,13 +90,6 @@ test("concurrent trials share one budget: what they hold together never passes i
   expect(run.failures).toEqual([])
 })
 
-test("a refusal under a turn's own cap fails that trial, and the run goes on", async () => {
-  const { run } = await Effect.runPromise(runWith(spending(1, 1, { turn: 0.5 }), { spendBudget: 10, repetitions: 2 }))
-  expect(run.trials.map((trial) => trial.status)).toEqual(["error", "error"])
-  expect(run.failures).toHaveLength(2)
-  expect(run.spend).toEqual({ budget: Option.some(10), settled: 0 })
-})
-
 test("without a budget a run records spend only once a trial reserves, and a run that metered nothing stores no spend key", async () => {
   const metered = await Effect.runPromise(runWith(spending(1, 0.5), { repetitions: 2 }))
   expect(metered.run.spend).toEqual({ budget: Option.none(), settled: 1 })
@@ -141,7 +134,7 @@ test("a run grades each trial as it ends, and its report is the regrade of its o
   const unused = { id: "unused", configuration: {}, fingerprints: {} }
   const execute = Effect.gen(function* () {
     const ledger = yield* ModelSpend
-    const hold = yield* ledger.reserve({ runId: RunId.make("turn"), amount: 1, caps: {} })
+    const hold = yield* ledger.reserve({ amount: 1, caps: {} })
     yield* ledger.settle(hold, 1)
     return { output: "answer", evidence: { facts: ["source"] } }
   }).pipe(Effect.mapError((error) => new EvaluationError({ code: "provider", message: error.message, cause: error })))
