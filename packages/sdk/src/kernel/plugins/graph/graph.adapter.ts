@@ -75,7 +75,7 @@ export const LinkThings = Tool.make(LINK_THINGS, {
  */
 export const UnlinkThings = Tool.make(UNLINK_THINGS, {
   description: "Remove a stored link, when the user asks you to or says it is no longer true. Returns what was removed.",
-  parameters: Schema.Struct({ id: Schema.String.annotate({ description: "The link's id, as the list of known links gives it, such as e1." }) }),
+  parameters: Schema.Struct({ id: Schema.String.annotate({ description: "The link's id, as linkThings or followThings gave it, such as e1." }) }),
   success: Schema.String,
   failure: Schema.String,
   failureMode: "return",
@@ -89,7 +89,7 @@ export const UnlinkThings = Tool.make(UNLINK_THINGS, {
  * @public
  */
 export const FollowThings = Tool.make(FOLLOW_THINGS, {
-  description: `Read the stored links that name a thing, as subject or as object, newest first: at most ${FOLLOW_LIMIT}, and how many more there are. Use it to follow a link further than the known links you were sent.`,
+  description: `Read the stored links that name a thing, as subject or as object, newest first: at most ${FOLLOW_LIMIT}, and how many more there are. Use it to find what a thing is linked to.`,
   parameters: Schema.Struct({ name: Schema.String.annotate({ description: "The thing's name, as a link writes it, such as \"Acme\"." }) }),
   success: Followed,
   failure: Schema.String,

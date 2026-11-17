@@ -119,6 +119,29 @@ describe("the links near a question", () => {
     expect(said(near(loop, "Who does A know?", { hops: 3, limit: 10 }))).toEqual(["e2: B knows A", "e1: A knows B", "e3: A is A"])
   })
 
+  test("a thing reached by two links in one step keeps the better path: what is beyond it ranks by that one", () => {
+    // A is linked to X twice; only the second link meets "works". Lisbon, beyond X, is ranked by the better of the two.
+    const links = graph(["A", "likes", "X"], ["A", "works with", "X"], ["X", "is in", "Lisbon"], ["A", "knows", "W"], ["W", "lives in", "Porto"])
+    expect(said(near(links, "Where is the one A works with?", { hops: 2, limit: 3 }))).toEqual(["e2: A works with X", "e3: X is in Lisbon", "e4: A knows W"])
+  })
+
+  test("a link reached again by a better path takes that path's rank", () => {
+    // X is in Lisbon is reached from X (no word met) and from Lisbon (reached by "works at"): it ranks by the second.
+    const links = graph(["A", "likes", "X"], ["A", "works at", "Lisbon"], ["X", "is in", "Lisbon"])
+    expect(said(near(links, "Where does A work?", { hops: 2, limit: 3 }))).toEqual(["e2: A works at Lisbon", "e3: X is in Lisbon", "e1: A likes X"])
+  })
+
+  test("the names a question starts from rank nothing: only its other words do", () => {
+    // Counting "anna" and "bert" would tie the two links, and the newer would come first.
+    const links = graph(["Anna", "works at", "Acme"], ["Anna", "met", "Bert"])
+    expect(said(near(links, "Where do Anna and Bert work?", { hops: 1, limit: 1 }))).toEqual(["e1: Anna works at Acme"])
+  })
+
+  test("a word of four letters that carries no meaning still meets: \"does\" ranks a relation that holds it (ADR 0019)", () => {
+    const links = graph(["Ana", "does not like", "coffee"], ["Ana", "likes", "tea"])
+    expect(said(near(links, "Where does Ana go?", { hops: 1, limit: 1 }))).toEqual(["e1: Ana does not like coffee"])
+  })
+
   test("with nothing named, or no link, there are none", () => {
     expect(near(seven, "What is the weather?", two)).toEqual([])
     expect(near([], "Where does Ana work?", two)).toEqual([])
@@ -154,8 +177,8 @@ describe("what the model reads", () => {
 
   test("the link to remove is the standing one with the id given; an id no standing link has fails, a long one cut", () => {
     expect(Result.map(linkToUnlink(seven, " e2 "), (link) => String(link.id))).toEqual(Result.succeed("e2"))
-    expect(linkToUnlink(seven, "e9")).toEqual(Result.fail('No link has the id "e9". The ids are in the list of known links, such as e1.'))
-    expect(noLinkWith("x".repeat(90))).toBe(`No link has the id "${"x".repeat(80)}" [… 10 characters clipped]. The ids are in the list of known links, such as e1.`)
+    expect(linkToUnlink(seven, "e9")).toEqual(Result.fail('No link has the id "e9". Ids are those linkThings and followThings give, such as e1.'))
+    expect(noLinkWith("x".repeat(90))).toBe(`No link has the id "${"x".repeat(80)}" [… 10 characters clipped]. Ids are those linkThings and followThings give, such as e1.`)
   })
 
   test("a busy graph session is said in fixed words", () => {

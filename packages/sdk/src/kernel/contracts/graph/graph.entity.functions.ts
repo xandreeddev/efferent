@@ -108,7 +108,9 @@ export const near = (links: ReadonlyArray<Link>, question: string, options: { re
         if (subject !== thing && object !== thing) return
         const met = new Set([...from.met, ...metBy(link)])
         const before = reached.get(link.id)
-        if (before === undefined || met.size > before.met.size) reached.set(link.id, { hops: hop, met, at })
+        // A link is ranked by its shortest paths: a better one of the same length replaces the first, a longer one
+        // (back from a thing beyond it, to where the walk began) does not.
+        if (before === undefined || (before.hops === hop && met.size > before.met.size)) reached.set(link.id, { hops: hop, met, at })
         const other = subject === thing ? object : subject
         const there = things.get(other)
         if (there === undefined) {
@@ -182,7 +184,7 @@ export const sameLink = (links: ReadonlyArray<Link>, link: { readonly subject: s
     normalName(known.subject) === normalName(link.subject) && normalName(known.relation) === normalName(link.relation) && normalName(known.object) === normalName(link.object)))
 
 /** What `unlinkThings` answers for an id no standing link has. */
-export const noLinkWith = (id: string): string => `No link has the id ${shown(id)}. The ids are in the list of known links, such as e1.`
+export const noLinkWith = (id: string): string => `No link has the id ${shown(id)}. Ids are those linkThings and followThings give, such as e1.`
 
 /** The link a model named to remove, among those that stand, or why there is none. */
 export const linkToUnlink = (links: ReadonlyArray<Link>, id: string): Result.Result<Link, string> =>

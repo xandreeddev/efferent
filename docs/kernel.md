@@ -64,6 +64,7 @@ caught up.
 | `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
 | The skill contract | sdk, `contracts/skill` | `defineSkill`, `catalogue`, `loadedOf`: a skill is a value, and it is loaded where a result of `loadSkill` is stored |
 | The facts contract | sdk, `contracts/facts` | `factsOf`, `relevant`; the `plugin.facts.learned` and `plugin.facts.forgotten` records, kept in a session of their own |
+| The graph contract | sdk, `contracts/graph` | `linksOf`, `near`, `linksNote`; the `plugin.graph.linked` and `plugin.graph.unlinked` records, kept in a session of their own |
 | `factTools`, `factHandlers`, `withFacts({ limit })` | sdk, `plugins/facts` | what an agent knows across conversations: two tools that write facts to the memory session, and a memory wrapper that reads them for each request |
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
@@ -1447,9 +1448,11 @@ id, framed as data (`linksNote`). With nothing named, nothing is added; the
 question is the user's last message in the conversation's journal
 (`questionOf`, the memory contract's). Nothing is stored, and a memory's
 budget does not count the links: they are bounded by `limit` and by a name's
-length. The order matters to a small model: Qwen2.5 0.5B named the right city
-when the path came first and not when another link about Ana did; DeepSeek
-V4.1 Flash named it either way (ADR 0019 has the counts).
+length. The order helps a small model: Qwen2.5 0.5B named the right city more
+often with the path first than with another link about Ana first, though not
+reliably in the note's own shape; DeepSeek V4.1 Flash named it either way
+(ADR 0019 has the counts). A word of four letters that carries no meaning,
+such as "does", is a word like any other: it meets a relation that holds it.
 
 What it costs: the walk reads every link of the graph session for each
 request, and a hub (a thing with many links, such as the speaker) is cut by
@@ -2096,6 +2099,7 @@ fail on a careless plugin written for it.
 | `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
+| graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
 | `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |

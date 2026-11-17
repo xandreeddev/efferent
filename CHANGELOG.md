@@ -22,11 +22,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   distance, then the newest (`near`): "Acme is in Lisbon" is sent right
   after "Ana works at Acme" for "In what city does Ana work?", where
   lesson 11's word ranking, at the same limit, left it out. The speaker's
-  words ("I", "me") are the host's option. Measured first: a small model
-  answers from the first lines (Qwen2.5 0.5B named the city 5 of 5 with
-  the path first, 0 of 5 with another link first; DeepSeek V4.1 Flash
-  either way), and a browser embedding model was left out (it scored
-  Lisbon nearer Paris than Lisboa). `questionOf` moves to the memory
+  words ("I", "me") are the host's option. Measured first: the order
+  helps a small model without making it reliable (Qwen2.5 0.5B named the
+  city in 1 and 3 tries of 5 with the path first, never with another link
+  first; DeepSeek V4.1 Flash either way, and from the final note), and a
+  browser embedding model was left out (it scored Lisbon nearer Paris
+  than Lisboa). `questionOf` moves to the memory
   contract, still exported from the kernel's entry.
 
 - `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
