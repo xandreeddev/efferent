@@ -2,6 +2,7 @@
 // Transformers.js runs in a worker (cpu-worker.ts) so the page stays responsive;
 // this module is the main-thread side: it loads, streams, and stops.
 import { Effect } from "effect"
+import type { Response } from "effect/ai"
 import type { ChatMessage } from "../prompt-map.ts"
 import { settledParts, toChatMessages, usageOf } from "../prompt-map.ts"
 import { makeBrowserModel } from "./make.ts"
@@ -87,12 +88,12 @@ const wrap = (choice: ModelChoice, worker: WorkerLike): LoadedModel => {
 
   const model = makeBrowserModel(choice.id, {
     generateText: (options) => Effect.tryPromise({
-      try: () => new Promise<never>((resolve, reject) => {
+      try: () => new Promise<Array<Response.PartEncoded>>((resolve, reject) => {
         const messages = toChatMessages(options.prompt)
         let reply = ""
         generate(messages, (message) => {
           if (message.type === "token") reply += message.text
-          else if (message.type === "done") resolve(settledParts(reply, usageOf(messages, reply)) as never)
+          else if (message.type === "done") resolve(settledParts(reply, usageOf(messages, reply)))
           else if (message.type === "error") reject(new Error(message.message))
         })
       }),
@@ -109,7 +110,7 @@ const wrap = (choice: ModelChoice, worker: WorkerLike): LoadedModel => {
           else if (message.type === "error") { finished = true; sink.fail(new Error(message.message)) }
         })
         return () => { if (!finished) interruptRequest(id) }
-      }) as never
+      })
     },
   })
   // The Stop button: interrupt every request not yet done, the one generating and those waiting behind it. A

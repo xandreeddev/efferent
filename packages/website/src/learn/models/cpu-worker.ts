@@ -9,6 +9,7 @@
 // few tokens at a time (reusing the model's KV cache between chunks) and yields
 // to the event loop between chunks: a Stop lands within a chunk.
 import { AutoModelForCausalLM, AutoTokenizer, env, TextStreamer } from "@huggingface/transformers"
+import type { DataType, PreTrainedTokenizer, Tensor } from "@huggingface/transformers"
 import { indexedDbCache, needsIndexedDbCache } from "./idb-cache.ts"
 
 // Downloads are kept for the next visit. Transformers.js keeps them in the browser's Cache API, which a page
@@ -21,20 +22,19 @@ if (needsIndexedDbCache()) {
 
 type Message = { role: string; content: string }
 type In =
-  | { type: "load"; id: string; dtype: string }
+  | { type: "load"; id: string; dtype: DataType }
   | { type: "generate"; id: number; messages: Message[]; maxNewTokens: number }
   | { type: "interrupt"; id: number }
 
 const CHUNK_TOKENS = 6
 
-// The library's own types for these are broad; the worker uses the small slice below.
-type Tokenizer = { apply_chat_template: (messages: Message[], options: object) => { input_ids: unknown; attention_mask: unknown } }
+// The library's own type for the model's answer is broad (an output or a tensor); the worker uses the slice below.
 type Model = {
   generate: (options: object) => Promise<{ sequences: { dims: number[]; tolist: () => number[][] }; past_key_values: { dispose?: () => void } }>
   generation_config?: { eos_token_id?: number | number[] }
 }
 
-let tokenizer: Tokenizer | undefined
+let tokenizer: PreTrainedTokenizer | undefined
 let model: Model | undefined
 const cancelled = new Set<number>()
 let running: number | undefined
@@ -60,11 +60,11 @@ const generate = async (message: Extract<In, { type: "generate" }>) => {
     let finished = false
     while (!finished && produced < message.maxNewTokens && !cancelled.has(message.id)) {
       // A new streamer per chunk: it skips the prompt it is first handed (all tokens so far) and streams only the new ones.
-      const streamer = new TextStreamer(tokenizer as never, {
+      const streamer = new TextStreamer(tokenizer, {
         skip_prompt: true, skip_special_tokens: true,
         callback_function: (text: string) => send({ type: "token", id: message.id, text }),
       })
-      const before = (inputIds as { dims: number[] }).dims[1] ?? 0
+      const before = inputIds.dims[1] ?? 0
       const out = await model.generate({
         input_ids: inputIds, attention_mask: attention, past_key_values: past,
         max_new_tokens: Math.min(CHUNK_TOKENS, message.maxNewTokens - produced), do_sample: false,
@@ -76,7 +76,7 @@ const generate = async (message: Extract<In, { type: "generate" }>) => {
       const last = sequence[sequence.length - 1]
       // Fewer new tokens than asked for, or an end token, means the answer is complete.
       finished = sequence.length - before < CHUNK_TOKENS || (last !== undefined && eosOf().includes(last))
-      const T = (inputIds as { constructor: new (type: string, data: BigInt64Array, dims: number[]) => unknown }).constructor
+      const T = (inputIds as { constructor: new (type: string, data: BigInt64Array, dims: number[]) => Tensor }).constructor
       inputIds = new T("int64", BigInt64Array.from(sequence.map(BigInt)), [1, sequence.length])
       attention = new T("int64", BigInt64Array.from(sequence.map(() => 1n)), [1, sequence.length])
       await yieldToEventLoop()
@@ -102,8 +102,8 @@ self.onmessage = (event: MessageEvent<In>) => {
     queue = queue.then(async () => {
       try {
         const progress_callback = (progress: unknown) => send({ type: "progress", progress })
-        tokenizer = (await AutoTokenizer.from_pretrained(message.id, { progress_callback })) as unknown as Tokenizer
-        model = (await AutoModelForCausalLM.from_pretrained(message.id, { dtype: message.dtype as never, device: "wasm", progress_callback })) as unknown as Model
+        tokenizer = await AutoTokenizer.from_pretrained(message.id, { progress_callback })
+        model = (await AutoModelForCausalLM.from_pretrained(message.id, { dtype: message.dtype, device: "wasm", progress_callback })) as unknown as Model
         send({ type: "ready" })
       } catch (error) {
         send({ type: "error", message: error instanceof Error ? error.message : String(error) })

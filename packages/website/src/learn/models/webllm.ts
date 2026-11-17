@@ -255,11 +255,11 @@ export const loadWebLlm = async (
     generateText: (options) => Effect.tryPromise({
       try: () => { issued += 1; const ticket = issued; return exclusive(async () => {
         const messages = alternating(toChatMessages(options.prompt))
-        if (ticket <= stoppedUpTo) return settledParts("", usageOf(messages, "")) as never
+        if (ticket <= stoppedUpTo) return settledParts("", usageOf(messages, ""))
         const chunks = await engine.chat.completions.create({ messages, stream: true, max_tokens: MAX_REPLY_TOKENS, stream_options: { include_usage: true } })
         let reply = ""
         for await (const chunk of chunks) reply += chunk.choices[0]?.delta?.content ?? ""
-        return settledParts(reply, usageOf(messages, reply)) as never
+        return settledParts(reply, usageOf(messages, reply))
       }) },
       catch: (error) => aiError("WebLLM", "generateText", error),
     }),
@@ -296,7 +296,7 @@ export const loadWebLlm = async (
         // The stream's own stop, called whenever its reader lets go: it cancels this request alone, and nothing
         // once the request is done.
         return () => { if (!done) cancel(ticket) }
-      }) as never
+      })
     },
   })
 

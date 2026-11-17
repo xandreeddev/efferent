@@ -40,8 +40,8 @@ export const usageOf = (messages: ReadonlyArray<ChatMessage>, reply: string): Us
 })
 
 /** The parts of a settled text answer. */
-export const settledParts = (reply: string, usage: Usage): ReadonlyArray<Response.PartEncoded> =>
-  [{ type: "text", text: reply }, { type: "finish", reason: "stop", usage }] as unknown as ReadonlyArray<Response.PartEncoded>
+export const settledParts = (reply: string, usage: Usage): Array<Response.PartEncoded> =>
+  [{ type: "text", text: reply }, { type: "finish", reason: "stop", usage }]
 
 /** A stream of text deltas as `effect/ai` stream parts, ended by a finish part. */
 export const streamStart = { type: "text-start", id: "text" } as const
