@@ -7,7 +7,7 @@
 import { Option, Predicate } from "effect"
 import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, FACTS_OWNER, forgottenEvent, learnedEvent, resultText, TASKS_OWNER, turnsOf } from "@xandreed/sdk/kernel"
+import { estimateTokens, FACTS_OWNER, forgottenEvent, GRAPH_OWNER, learnedEvent, linkedEvent, resultText, TASKS_OWNER, turnsOf, unlinkedEvent } from "@xandreed/sdk/kernel"
 import type { ClosedRead, TurnRead } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
@@ -33,10 +33,10 @@ interface ContextSeen {
 /**
  * What a session is, read from its header and never guessed from its place in a list: the chat's conversation; a
  * helper's (lesson 4: it has a parent); a background task's (lesson 17: the tasks plugin owns it, and it has a
- * parent); the memory session (lesson 11: the facts plugin owns it, and it continues no other); or another session
- * of the program's own making.
+ * parent); the memory session (lesson 11: the facts plugin owns it, and it continues no other); the graph session
+ * (lesson 18: the graph plugin owns it, and it continues no other); or another session of the program's own making.
  */
-export type SessionKind = "chat" | "helper" | "task" | "memory" | "other"
+export type SessionKind = "chat" | "helper" | "task" | "memory" | "graph" | "other"
 
 /** What the page heard of a session's header: who owns it, and the session it was created under, if any. */
 export interface SessionSeen {
@@ -46,13 +46,13 @@ export interface SessionSeen {
 
 /**
  * The kind of a session: the chat's is the one the page shows; any other is told by its header, as the kernel
- * tells the memory session (the facts plugin's own, with no parent). One whose header was never heard is no
- * helper and no memory: it is another session.
+ * tells the memory session (the facts plugin's own, with no parent) and the graph session (the graph plugin's own,
+ * with no parent). One whose header was never heard is no helper, no memory and no graph: it is another session.
  */
 export const kindOf = (session: string, chat: string, header: Option.Option<SessionSeen>): SessionKind =>
   session === chat ? "chat" : Option.match(header, {
     onNone: (): SessionKind => "other",
-    onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? (owner === TASKS_OWNER ? "task" : "helper") : owner === FACTS_OWNER ? "memory" : "other",
+    onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? (owner === TASKS_OWNER ? "task" : "helper") : owner === FACTS_OWNER ? "memory" : owner === GRAPH_OWNER ? "graph" : "other",
   })
 
 /**
@@ -149,6 +149,11 @@ export const summaryOf = (record: Pick<StoredEvent, "name" | "data" | "tags" | "
       if (Option.isSome(learned)) return clip(`fact ${learned.value.id}, from turn ${learned.value.from.turn} of conversation ${learned.value.from.session.slice(0, 8)}: ${learned.value.text}`)
       const forgotten = dataOf(forgottenEvent, record)
       if (Option.isSome(forgotten)) return `fact ${forgotten.value.id} no longer stands`
+      // A link's record (lesson 18), in the graph session: the link as a sentence and where it came from, or the link that no longer stands.
+      const linked = dataOf(linkedEvent, record)
+      if (Option.isSome(linked)) return clip(`link ${linked.value.id}, from turn ${linked.value.from.turn} of conversation ${linked.value.from.session.slice(0, 8)}: ${linked.value.subject} ${linked.value.relation} ${linked.value.object}`)
+      const unlinked = dataOf(unlinkedEvent, record)
+      if (Option.isSome(unlinked)) return `link ${unlinked.value.id} no longer stands`
       if (record.name === turnStartedEvent.name && typeof data === "object" && data !== null && "turn" in data) return `turn ${String(data.turn)} opened`
       if (record.name === turnEndedEvent.name && typeof data === "object" && data !== null && "outcome" in data) {
         const outcome = data.outcome
@@ -302,7 +307,7 @@ export interface StepView {
 }
 
 /** How a record stands for the model call shown. */
-export type RecordUse = "in-context" | "left-out" | "later" | "not-conversation" | "fact"
+export type RecordUse = "in-context" | "left-out" | "later" | "not-conversation" | "fact" | "link"
 
 export interface JournalRow {
   readonly seq: number
@@ -486,9 +491,12 @@ const journalFor = (board: Board, turn: number, context: Option.Option<ContextSe
   const upTo = Option.match(context, { onNone: () => Infinity, onSome: (seen) => seen.upTo })
   return board.records.map((record): JournalRow => {
     const role = Option.map(sentMessageOf(record), (message) => saidOfStored(message).role)
-    // In the memory session a fact's record is what the session is for: no memory builds a context from this journal.
+    // In the memory session a fact's record is what the session is for, and in the graph session a link's: no memory
+    // builds a context from either journal.
     const ofFact = board.kind === "memory" && (Option.isSome(dataOf(learnedEvent, record)) || Option.isSome(dataOf(forgottenEvent, record)))
+    const ofLink = board.kind === "graph" && (Option.isSome(dataOf(linkedEvent, record)) || Option.isSome(dataOf(unlinkedEvent, record)))
     const use: RecordUse = ofFact ? "fact"
+      : ofLink ? "link"
       : Option.isNone(role) ? "not-conversation"
       : record.seq > upTo ? "later"
         : Option.isNone(context) || inContext.has(record.seq) ? "in-context" : "left-out"
@@ -553,27 +561,42 @@ const callViewOf = (board: Board, turn: number, index: number, tried: ReadonlyAr
   }
 }
 
+/** What a turn of the memory session (lesson 11) or the graph session (lesson 18) says of itself, by the session's kind. */
+const KEPT_WORDS = {
+  memory: { code: "sessions.turn(yield* memorySession, …)", opened: "A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open." },
+  graph: { code: "sessions.turn(yield* graphSession, …)", opened: "A call of linkThings or unlinkThings is one turn on the graph session, opened while the conversation's own turn is open." },
+} as const
+
+/** A record of the memory session or the graph session, named for what it says. */
+const keptLabel = (record: StoredEvent): string =>
+  Option.isSome(dataOf(learnedEvent, record)) ? "Fact learned"
+    : Option.isSome(dataOf(forgottenEvent, record)) ? "Fact forgotten"
+      : Option.isSome(dataOf(linkedEvent, record)) ? "Link stored"
+        : Option.isSome(dataOf(unlinkedEvent, record)) ? "Link removed"
+          : "Record stored"
+
 /**
- * One turn of the memory session (lesson 11): it was opened by a call of `rememberFact` or `forgetFact`, stored
- * one record, and closed. No memory built a context and no model was called, so it has no such steps.
+ * One turn of the memory session (lesson 11) or the graph session (lesson 18): it was opened by a call of a tool
+ * that writes there (`rememberFact`, `forgetFact`, `linkThings`, `unlinkThings`), stored one record, and closed.
+ * No memory built a context and no model was called, so it has no such steps.
  */
-const memoryTurnOf = (board: Board, turn: number): TurnView => {
+const memoryTurnOf = (board: Board, turn: number, words: (typeof KEPT_WORDS)[keyof typeof KEPT_WORDS]): TurnView => {
   const { opened: started, closed: ended, records: ofTurn } = readOf(board, turn)
   const closed = Option.map(ended, outcomeText)
   const failed = Option.match(closed, { onNone: () => false, onSome: (text) => !text.startsWith("Completed") })
   const stored = ofTurn.filter((record) => record.name !== turnStartedEvent.name && record.name !== turnEndedEvent.name)
   const steps: ReadonlyArray<StepView> = [
     {
-      id: "opened", kind: "opened", call: 0, label: "Turn opened", code: "sessions.turn(yield* memorySession, …)", column: "journal",
+      id: "opened", kind: "opened", call: 0, label: "Turn opened", code: words.code, column: "journal",
       state: Option.isSome(started) ? "done" : "now", seqs: Option.toArray(started),
       detail: Option.match(started, {
         onNone: () => "Opening the turn.",
-        onSome: (seq) => `Record #${seq}, ${turnStartedEvent.name}. A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open.`,
+        onSome: (seq) => `Record #${seq}, ${turnStartedEvent.name}. ${words.opened}`,
       }),
     },
     ...stored.map((one, index): StepView => ({
       id: `stored-record-${index + 1}`, kind: "stored-record", call: 0, column: "journal", state: "done", seqs: [one.seq], code: "session.append(…)",
-      label: Option.isSome(dataOf(learnedEvent, one)) ? "Fact learned" : Option.isSome(dataOf(forgottenEvent, one)) ? "Fact forgotten" : "Record stored",
+      label: keptLabel(one),
       detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}`,
     })),
     {
@@ -607,7 +630,7 @@ export const storedAfter = (view: TurnView, call: CallView): ReadonlyArray<Journ
     : []
 
 export const viewOf = (board: Board, turn: number): TurnView => {
-  if (board.kind === "memory") return memoryTurnOf(board, turn)
+  if (board.kind === "memory" || board.kind === "graph") return memoryTurnOf(board, turn, KEPT_WORDS[board.kind])
   // A session that is not the chat's (a helper's, or another of the program's own): its words stay out of the chat.
   const quiet = board.kind !== "chat"
   // The turn as the kernel reads it from the records: its start, its messages, its steps and how it closed.
@@ -828,11 +851,12 @@ export const heardBy = (all: Boards, trace: Trace, at: number): Boards => {
 
 /**
  * The boards as a new conversation starts (Clear context, or a durable lesson's program naming another one): an
- * empty board for the new chat, and every other session retired with its board, but the memory session's. The
- * memory session is no conversation's: its board stays, with the records heard so far, and goes on being heard.
+ * empty board for the new chat, and every other session retired with its board, but the memory session's and the
+ * graph session's. Neither is a conversation's: each board stays, with the records heard so far, and goes on being
+ * heard.
  */
 export const startedOver = (all: Boards, chat: string): Boards => {
-  const kept = [...all.boards].filter(([session, board]) => session !== chat && board.kind === "memory")
+  const kept = [...all.boards].filter(([session, board]) => session !== chat && (board.kind === "memory" || board.kind === "graph"))
   const gone = [...all.boards.keys()].filter((session) => session !== chat && !kept.some(([id]) => id === session))
   return {
     chat,
@@ -861,7 +885,8 @@ const taskOf = (board: Board): string => {
 /**
  * The row of sessions: the chat's first, then each other session in the order it appeared, named for what it is.
  * A helper is numbered among the helpers and named by its task, and a background task among the tasks (lesson 17);
- * the memory session is "Memory"; a session that is none of these is numbered among its like, with its owner.
+ * the memory session is "Memory" and the graph session "Graph"; a session that is none of these is numbered among
+ * its like, with its owner.
  */
 export const sessionRow = (all: Boards): ReadonlyArray<SessionTab> => {
   const counts = { helper: 0, task: 0, other: 0 }
@@ -870,6 +895,7 @@ export const sessionRow = (all: Boards): ReadonlyArray<SessionTab> => {
     const kind = kindOf(session, all.chat, header)
     if (kind === "chat") return { session, kind, label: "Chat", title: "The chat's session" }
     if (kind === "memory") return { session, kind, label: "Memory", title: `The memory session: it holds the facts the agent remembers, in a journal of its own, for every conversation: ${session}` }
+    if (kind === "graph") return { session, kind, label: "Graph", title: `The graph session: it holds the links between things the agent knows, in a journal of its own, for every conversation: ${session}` }
     const task = taskOf(board)
     const named = task.length > 0 ? `: ${task}` : ""
     const under = Option.exists(header, ({ parent }) => Option.contains(parent, all.chat)) ? "the chat's" : "another session's"

@@ -28,7 +28,12 @@ Measured before deciding (17 November 2026):
   named Lisbon in 3 of 3 with Porto first and 3 of 3 with the chain first; sent this
   decision's own note (`linksNote` over the seven links above), it answered both "In what
   city does Ana work?" (Lisbon) and "Where does Ana live?" (Porto) right in 3 of 3. The note
-  in its final words has not been sent to Qwen.
+  in its final words was then sent to Qwen on lesson 18's page (the seven links stored by
+  Echo, a new conversation each try): "In what city does Ana work?" got Lisbon in 5 of 5, and
+  "Where does Ana live?" Porto in 5 of 5. The same six links in two orders, at a limit of 8
+  (the chain first, e1 e2 e7 e6 e4 e3; and by distance alone, e7 e6 e4 e3 e1 e2, the chain
+  last): Lisbon in 4 of 5 with the chain first, and in 0 of 5 with it last, where Qwen
+  answered "Ana works at Acme." each time.
 - **Writing.** DeepSeek V4.1 Flash, offered a calculator, lesson 2's `remember` and
   `recall`, and `linkThings` and `followThings`, called `linkThings` in 9 tries of 9 and
   never `remember`: "Ana works at Acme, and Acme is in Lisbon." gave the two links each
@@ -89,9 +94,12 @@ Measured before deciding (17 November 2026):
 
 - An agent with a graph sends, for a question that names something, the links of a path to
   an answer before the links that merely share a thing with it. The order helps a small
-  model, which leans on the first lines, and does not make it reliable: in the note's own
-  shape Qwen2.5 0.5B named the city in 1 of 5 and 3 of 5 tries with the chain first, and in
-  none with another link first.
+  model, which leans on the first lines: on the same six links Qwen2.5 0.5B named the city
+  in 4 of 5 tries with the chain first and in none with it last.
+- A model may take the note for the whole graph. DeepSeek V4.1 Flash, sent the five links a
+  turn's own message reached of seven, said two seemed to be missing and called
+  `followThings` twice to check. The note says the links are near the question, not that
+  they are all.
 - A link beyond a thing the path reached ranks with every other link of that thing: for "In
   what city does Ana work?", "Acme sells paint" ranks with "Acme is in Lisbon", the newer
   first, since no word of the question meets "Lisbon". Enough such links cut the answer at

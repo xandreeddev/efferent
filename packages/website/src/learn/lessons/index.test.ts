@@ -62,9 +62,10 @@ describe("lesson definitions", () => {
     expect(Option.map(lessonOf("branches"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["branch", "chat", "agent", "store", "tools", "memory"]))
     expect(Option.map(lessonOf("workspace"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["workspace", "agent", "tools", "memory", "chat"]))
     expect(Option.map(lessonOf("background-tasks"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["agent", "helper", "chat", "tools", "memory"]))
+    expect(Option.map(lessonOf("connected-memory"), (lesson) => lesson.files.map((file) => file.id))).toEqual(Option.some(["memory", "tools", "agent", "chat"]))
     expect(lessonOf("no-such-lesson")).toEqual(Option.none())
     // The list of slugs is the track's order, and every slug in it finds its lesson.
-    expect(lessonSlugs).toEqual(["your-first-agent", "tools", "your-own-plugin", "sub-agents", "compaction", "render", "keep-the-conversation", "pointers", "approvals", "skills", "remember", "test-your-agent", "evals", "model-failures", "branches", "workspace", "background-tasks"])
+    expect(lessonSlugs).toEqual(["your-first-agent", "tools", "your-own-plugin", "sub-agents", "compaction", "render", "keep-the-conversation", "pointers", "approvals", "skills", "remember", "test-your-agent", "evals", "model-failures", "branches", "workspace", "background-tasks", "connected-memory"])
     expect(lessonSlugs.filter((slug) => Option.isNone(lessonOf(slug)))).toEqual([])
   })
 

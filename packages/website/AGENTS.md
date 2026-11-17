@@ -155,21 +155,22 @@ check` (tsc over the learn code, the build, the link check) and
     its task, lesson 4); a background task's, a child the tasks plugin
     owns (`plugin.tasks`, "Task N" and its task, lesson 17), drawn as a
     helper's is; the memory session, which the facts plugin owns
-    and which has no parent ("Memory", lesson 11); any other session of
-    the program's own ("Session N"). The runtime tells the page a
-    session's header in a `Session` trace, for every session but the
-    chat's, from its waited listener of a turn's start: so before the
-    first record of that session's first turn here, and it cannot fail
-    the turn. A header never heard makes a session "another", not a
-    helper. A new conversation (`startedOver`: Clear context, or a
-    durable lesson's program naming another one) retires every other
-    session with the old chat's, but the memory session's board, which is
-    no conversation's and keeps its records. A turn on the memory session
-    is three steps (opened, the fact's record, closed) and no model call;
-    a fact's record is summed up with where it came from, and its row
-    says it is a fact's. The pane (`panes/trace.ts`) draws what these
-    functions give; the DOM wiring itself is type-checked, not run by a
-    test.
+    and which has no parent ("Memory", lesson 11); the graph session,
+    which the graph plugin owns and which has no parent ("Graph", lesson
+    18); any other session of the program's own ("Session N"). The
+    runtime tells the page a session's header in a `Session` trace, for
+    every session but the chat's, from its waited listener of a turn's
+    start: so before the first record of that session's first turn here,
+    and it cannot fail the turn. A header never heard makes a session
+    "another", not a helper. A new conversation (`startedOver`: Clear
+    context, or a durable lesson's program naming another one) retires
+    every other session with the old chat's, but the memory session's
+    board and the graph session's, which are no conversation's and keep
+    their records. A turn on either is three steps (opened, the fact's
+    or the link's record, closed) and no model call; a fact's or a
+    link's record is summed up with where it came from, and its row says
+    what it is. The pane (`panes/trace.ts`) draws what these functions
+    give; the DOM wiring itself is type-checked, not run by a test.
   - A turn has one context per model call, and one prompt per attempt: a
     call under a plan (lesson 14) may be tried again, and each try is a
     prompt. The prompts are grouped by call from the prompts' own marks
@@ -688,6 +689,29 @@ check` (tsc over the learn code, the build, the link check) and
     (`isReport`). The helper is offered tools.ts's tools and uses them by
     the same rules: a task that is a sum calls the calculator, and the
     report reads "The tool answered: calculator says 42.".
+  - Lesson 18's rules, for links, each asleep where its tool is not
+    offered, placed after lesson 11's rules and before lesson 16's. In a
+    message that does not end with a question mark, each sentence
+    "<thing> <relation> <thing>." whose relation is one of
+    `LINK_RELATIONS` (works at, is in, lives in, likes, drives, sells, is
+    the sister of) is one `linkThings` call, all in one answer; "I work at
+    X." and "I live in X." have the subject "user". Where `rememberFact`
+    is offered too, lesson 11's rule comes first ("I live in Lisbon." is a
+    fact), with a test that fails when the link rule is moved before it.
+    "Follow X." and "What is X linked to?" call `followThings` with X;
+    "Unlink e2." calls `unlinkThings`. The ids `linkThings` answered in one
+    step are answered in one sentence ("The links' ids: e1, e2."), which
+    says nothing of what was stored, since a link said again is answered
+    with the id it has; a `followThings` result with "Following X: " and
+    its first two links; an `unlinkThings` result, and any failure, as the
+    tool's. With no call to make, one question sent with the kernel's note
+    of links (`linksNote`: its first line, word for word, then the frame)
+    is answered from the note's first two lines, whatever it asks ("From
+    what I know: Ana works at Acme. Acme is in Lisbon."). The follow rule
+    is a call, so it comes before that reading, with a test that fails
+    when the reading is moved before the calls: "What is Acme linked to?"
+    names Acme and is sent a note too. The note of links is read past as
+    the facts' is (`isAdded`).
   - Lesson 13's rule, in `echoReply`, after every other rule but the
     last: one message that says what something is and then asks about it
     under the same name ("The meeting is on Tuesday. When is the

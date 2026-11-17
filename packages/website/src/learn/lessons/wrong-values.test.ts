@@ -16,6 +16,8 @@ const NO_PROGRAM = "agent.ts did not run: main is not an Effect. It should be th
 const NO_EXPORTED_PROGRAM = "agent.ts did not run: program is not an Effect. It should be the program main runs, exported so that checks.ts runs the same one."
 const NO_CHECKS = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
 const NO_FAILURES = "failures.ts did not run: failures is not a list of failures. It should be an array, each entry { retryable, pieces } or {}."
+const NO_GRAPH_MEMORY = "memory.ts did not run: memory is not a layer. It should be withGraph({ hops, limit, speaker })(flatMemory)."
+const NO_HOPS = "memory.ts did not run: withGraph needs hops, a whole number from 1 to 3: how many links away from what a question names it walks. It was given"
 const NO_DATASET = "evals.ts did not run: dataset is not a dataset. It should be { id, version, input, reference, cases }, with input and reference schemas and cases a list."
 /** Lesson 13's evals.ts with a dataset of no case: what the cases after it change is held alone. */
 const EMPTY_SET = 'const dataset = { id: "d", version: "1", input: Schema.String, reference: Schema.String, cases: [] }'
@@ -147,6 +149,23 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     // helper.ts makes one function, the work of a task, which the tasks plugin calls: a value that is none refuses the build.
     ["helper", "const helper = 42", "helper.ts did not run: helper is not a function. It should take the task's session and its text, and give the task's answer."],
     ["helper", "const helper = Effect.succeed(\"done\")", "helper.ts did not run: helper is not a function. It should take the task's session and its text, and give the task's answer."],
+  ],
+  "connected-memory": [
+    ["memory", "const memory = 42", NO_GRAPH_MEMORY],
+    // The wrapper made and never given a memory is a function, not a layer.
+    ["memory", "const memory = withGraph({ hops: 2, limit: 5 })", NO_GRAPH_MEMORY],
+    // Options the kernel refuses are refused as the file runs, in the kernel's words: a walk too long, no limit, a
+    // speaker's word of two words, and a memory where the options go.
+    ["memory", "const memory = withGraph({ hops: 4, limit: 5 })(flatMemory)", `${NO_HOPS} 4`],
+    ["memory", "const memory = withGraph({ hops: 2, limit: 0 })(flatMemory)", "memory.ts did not run: withGraph needs a limit, a whole number from 1 to 50: the most links a request is sent. It was given 0"],
+    [
+      "memory", 'const memory = withGraph({ hops: 2, limit: 5, speaker: { name: "user", words: ["my name"] } })(flatMemory)',
+      'memory.ts did not run: withGraph\'s speaker needs a name with a letter or a digit, and words that are each one word, such as "me"',
+    ],
+    ["memory", "const memory = withGraph(flatMemory)", `${NO_HOPS} undefined`],
+    ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), graphTools)."],
+    ["tools", "const tools = graphTools\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be Toolkit.make(calculator).toLayer({ … })."],
+    ["agent", "const main = 42", NO_PROGRAM],
   ],
 }
 
