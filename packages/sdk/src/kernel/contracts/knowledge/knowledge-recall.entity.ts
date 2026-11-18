@@ -56,12 +56,13 @@ export interface Asked {
 
 /**
  * How a seed was named: by its name or another name it bears in the last message (`name`), by one of the speaker's
- * words there (`speaker`: the user's entity), or by its name in the turn before, when the last message named nothing
- * (`before`).
+ * words there (`speaker`: the user's entity), by its first name there, a person's, when the message named nobody in
+ * full and held no speaker's word (`first-name`), or by its name in the turn before, when the last message named
+ * nothing (`before`).
  *
  * @public
  */
-export const SeedWay = Schema.Literals(["name", "speaker", "before"])
+export const SeedWay = Schema.Literals(["name", "speaker", "first-name", "before"])
 export type SeedWay = typeof SeedWay.Type
 
 /**
@@ -89,14 +90,25 @@ export interface ScoredMemory {
 }
 
 /**
- * A memory of the fused list: how it was scored, its place (from 1) in the list of memories about a seed and in the
- * list the message's words reach, when it is in them, and its fused score.
+ * A standing memory's place (from 1) in one of the two lists, and the memory that took it: the standing one itself,
+ * or one it replaced that ranked there in its stead (`by`, with that memory's score and words).
+ *
+ * @public
+ */
+export interface ListPlace {
+  readonly place: number
+  readonly by: ScoredMemory
+}
+
+/**
+ * A memory of the fused list, which stands: how it was scored, its place in the list of memories about a seed and in
+ * the list the message's words reach, when it is in them, and its fused score.
  *
  * @public
  */
 export interface FusedMemory extends ScoredMemory {
-  readonly seed: Option.Option<number>
-  readonly words: Option.Option<number>
+  readonly seed: Option.Option<ListPlace>
+  readonly words: Option.Option<ListPlace>
   readonly fused: number
 }
 
@@ -189,7 +201,8 @@ export type RecalledWhy = typeof RecalledWhy.Type
  * was named; the entities the walk by subject started from, each with the memory that brought it in; the memories it
  * could send, those sent first in the order sent, then the rest of the fused list, then the rest of what the walk
  * found (at most `KNOWLEDGE_SHOWN`, the rest counted in `more`), each with its place in the list about a seed and the
- * seeds it is about, its place in the list the message's words reach with its score and those words, its place in
+ * seeds it is about, its place in the list the message's words reach with its score and those words (each place with
+ * the memory it replaced that took it, `via`, when one did, and then that memory's seeds, score and words), its place in
  * the walk with the entity it was found by, its fused score, whether it was sent and why or why not, and the
  * memories sent under it as what it replaced; the ids sent, in order; and what the note costs, in tokens (0 with no
  * note).
@@ -207,8 +220,8 @@ export const KnowledgeRecalledData = Schema.Struct({
     id: MemoryId,
     text: Schema.String,
     about: Schema.Array(EntityId),
-    seed: Schema.NullOr(Schema.Struct({ place: Schema.Number, seeds: Schema.Array(EntityId) })),
-    words: Schema.NullOr(Schema.Struct({ place: Schema.Number, score: Schema.Number, terms: Schema.Array(Schema.String) })),
+    seed: Schema.NullOr(Schema.Struct({ place: Schema.Number, seeds: Schema.Array(EntityId), via: Schema.NullOr(MemoryId) })),
+    words: Schema.NullOr(Schema.Struct({ place: Schema.Number, score: Schema.Number, terms: Schema.Array(Schema.String), via: Schema.NullOr(MemoryId) })),
     walk: Schema.NullOr(Schema.Struct({ place: Schema.Number, from: EntityId })),
     fused: Schema.Number,
     sent: Schema.Boolean,

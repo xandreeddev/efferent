@@ -76,7 +76,12 @@ describe("the seeds", () => {
   test.each<[string, string, Asked, ReadonlyArray<string>, ReadonlyArray<string>]>([
     ["a name in the last message, as a run of whole words", "", asked("In what city does Ana Silva work?"), [], ["n2 Ana Silva name Ana Silva"]],
     ["another name an entity bears, folded", "", asked("Is it far from LISBOA?"), [], ["n4 Lisbon name Lisboa"]],
-    ["a name inside a word names nothing", "", asked("Ana Silvas and Acmeland."), [], []],
+    ["a name inside a word names nothing", "", asked("Bananas and Acmeland."), [], []],
+    ["a person's first name, when the message names nobody in full", "", asked("Where does Ana work?"), ["i", "me"], ["n2 Ana Silva first-name ana"]],
+    ["no first name when a full name is there", "", asked("Does Ana Silva know Bruno?"), [], ["n2 Ana Silva name Ana Silva"]],
+    ["no first name when a speaker's word is there", "", asked("Do I know Bruno?"), ["i"], ["n1 the user speaker i"]],
+    ["a first name is a person's: no place is named by its first word", "", asked("Is Porto far?"), [], ["n7 Porto name Porto"]],
+    ["a first name is a whole word of three letters or more", "", asked("Brunos and Bru?"), [], []],
     ["a speaker's word names the user", "", asked("Where do I live?"), ["i", "me", "my"], ["n1 the user speaker i"]],
     ["the user's own names are no seed: they are the prompt's English", "", asked("I asked the user."), [], []],
     ["the turn before, only when the last message names nothing", "", asked("And where does he live?", { user: "Tell me about Bruno Reis.", answer: "He lives in Porto." }), ["i", "me"], ["n6 Bruno Reis before Bruno Reis", "n7 Porto before Porto"]],
@@ -88,13 +93,19 @@ describe("the seeds", () => {
 })
 
 describe("the keyword ranking", () => {
-  test("BM25 over the memories given: each word of the text once, folded, more than one character, the stop words passed over", () => {
+  test("BM25 over the memories given: each word of the text once, folded, more than one character, the stop words passed over, a word meeting one it starts", () => {
     const two = knowledgeOf(journalOf(source("s1"), entity("n2", "Ana"), memory("m1", "Ana works at Acme.", ["n2"]), memory("m2", "Acme is in Lisbon.", [])))
     const scored = keywordScores(two.memories, "The Acme, a LISBON acme?", ["THE"])
     // "acme" is in both (idf ln 1.2), "lisbon" in one (idf ln 2); both sentences are as long as the mean, so each word adds its idf.
     expect<unknown>(scored.map((one) => [one.memory.id, one.terms])).toEqual([["m1", ["acme"]], ["m2", ["acme", "lisbon"]]])
     expect(scored[0]?.score).toBeCloseTo(Math.log(1.2), 12)
     expect(scored[1]?.score).toBeCloseTo(Math.log(2.4), 12)
+    // A word meets another that starts it, both four characters or more: "work" counts in "works", in how often and
+    // in how many sentences alike (df 1, idf ln 2); "wor" is too short to meet anything but itself.
+    const working = keywordScores(two.memories, "Work? Wor? Lisbons?", [])
+    expect<unknown>(working.map((one) => [one.memory.id, one.terms])).toEqual([["m1", ["work"]], ["m2", ["lisbons"]]])
+    expect(working[0]?.score).toBeCloseTo(Math.log(2), 12)
+    expect(working[1]?.score).toBeCloseTo(Math.log(2), 12)
     expect(keywordScores([], "anything", []).length).toBe(0)
     expect(keywordScores(two.memories, "the", ["THE"]).map((one) => one.score)).toEqual([0, 0])
   })
@@ -105,8 +116,12 @@ describe("recall", () => {
     // Ana Silva is the seed; what she works at now is sent with what it replaced, and the walk from Globex finds where it is.
     ["a question about a named person: the memory about her, what it replaced, and the walk by subject", asked("In what city does Ana Silva work?"), ENGLISH, [["m5", "ranked", ["m1"]], ["m6", "walked", []]]],
     ["no walk", asked("In what city does Ana Silva work?"), { ...ENGLISH, walk: 0 }, [["m5", "ranked", ["m1"]]]],
-    ["the speaker's words: the user's memories", asked("Where do I live?"), ENGLISH, [["m4", "ranked", []]]],
-    ["no speaker's words: nobody is named", asked("Where do I live?"), { ...ENGLISH, speaker: [] }, []],
+    // "live" meets "lives": the words reach Bruno Reis's home too, after the user's own.
+    ["the speaker's words: the user's memories first", asked("Where do I live?"), ENGLISH, [["m4", "ranked", []], ["m3", "ranked", []]]],
+    ["no speaker's words: the words alone", asked("Where do I live?"), { ...ENGLISH, speaker: [] }, [["m4", "ranked", []], ["m3", "ranked", []]]],
+    ["a first name seeds the person", asked("Who is Bruno?"), ENGLISH, [["m3", "ranked", []]]],
+    // Ana Silva's memory about Acme ended: its words take a place for what replaced it, Globex, sent with it.
+    ["an ended memory ranks for what replaced it", asked("Who was at Acme?"), { ...ENGLISH, walk: 0 }, [["m2", "ranked", []], ["m5", "ranked", ["m1"]]]],
     ["the turn before seeds a follow-up", asked("And what about him?", { user: "Tell me about Bruno Reis.", answer: "" }), ENGLISH, [["m3", "ranked", []]]],
     ["the message's words alone reach a memory, named or not", asked("Who works?"), ENGLISH, [["m5", "ranked", ["m1"]]]],
     ["another name names a seed; with no word in common, the more often said first", asked("Which company is in Lisboa now?"), ENGLISH, [["m6", "ranked", []], ["m2", "ranked", []]]],
@@ -116,17 +131,21 @@ describe("recall", () => {
     expect<unknown>(sentOf(knowledge, question, options)).toEqual([...expected])
   })
 
-  test("the fused list: a place p (from 0) of the list about a seed adds 1 / (10 + p), of the words' list 0.5 / (10 + p); ties by the keyword score, then how often, then the latest said", () => {
+  test("the fused list: a place p (from 0) of the list about a seed adds 1 / (10 + p), of the words' list 0.5 / (10 + p); ties by the keyword score, then how often, then the latest said; an ended memory takes its place for what replaced it", () => {
     const recall = recallKnowledge(knowledge, asked("Is Acme in Lisbon?"), ENGLISH)
     expect<unknown>(recall.seeds.map((seed) => seed.id)).toEqual(["n3", "n4"])
-    expect<unknown>(recall.ranked.map((one) => [one.memory.id, Option.getOrNull(one.seed), Option.getOrNull(one.words), one.terms])).toEqual([
-      ["m2", 1, 1, ["acme", "lisbon"]],
-      ["m6", 2, 2, ["lisbon"]],
+    const place = (at: Option.Option<{ readonly place: number; readonly by: { readonly memory: { readonly id: string } } }>) => Option.getOrNull(Option.map(at, (one) => `${one.place} by ${one.by.memory.id}`))
+    expect<unknown>(recall.ranked.map((one) => [one.memory.id, place(one.seed), place(one.words), one.terms])).toEqual([
+      ["m2", "1 by m2", "1 by m2", ["acme", "lisbon"]],
+      ["m6", "2 by m6", "2 by m6", ["lisbon"]],
+      // "Ana Silva works at Acme" ended, replaced by "Ana Silva works at Globex": the old one is about Acme and holds
+      // its name, so it takes third place in both lists for the memory that replaced it.
+      ["m5", "3 by m1", "3 by m1", []],
     ])
-    expect(recall.ranked.map((one) => one.fused)).toEqual([1 / 10 + 0.5 / 10, 1 / 11 + 0.5 / 11])
-    // The walk starts from what the best memories about a seed bring in that the question did not name: Globex. The
-    // one memory whose subject is Globex is sent already, and Ana Silva's memory about Globex has her as its subject.
-    expect<unknown>(recall.bridges).toEqual([{ id: "n5", name: "Globex", from: "m6" }])
+    expect(recall.ranked.map((one) => one.fused)).toEqual([1 / 10 + 0.5 / 10, 1 / 11 + 0.5 / 11, 1 / 12 + 0.5 / 12])
+    // The walk starts from what the best memories about a seed bring in that the question did not name: Globex, and
+    // Ana Silva. Ana Silva's memory about Globex has her as its subject.
+    expect<unknown>(recall.bridges).toEqual([{ id: "n5", name: "Globex", from: "m6" }, { id: "n2", name: "Ana Silva", from: "m5" }])
     expect(recall.walked).toEqual([])
   })
 
@@ -201,13 +220,18 @@ describe("what recall says it did", () => {
       limit: 1,
       walk: 3,
       seeds: [{ id: "n3", name: "Acme", by: "name", word: "Acme" }, { id: "n4", name: "Lisbon", by: "name", word: "Lisbon" }],
-      bridges: [{ id: "n5", name: "Globex", from: "m6" }],
+      bridges: [{ id: "n5", name: "Globex", from: "m6" }, { id: "n2", name: "Ana Silva", from: "m5" }],
       memories: [
-        { id: "m2", text: "Acme is in Lisbon.", about: ["n3", "n4"], seed: { place: 1, seeds: ["n3", "n4"] }, words: { place: 1, score: recall.ranked[0]?.score ?? -1, terms: ["acme", "lisbon"] }, walk: null, fused: 1 / 10 + 0.5 / 10, sent: true, why: "ranked", before: [] },
-        { id: "m6", text: "Globex is in Lisbon.", about: ["n5", "n4"], seed: { place: 2, seeds: ["n4"] }, words: { place: 2, score: recall.ranked[1]?.score ?? -1, terms: ["lisbon"] }, walk: { place: 1, from: "n5" }, fused: 1.5 / 11, sent: true, why: "walked", before: [] },
+        { id: "m2", text: "Acme is in Lisbon.", about: ["n3", "n4"], seed: { place: 1, seeds: ["n3", "n4"], via: null }, words: { place: 1, score: recall.ranked[0]?.score ?? -1, terms: ["acme", "lisbon"], via: null }, walk: null, fused: 1 / 10 + 0.5 / 10, sent: true, why: "ranked", before: [] },
+        { id: "m6", text: "Globex is in Lisbon.", about: ["n5", "n4"], seed: { place: 2, seeds: ["n4"], via: null }, words: { place: 2, score: recall.ranked[1]?.score ?? -1, terms: ["lisbon"], via: null }, walk: { place: 1, from: "n5" }, fused: 1.5 / 11, sent: true, why: "walked", before: [] },
+        // Its places were taken by the memory it replaced, whose seeds, score and words they show.
+        {
+          id: "m5", text: "Ana Silva works at Globex.", about: ["n2", "n5"], seed: { place: 3, seeds: ["n3"], via: "m1" },
+          words: { place: 3, score: Option.getOrThrow(recall.ranked[2]?.words ?? Option.none()).by.score, terms: ["acme"], via: "m1" }, walk: { place: 2, from: "n2" }, fused: 1.5 / 12, sent: true, why: "walked", before: ["m1"],
+        },
       ],
       more: 0,
-      sent: ["m2", "m6"],
+      sent: ["m2", "m6", "m5"],
       tokens: estimateTokens(note),
     })
   })

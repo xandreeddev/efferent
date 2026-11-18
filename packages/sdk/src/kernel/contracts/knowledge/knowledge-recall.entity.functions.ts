@@ -4,10 +4,10 @@ import type { StoredEvent } from "@xandreed/core/kernel"
 import { clipTo, estimateTokens, framed, hostNote } from "../memory/memory.entity.functions.js"
 import { USER_ENTITY } from "./knowledge.entity.js"
 import type { EntityId, Knowledge, KnownMemory, MemoryId } from "./knowledge.entity.js"
-import { dayOf, folded, holdsRun, standing } from "./knowledge.entity.functions.js"
+import { dayOf, folded, holdsRun } from "./knowledge.entity.functions.js"
 import { ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
 import type {
-  Asked, Bridge, FusedMemory, KnowledgeOptions, KnowledgeRecall, KnowledgeRecalledData, KnowledgeRecallOptions, RecalledWhy, ScoredMemory, Seed, SentMemory, WalkedMemory,
+  Asked, Bridge, FusedMemory, KnowledgeOptions, ListPlace, KnowledgeRecall, KnowledgeRecalledData, KnowledgeRecallOptions, RecalledWhy, ScoredMemory, Seed, SentMemory, WalkedMemory,
 } from "./knowledge-recall.entity.js"
 
 /**
@@ -88,12 +88,28 @@ export const seedsOf = (knowledge: Knowledge, asked: Asked, speaker: ReadonlyArr
     ...(spoken === undefined || user === undefined ? [] : [{ id: user.id, name: user.name, by: "speaker" as const, word: spoken }]),
     ...named(asked.last, "name"),
   ]
-  return last.length > 0 ? last : named(`${asked.before.user}\n${asked.before.answer}`, "before")
+  if (last.length > 0) return last
+  // A person by a first name of three letters or more, as a whole word, as `shownFor` reads one.
+  const lastWords = folded(asked.last)
+  const firsts = knowledge.entities.flatMap((entity): ReadonlyArray<Seed> => {
+    const first = folded(entity.name).split(" ")[0] ?? ""
+    return entity.id !== USER_ENTITY && entity.kind === PERSON && first.length >= 3 && holdsRun(lastWords, first) ? [{ id: entity.id, name: entity.name, by: "first-name", word: first }] : []
+  })
+  return firsts.length > 0 ? firsts : named(`${asked.before.user}\n${asked.before.answer}`, "before")
 }
+
+/** The kind of entity whose first name alone can name it. */
+const PERSON = "person"
 
 /** BM25's constants, as measured (ADR 0023). */
 const K1 = 1.2
 const B = 0.75
+
+/**
+ * Two words meet when they are the same, or when both are four characters or more and one starts the other: "work"
+ * meets "works", "live" "lives", "lead" "leader". The rule `shownFor` ties a source to a memory by.
+ */
+const meets = (a: string, b: string): boolean => a === b || (a.length >= 4 && b.length >= 4 && (a.startsWith(b) || b.startsWith(a)))
 
 /** A text's words for the keyword ranking: folded, more than one character, and none of the stop words. */
 const termsOf = (text: string, stop: ReadonlySet<string>): ReadonlyArray<string> => folded(text).split(" ").filter((word) => word.length > 1 && !stop.has(word))
@@ -101,7 +117,10 @@ const termsOf = (text: string, stop: ReadonlySet<string>): ReadonlyArray<string>
 /**
  * Each memory's BM25 score for a text's words, in the order given (ADR 0023): the kernel's own, over those memories'
  * sentences alone, with `k1` 1.2 and `b` 0.75. A word is folded, more than one character, and none of the host's stop
- * words (folded too); each word of the text counts once. A memory that holds none of them scores 0.
+ * words (folded too); each word of the text counts once. A word of a sentence counts for a word of the text when the
+ * two meet: the same, or both four characters or more and one the start of the other ("work" and "works"), in how
+ * often a sentence holds it and in how many sentences do alike. A memory that holds none of them scores 0; `terms`
+ * are the text's words it holds.
  *
  * @public
  */
@@ -109,15 +128,15 @@ export const keywordScores = (memories: ReadonlyArray<KnownMemory>, text: string
   const stop = new Set(stopWords.map(folded))
   const docs = memories.map((memory) => termsOf(memory.text, stop))
   const mean = docs.length === 0 ? 0 : docs.reduce((sum, doc) => sum + doc.length, 0) / docs.length
-  const df = new Map<string, number>()
-  for (const doc of docs) for (const term of new Set(doc)) df.set(term, (df.get(term) ?? 0) + 1)
   const asked = [...new Set(termsOf(text, stop))]
+  // A word of the text counts in a sentence where a word meets it, and a sentence holds it when one does.
+  const df = new Map<string, number>(asked.map((term) => [term, docs.filter((doc) => doc.some((word) => meets(word, term))).length]))
   return memories.map((memory, at) => {
     const doc = docs[at] ?? []
     let score = 0
     const terms: Array<string> = []
     for (const term of asked) {
-      const tf = doc.filter((word) => word === term).length
+      const tf = doc.filter((word) => meets(word, term)).length
       if (tf === 0) continue
       const n = df.get(term) ?? 0
       const idf = Math.log(1 + (docs.length - n + 0.5) / (n + 0.5))
@@ -142,6 +161,25 @@ const WORDS_WEIGHT = 0.5
 const WALK_FROM = 3
 
 /**
+ * The standing memory a memory stands for: itself when it stands; for one that ended as `changed`, what replaced it,
+ * followed until one stands. None for a memory that was wrong, was forgotten, or whose replacement no longer stands
+ * by a change.
+ */
+const standsFor = (byId: ReadonlyMap<MemoryId, KnownMemory>, memory: KnownMemory): Option.Option<KnownMemory> => {
+  const seen = new Set<MemoryId>()
+  let at = memory
+  while (!seen.has(at.id)) {
+    seen.add(at.id)
+    if (Option.isNone(at.ended)) return Option.some(at)
+    const { why, by } = at.ended.value
+    const next = why === "changed" ? Option.flatMap(by, (id) => Option.fromNullishOr(byId.get(id))) : Option.none<KnownMemory>()
+    if (Option.isNone(next)) return Option.none()
+    at = next.value
+  }
+  return Option.none()
+}
+
+/**
  * The memories a memory replaced, newest first: those that ended as `changed` with it as what came in their place,
  * then those they replaced, and so on, at most `BEFORE_SHOWN`. A memory that was wrong, or forgotten, is no "before".
  */
@@ -163,14 +201,16 @@ const replacedBy = (knowledge: Knowledge, id: MemoryId): ReadonlyArray<KnownMemo
  * What recall sends for one request, and why (ADR 0023). Pure: no model, no embedder.
  *
  * 1. The seeds (`seedsOf`).
- * 2. Two lists of the memories that stand, each ordered by the last message's BM25 score (`keywordScores`, over the
- *    standing memories), then how often said, then the latest said: those about a seed, and those the message's
- *    words reach (a score above 0). They are fused by rank: a memory at place `p` (from 0) of a list adds
- *    `weight / (10 + p)`, 1 for the list about a seed and 0.5 for the words'. The first `limit` of the fused list are
- *    sent, best first.
+ * 2. Two lists, each ordered by the last message's BM25 score (`keywordScores`, over the candidates: the memories
+ *    that stand, and those that ended as `changed` with a standing memory as what came in their place, followed
+ *    through), then how often said, then the latest said: those about a seed, and those the message's words reach (a
+ *    score above 0). An ended candidate takes its place for the standing memory that replaced it, which is never
+ *    placed twice in a list: it keeps the first place it or one it replaced took. They are fused by rank: a memory at
+ *    place `p` (from 0) of a list adds `weight / (10 + p)`, 1 for the list about a seed and 0.5 for the words'. The
+ *    first `limit` of the fused list are sent, best first.
  * 3. The walk by subject: the entities the three best memories about a seed are about, but the user's and those the
  *    last message named, are its bridges; up to `walk` more memories, not among those sent, whose first `about` is a
- *    bridge, best by the same order, are sent after them. A memory's first `about` is its subject: the walk relies on
+ *    bridge, best by the same order (standing memories only), are sent after them. A memory's first `about` is its subject: the walk relies on
  *    the curator writing it so.
  * 4. A memory sent carries the memories it replaced (`changed`), newest first, at most `BEFORE_SHOWN`, so one that
  *    ended is only ever sent under what replaced it.
@@ -181,27 +221,43 @@ export const recallKnowledge = (knowledge: Knowledge, asked: Asked, options: Kno
   const seeds = seedsOf(knowledge, asked, options.speaker)
   const seedIds = new Set<EntityId>(seeds.map((seed) => seed.id))
   const named = new Set<EntityId>(seeds.filter((seed) => seed.by !== "before").map((seed) => seed.id))
-  const scored = keywordScores(standing(knowledge), asked.last, options.stopWords)
-  const about = scored.filter((one) => one.memory.about.some((id) => seedIds.has(id))).toSorted(byWords)
-  const reached = scored.filter((one) => one.score > 0).toSorted(byWords)
-  const seedPlace = new Map<MemoryId, number>(about.map((one, at) => [one.memory.id, at]))
-  const wordsPlace = new Map<MemoryId, number>(reached.map((one, at) => [one.memory.id, at]))
-  const fusedOf = (id: MemoryId): number =>
-    Option.match(Option.fromNullishOr(seedPlace.get(id)), { onNone: () => 0, onSome: (at) => SEED_WEIGHT / (FUSION_K + at) })
-    + Option.match(Option.fromNullishOr(wordsPlace.get(id)), { onNone: () => 0, onSome: (at) => WORDS_WEIGHT / (FUSION_K + at) })
+  // The candidates: the memories that stand, and those a standing one replaced, each of which ranks in its stead.
+  const byId = new Map<MemoryId, KnownMemory>(knowledge.memories.map((memory) => [memory.id, memory]))
+  const candidates = knowledge.memories.flatMap((memory) => Option.match(standsFor(byId, memory), { onNone: () => [], onSome: (stands) => [{ memory, stands }] }))
+  const pooled = keywordScores(candidates.map((one) => one.memory), asked.last, options.stopWords)
+  const standsOf = new Map<MemoryId, KnownMemory>(candidates.map((one) => [one.memory.id, one.stands]))
+  const scored = pooled.filter((one) => Option.isNone(one.memory.ended))
+  const own = new Map<MemoryId, ScoredMemory>(scored.map((one) => [one.memory.id, one]))
+  /** A list of candidates as the standing memories they stand for, each at the first place one of them took. */
+  const placed = (list: ReadonlyArray<ScoredMemory>): ReadonlyArray<{ readonly memory: ScoredMemory; readonly by: ScoredMemory }> => {
+    const seen = new Set<MemoryId>()
+    return list.flatMap((by) => {
+      const stands = standsOf.get(by.memory.id)
+      const memory = stands === undefined ? undefined : own.get(stands.id)
+      if (memory === undefined || seen.has(memory.memory.id)) return []
+      seen.add(memory.memory.id)
+      return [{ memory, by }]
+    })
+  }
+  const about = placed(pooled.filter((one) => one.memory.about.some((id) => seedIds.has(id))).toSorted(byWords))
+  const reached = placed(pooled.filter((one) => one.score > 0).toSorted(byWords))
+  const placeIn = (list: ReturnType<typeof placed>) => new Map<MemoryId, ListPlace>(list.map((one, at) => [one.memory.memory.id, { place: at + 1, by: one.by }]))
+  const seedPlace = placeIn(about)
+  const wordsPlace = placeIn(reached)
+  const weighed = (place: ListPlace | undefined, weight: number): number => (place === undefined ? 0 : weight / (FUSION_K + place.place - 1))
   const ranked: ReadonlyArray<FusedMemory> = scored
     .filter((one) => seedPlace.has(one.memory.id) || wordsPlace.has(one.memory.id))
     .map((one) => ({
       ...one,
-      seed: Option.map(Option.fromNullishOr(seedPlace.get(one.memory.id)), (at) => at + 1),
-      words: Option.map(Option.fromNullishOr(wordsPlace.get(one.memory.id)), (at) => at + 1),
-      fused: fusedOf(one.memory.id),
+      seed: Option.fromNullishOr(seedPlace.get(one.memory.id)),
+      words: Option.fromNullishOr(wordsPlace.get(one.memory.id)),
+      fused: weighed(seedPlace.get(one.memory.id), SEED_WEIGHT) + weighed(wordsPlace.get(one.memory.id), WORDS_WEIGHT),
     }))
     .toSorted((a, b) => b.fused - a.fused || byWords(a, b))
   const direct = ranked.slice(0, options.limit)
   const sentIds = new Set<MemoryId>(direct.map((one) => one.memory.id))
   const bridges: Array<Bridge> = []
-  for (const { memory } of about.slice(0, WALK_FROM)) {
+  for (const { memory: { memory } } of about.slice(0, WALK_FROM)) {
     for (const id of memory.about) {
       if (id === USER_ENTITY || named.has(id) || bridges.some((bridge) => bridge.id === id)) continue
       const entity = knowledge.entities.find((one) => one.id === id)
@@ -272,8 +328,14 @@ export const knowledgeRecalledOf = (recall: KnowledgeRecall, options: KnowledgeR
         id: memory.id,
         text: memory.text,
         about: [...memory.about],
-        seed: one === undefined ? null : Option.match(one.seed, { onNone: () => null, onSome: (place) => ({ place, seeds: memory.about.filter((id) => seedIds.has(id)) }) }),
-        words: one === undefined ? null : Option.match(one.words, { onNone: () => null, onSome: (place) => ({ place, score: one.score, terms: [...one.terms] }) }),
+        seed: one === undefined ? null : Option.match(one.seed, {
+          onNone: () => null,
+          onSome: ({ place, by }) => ({ place, seeds: by.memory.about.filter((id) => seedIds.has(id)), via: by.memory.id === memory.id ? null : by.memory.id }),
+        }),
+        words: one === undefined ? null : Option.match(one.words, {
+          onNone: () => null,
+          onSome: ({ place, by }) => ({ place, score: by.score, terms: [...by.terms], via: by.memory.id === memory.id ? null : by.memory.id }),
+        }),
         walk: walk ?? null,
         fused: one?.fused ?? 0,
         sent: sentIds.has(memory.id),
