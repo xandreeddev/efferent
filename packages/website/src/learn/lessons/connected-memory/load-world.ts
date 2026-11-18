@@ -107,9 +107,9 @@ const numberOf = (id: string): number => Number(id.slice(1))
 
 /**
  * Every record of a load, over the knowledge as it stands (`knowledge`): ids go on from the highest it holds, an
- * entity it holds by a name or another name is that entity, and a sentence a memory that stands says word for word
- * is that memory said again. Ends are the world's own: a later employer or home ends the earlier one the world
- * said, never one a conversation stored.
+ * entity it holds by a name or another name is that entity, and a sentence a memory that stands says word for word,
+ * or one that ended after the sentence's day, is that memory said again. Ends are the world's own: a later employer
+ * or home ends the earlier one the world said, never one a conversation stored.
  */
 export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntry> = WORLD): WorldDrafts => {
   const next = nextIds(knowledge)
@@ -121,6 +121,9 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
   for (const known of knowledge.entities.slice(1)) for (const name of [known.name, ...known.aliases]) byName.set(normalName(name), known.id)
   const aliasesOf = new Map<EntityId, Set<string>>(knowledge.entities.map((known) => [known.id, new Set([known.name, ...known.aliases].map(normalName))]))
   const byText = new Map<string, MemoryId>(standing(knowledge).map((known) => [normalName(known.text), known.id]))
+  // The memories that ended, by their sentence: a sentence the world says before one of them ended is that memory.
+  const endedText = new Map<string, { readonly id: MemoryId; readonly at: number }>(knowledge.memories.flatMap((known) =>
+    Option.match(known.ended, { onNone: () => [], onSome: (ended) => [[normalName(known.text), { id: known.id, at: ended.at }] as const] })))
   // Each person's employer and home that stand, by the person and the relation: the memory and the entity it names.
   const holding = new Map<string, { readonly id: MemoryId; readonly entity: EntityId }>()
   const drafts: Array<{ readonly draft: StoredDraft; readonly at: number }> = []
@@ -164,7 +167,11 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
     for (const entry of said) {
       const [subject, relation, object] = entry
       const text = sentenceOf(entry)
-      const again = byText.get(normalName(text))
+      // Said word for word by a memory that stands, or by one that ended after this day: that memory, said again. The
+      // knowledge does not count a restatement of a memory that ended, so it stays ended: what the world said before
+      // a conversation changed it does not bring it back.
+      const before = endedText.get(normalName(text))
+      const again = byText.get(normalName(text)) ?? (before !== undefined && before.at > at ? before.id : undefined)
       if (again !== undefined) {
         put(stored(memoryRestatedEvent, { id: again, source: id, quote: text }))
         counts.restated++

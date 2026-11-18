@@ -39,17 +39,19 @@ export const curatorOn = (model) =>
       return Curator.of({
         curate: ({ prompt }) =>
           llm.streamText({ prompt }).pipe(
-            Stream.tap((part) => (part.type === "error" ? Effect.fail(part.error) : Effect.void)),
+            // A model that fails, or answers with nothing, gives no reply: the try fails, and the
+            // kernel stores that it did.
+            Stream.tap((part) =>
+              part.type === "error"
+                ? Effect.fail(new CurationFailed({ message: \`the model reported: \${part.error}\` }))
+                : Effect.void,
+            ),
             Stream.filter((part) => part.type === "text-delta"),
             Stream.map((part) => part.delta),
             Stream.mkString,
-            // A model that fails, or answers with nothing, gives no reply: the try fails, and the
-            // kernel stores that it did.
-            Effect.catch((error) =>
+            Effect.catchTag("AiError", (error) =>
               Effect.fail(
-                new CurationFailed({
-                  message: \`the model could not curate: \${error.message ?? error}\`,
-                }),
+                new CurationFailed({ message: \`the model could not curate: \${error.message}\` }),
               ),
             ),
             Effect.flatMap((text) =>
@@ -120,14 +122,12 @@ export const DEFAULT_CURATOR = `${REVIEW_LINE}\n\n${CURATOR}\n\n${SAID}\n\n${KEE
 export const curatorDocumentOf = (curator: string): string => `${CURATOR_HEADER}${curator}\n`
 
 /**
- * The same file as a module a test can compile: the curator's model is typed, and so is what `said` reads; a model's
- * failure is read for its words as lesson 5's summarizer reads one. Nothing else needs a type.
+ * The same file as a module a test can compile: the curator's model is typed, and so is what `said` reads. Nothing
+ * else needs a type, and nothing is cast.
  */
 export const curatorModuleOf = (curator: string): string => `${CURATOR_HEADER.replace('import { Chat } from "./chat.ts"', 'import { Chat } from "./chat.ts"\nimport type { CurationOutcome } from "@xandreed/sdk/kernel"')}${curator
   .replace("export const curatorOn = (model) =>", "export const curatorOn = (model: Layer.Layer<LanguageModel.LanguageModel>) =>")
-  .replace("const said = (outcome) => {", "const said = (outcome: CurationOutcome) => {")
-  // As lesson 5's summarizer: a stream's failure is the model's AiError or an error part's value, read for its words.
-  .replace("\${error.message ?? error}", "\${String((error as { readonly message?: unknown }).message ?? error)}")}\n`
+  .replace("const said = (outcome) => {", "const said = (outcome: CurationOutcome) => {")}\n`
 
 /** The editable part as the page runs it: statements, without `export`. */
 export const curatorBodyOf = (curator: string): string => curator.replace(/^export /gm, "")

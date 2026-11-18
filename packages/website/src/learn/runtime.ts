@@ -759,7 +759,14 @@ export class LessonRuntime {
     if (Option.isNone(program)) return
     await Effect.runPromise(Fiber.interrupt(program.value.fiber))
     await Effect.runPromise(Scope.close(program.value.scope, Exit.void))
-    // A curation cut short stores nothing more: its source stays pending, for the next program's turn to take up.
+    this.cutCurations()
+  }
+
+  /**
+   * The program stopped, asked to or by itself: a curation it ran is cut short and stores nothing more. Its source
+   * stays pending, for the next program's turn to take up; the page is told where its calls were filed.
+   */
+  private cutCurations(): void {
     for (const source of this.curatingSources) {
       const place = this.curatingPlaces.get(source)
       if (place !== undefined) this.emit({ _tag: "CurationCut", ...place, source })
@@ -789,7 +796,8 @@ export class LessonRuntime {
     const scope = await Effect.runPromise(Scope.fork(this.root))
     const fiber = await Effect.runPromise(Effect.forkIn(main.pipe(
       Effect.onExit((exit) => Effect.sync(() => {
-        // A stop the page asked for says nothing; an end of the program's own is said, in words.
+        // A stop the page asked for says nothing; an end of the program's own is said, in words, and cuts its curation.
+        if (Exit.isSuccess(exit) || !Cause.hasInterruptsOnly(exit.cause)) this.cutCurations()
         if (Exit.isSuccess(exit)) this.emit({ _tag: "Ended", reason: "your program ended: it stopped taking messages." })
         else if (!Cause.hasInterruptsOnly(exit.cause)) this.emit({ _tag: "Ended", reason: `your program stopped: ${buildFailure(exit.cause)}` })
       })),

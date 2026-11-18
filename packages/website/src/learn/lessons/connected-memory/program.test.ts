@@ -271,9 +271,8 @@ describe("lesson 18's displayed program", () => {
     expect(DEFAULT_CURATOR).toContain("    const again = yield* curateAgain(knowledge, source.id, options)\n")
     expect(DEFAULT_CURATOR).toContain("  const outcome = yield* curate(\n")
     expect(curatorDocumentOf(DEFAULT_CURATOR)).toBe(`${CURATOR_IMPORTS}\n\n${DEFAULT_CURATOR}\n`)
-    // Nothing in the typed module is cast to any type of the kernel's: only a failure, read for its words.
-    expect(curatorModuleOf(DEFAULT_CURATOR)).not.toMatch(/\bas (?:never|any|unknown)\b/)
-    expect(curatorModuleOf(DEFAULT_CURATOR).match(/\bas \{/g)).toHaveLength(1)
+    // Nothing in the typed module is cast.
+    expect(curatorModuleOf(DEFAULT_CURATOR)).not.toMatch(/\bas (?:never|any|unknown|const|\{)|\) as [A-Z]/)
   })
 
   test("each experiment changes one line and nothing else; a line the learner rewrote is left alone", () => {
