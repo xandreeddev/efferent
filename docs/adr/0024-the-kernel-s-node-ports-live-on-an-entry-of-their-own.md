@@ -71,7 +71,8 @@ knowledge) included.
 - **A write is one at a time in the process and runs to its end once begun** (`Effect.uninterruptible`), so an
   interrupted caller never leaves a write half done for the next; the session plugin reads the place again after
   an interrupted append. An append knows where a file ends from its own last write while the file's size and
-  change time (in nanoseconds) say nothing else wrote to it; otherwise it reads the file again.
+  change time are as that write left them; otherwise it reads the file again. That check is not a promise to see a
+  file changed under the writer (a file system's clock can be coarser than two writes): only the writer writes.
 - **Not ported from the old engine:** a bound on each file system call (its admission slots and stall deadline,
   for a network mount that stops answering). A call here waits for the file system as long as it takes. That
   returns with a store on a network mount.
@@ -99,9 +100,10 @@ knowledge) included.
   answers `ESRCH`), and from one that names this process's id, which a process before this one had. It lets the
   store go, its holder file removed, when the layer's scope closes. A process id used again by another running
   process keeps the store held: the refusal names the file to remove.
-- **SQLite's own locks are not that writer.** In a test on Bun 1.3.0, a process inside `BEGIN IMMEDIATE` on
-  `bun:sqlite` did not stop another process's write to the same file, where a Node process holding the same
-  transaction did. A lock the store keeps itself holds on both.
+- **SQLite's own locks are not that writer.** Tried on Bun 1.3.0 and Node 24.16, on a local disk (ext4) and on
+  tmpfs: a process that ran `BEGIN IMMEDIATE` and an insert on `bun:sqlite` and waited did not stop another
+  process (on Bun or on Node) from writing the same file, where a Node process doing the same over `node:sqlite`
+  did (`SQLITE_BUSY`). A lock the store keeps itself holds on both runtimes.
 - **Two handles of one process share the hold.** They take one lane for their writes, and the lock is released
   when the last closes. That is what the storage kit's `reopens` asks of a store whose journals outlive its handle
   (a second live handle that appends after the first), and what a host that builds the stack twice gets.

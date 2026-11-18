@@ -39,7 +39,7 @@ describe("the SQLite journal", () => {
         yield* first.append(header.id, Seq.make(0), turn, stored(noted, { n: 1 }))
       }))
       // A writer that inserted its event and was killed before its commit.
-      const child = Bun.spawn(["bun", "-e", `
+      const child = Bun.spawn([process.execPath, "-e", `
         import { Database } from "bun:sqlite"
         const db = new Database(${JSON.stringify(path)})
         db.exec("BEGIN IMMEDIATE")

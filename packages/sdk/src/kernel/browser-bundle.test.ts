@@ -62,6 +62,7 @@ test("the same check catches an entry that imports one: the kernel's entry besid
 test("a browser bundle of @xandreed/sdk/kernel reaches no module of the Node entry", async () => {
   const kernel = await bundle(`${import.meta.dir}/index.ts`)
   expect(kernel.reached).toEqual([])
+  expect(kernel.built).toBe(true)
 }, 60_000)
 
 test("the same check catches an entry that imports the Node entry: the kernel's entry beside it", async () => {

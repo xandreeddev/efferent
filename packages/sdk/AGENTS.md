@@ -48,7 +48,8 @@ the sdk's: `sdk-kernel-contracts` (`contracts/**`), one
 under the kernel, a contract's or a plugin's folder included, placed
 before them all). It imports core's kernel and
 `effect/ai` and nothing else of the workspace, not core's root, not the
-runtime, not the rest of the sdk, and no runtime module:
+runtime, not the rest of the sdk, and, its Node entry aside (`src/kernel/node`,
+below), no runtime module:
 `browser-bundle.test.ts` builds its entry for a browser and records every
 specifier the bundler resolves, none of which may name one (`node:`,
 `bun:`, or a bare builtin name); its control, `fixtures/kernel-node-import.ts`,
@@ -814,8 +815,8 @@ the package roots.
   process's id with no handle of this process holding it; let go when the
   last handle of the process closes. Two handles of one process share the
   hold and the lane: the storage kit's `reopens` runs two at once. SQLite's
-  own locks are not used for it: on Bun 1.3.0 they do not hold across
-  processes. The rules are the pure `verdictOf`, held to a table test.
+  own locks are not used for it: on Bun 1.3.0 a `bun:sqlite` transaction did
+  not stop another process's write to the file (ADR 0024). The rules are the pure `verdictOf`, held to a table test.
 - `recoverTurns` (`plugins/session/recover.usecase.ts`, exported by the
   browser entry, `RecoveredTurn`): the host's recovery step once it holds a
   store, before any turn; `Sessions.recover` on every session it reads,

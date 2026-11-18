@@ -1,4 +1,4 @@
-import { mkdir } from "node:fs/promises"
+import { mkdir, stat } from "node:fs/promises"
 import { dirname } from "node:path"
 import { Array as Arr, Clock, Effect, Layer, Option, Predicate, Result, Schema, Semaphore } from "effect"
 import { byCreation, JournalStorage, JournalStorageError, Seq, SessionHeader, StoredEvent } from "@xandreed/core/kernel"
@@ -26,10 +26,13 @@ interface Connection {
 /** Whether this process runs on Bun: its SQLite driver is `bun:sqlite`; Node's is `node:sqlite`. */
 const onBun = typeof process.versions.bun === "string"
 
-/** A connection to the file at `path`, made by this runtime's driver, loaded only now: neither module is imported where the other runs. */
-const connect = (path: string): Promise<Connection> => onBun
+/**
+ * A connection to the file at `path`, made by this runtime's driver, loaded only now: neither module is imported
+ * where the other runs. A read-only one changes nothing of the file, its WAL included.
+ */
+const connect = (path: string, readOnly: boolean): Promise<Connection> => onBun
   ? import("bun:sqlite").then(({ Database }) => {
-    const db = new Database(path, { create: true, strict: true })
+    const db = readOnly ? new Database(path, { readonly: true, strict: true }) : new Database(path, { create: true, strict: true })
     return {
       exec: (sql) => { db.exec(sql) },
       all: (sql, params) => db.query(sql).all(...params),
@@ -38,7 +41,7 @@ const connect = (path: string): Promise<Connection> => onBun
     }
   })
   : import("node:sqlite").then(({ DatabaseSync }) => {
-    const db = new DatabaseSync(path)
+    const db = new DatabaseSync(path, { readOnly })
     return {
       exec: (sql) => { db.exec(sql) },
       all: (sql, params) => db.prepare(sql).all(...params),
@@ -91,7 +94,8 @@ const decodedRows = <A>(rows: ReadonlyArray<unknown>, decode: (row: unknown) => 
  *   built (the folder `<path>.writer`, ADR 0024) and fails with
  *   `JournalOpenFailed` (`Held`) while another live process holds it; it is
  *   taken over from a holder whose process is gone. SQLite's own file locks
- *   are not that writer: Bun's driver does not hold them across processes.
+ *   are not that writer: a `bun:sqlite` transaction did not stop another
+ *   process's write on Bun 1.3.0.
  *   Two layers of one process share the hold, each with its own connection,
  *   and their writes take one lane.
  * - The schema (`PRAGMA user_version`, `SQLITE_SCHEMA`) and the application
@@ -110,32 +114,43 @@ export const sqliteJournal = (options: SqliteJournalOptions): Layer.Layer<Journa
   const refused = (reason: JournalOpenFailed["reason"], what: string) => (cause: unknown) =>
     new JournalOpenFailed({ reason, store: path, message: `${what}: ${messageOf(cause)}`, cause })
   yield* Effect.tryPromise({ try: () => mkdir(dirname(path), { recursive: true, mode: 0o700 }), catch: refused("Unavailable", `the folder of ${path} could not be made`) })
-  const writer = yield* holdWriter(`${path}.writer`, path)
-  const db = yield* Effect.acquireRelease(
-    Effect.tryPromise({ try: () => connect(path), catch: refused("Unavailable", `${path} could not be opened`) }),
+  /** A connection for the scope, closed with it. */
+  const opened = (readOnly: boolean) => Effect.acquireRelease(
+    Effect.tryPromise({ try: () => connect(path, readOnly), catch: refused("Unavailable", `${path} could not be opened`) }),
     (connection) => Effect.try({ try: () => connection.close(), catch: (cause) => cause }).pipe(
       Effect.catch((cause) => Effect.logWarning(`the journal database ${path} did not close cleanly`, cause)),
     ),
   )
-  // The file's own header first: a file that is no database, or another application's, is refused before anything is written to it.
-  const opened = yield* Effect.try({
-    try: () => {
-      db.exec("PRAGMA busy_timeout = 0")
-      return decodeDatabase(db.all(
+  /**
+   * What the file says it holds, refused unless it is a journal database of this schema or a fresh one: a file that is
+   * no database, another application's, or another schema's.
+   */
+  const checked = (connection: Connection) => Effect.gen(function* () {
+    const read = yield* Effect.try({
+      try: () => decodeDatabase(connection.all(
         "SELECT (SELECT user_version FROM pragma_user_version) AS version, (SELECT application_id FROM pragma_application_id) AS application, (SELECT count(*) FROM sqlite_master WHERE type = 'table') AS tables",
         [],
-      )[0])
-    },
-    catch: (cause) => isNotADatabase(cause) ? refused("Format", `${path} is not a SQLite database`)(cause) : refused("Unavailable", `${path} could not be read`)(cause),
+      )[0]),
+      catch: (cause) => isNotADatabase(cause) ? refused("Format", `${path} is not a SQLite database`)(cause) : refused("Unavailable", `${path} could not be read`)(cause),
+    })
+    const found = yield* Effect.mapError(Effect.fromResult(read), refused("Format", `${path} does not say what it holds`))
+    const fresh = found.version === 0 && found.tables === 0
+    if (!fresh && found.application !== SQLITE_APPLICATION_ID) {
+      return yield* Effect.fail(new JournalOpenFailed({ reason: "Format", store: path, message: `${path} is another application's database (application id ${found.application}), not a journal database` }))
+    }
+    if (!fresh && found.version !== SQLITE_SCHEMA) {
+      return yield* Effect.fail(new JournalOpenFailed({ reason: "Format", store: path, message: `${path} is at schema ${found.version}; this release reads schema ${SQLITE_SCHEMA} only, and does not migrate` }))
+    }
+    return fresh
   })
-  const found = yield* Effect.mapError(Effect.fromResult(opened), refused("Format", `${path} does not say what it holds`))
-  const fresh = found.version === 0 && found.tables === 0
-  if (!fresh && found.application !== SQLITE_APPLICATION_ID) {
-    return yield* Effect.fail(new JournalOpenFailed({ reason: "Format", store: path, message: `${path} is another application's database (application id ${found.application}), not a journal database` }))
-  }
-  if (!fresh && found.version !== SQLITE_SCHEMA) {
-    return yield* Effect.fail(new JournalOpenFailed({ reason: "Format", store: path, message: `${path} is at schema ${found.version}; this release reads schema ${SQLITE_SCHEMA} only, and does not migrate` }))
-  }
+  // A file that is there is read first on a connection that changes nothing of it, before the store is taken: one this
+  // store does not read is refused as it was found, its WAL included.
+  const there = yield* Effect.tryPromise({ try: () => stat(path).then(() => true, (error: unknown) => Option.contains(errorCodeOf(error), "ENOENT") ? false : Promise.reject(error)), catch: refused("Unavailable", `${path} could not be found`) })
+  if (there) yield* Effect.scoped(Effect.flatMap(opened(true), checked))
+  const writer = yield* holdWriter(`${path}.writer`, path)
+  const db = yield* opened(false)
+  yield* Effect.try({ try: () => db.exec("PRAGMA busy_timeout = 0"), catch: refused("Unavailable", `${path} could not be set up`) })
+  const fresh = yield* checked(db)
   yield* Effect.try({
     try: () => {
       db.exec("PRAGMA journal_mode = WAL")

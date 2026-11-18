@@ -85,7 +85,9 @@ describe("the directory journal", () => {
       // One character of the second event changed: its CRC-32 no longer matches.
       yield* Effect.promise(() => writeFile(file, text.replace('"n":1', '"n":7')))
       const refusal = yield* Effect.flip(storage.read(header.id))
-      const append = yield* Effect.flip(storage.append(header.id, Seq.make(3), turn, stored(noted, { n: 3 })))
+      // A handle that knows nothing of the file reads it before it appends: the line damaged before the tail stops it.
+      const fresh = yield* storageAt(store, directory)
+      const append = yield* Effect.flip(fresh.append(header.id, Seq.make(3), turn, stored(noted, { n: 3 })))
       return { reason: refusal.reason, message: refusal.message, append: append.reason }
     })))
     expect(result.reason).toBe("Unreadable")

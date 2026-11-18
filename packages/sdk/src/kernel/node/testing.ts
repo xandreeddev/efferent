@@ -63,7 +63,7 @@ const holderScript = join(import.meta.dir, "../../../fixtures/kernel-store-holde
  */
 export const holder = (kind: "directory" | "sqlite", path: string, mode: "hold" | "turn") => Effect.acquireRelease(
   Effect.promise(async () => {
-    const child = Bun.spawn(["bun", holderScript, kind, path, mode], { stdout: "pipe", stderr: "inherit" })
+    const child = Bun.spawn([process.execPath, holderScript, kind, path, mode], { stdout: "pipe", stderr: "inherit" })
     const reader = child.stdout.getReader()
     const decoder = new TextDecoder()
     const first = async (got: string): Promise<string> => {

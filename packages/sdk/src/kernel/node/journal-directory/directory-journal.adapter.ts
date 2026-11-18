@@ -94,7 +94,11 @@ interface SessionFile {
   readonly whole: number
 }
 
-/** Where a session's file ends, as this handle last wrote or read it: its last place, and the file's size and time of change then (a rewrite of the same size changes the time). */
+/**
+ * Where a session's file ends, as this handle last wrote or read it: its last place, and the file's size and time of
+ * change then. Only the store's writer writes the file; the size and the time are a check against a file changed
+ * under it, not a promise to see every such change (a file system's clock can be coarser than two writes).
+ */
 interface Tail {
   readonly seq: number
   readonly size: bigint
