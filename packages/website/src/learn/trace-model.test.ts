@@ -394,70 +394,70 @@ describe("the Context tab's row of sessions", () => {
     ])
   })
 
-  test("lesson 18: the graph session is a button of its own, \"Graph\", whose title says it holds the links; each link stored is a turn of three steps, and no model call", async () => {
-    const { runtime, heard, all } = await boardsAfter(connectedMemory, ["Ana works at Acme. Acme is in Lisbon.", "Unlink e2."])
+  test("lesson 18: the knowledge session is a button of its own, \"Memory\", whose title says what it holds; a source's turn, the curator's calls filed under it, and the turn that stored what was kept", async () => {
+    const { runtime, heard, all } = await boardsAfter(connectedMemory, ["My friend Ana Silva works at Acme. Acme is in Lisbon."])
     const chat = runtime.conversation
+    // The program's turn is answered before the curation is stored: wait for the record that says it was curated.
+    await new Promise<void>((resolve) => {
+      if (heard.some((trace) => trace._tag === "Event" && trace.event.name === "plugin.knowledge.curated")) return resolve()
+      const stop = runtime.onTrace((trace) => { if (trace._tag === "Event" && trace.event.name === "plugin.knowledge.curated") { stop(); resolve() } })
+    })
+    const boards = heard.reduce<Boards>((built, trace) => heardBy(built, trace, 0), emptyBoards(chat))
     const named = heard.flatMap((trace) => (trace._tag === "Session" ? [trace] : []))
-    expect(named.map((trace) => [trace.owner, trace.parent])).toEqual([["plugin.graph", undefined]])
-    const graph = named[0]!.session
-    expect(sessionRow(all)).toEqual([
+    expect(named.map((trace) => [trace.owner, trace.parent])).toEqual([["plugin.knowledge", undefined]])
+    const knowledge = named[0]!.session
+    expect(sessionRow(boards)).toEqual([
       { session: chat, kind: "chat", label: "Chat", title: "The chat's session" },
-      { session: graph, kind: "graph", label: "Graph", title: `The graph session: it holds the links between things the agent knows, in a journal of its own, for every conversation: ${graph}` },
+      { session: knowledge, kind: "knowledge", label: "Memory", title: `The knowledge session: what the curator kept of each turn, in a journal of its own, for every conversation: ${knowledge}` },
     ])
-    const board = all.boards.get(graph)!
-    expect(turnNumbersOf(board)).toEqual([1, 2, 3])
-    const first = viewOf(board, 1)
-    expect(first.steps.map((step) => [step.id, step.label, step.state, step.code, step.seqs])).toEqual([
-      ["opened", "Turn opened", "done", "sessions.turn(yield* graphSession, …)", [1]],
-      ["stored-record-1", "Link stored", "done", "session.append(…)", [2]],
-      ["closed", "Turn closed", "done", "the scope ends", [3]],
-    ])
-    expect(first.steps[0]?.detail).toBe("Record #1, core.session.turn.started. A call of linkThings or unlinkThings is one turn on the graph session, opened while the conversation's own turn is open.")
-    expect([first.calls[0]?.memory, first.calls[0]?.prompt]).toEqual([Option.none(), Option.none()])
-    // The link's row says where it came from; its payload holds the conversation and the turn. The removal is a row of its own.
-    const removed = viewOf(board, 3)
-    expect(removed.steps.map((step) => [step.id, step.label, step.seqs])).toEqual([["opened", "Turn opened", [7]], ["stored-record-1", "Link removed", [8]], ["closed", "Turn closed", [9]]])
-    expect(removed.calls[0]?.journal.map((row) => [row.seq, row.use, row.summary])).toEqual([
-      [1, "not-conversation", "turn 1 opened"], [2, "link", `link e1, from turn 1 of conversation ${chat.slice(0, 8)}: Ana works at Acme`], [3, "not-conversation", "turn 1 closed: Completed"],
-      [4, "not-conversation", "turn 2 opened"], [5, "link", `link e2, from turn 1 of conversation ${chat.slice(0, 8)}: Acme is in Lisbon`], [6, "not-conversation", "turn 2 closed: Completed"],
-      [7, "not-conversation", "turn 3 opened"], [8, "link", "link e2 no longer stands"], [9, "not-conversation", "turn 3 closed: Completed"],
-    ])
-    expect(first.calls[0]?.journal[1]?.payload).toBe(JSON.stringify({ id: "e1", subject: "Ana", relation: "works at", object: "Acme", from: { session: chat, turn: 1 } }, null, 2))
-    // A new conversation keeps the graph session's board, as it keeps the memory session's.
-    const next = startedOver(all, "the-next-conversation")
-    expect(labels(next)).toEqual(["chat: Chat", "graph: Graph"])
-    expect(next.boards.get(graph)).toBe(board)
-    expect(next.retired.has(graph)).toBe(false)
-  })
-
-  test("lesson 18: a link said again in a later turn is a step of its own, \"Link said again\", and a row that says which turn said it", async () => {
-    const { runtime, all } = await boardsAfter(connectedMemory, ["Ana works at Acme.", "ANA works at  acme."])
-    const chat = runtime.conversation
-    const board = [...all.boards.values()].find((one) => one.kind === "graph")!
+    const board = boards.boards.get(knowledge)!
     expect(turnNumbersOf(board)).toEqual([1, 2])
-    const again = viewOf(board, 2)
-    expect(again.steps.map((step) => [step.id, step.label, step.code, step.seqs])).toEqual([
-      ["opened", "Turn opened", "sessions.turn(yield* graphSession, …)", [4]], ["stored-record-1", "Link said again", "session.append(…)", [5]], ["closed", "Turn closed", "the scope ends", [6]],
+    const first = viewOf(board, 1)
+    expect(first.steps.map((step) => [step.id, step.label, step.state, step.code, step.seqs, step.call])).toEqual([
+      ["opened", "Turn opened", "done", "sessions.turn(knowledge, …), in curate", [1], 0],
+      ["stored-record-1", "Source stored", "done", "session.append(…)", [2], 0],
+      ["closed", "Turn closed", "done", "the scope ends", [3], 0],
+      ["curator-asked-1", "Curator asked (extract)", "done", "curator.curate({ prompt, job })", [], 1],
+      ["curator-answered-1", "Curator answered", "done", "the curator's reply", [], 1],
+      ["curator-asked-2", "Curator asked (review)", "done", "curator.curate({ prompt, job })", [], 2],
+      ["curator-answered-2", "Curator answered", "done", "the curator's reply", [], 2],
     ])
-    expect(again.steps[1]?.detail).toBe(`Record #5, plugin.graph.restated. Open it in the Journal column to read all of it. In short: link e1 said again, in turn 2 of conversation ${chat.slice(0, 8)}`)
+    expect(first.steps[0]?.detail).toBe("Record #1, core.session.turn.started. The curation step (curate, called by curator.ts's keep after the chat's turn is answered) opens a turn on the knowledge session to store the source, and another to store what the checks kept. The curator's model calls run between the two, in no turn.")
+    expect(first.steps[1]?.detail).toBe("Record #2, plugin.knowledge.source. Open it in the Journal column to read all of it. In short: source s1: user: My friend Ana Silva works at Acme. Acme is in Lisbon. assistan…")
+    // Each call's prompt is the one message the curator was sent, in the Prompt column; no memory built it.
+    expect(first.calls.map((call) => [call.call, Option.isNone(call.memory), Option.map(call.prompt, (rows) => rows.map((row) => [row.role, row.source]))])).toEqual([
+      [1, true, Option.some([["user", "added"]])], [2, true, Option.some([["user", "added"]])],
+    ])
+    expect(first.calls[0]?.journal.map((row) => [row.seq, row.use])).toEqual([[1, "not-conversation"], [2, "kept"], [3, "not-conversation"], [4, "not-conversation"], [5, "kept"], [6, "kept"], [7, "kept"], [8, "kept"], [9, "kept"], [10, "kept"], [11, "not-conversation"]])
+    const second = viewOf(board, 2)
+    expect(second.steps.map((step) => [step.id, step.label, step.seqs])).toEqual([
+      ["opened", "Turn opened", [4]], ["stored-records", "Kept: 2 memories, 3 entities, 1 curated", [5, 6, 7, 8, 9, 10]], ["closed", "Turn closed", [11]],
+    ])
+    expect(second.steps[1]?.detail).toBe("Records #5 to #10: 6 records stored in this one turn. Open any of them in the Journal column. The first, in short: entity n2, Ana Silva (person), from s1")
+    // A new conversation keeps the knowledge session's board, as it keeps the memory session's.
+    const next = startedOver(boards, "the-next-conversation")
+    expect(labels(next)).toEqual(["chat: Chat", "knowledge: Memory"])
+    expect(next.boards.get(knowledge)).toBe(board)
+    expect(next.retired.has(knowledge)).toBe(false)
+    expect(all.chat).toBe(chat)
   })
 
-  test("lesson 18: the turn Load the world opens on the graph session stored 654 records, and is one step that counts them, not 654", async () => {
+  test("lesson 18: the turn Load the world opens on the knowledge session stored 2,141 records, and is one step that counts them by kind", async () => {
     const { runtime, heard } = await boardsAfter(connectedMemory, [])
-    expect(await runtime.loadWorld()).toEqual(Result.succeed("Stored 654 sentences in one turn on the graph session: 557 new links, e1 to e557, and 97 said again."))
+    expect(await runtime.loadWorld()).toEqual(Result.succeed("Stored the world's 654 sentences in one turn on the knowledge session: 557 memories, 97 said again and 3 ended, about 374 new entities, from 554 days, each a source of its own."))
     const all = heard.reduce<Boards>((built, trace) => heardBy(built, trace, 0), emptyBoards(runtime.conversation))
-    const board = [...all.boards.values()].find((one) => one.kind === "graph")!
+    const board = [...all.boards.values()].find((one) => one.kind === "knowledge")!
     expect(turnNumbersOf(board)).toEqual([1])
-    expect(board.records).toHaveLength(656)
+    expect(board.records).toHaveLength(2143)
     const view = viewOf(board, 1)
     expect(view.steps.map((step) => [step.id, step.label, step.code, step.seqs.length])).toEqual([
-      ["opened", "Turn opened", "sessions.turn(yield* graphSession, …)", 1],
-      ["stored-records", "Links stored: 557 links, 97 said again", "session.append(…), once for each", 654],
+      ["opened", "Turn opened", "sessions.turn(knowledge, …), in curate", 1],
+      ["stored-records", "Kept: 557 memories, 97 said again, 3 ended, 374 entities, 2 other names, 554 sources, 554 curated", "session.append(…), once for each", 2141],
       ["closed", "Turn closed", "the scope ends", 1],
     ])
-    expect(view.steps[0]?.detail).toBe("Record #1, core.session.turn.started. This turn stored many records at once, with no tool call and no model: the page's Load the world writes the world's sentences straight into the graph session, one record each.")
-    expect(view.steps[1]?.detail).toBe("Records #2 to #655: 654 records stored in this one turn. Open any of them in the Journal column. The first, in short: link e1, from turn 1 of conversation world: Ana Silva works at Acme")
-    expect(view.calls[0]?.journal).toHaveLength(656)
+    expect(view.steps[0]?.detail).toBe("Record #1, core.session.turn.started. This turn stored many records at once: what the checks kept of the curator's reply, then the record that the source was curated; or, with no model, the page's Load the world, a source for each day the world says something and what a curator that made no mistake would keep.")
+    expect(view.steps[1]?.detail).toBe("Records #2 to #2142: 2141 records stored in this one turn. Open any of them in the Journal column. The first, in short: source s1: host: Ana Silva works at Acme.")
+    expect(view.calls[0]?.journal).toHaveLength(2143)
   })
 
   test("a new conversation keeps the memory session's board, with its records, and retires every other session with the old chat's", async () => {

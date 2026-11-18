@@ -10,6 +10,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- Docs site: lesson 18 of the learn track keeps its memory with a curator.
+  Its program offers no tool that remembers (tools.ts is the calculator
+  alone); after each turn's answer agent.ts runs curator.ts's `keep`, which
+  takes up any source an earlier turn left (Stop cut it short, or a try
+  failed) with `curateAgain`, then stores the turn as a source and curates it
+  with the kernel's `curate`, before the next message is taken. memory.ts is
+  `withKnowledge({ limit: 8, walk: 3, speaker, stopWords })(flatMemory)`, the
+  speaker's words and the stop words written out in the file. The curator asks
+  the page's curator model: the model picked when it is Echo or a gateway
+  model, else the page's own Echo, which curates by rule (a local model cannot
+  read the curation prompt in one request). Echo answers the kernel's curation
+  prompt by rule, read by its first line word for word, and its review prompt
+  with the proposal unchanged, and answers a question sent with the note of
+  memories from its first two lines, a line of what a memory replaced read as
+  "Before that: …". The curator's calls are traced as the curator's, on the
+  knowledge session under the turn that stored their source; the Context tab
+  has a board for the knowledge session, "Memory"; a curation counts as busy
+  for Load the world, and Stop, Rebuild and Clear context cut it short, its
+  source left pending and said so. Load the world writes the 654 sentences
+  into the knowledge session in one turn, with no model: 554 sources (one a
+  day, each curated), 374 entities, 2 other names, 557 memories, 97
+  restatements and 3 ended.
 - `@xandreed/sdk/kernel`: knowledge curated after the turn and recalled from
   what the conversation names (ADR 0023). `curate(session, source, { review?,
   prompt? })` is the curation step a host's program calls after a turn: it
