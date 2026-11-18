@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Duration, Schema } from "effect"
 import { ModelSpendExceeded, SpendAmount, SpendCaps } from "@xandreed/core/kernel"
 
 const PerMillion = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
@@ -78,3 +78,18 @@ export const REFUSAL_KEY = "ModelSpend"
 
 /** The ledger's refusal, read back from a reason's metadata. */
 export const CarriedRefusal = Schema.Struct({ [REFUSAL_KEY]: ModelSpendExceeded })
+
+/**
+ * How long a provider waits for a response's headers (`response`), and between two pieces of its body (`idle`),
+ * before it gives up on the call as a lost connection (worth another try; the request left, so the call settles at
+ * its hold).
+ *
+ * @public
+ */
+export interface Timeouts {
+  readonly response?: Duration.Input
+  readonly idle?: Duration.Input
+}
+
+/** The waits a provider gives up after when its options name none: a minute for the headers, two between pieces. */
+export const DEFAULT_TIMEOUTS = { response: Duration.minutes(1), idle: Duration.minutes(2) } as const

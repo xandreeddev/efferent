@@ -137,6 +137,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-journal-directory",
   "sdk-kernel-node-journal-sqlite",
   "sdk-kernel-node-model-spend",
+  "sdk-kernel-node-model-openai-compatible",
   "core/kernel",
 ]
 
@@ -588,7 +589,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         name: "sdk-kernel-tests",
         path: `packages/sdk/src/kernel/${glob}`,
         canImport: [...SDK_KERNEL_TESTS],
-        externals: ["effect", "effect/ai", "node:", "bun:sqlite", "bun:test"],
+        externals: ["effect", "effect/ai", "effect/http", "node:", "bun:sqlite", "bun:test"],
       })),
       // The kernel's Node entry (`packages/sdk/src/kernel/node`, `./kernel/node`, ADR 0024): the ports that need a
       // runtime's modules, which Node 24 and Bun both provide. One layer per folder: the one-writer lock
@@ -604,7 +605,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       // a folder per provider. The Anthropic one is the only layer outside the models plugin that names a provider
       // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
       { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend"], externals: [] },
+      { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },

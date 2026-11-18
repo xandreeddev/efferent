@@ -4,7 +4,8 @@ import { HttpClient, HttpClientError } from "effect/http"
 import type { HttpClientRequest } from "effect/http"
 import type { ModelSpend, ModelSpendExceeded, ModelSpendUnavailable } from "@xandreed/core/kernel"
 import { CallReach } from "./call-reach.port.js"
-import type { Charge, Reach, Reported, SpendOptions } from "./model-spend.entity.js"
+import { DEFAULT_TIMEOUTS } from "./model-spend.entity.js"
+import type { Charge, Reach, Reported, SpendOptions, Timeouts } from "./model-spend.entity.js"
 import { heldBy, isRefusalStatus, ledgerUnavailable, neverConnected, settlementOf, spendRefused } from "./model-spend.entity.functions.js"
 
 /** What charges a provider's calls: the ledger in its context, the host's spend options, and names for its failures. */
@@ -100,15 +101,6 @@ export const chargedSend = <S, A, E1, E2, R1>(
     )
     return [sent, stream.pipe(Stream.onExit((exit) => Scope.close(own, exit)))] as const
   }))
-
-/** How long a provider waits for a response's headers, and between two pieces of its body, before it gives up. */
-export interface Timeouts {
-  readonly response?: Duration.Input
-  readonly idle?: Duration.Input
-}
-
-/** The waits a provider gives up after when its options name none: a minute for the headers, two between pieces. */
-export const DEFAULT_TIMEOUTS = { response: Duration.minutes(1), idle: Duration.minutes(2) } as const
 
 const timedOut = (request: HttpClientRequest.HttpClientRequest, wait: Duration.Duration) =>
   new HttpClientError.HttpClientError({ reason: new HttpClientError.TransportError({ request, description: `no response came within ${Duration.format(wait)}` }) })
