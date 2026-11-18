@@ -1,8 +1,13 @@
 import assert from "node:assert/strict"
+import { spawn } from "node:child_process"
+import { mkdtempSync, rmSync } from "node:fs"
+import { tmpdir } from "node:os"
+import { join } from "node:path"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, Embedder, embedderConformance, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, scriptedModel, sessions, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
+import { callTool, Embedder, embedderConformance, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, sessions, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
+import { directoryJournal, sqliteJournal } from "@xandreed/sdk/kernel/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -27,6 +32,24 @@ const webOver = (store) => built(JournalStorage, webStorageJournal(store, { pref
 const sessionsOver = (core, store) => Effect.flatMap(built(JournalStorage, store, Layer.empty), (storage) =>
   Effect.map(built(Sessions, sessions(), Layer.merge(onCore(core), Layer.succeed(JournalStorage, storage))), (all) => ({ sessions: all, storage })))
 
+/** Where the durable journals of this run are kept: one folder, removed when the process exits. */
+const scratch = mkdtempSync(join(tmpdir(), "kernel-consumer-"))
+process.on("exit", () => rmSync(scratch, { recursive: true, force: true }))
+let made = 0
+/** A path under the scratch folder no store has used. */
+const fresh = (file) => join(scratch, `store-${++made}`, file)
+/** The two durable journals of the Node entry, each over a path: a directory of files, and a SQLite file (`bun:sqlite` on Bun, `node:sqlite` on Node). */
+const durable = {
+  directory: { file: "journal", layer: (path) => directoryJournal({ directory: path }) },
+  sqlite: { file: "journal.db", layer: (path) => sqliteJournal({ path }) },
+}
+const durableOver = (kind, path) => built(JournalStorage, durable[kind].layer(path), Layer.empty)
+/** The storage kit's subject over a durable journal: a fresh path per check, and two handles of this process on one path. */
+const durableSubject = (kind) => ({
+  open: Effect.suspend(() => durableOver(kind, fresh(durable[kind].file))),
+  pair: Effect.suspend(() => { const path = fresh(durable[kind].file); return Effect.all([durableOver(kind, path), durableOver(kind, path)], { concurrency: 1 }) }),
+})
+
 const kits = {
   storage: journalStorageConformance({ open: built(JournalStorage, inProcessJournal(), Layer.empty) }),
   // A store that outlives its handle is also asked what a second handle on the same storage reads.
@@ -47,6 +70,10 @@ const kits = {
     }), Layer.empty),
   }),
   vectors: vectorStoreConformance({ open: built(VectorStore, inMemoryVectors(), Layer.empty) }),
+  directoryStorage: journalStorageConformance(durableSubject("directory")),
+  sqliteStorage: journalStorageConformance(durableSubject("sqlite")),
+  sessionsOverDirectory: sessionsConformance({ open: (core) => sessionsOver(core, durable.directory.layer(fresh("journal"))) }),
+  sessionsOverSqlite: sessionsConformance({ open: (core) => sessionsOver(core, durable.sqlite.layer(fresh("journal.db"))) }),
 }
 /** Run a kit's checks one after another: how many ran, and what each failure said. */
 const run = (checks) => Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) =>
@@ -193,6 +220,63 @@ const resumed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
 }).pipe(Effect.provide(durableOf()))).pipe(Effect.timeout("20 seconds")))
 assert.deepEqual(resumed, { listed: [left], busy: "SessionBusy", closed: 2, turn: 3, outcomes: ["Completed", "Abandoned", "Completed"] })
 
+/**
+ * A process over a durable journal, run by this runtime from the packed packages: it creates a session, opens a
+ * turn, stores a message and waits inside the turn; or, refused the store, says why and waits. Its first line says
+ * which.
+ */
+const holderScript = (kind, path) => `
+import { Effect, Layer } from "effect"
+import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
+import { sessions } from "@xandreed/sdk/kernel"
+import { directoryJournal, sqliteJournal } from "@xandreed/sdk/kernel/node"
+const store = ${kind === "sqlite" ? "sqliteJournal({ path: " + JSON.stringify(path) + " })" : "directoryJournal({ directory: " + JSON.stringify(path) + " })"}
+const say = (value) => Effect.sync(() => { process.stdout.write(JSON.stringify(value) + "\\n") })
+await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const all = yield* Sessions
+  const session = yield* all.create({ owner: "holder" })
+  yield* all.turn(session, (open) => Effect.andThen(open.append(userMessage("Are you there?")), Effect.andThen(say({ session }), Effect.never)))
+}).pipe(
+  Effect.provide(sessions().pipe(Layer.provideMerge(store), Layer.provideMerge(kernel()))),
+  Effect.catchTag("JournalOpenFailed", (failed) => Effect.andThen(say({ refused: failed.reason }), Effect.never)),
+)))
+`
+const spawnHolder = (kind, path) => new Promise((resolve, reject) => {
+  const script = holderScript(kind, path)
+  const child = spawn(process.execPath, typeof Bun === "undefined" ? ["--input-type=module", "-e", script] : ["-e", script], { cwd: process.cwd(), stdio: ["ignore", "pipe", "inherit"] })
+  let out = ""
+  child.stdout.on("data", (chunk) => {
+    out += chunk
+    if (out.includes("\n")) resolve({ child, line: JSON.parse(out.slice(0, out.indexOf("\n"))) })
+  })
+  child.once("exit", (code) => reject(new Error(`the holder process exited with ${code} before it said what it holds`)))
+})
+/** Kill a process as a crash does: no finalizer of its runs. */
+const kill = (child) => new Promise((resolve) => { child.once("exit", resolve); child.kill("SIGKILL") })
+
+/**
+ * A process killed inside a turn, on each durable journal: the next process takes the store over (its holder is
+ * gone), closes the turn as abandoned with `recoverTurns`, and takes a new turn; while it holds the store, a third
+ * process is refused.
+ */
+const crashes = {}
+for (const kind of Object.keys(durable)) {
+  const path = fresh(durable[kind].file)
+  const { child, line } = await spawnHolder(kind, path)
+  assert.ok(typeof line.session === "string", `the ${kind} holder said ${JSON.stringify(line)}`)
+  await kill(child)
+  crashes[kind] = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+    const closed = yield* recoverTurns
+    const sessionsOf = yield* Sessions
+    const turn = yield* sessionsOf.turn(line.session, (open) => Effect.succeed(open.turn))
+    const second = yield* Effect.promise(() => spawnHolder(kind, path))
+    yield* Effect.promise(() => kill(second.child))
+    const journal = yield* sessionsOf.read(line.session)
+    return { closed: closed.map((one) => [one.session === line.session, one.turn]), turn, refused: second.line.refused, outcomes: journal.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data.outcome._tag) }
+  }).pipe(Effect.provide(sessions().pipe(Layer.provideMerge(durable[kind].layer(path)), Layer.provideMerge(kernel()))))).pipe(Effect.timeout("30 seconds")))
+  assert.deepEqual(crashes[kind], { closed: [[true, 1]], turn: 2, refused: "Held", outcomes: ["Abandoned", "Completed"] }, `the ${kind} journal after a crash`)
+}
+
 class Notes extends Context.Service()("consumer/Notes") {}
 const notes = Layer.succeed(Notes, { of: (text) => `noted: ${text}` })
 const composed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -212,6 +296,8 @@ console.log(`kernel ${JSON.stringify({
   inboxQueued: true,
   toolTurn: true,
   storeOutlives: true,
+  durableKits: true,
+  crashRecovered: true,
   layersComposed: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)

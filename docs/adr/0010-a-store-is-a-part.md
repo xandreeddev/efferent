@@ -74,3 +74,8 @@ four questions the in-process store never had to answer:
 
 *Amended 15 November 2026 (ADR 0016).* The contract has a fifth call, `fork`: a branch, a new session whose
 journal starts as another's up to a place, copied as stored in one step. The storage kit checks it (`fork`).
+
+*Amended 18 November 2026 (ADR 0024).* The durable stores of `@xandreed/sdk/kernel/node` enforce one writer per
+store, a process, taking the store as their layer is built and refusing a second live process (`JournalOpenFailed`,
+`Held`). A host that has built one knows that every turn the store holds open was a dead writer's, and closes them all
+with `recoverTurns`, which calls `recover` on every session it reads. The host still calls it: the kernel never does.

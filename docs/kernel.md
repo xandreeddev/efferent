@@ -19,7 +19,8 @@ sessions, several memory strategies. The kernel starts from the other end:
 the smallest set of agreements that lets the parts of an agent be written,
 replaced and tested apart. It imports nothing of the engine and the engine
 imports nothing of it; nothing in it imports a runtime module, so it runs
-in a browser as it is. It is a first cut: [what it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
+in a browser as it is, its Node entry aside (`@xandreed/sdk/kernel/node`,
+the stores on a disk). It is a first cut: [what it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
 is listed below. The engine stays the one to build on until the kernel has
 caught up.
 
@@ -1952,6 +1953,71 @@ holds for its own. A turn this process holds is never recovered by it
 (`SessionBusy`). The session a header names as its parent is not checked
 to exist: the parent may be in another store.
 
+### On Node and Bun: a directory or a SQLite file
+
+`@xandreed/sdk/kernel/node` holds the ports that need a runtime's modules,
+which Node 24 and Bun both provide ([ADR 0024](adr/0024-the-kernel-s-node-ports-live-on-an-entry-of-their-own.md)).
+The browser entry imports none of it. Two stores pass the storage and
+sessions kits there:
+
+- `directoryJournal({ directory })`: one file per session, its header on the
+  first line and an event on each line after it, each line its CRC-32 and
+  its JSON. An append returns once its line is on the disk; a new session or
+  branch is written whole and published by an exclusive hard link. A line a
+  crash left unfinished is never read, and is cut before the next append; a
+  line that is not the line written makes the session `Unreadable`.
+- `sqliteJournal({ path })`: one SQLite file in WAL mode with
+  `synchronous = FULL`, an append one transaction. On Bun it opens the file
+  with `bun:sqlite`, on Node with `node:sqlite`.
+
+Each records its format (`store.json`, or the database's `user_version` and
+`application_id`) and refuses one it does not know, never migrating it. Each
+has one writer, a process: the layer takes the store as it is built, fails
+with `JournalOpenFailed` (`Held`) while another live process holds it, takes
+it over from one whose process is gone, and lets it go when its scope
+closes. So a host that has built the layer knows what `Sessions.recover`
+asks it to know: every turn the store holds open was a dead writer's.
+`recoverTurns` closes them all, in every session of the store, the facts,
+graph and knowledge sessions included, and gives the turns it closed:
+
+<!-- pinned: packages/sdk/src/kernel/node/durable.test.ts#durable -->
+
+```ts
+import { Effect, Layer } from "effect"
+import { kernel, Sessions } from "@xandreed/core/kernel"
+import type { SessionId } from "@xandreed/core/kernel"
+import { recoverTurns, sessions } from "@xandreed/sdk/kernel"
+import { directoryJournal } from "@xandreed/sdk/kernel/node"
+
+/**
+ * A host's stack over a directory of files. The store is taken as the layer is
+ * built: it fails with `JournalOpenFailed` while another live process holds
+ * it, and takes it over from one whose process is gone. `sqliteJournal({ path })`
+ * is the same over one SQLite file.
+ */
+const over = (directory: string) => sessions().pipe(
+  Layer.provideMerge(directoryJournal({ directory })),
+  Layer.provideMerge(kernel()),
+)
+
+/**
+ * Go on with a conversation of the store. First, before any turn: every turn
+ * the store holds open was a writer's that is gone, since no other process can
+ * hold the store, so `recoverTurns` closes each as `Abandoned`.
+ */
+const goOn = (directory: string, conversation: SessionId) => Effect.gen(function* () {
+  const closed = yield* recoverTurns
+  const turns = yield* Sessions
+  const turn = yield* turns.turn(conversation, (session) => Effect.succeed(session.turn))
+  return { closed: closed.length, turn }
+}).pipe(Effect.provide(over(directory)))
+```
+
+Run it once, before any turn: a turn of this process that is open is
+refused (`SessionBusy`). Two layers of one process over one store share its
+hold. A store shared by several machines, or by processes that come and go,
+needs claims that expire, which a later cut brings.
+
 ## Branches
 
 A branch continues a conversation from an earlier turn and keeps the
@@ -2495,7 +2561,7 @@ fail on a careless plugin written for it.
 
 ## What the first cut leaves out, and the order it returns
 
-This cut keeps journals in the process or in a browser's storage, and has one
+This cut keeps journals in the process, in a browser's storage, in a directory or in a SQLite file, and has one
 session plugin and three memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
 (see "Tools: the turn becomes a loop"). What follows returns in this order.
 
@@ -2503,11 +2569,13 @@ session plugin and three memories. A host's turn runs tools itself, through Effe
    and `Card`; a richer vocabulary, or one a host extends, returns when a
    client needs it. (What the UI shows has returned: a record tagged `ui`,
    `viewsOf`.)
-2. **Stores on a disk or in a database**, on the contract and kit the two
-   shipped stores pass. (A store that outlives its process, and the close
-   of a turn its writer left open, have returned: `webStorageJournal`,
-   `Sessions.recover`. So have a summary of old turns, `summaryMemory`, and
-   results sent as pointers with a tool that reads them back, `pointed` and
+2. **Stores that several processes write**, with claims that expire.
+   (Stores on a disk and in a database have returned, with one writer each:
+   `directoryJournal` and `sqliteJournal` on `@xandreed/sdk/kernel/node`, and
+   `recoverTurns`. So have a store that outlives its process and the close
+   of a turn its writer left open, `webStorageJournal` and
+   `Sessions.recover`; a summary of old turns, `summaryMemory`; and results
+   sent as pointers with a tool that reads them back, `pointed` and
    `readResult`.)
 
 ## Open questions

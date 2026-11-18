@@ -687,6 +687,27 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     `open(core)` returns `{ sessions, storage }`. `headerOf` takes the
     creation time as its third argument.
   - Nothing in either entry imports a `node:` or `bun:` module.
+- `@xandreed/sdk/kernel/node`, the kernel's entry for the ports that need a
+  runtime's modules, on Node 24 and Bun (ADR 0024). The browser entry
+  imports none of it. Two journals that outlive their process, each
+  passing the storage and sessions kits:
+  - `directoryJournal({ directory })`: one file per session, a line per
+    event with its CRC-32. An append is on the disk when it returns; a
+    session or a branch is written whole and published by an exclusive hard
+    link. A line a crash left unfinished is never read and is cut before the
+    next append; a damaged line makes the session `Unreadable`.
+  - `sqliteJournal({ path })`: one SQLite file, WAL with
+    `synchronous = FULL`, an append one transaction; `bun:sqlite` on Bun,
+    `node:sqlite` on Node.
+  - Each records its format and refuses one it does not know
+    (`JournalOpenFailed`, `Format`), with no migration. Each has one writer,
+    a process: the layer takes the store as it is built, fails with
+    `JournalOpenFailed` (`Held`) while another live process holds it, and
+    takes it over once that process is gone.
+  - `recoverTurns` (`@xandreed/sdk/kernel`): the host's recovery step once it
+    holds a store, closing every turn left open as `Abandoned`, in every
+    session of the store. A process killed inside a turn no longer leaves
+    its session busy after a restart.
 
 ### Repository
 

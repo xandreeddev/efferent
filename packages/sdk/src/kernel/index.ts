@@ -102,6 +102,8 @@ export { webStorageJournal } from "./plugins/journal-web-storage/web-storage.ada
 export type { KeyValueStore, WebStorageJournalOptions } from "./plugins/journal-web-storage/web-storage.adapter.js"
 export { sessions } from "./plugins/session/sessions.adapter.js"
 export type { SessionsOptions } from "./plugins/session/sessions.adapter.js"
+export { RecoveredTurn } from "./plugins/session/recover.entity.js"
+export { recoverTurns } from "./plugins/session/recover.usecase.js"
 export { flatMemory } from "./plugins/memory-flat/flat.adapter.js"
 export { windowMemory } from "./plugins/memory-window/window.adapter.js"
 export { WindowDroppedData, WindowPressureData, windowDroppedEvent, windowPressureEvent } from "./plugins/memory-window/window.entity.js"

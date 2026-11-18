@@ -1,0 +1,13 @@
+class JournalOpenFailed
+const DIRECTORY_LAYOUT
+const DIRECTORY_STORE
+const DirectoryMarker
+const OpenRefusal
+const SQLITE_APPLICATION_ID
+const SQLITE_SCHEMA
+const directoryJournal
+const sqliteJournal
+interface DirectoryJournalOptions
+interface SqliteJournalOptions
+type DirectoryMarker
+type OpenRefusal
