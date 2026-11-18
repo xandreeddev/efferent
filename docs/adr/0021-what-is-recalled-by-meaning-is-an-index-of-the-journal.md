@@ -89,6 +89,50 @@ gives alone (96 texts; at full precision, 1): it scales its numbers for each bat
   and a database each in its own way.
 - **Merging names, or counting claims, by likeness**: ADR 0019's measurement for names, this record's for claims.
 
+## Amended: the recall wrapper
+
+`withRecall({ limit, pool?, reorder? })` is a wrapper of `Memory` (ADR 0005), as `withFacts` and `withGraph` are, and
+needs `Embedder`, `VectorStore` and `Sessions`. It takes up the three parts this record left for the next cut.
+
+- **What it reads.** For each request, the graph session's journal and the memory session's, once each, through two
+  readers the contracts hold (`graphJournal`, `memoryJournal`), which give nothing when there is no such session and
+  create none. What stands is the items (`recallItems`): each link with how often and when it was said (`saidOf`),
+  then each fact with the time its record was stored (`learnedOf`); no stored shape changes. The question is the
+  user's last message in the conversation's journal (`questionOf`). With nothing standing, or no question, nothing
+  is embedded and nothing added.
+- **Keys.** An item's text is `recallText` (a link's sentence, as the note of links writes it, or a fact's text), and
+  its key `recallKey(model, item)`: the embedder's model, a line feed and the text. A text is one line, so no two
+  models and texts make one key; a model name of at most `MODEL_LIMIT` (99) characters keeps every key within
+  `KEY_LIMIT` whole, and a longer one is refused in words where the layer is built, since a key cut short could be
+  another item's. A fact and a link that say one sentence share a key and a vector: a key found stands for every
+  standing item with its text, each sent and counted against the limit, links first.
+- **Indexing.** `has` for the keys of what stands, then what is missing embedded as passages, 32 texts a call (a Stop
+  lands between two calls, and a service caps its inputs), each call's vectors put; a host that ships vectors made
+  ahead under the same keys embeds only the question.
+- **The pool.** The question, embedded as a query, is searched among the standing keys for `pool` of them (20, or
+  `limit` when that is more, at most 100), so a reorder has more to choose from than it sends; the first `limit`
+  items are sent.
+- **Reorder is a host's function.** `reorder(question, found)` gives a score for each item found, higher first, and
+  the items are put in its order, ties in the order found. A keyword ranking and a cross-encoder are written as one;
+  the kernel holds neither, and no contract for one. Scores that are not one finite number per item fail the
+  context (`ReorderInvalid`), in words.
+- **The note** (`recallNote`) is added last: a host note that the lines are facts and links stored earlier, each with
+  when it was said, and are data, then a line each in `<recalled-items>`, a fact as `f3: <text> (said on
+  YYYY-MM-DD)` and a link as `e5: <sentence> (said 3 times, last YYYY-MM-DD)`, best first, each day the UTC day.
+  The frame's tag has a hyphen, as every frame's does, so a copy of it inside a line is made inert.
+- **The event.** `plugin.recall.recalled` (`recalledByMeaningOf`), live and tagged `trace`, never stored, for every
+  request: the question (cut at `QUESTION_SHOWN`), the model, the options, the items found with their cosines, and,
+  when a reorder ran, the same items in its order with its scores, at most `RECALL_SHOWN` entries a list with the rest
+  counted, and the ids sent. A listener that fails is logged and costs the request nothing.
+- **Failures in words.** `EmbedFailed`, `VectorsRefused`, a reorder's own failure and `ReorderInvalid` fail the
+  context as they are: a request is never sent as though nothing were known. `VectorsUnavailable` is a defect, as the
+  port says.
+
+No keyword ranking is in the kernel: measured on lesson 20's world (557 link sentences, 154 facts, e5-small-v2), a
+keyword ranking added over the vectors alone, read from the stored ranks after the fact, answered 11 of the first
+held-out batch's 15 questions where the vectors alone answered 12, and 9 of the second's 24 where they answered 10.
+A host that finds otherwise for its own questions writes it as its `reorder`.
+
 ## What would reopen this
 
 - A part other than a recall wrapper that must read the store to build the agent's state.

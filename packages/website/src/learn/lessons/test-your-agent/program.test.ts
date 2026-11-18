@@ -376,7 +376,9 @@ const probe = Effect.gen(function* () {
     // One error a program, each in checks.ts, on the function whose stack is short.
     expect(errors.map((line) => line.slice(0, line.indexOf("(")))).toEqual(["src/learn/lessons/test-your-agent/generated-program-check/missing/handlers/checks.ts", "src/learn/lessons/test-your-agent/generated-program-check/missing/model/checks.ts"])
     for (const error of errors) expect(error).toContain("is not assignable to type 'Effect<readonly TurnRead[], unknown, never>'")
-    expect(said).toContain("Type 'Handler<\"calculator\">' is not assignable to type 'never'")
+    // Which of the toolkit's handlers tsc names is the compiler's own order, which moves as the kernel's exports do;
+    // the lesson says "a handler of one of the tools", never which.
+    expect(said).toMatch(/Type 'Handler<"(calculator|remember|recall)">' is not assignable to type 'never'/)
     expect(said).toContain("Type 'LanguageModel' is not assignable to type 'never'")
   }, 120_000)
 

@@ -15,6 +15,7 @@ class InvalidBudget
 class Memory
 class ModelAnswerFailed
 class OverBudget
+class ReorderInvalid
 class SentWhole
 class Summarizer
 class SummaryFailed
@@ -68,6 +69,7 @@ const ListFiles
 const ListView
 const LoadSkill
 const LoadedSkill
+const MODEL_LIMIT
 const ModelScript
 const NAME_LIMIT
 const PATH_LIMIT
@@ -82,6 +84,9 @@ const REMEMBER_FACT
 const REPORT_LIMIT
 const ReadFile
 const ReadResult
+const RecallEntry
+const RecallList
+const RecalledByMeaningData
 const RecalledData
 const RefusedBecause
 const Relation
@@ -157,6 +162,7 @@ const inboxQueuedEvent
 const isOverBudget
 const knownLinks
 const learnedEvent
+const learnedOf
 const linkedEvent
 const linksNote
 const linksOf
@@ -176,6 +182,12 @@ const progressEvent
 const promptMessage
 const questionOf
 const readResult
+const recallItems
+const recallKey
+const recallNote
+const recallText
+const recalledByMeaningEvent
+const recalledByMeaningOf
 const recalledEvent
 const recalledOf
 const recordedEmbedder
@@ -212,6 +224,7 @@ const windowMemory
 const windowPressureEvent
 const withFacts
 const withGraph
+const withRecall
 const workspacePath
 const writtenEvent
 interface Answered
@@ -223,6 +236,7 @@ interface FilesSubject
 interface GraphOptions
 interface InboxOptions
 interface KeyValueStore
+interface LearnedFact
 interface MemorySubject
 interface MemoryWrapperSubject
 interface MessageRead
@@ -230,6 +244,7 @@ interface ModelToolCall
 interface NamedThing
 interface PointerOptions
 interface Queued
+interface RecallOptions
 interface RecordedOptions
 interface RecordedVectors
 interface ResultRead
@@ -284,6 +299,10 @@ type Offered
 type OwnSkills
 type OwnTools
 type ProgressData
+type RecallEntry
+type RecallItem
+type RecallList
+type RecalledByMeaningData
 type RecalledData
 type RefusedBecause
 type Relation
