@@ -1773,7 +1773,8 @@ const memory = withKnowledge({ limit: 8, walk: 3, speaker: ["i", "me", "my"], st
   seed bring in and the message did not name. "Ana Silva works at Acme"
   brings in Acme, and the walk finds "Acme is in Lisbon".
 - **What ended** is never sent alone: a memory sent carries those it
-  replaced, newest first, as "before that" lines with until when they held.
+  replaced, newest first, at most three (`BEFORE_SHOWN`), as "before that"
+  lines with until when they held.
 
 The note (`knowledgeNote`) is a line a memory with when it was said, and no
 ids:
@@ -1801,7 +1802,7 @@ What recall did is said live for every request, `plugin.knowledge.recalled`
 seeds and how each was named, the walk's bridges, each memory it could send
 with its place in each list, its score and words, whether it was sent and
 why or why not, and the note's tokens. On a memory written from the learn
-track's world (711 memories), this recall found the memories 20 of 25
+track's world (711 memories), with 44 English stop words, this recall found the memories 20 of 25
 single questions need, both memories of 8 of 14 that need two, and both of
 71 of 94 generated two-step questions; with no walk, 20, 1 and 0. ADR 0023
 has the counts and what they rest on. A question whose words the memory

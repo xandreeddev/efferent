@@ -39,20 +39,21 @@ after an unrelated turn, and 94 two-step questions generated from the memory's p
 Carla Novak's employer in?"). They were written for the earlier measurements, before this recall; the generated ones
 come from templates, which favours any walk that follows a sentence's subject.
 
-The counts below are the kernel's own functions, run over that memory with the 44 English stop words and the
-speaker's words of the measurement (`i`, `me`, `my`, `mine`, `myself`): they give the same counts, set by set, as
-the scratch code the decisions were made on.
+The decisions were made on scratch code; the rows marked † were then run through the kernel's own functions, over
+the same memory with the 44 English stop words and the speaker's words of the measurement (`i`, `me`, `my`, `mine`,
+`myself`), and gave the same counts, set by set. The other rows are arms the kernel's recall cannot be set to (a
+list left out, the walk inside the places, the walk from another list), counted by the scratch code alone.
 
 | What is sent | single (25) | two (14) | follow-ups (24) | after an unrelated turn (39) | generated two-step (94) |
 |---|---|---|---|---|---|
 | memories about a seed, 8 places, no walk | 15 | 0 | 13 | 15 | 0 |
-| the two lists fused, 8 places, no walk | 20 | 1 | 13 | 17 | 0 |
-| the two lists fused, 11 places, no walk | 20 | 1 | 16 | 21 | 0 |
-| **the two lists fused, 8 places, then a walk by subject of up to 3 more** | **20** | **8** | **14** | **24** | **71** |
+| the two lists fused, 8 places, no walk † | 20 | 1 | 13 | 17 | 0 |
+| the two lists fused, 11 places, no walk † | 20 | 1 | 16 | 21 | 0 |
+| **the two lists fused, 8 places, then a walk by subject of up to 3 more** † | **20** | **8** | **14** | **24** | **71** |
 | the same walk taking 3 of the 8 places | 19 | 7 | 10 | 22 | 71 |
 | the walk from the fused list's three best, not the seed list's, 3 of 8 places | 19 | 8 | 10 | 21 | 44 |
 | memories about a seed alone, then the walk, 3 of 8 places | 14 | 7 | 10 | 21 | 71 |
-| the chosen recall with no stop words | 18 | 7 | 14 | 21 | 77 |
+| the chosen recall with no stop words † | 18 | 7 | 14 | 21 | 77 |
 
 - **The list the message's words reach** (BM25) adds 5 single questions to the list about a seed (15 to 20), and
   costs nothing elsewhere.
@@ -81,12 +82,11 @@ the scratch code the decisions were made on.
 - **Cost.** About 2 ms for one recall over the 711 memories, on one machine; the fold of the knowledge session's
   journal comes before it, once per request.
 
-What others published, read for the relation record (third parties to the systems they test unless said): no study
-isolates a relation's label. Relation triples alone do much worse than text (HotpotQA F1 with Llama 8B and 70B:
-plain retrieval 60.0 and 63.9, triples alone 25.0 and 30.7, triples with their text 42.6 and 48.8); where graphs help
-questions of two steps, the edge leads back to text, and variants without relations match them (their authors'
-own results); the one vendor that measured typed triples beside sentence memories got lower scores on questions of
-two steps (47.19 against 51.15) and later replaced the triples with links between entities.
+What others published, read for the relation record: no study isolates a relation's label. Relation triples alone
+did much worse than plain text in a third party's comparison; where graphs help questions of two steps, the edge
+leads back to text, and variants without relations match them (their authors' own results); and the one vendor that
+measured typed triples beside sentence memories reported lower scores on questions of two steps, and later replaced
+the triples with links between entities.
 
 ## Decision
 
@@ -107,7 +107,11 @@ two steps (47.19 against 51.15) and later replaced the triples with links betwee
   proposal is what a review exists to correct (ends of memories that only depend on what changed, a question taken
   for a restatement), so it is not stored in its place. The source is `Failed` and can be tried again.
 - **An interruption stores nothing after the source**: no `failed` record, so the source stays `Pending` and
-  `curateAgain` takes it up.
+  `curateAgain` takes it up. The turns that store a curation's records, or its failure, are not cut short once
+  begun: memories stored without the `plugin.knowledge.curated` that closes them would be curated again, and their
+  sentences counted as said again.
+- **A source is stored with its fields by name**: a host's value may hold more (a turn's source carries its text
+  beside its parts), and that is never stored.
 - **The knowledge session is the first by creation whose owner is `KNOWLEDGE_OWNER`** (`knowledgeSession`), created
   when there is none, as the facts' memory session is; `knowledgeJournal` reads it and creates none.
 - **Recall calls no model and no embedder.** `withKnowledge(options)` is a memory wrapper that, for each request,
@@ -131,10 +135,14 @@ two steps (47.19 against 51.15) and later replaced the triples with links betwee
   sent, best by the same order, are sent after the `limit`, on top of it. A seed from the turn before can be a
   bridge, since the last message did not name it.
 - **An ended memory is never sent alone.** Only standing memories are ranked, as measured; each memory sent carries
-  those it replaced (ended as `changed`, with it as what came in their place, and what those replaced, newest
-  first), sent under it as "before that". The checks let a memory end another only when the two share a stored
-  entity, so the seed that would have found the old memory finds what replaced it. A memory ended as `wrong` was
-  never true, and one forgotten was asked to be: neither is sent.
+  those it replaced (ended as `changed`, with it as what came in their place, and what those replaced), newest
+  first, at most `BEFORE_SHOWN` (3), sent under it as "before that", so a fact that changes often does not grow every
+  note. An ended memory is no candidate of its own: a question that reaches only the old one, through a seed or a
+  word the replacement does not share ("Who works at Acme?" once Ana Silva moved to Globex), sends neither. The
+  checks let a memory end another only when the two share a stored entity, so a seed they share finds the
+  replacement, and with it the old one. This is narrower than sending what replaced any ended memory that would
+  rank: that changes what BM25 counts, and was not measured. A memory ended as `wrong` was never true, and one
+  forgotten was asked to be: neither is sent.
 - **The note** (`knowledgeNote`) is `hostNote` text, then the memories framed in `<known-memories>`, a line each: its
   sentence and when it was said (`said on YYYY-MM-DD`, or `said N times, last YYYY-MM-DD`, the day of its source's
   `at`), and under it `  before that: <sentence> (<when said>, until YYYY-MM-DD)` for each it replaced. No ids: the
@@ -163,8 +171,8 @@ two steps (47.19 against 51.15) and later replaced the triples with links betwee
 - **The walk inside the 8 places**: follow-ups 14 to 10 of 24.
 - **The walk from the fused list's best**: 44 of 94 against 71.
 - **More plain places instead of a walk**: 11 places found 1 of 14 and 0 of 94.
-- **Ended memories as candidates, mapped to what replaced them.** It changes what BM25 counts and was not measured;
-  the replacement already shares the old memory's entity.
+- **Ended memories as candidates, mapped to what replaced them.** It changes what BM25 counts and was not measured.
+  The cost of leaving it out is in "Decision": a question that reaches only the old memory sends neither.
 - **A typed relation record.** See "Decision" and "Measured".
 - **English in the kernel.** The user's names in the fold are the prompt's English; the speaker's words and the stop
   words are the host's.

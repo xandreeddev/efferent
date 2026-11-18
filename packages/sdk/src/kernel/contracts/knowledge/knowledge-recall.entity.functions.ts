@@ -5,7 +5,7 @@ import { clipTo, estimateTokens, framed, hostNote } from "../memory/memory.entit
 import { USER_ENTITY } from "./knowledge.entity.js"
 import type { EntityId, Knowledge, KnownMemory, MemoryId } from "./knowledge.entity.js"
 import { dayOf, folded, holdsRun, standing } from "./knowledge.entity.functions.js"
-import { ASKED_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
+import { ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
 import type {
   Asked, Bridge, FusedMemory, KnowledgeOptions, KnowledgeRecall, KnowledgeRecalledData, KnowledgeRecallOptions, RecalledWhy, ScoredMemory, Seed, SentMemory, WalkedMemory,
 } from "./knowledge-recall.entity.js"
@@ -143,7 +143,7 @@ const WALK_FROM = 3
 
 /**
  * The memories a memory replaced, newest first: those that ended as `changed` with it as what came in their place,
- * then those they replaced, and so on. A memory that was wrong, or forgotten, is no "before".
+ * then those they replaced, and so on, at most `BEFORE_SHOWN`. A memory that was wrong, or forgotten, is no "before".
  */
 const replacedBy = (knowledge: Knowledge, id: MemoryId): ReadonlyArray<KnownMemory> => {
   const seen = new Set<MemoryId>([id])
@@ -156,7 +156,7 @@ const replacedBy = (knowledge: Knowledge, id: MemoryId): ReadonlyArray<KnownMemo
     found.push(...next.toSorted((a, b) => Option.match(b.ended, { onNone: () => 0, onSome: (ended) => ended.at }) - Option.match(a.ended, { onNone: () => 0, onSome: (ended) => ended.at })))
     wave = next.map((memory) => memory.id)
   }
-  return found
+  return found.slice(0, BEFORE_SHOWN)
 }
 
 /**
@@ -172,8 +172,8 @@ const replacedBy = (knowledge: Knowledge, id: MemoryId): ReadonlyArray<KnownMemo
  *    last message named, are its bridges; up to `walk` more memories, not among those sent, whose first `about` is a
  *    bridge, best by the same order, are sent after them. A memory's first `about` is its subject: the walk relies on
  *    the curator writing it so.
- * 4. A memory sent carries the memories it replaced (`changed`), newest first, so one that ended is only ever sent
- *    under what replaced it.
+ * 4. A memory sent carries the memories it replaced (`changed`), newest first, at most `BEFORE_SHOWN`, so one that
+ *    ended is only ever sent under what replaced it.
  *
  * @public
  */

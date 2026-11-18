@@ -73,7 +73,7 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
     )
   }
   const failed = (reason: string) => Effect.as(
-    sessions.turn(session, (open) => open.append(stored(curationFailedEvent, { source: source.id, attempt, reason }))),
+    Effect.uninterruptible(sessions.turn(session, (open) => open.append(stored(curationFailedEvent, { source: source.id, attempt, reason })))),
     { _tag: "Failed" as const, source, attempt, calls: calls(), reason },
   )
   // What the curator is shown is read from the knowledge as it stands now, the source stored.
@@ -93,12 +93,13 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
   }
   const stage = staged(read.curation, source, shown)
   // What passed is stored in one turn, over the knowledge as it stands now: it may have moved while the model answered.
-  const kept = yield* sessions.turn(session, (open) => Effect.gen(function* () {
+  // The turn is not cut short, so its records are never stored without the one that says the source was curated.
+  const kept = yield* Effect.uninterruptible(sessions.turn(session, (open) => Effect.gen(function* () {
     const drafts = draftsOf(stage, knowledgeOf(yield* open.journal), source)
     yield* Effect.forEach(drafts, (draft) => open.append(draft), { concurrency: 1, discard: true })
     yield* open.append(stored(curatedEvent, { source: source.id, calls: prompts.length, kept: drafts.length, dropped: stage.dropped.slice(0, DROPPED_SHOWN) }))
     return keptFrom(yield* open.journal, source.id)
-  }))
+  })))
   const outcome: CurationOutcome = { _tag: "Curated", source, attempt, calls: calls(), shown, malformed: read.malformed, dropped: stage.dropped, kept }
   return outcome
 })
@@ -114,14 +115,23 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
  * review exists to catch. The model calls run outside any turn of the knowledge session.
  *
  * It answers what came of it (`CurationOutcome`); a store or a session that fails is its failure. An interruption
- * stores neither record, so the source stays `Pending` and `curateAgain` can take it up.
+ * stores neither record, so the source stays `Pending` and `curateAgain` can take it up; the turns that store the
+ * records are not cut short once begun, so what a curation kept is never stored without its `plugin.knowledge.curated`.
  *
  * @public
  */
 export const curate = Effect.fn("knowledge.curate")(function* (session: SessionId, source: NewSource, options: CurateOptions = {}) {
   const sessions = yield* Sessions
   const made = yield* sessions.turn(session, (open) => Effect.gen(function* () {
-    const data: SourceData = { id: nextIds(knowledgeOf(yield* open.journal)).source, ...source }
+    // The source's own fields, by name: a host's value may hold more (a `TurnSource`'s text), which is never stored.
+    const data: SourceData = {
+      id: nextIds(knowledgeOf(yield* open.journal)).source,
+      said: source.said,
+      at: source.at,
+      ...(source.context === undefined ? {} : { context: source.context }),
+      ...(source.from === undefined ? {} : { from: source.from }),
+      ...(source.meta === undefined ? {} : { meta: source.meta }),
+    }
     yield* open.append(stored(sourceEvent, data))
     return data
   }))

@@ -194,6 +194,20 @@ describe("knowledge kept by a curator", () => {
     expect<unknown>(knowledgeOf(journal).sources.map((one) => one.state)).toEqual([{ _tag: "Failed", attempts: 1, reason }])
   })
 
+  test("a source is stored with its own fields only, and the stored record of what was dropped keeps the first twenty", async () => {
+    const memories = Array.from({ length: 21 }, (_, at) => `{"kind":"fact","text":"Ana Silva said thing ${at + 1}.","about":[],"quote":"words nobody said ${at + 1}","by":"user","on":null,"ends":[],"why":null}`)
+    const curator = scripted(() => Effect.succeed(`{"entities":[],"aliases":[],"memories":[${memories.join(",")}],"restates":[],"forget":[]}`))
+    // A host's value may hold more than a source's fields: a turn's source has its text beside its parts.
+    const turn = { text: "User: My friend Ana Silva lives in Porto.", said: [{ by: "user" as const, text: "My friend Ana Silva lives in Porto." }] as const, context: "", at: MONDAY }
+    const { outcome, journal } = await Effect.runPromise(Effect.gen(function* () {
+      const session = yield* knowledgeSession
+      const outcome = yield* curate(session, turn, { review: false })
+      return { outcome, journal: (yield* Effect.flatMap(Sessions, (all) => all.read(session))).events }
+    }).pipe(Effect.provide(Layer.provideMerge(curator.layer, store())), Effect.orDie))
+    expect(Object.keys(knowledgeOf(journal).sources[0]?.source ?? {}).toSorted()).toEqual(["at", "context", "id", "said"])
+    expect<unknown>(outcome._tag === "Curated" ? [outcome.dropped.length, Option.map(outcome.kept.curated, (one) => one.dropped.length)] : outcome).toEqual([21, Option.some(20)])
+  })
+
   test("a curation cut short stores nothing after its source, which stays pending; curateAgain takes it up, and a failed one with its next try", async () => {
     const tries = await Effect.runPromise(Effect.gen(function* () {
       const asked = yield* Deferred.make<void>()
@@ -274,6 +288,10 @@ describe("recall from the knowledge", () => {
     const checks = memoryWrapperConformance({ name: "knowledge", wrap })
     const failed = await Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.exit(check.run), (exit) => (Exit.isFailure(exit) ? [check.id] : [])), { concurrency: 1 }))
     expect(failed.flat()).toEqual([])
+    // The wrapper was not idle: a question that names Ana Silva is sent what is kept about her.
+    const added = await Effect.runPromise(ask("Where does Ana Silva live?").pipe(Effect.provide(Layer.merge(wrap(flatMemory), kept)), Effect.orDie))
+    expect(added.length).toBe(2)
+    expect(added[1]?.includes("Ana Silva lives in Porto. (said on 2026-11-09)")).toBe(true)
   })
 
   test("options that are none are refused where they are written", () => {

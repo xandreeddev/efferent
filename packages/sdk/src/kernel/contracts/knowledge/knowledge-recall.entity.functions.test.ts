@@ -6,7 +6,7 @@ import { estimateTokens } from "../memory/memory.entity.functions.js"
 import { knowledgeOf } from "./knowledge.entity.functions.js"
 import type { Knowledge } from "./knowledge.entity.js"
 import { askedOf, checkedKnowledgeOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, recallKnowledge, seedsOf } from "./knowledge-recall.entity.functions.js"
-import { KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
+import { BEFORE_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
 import type { Asked, KnowledgeRecallOptions } from "./knowledge-recall.entity.js"
 import { aliased, ended, entity, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
 
@@ -152,6 +152,22 @@ describe("recall", () => {
       "  before that: Ana Silva works at Globex. (said on 2026-11-12, until 2026-11-14)",
       "  before that: Ana Silva works at Acme. (said on 2026-11-10, until 2026-11-12)",
     ])
+  })
+})
+
+describe("what a memory replaced", () => {
+  test("a memory sent carries at most three it replaced, the newest first: a fact that changes often does not grow every note", () => {
+    const days = ["2026-11-01", "2026-11-02", "2026-11-03", "2026-11-04", "2026-11-05"]
+    const changes = knowledgeOf(journalOf(
+      ...days.map((day, at) => source(`s${at + 1}`, parts(["user", `Day ${at + 1}.`]), { at: noon(day) })),
+      entity("n2", "Ana Silva"),
+      ...days.flatMap((_, at) => [
+        memory(`m${at + 1}`, `Ana Silva lives in town ${at + 1}.`, ["n2"], { from: `s${at + 1}` }),
+        ...(at === 0 ? [] : [ended(`m${at}`, "changed", { by: `m${at + 1}`, from: `s${at + 1}` })]),
+      ]),
+    ))
+    expect(BEFORE_SHOWN).toBe(3)
+    expect<unknown>(sentOf(changes, asked("Where does Ana Silva live?"), { ...ENGLISH, walk: 0 })).toEqual([["m5", "ranked", ["m4", "m3", "m2"]]])
   })
 })
 

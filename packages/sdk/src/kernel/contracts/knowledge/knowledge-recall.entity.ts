@@ -150,6 +150,14 @@ export interface KnowledgeRecall {
 }
 
 /**
+ * The most memories a memory sent carries as what it replaced ("before that" lines), the newest first: a fact that
+ * changes often does not grow every note.
+ *
+ * @public
+ */
+export const BEFORE_SHOWN = 3
+
+/**
  * The most memories a `plugin.knowledge.recalled` event lists: those sent first, so it never leaves one out; the rest
  * it counts in `more`.
  *

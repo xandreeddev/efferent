@@ -77,7 +77,7 @@ export { curate, curateAgain, knowledgeJournal, knowledgeSession } from "./contr
 export type {
   Asked, Bridge, FusedMemory, KnowledgeOptions, KnowledgeRecall, KnowledgeRecallOptions, ScoredMemory, Seed, SentMemory, WalkedMemory,
 } from "./contracts/knowledge/knowledge-recall.entity.js"
-export { ASKED_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, KnowledgeRecalledData, knowledgeRecalledEvent, RecalledWhy, SeedWay } from "./contracts/knowledge/knowledge-recall.entity.js"
+export { ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, KnowledgeRecalledData, knowledgeRecalledEvent, RecalledWhy, SeedWay } from "./contracts/knowledge/knowledge-recall.entity.js"
 export { askedOf, checkedKnowledgeOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, recallKnowledge, seedsOf } from "./contracts/knowledge/knowledge-recall.entity.functions.js"
 export { withKnowledge } from "./plugins/knowledge/knowledge.adapter.js"
 export { turnSource } from "./contracts/knowledge/knowledge-source.entity.functions.js"
