@@ -6,7 +6,7 @@ import {
   memoryRestatedEvent, MemoryText, Quote, QUOTE_LIMIT,
 } from "./knowledge.entity.js"
 import type { About, Curation, Dropped, Knowledge, KnownEntity, KnownMemory, MemoryData, ReadCuration, ShownKnowledge, SourceId, SourcePart, Staged } from "./knowledge.entity.js"
-import { evidenceOf, folded, nextIds, partText, standing } from "./knowledge.entity.functions.js"
+import { evidenceOf, folded, nextIds, standing } from "./knowledge.entity.functions.js"
 
 /** A text of a reply that says something: a string that is not blank. */
 const Text = Schema.String.check(Schema.isPattern(/\S/))
@@ -106,7 +106,7 @@ export const DROPPED_BECAUSE = {
   aliasEntity: "No entity the curator was shown has that id.",
   aliasName: `An alias is one line of 1 to ${ENTITY_NAME_LIMIT} characters with a letter or a digit.`,
   memoryText: `A memory is one line of 1 to ${MEMORY_LIMIT} characters.`,
-  quoteNotSaid: "Its quote is not in what the user, a tool or the host said.",
+  quoteNotSaid: "Its quote is not in what the user said, a tool returned or the host wrote.",
   quoteLength: `A quote is at most ${QUOTE_LIMIT} characters.`,
   aboutUnknown: "It is about something that is no entity the curator was shown and no new entity of the same reply.",
   aboutMany: "A memory is about at most 8 entities.",
@@ -147,14 +147,15 @@ const nameFrom = (text: string): Option.Option<EntityName> => Option.filter(enti
  *   entity's key. A kind that is no kind becomes `thing`.
  * - **An alias** is kept only for a shown entity, and only when the entity does not bear it yet.
  * - **A memory** is dropped when its sentence is not one line of 1 to 300 characters; when its quote is not found
- *   in one part of what the user, a tool or the host said (compared folded; the assistant's words never count), or
- *   is over 300 characters; when it is about something that is neither a shown entity nor a new one of the reply,
+ *   in one part of what the user said, a tool returned or the host wrote (compared folded; the assistant's words
+ *   never count, and neither do a tool call's name and parameters, which the model wrote), or is over 300
+ *   characters; when it is about something that is neither a shown entity nor a new one of the reply,
  *   or about more than 8; or when an earlier memory of the reply says the same. Who said it (`by`) is the speaker
  *   of the part that holds the quote, the one the reply named when several do. A memory about nothing is kept.
  *   A sentence a standing shown memory already has becomes a restatement of that memory. A kind that is no kind
  *   becomes `fact`. Its day (`on`) is kept only when it is a day.
- * - **Each end** (`ends`) must name a standing shown memory that shares an entity with the new memory, unless the
- *   new memory is about nothing; an end that does not is dropped alone, and the memory is kept. The reason is
+ * - **Each end** (`ends`) must name a standing shown memory that shares a stored entity with the new memory; an end
+ *   that does not is dropped alone, and the memory is kept. So a memory about nothing ends nothing. The reason is
  *   `changed` unless the reply says `wrong`.
  * - **A restatement** and **a forgetting** are kept only for a standing shown memory, and a restatement needs its
  *   quote found in what was said, as a memory does.
@@ -168,7 +169,7 @@ export const staged = (curation: Curation, source: { readonly said: ReadonlyArra
   }
   const shownEntities = new Map<string, KnownEntity>(shown.entities.map((entity) => [entity.id, entity]))
   const shownStanding = new Map<string, KnownMemory>(shown.memories.filter((memory) => Option.isNone(memory.ended)).map((memory) => [memory.id, memory]))
-  const evidence = evidenceOf(source).flatMap((part) => (part.by === "assistant" ? [] : [{ by: part.by, text: folded(partText(part)) }]))
+  const evidence = evidenceOf(source).map((part) => ({ by: part.by, text: folded(part.text) }))
   /** Who said a quote: the speaker of a part that holds it, the one the reply named when several do; none when no part holds it. */
   const saidBy = (quote: string, named: string): Option.Option<MemoryData["by"]> => {
     const wanted = folded(quote)
@@ -301,7 +302,7 @@ export const staged = (curation: Curation, source: { readonly said: ReadonlyArra
         drop(end, DROPPED_BECAUSE.noStandingMemory)
         return []
       }
-      if (about.length > 0 && !old.about.some((entity) => storedAbout.includes(entity))) {
+      if (!old.about.some((entity) => storedAbout.includes(entity))) {
         drop(end, DROPPED_BECAUSE.noCommonEntity)
         return []
       }

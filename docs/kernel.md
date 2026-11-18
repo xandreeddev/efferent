@@ -1657,7 +1657,9 @@ const keep = (session: SessionId, turn: TurnSource, at: number, from: { readonly
 
 - **A source** is what a memory rests on: `plugin.knowledge.source`, what
   was said in parts, each with who said it (`user`, `tool`, `assistant` or
-  `host`), what came before it (`context`) and when it happened (`at`).
+  `host`), what came before it (`context`) and when it happened (`at`). A
+  tool's part holds what the tool returned, and beside it the call it
+  answers, which the curator reads and no memory may rest on.
   `turnSource(turnsOf(journal), turn)` makes one from a turn: each message
   of the person's, each tool call with its parameters and its result, and
   the final answer, each bounded on its own with what was cut counted, and
@@ -1682,11 +1684,13 @@ const keep = (session: SessionId, turn: TurnSource, at: number, from: { readonly
   shape left out and counted. A reply with no object is none.
 - **The checks** are `staged(curation, source, shown)`. Each item is checked
   alone, and a bad one is dropped with its reason while the rest is kept. A
-  memory must rest on a quote found in what the user, a tool or the host
-  said, never in the assistant's words; it may be about shown entities and
+  memory must rest on a quote found in what the user said, a tool returned
+  or the host wrote, never in the assistant's words nor in a tool call's
+  parameters, which the model wrote; it may be about shown entities and
   new ones of the same reply only; a sentence a standing memory already has
   becomes a restatement; an end must name a standing shown memory that
-  shares an entity with the new one. A new entity whose name a stored one
+  shares an entity with the new one, so a memory about nothing ends
+  nothing. A new entity whose name a stored one
   bears is that entity.
 - **The records** are `draftsOf(staged, knowledge, source)`: entities,
   other names, each memory followed by what it ends, restatements, then

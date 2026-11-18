@@ -42,7 +42,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `reviewPrompt(prompt, reply)` (`<curation-task>`, `<proposed-update>`).
   `curationOf(reply)` reads a reply item by item, a wrong-shaped item left
   out and counted; `staged(curation, source, shown)` checks each item alone
-  and drops a bad one with a reason in one sentence (`KNOWLEDGE_CHECKS`);
+  and drops a bad one with a reason in one sentence (`KNOWLEDGE_CHECKS`): a
+  quote must be in what the user said, a tool returned or the host wrote,
+  never in a tool call's parameters (a tool's part holds its result, with
+  the call beside it as a `SourceCall`), and a memory ends another only
+  when they share an entity;
   `draftsOf(staged, knowledge, source)` makes the records over the knowledge
   as it stands when they are stored. With the ids and texts `SourceId`,
   `EntityId`, `MemoryId`, `USER_ENTITY`, `EntityName`, `EntityKind`,

@@ -3,7 +3,7 @@ import { Option, Result, Schema } from "effect"
 import { readJournal, stored, storedEvent, userMessage } from "@xandreed/core/kernel"
 import { EntityKind, EntityName, KNOWLEDGE_VOCABULARY, MemoryData, MemoryDay, MemoryId, MemoryText, Quote, SourceData, sourceEvent, USER_ENTITY } from "./knowledge.entity.js"
 import { dayOf, endedBy, evidenceOf, folded, holdsRun, knowledgeOf, nextIds, quoted, sourceText, standing } from "./knowledge.entity.functions.js"
-import { aliased, curated, ended, entity, failed, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
+import { aliased, called, curated, ended, entity, failed, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
 
 const texts = (knowledge: ReturnType<typeof knowledgeOf>) => knowledge.memories.map((one) => `${one.id}: ${one.text}`)
 
@@ -49,7 +49,7 @@ describe("text as names and quotes are compared", () => {
 })
 
 describe("a source's text", () => {
-  const said = parts(["user", "Look up my order QX-77120."], ["tool", `lookupOrder, called with {"order":"QX-77120"}, returned: {"status":"shipped"}`], ["assistant", "It has shipped."], ["host", "The user is on the free plan."])
+  const said = parts(["user", "Look up my order QX-77120."], called(`lookupOrder, called with {"order":"QX-77120"}`, `{"status":"shipped"}`), ["assistant", "It has shipped."], ["host", "The user is on the free plan."])
 
   test("each part is a line, labelled by who said it", () => {
     expect(sourceText({ said })).toBe([
@@ -60,8 +60,20 @@ describe("a source's text", () => {
     ].join("\n"))
   })
 
-  test("what a memory may rest on is every part but the assistant's", () => {
-    expect(evidenceOf({ said }).map((part) => part.by)).toEqual(["user", "tool", "host"])
+  test("a tool's part reads as its call and what it returned, or as what failed; one that names no call as its text", () => {
+    expect(sourceText({ said: parts(called(`search, called with {"query":"DHL"}`, "The service is down.", true), called("ping, called with {}", ""), ["tool", "A note a host took from a tool."]) })).toBe([
+      `Tool search, called with {"query":"DHL"}, failed: The service is down.`,
+      "Tool ping, called with {}, returned: ",
+      "Tool A note a host took from a tool.",
+    ].join("\n"))
+  })
+
+  test("what a memory may rest on is every part's own text but the assistant's: a tool's call, which the model wrote, is no part of it", () => {
+    expect(evidenceOf({ said })).toEqual([
+      { by: "user", text: "Look up my order QX-77120." },
+      { by: "tool", text: `{"status":"shipped"}` },
+      { by: "host", text: "The user is on the free plan." },
+    ])
   })
 })
 

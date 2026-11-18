@@ -8,9 +8,15 @@ import { partText, sourceText } from "./knowledge.entity.functions.js"
 /** A part of a source, unless its text is blank: a part says something. */
 const part = (by: SaidBy, text: string): ReadonlyArray<SourcePart> => (text.trim().length === 0 ? [] : [{ by, text }])
 
-/** A tool call with what it came to, as a source's part reads: its name, its parameters as JSON, and its result, each of the two cut at `TURN_RESULT_SHOWN`. */
-const toolText = (call: CallRead, result: ResultRead): string =>
-  `${call.name}, called with ${clipTo(JSON.stringify(call.input) ?? "", TURN_RESULT_SHOWN)}, ${result.isFailure ? "failed" : "returned"}: ${clipTo(typeof result.result === "string" ? result.result : JSON.stringify(result.result) ?? "", TURN_RESULT_SHOWN)}`
+/**
+ * A tool call with what it came to, as a source's part: what it returned as the part's text, and the call beside
+ * it (its name and its parameters as JSON, and whether it failed), each of the two cut at `TURN_RESULT_SHOWN`.
+ */
+const toolPart = (call: CallRead, result: ResultRead): SourcePart => ({
+  by: "tool",
+  text: clipTo(typeof result.result === "string" ? result.result : JSON.stringify(result.result) ?? "", TURN_RESULT_SHOWN),
+  call: { text: `${call.name}, called with ${clipTo(JSON.stringify(call.input) ?? "", TURN_RESULT_SHOWN)}`, failed: result.isFailure },
+})
 
 /** The most characters of one message or answer in a source's context. */
 const CONTEXT_PART = 900
@@ -31,8 +37,9 @@ const contextOf = (before: ReadonlyArray<TurnRead>): string =>
  * only a background task's report is no source).
  *
  * The parts, in the order their records were stored: each message of the person's (`user`); each tool call that
- * has a result (`tool`: `<name>, called with <json>, returned: <text>`, or `failed:` for a failed result), but
- * those of the tools `options.leave` names; then the turn's final answer (`assistant`), when it has one. A message
+ * has a result (`tool`: the result as the part's text, with its call beside it, so it reads
+ * `<name>, called with <json>, returned: <text>`, or `failed:` for a failed result), but those of the tools
+ * `options.leave` names; then the turn's final answer (`assistant`), when it has one. A message
  * another session sent (a task's report) is left out.
  *
  * Each part is bounded on its own, with a marker that counts what was cut, so one long tool result never cuts the
@@ -54,7 +61,7 @@ export const turnSource = (turns: ReadonlyArray<TurnRead>, at: number, options: 
   const users = (bound: number, from: number): ReadonlyArray<{ readonly seq: number; readonly part: SourcePart }> =>
     messages.slice(from).flatMap((message) => part("user", clipTo(message.text, bound)).map((one) => ({ seq: message.seq, part: one })))
   const tools = turn.steps.flatMap((step) => step.calls).filter((call) => !leave.has(call.name)).flatMap((call) =>
-    Option.match(call.result, { onNone: () => [], onSome: (result) => part("tool", toolText(call, result)).map((one) => ({ seq: result.seq, part: one })) }))
+    Option.match(call.result, { onNone: () => [], onSome: (result) => [{ seq: result.seq, part: toolPart(call, result) }] }))
   const answer = Option.match(turn.answer, { onNone: () => [], onSome: (text) => part("assistant", clipTo(text, TURN_MESSAGE_SHOWN)) })
   const built = (bound: number, from: number, dropped: number): ReadonlyArray<SourcePart> =>
     [...[...users(bound, from), ...tools.slice(dropped)].toSorted((a, b) => a.seq - b.seq).map((one) => one.part), ...answer]

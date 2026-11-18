@@ -66,7 +66,7 @@ export {
   AliasedData, aliasedEvent, CONTEXT_LIMIT, CuratedData, curatedEvent, Curation, CurationFailedData, curationFailedEvent, CurationRef, Dropped, DROPPED_SHOWN, EndedWhy,
   ENTITY_KINDS, ENTITY_NAME_LIMIT, EntityData, entityEvent, EntityId, EntityKind, EntityName, KNOWLEDGE_CHECKS, KNOWLEDGE_OWNER, KNOWLEDGE_PROMPT, KNOWLEDGE_VOCABULARY,
   MEMORY_LIMIT, MemoryData, MemoryDay, MemoryEndedData, memoryEndedEvent, memoryEvent, MemoryId, MemoryKind, MemoryRestatedData, memoryRestatedEvent, MemoryText, Quote,
-  QUOTE_LIMIT, SaidBy, SHOWN_LIMITS, SOURCE_LIMIT, SourceContext, SourceData, sourceEvent, SourceId, SourcePart, SourceState, SourceText, TURN_MESSAGE_SHOWN,
+  QUOTE_LIMIT, SaidBy, SHOWN_LIMITS, SOURCE_LIMIT, SourceCall, SourceContext, SourceData, sourceEvent, SourceId, SourcePart, SourceState, SourceText, TURN_MESSAGE_SHOWN,
   TURN_RESULT_SHOWN, USER_ALIASES, USER_ENTITY, USER_NAME,
 } from "./contracts/knowledge/knowledge.entity.js"
 export { endedBy, knowledgeOf, nextIds, sourceText, standing } from "./contracts/knowledge/knowledge.entity.functions.js"

@@ -1,7 +1,7 @@
 import { Option } from "effect"
 import { SHOWN_LIMITS, USER_ENTITY } from "./knowledge.entity.js"
 import type { EntityId, Knowledge, KnownEntity, KnownMemory, MemoryId, ShownKnowledge, ShownLimits, SourcePart } from "./knowledge.entity.js"
-import { folded, holdsRun } from "./knowledge.entity.functions.js"
+import { folded, holdsRun, saidText } from "./knowledge.entity.functions.js"
 
 /** The words of a text that can tie it to another: folded, three characters or more. */
 const wordsOf = (text: string): ReadonlyArray<string> => folded(text).split(" ").filter((word) => word.length >= 3)
@@ -40,8 +40,9 @@ interface Ranked {
  * 17, missing the memory a turn changes in 3 cases, and this choice held 20. That is a small set, and nobody in it
  * had more than 30 memories.
  *
- * The source's words are its parts' texts, without the labels a curator reads them under: "User" names no entity,
- * and shares no word with "The user lives in Lisbon". The context is read as it is stored, labels included.
+ * The source's words are its parts' texts, and a tool call's name and parameters, without the labels a curator
+ * reads them under: "User" names no entity, and shares no word with "The user lives in Lisbon". The context is read
+ * as it is stored, labels included.
  *
  * A memory about no entity is never shown, and a name in a script written without spaces between words is not
  * found as a run of whole words.
@@ -55,7 +56,7 @@ export const shownFor = (
 ): ShownKnowledge => {
   // What was said, without the labels a curator reads it under ("User: ", "Tool "): a label is no word of the
   // source's, and "user" would meet every memory that says "the user".
-  const text = source.said.map((part) => part.text).join("\n")
+  const text = source.said.map(saidText).join("\n")
   const own = folded(text)
   const before = folded(source.context ?? "")
   const ranked = knowledge.entities.flatMap((entity): ReadonlyArray<Ranked> => {

@@ -104,7 +104,7 @@ describe("knowledge kept by a curator", () => {
     // #endregion records
 
     // The checks dropped the one memory that rested on the assistant's words, alone, and kept the rest of that reply.
-    expect(dropped).toEqual([[], [{ what: `memory "Braga is a lovely city."`, why: "Its quote is not in what the user, a tool or the host said." }]])
+    expect(dropped).toEqual([[], [{ what: `memory "Braga is a lovely city."`, why: "Its quote is not in what the user said, a tool returned or the host wrote." }]])
     // The second turn names nobody ("she"): its context does, so the curator was shown Ana Silva and what is stored about her.
     expect(prompts).toHaveLength(2)
     expect(prompts[1]?.includes("<earlier-turns>\nUser: My friend Ana Silva lives in Porto.\nAssistant's final answer: Good to know.\n</earlier-turns>")).toBe(true)

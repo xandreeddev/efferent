@@ -27,9 +27,12 @@ export const journalOf = (...records: ReadonlyArray<StoredDraft | number>): Read
   return events
 }
 
-/** The parts of a source in a few words: `["user", "…"]`. */
-export const parts = (...said: ReadonlyArray<readonly [by: SourcePart["by"], text: string]>): readonly [SourcePart, ...Array<SourcePart>] => {
-  const [first, ...rest] = said.map(([by, text]) => ({ by, text }))
+/** A tool's part that names its call: what the tool returned, and the call the model wrote (`lookupOrder, called with {"order":"QX-1"}`). */
+export const called = (call: string, returned: string, failed = false): SourcePart => ({ by: "tool", text: returned, call: { text: call, failed } })
+
+/** The parts of a source in a few words: `["user", "…"]`, or a part as it is (`called(…)`). */
+export const parts = (...said: ReadonlyArray<readonly [by: SourcePart["by"], text: string] | SourcePart>): readonly [SourcePart, ...Array<SourcePart>] => {
+  const [first, ...rest] = said.map((one): SourcePart => ("by" in one ? one : { by: one[0], text: one[1] }))
   return [first ?? { by: "user", text: "Hello." }, ...rest]
 }
 

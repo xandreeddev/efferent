@@ -3,7 +3,7 @@ import type { StoredDraft } from "@xandreed/core/kernel"
 import type { ShownKnowledge } from "./knowledge.entity.js"
 import { knowledgeOf } from "./knowledge.entity.functions.js"
 import { shownFor } from "./knowledge-shown.entity.functions.js"
-import { aliased, ended, entity, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
+import { aliased, called, ended, entity, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
 
 const names = (shown: ShownKnowledge) => shown.entities.map((one) => one.name)
 const ids = (shown: ShownKnowledge) => shown.memories.map((one) => String(one.id))
@@ -65,13 +65,14 @@ describe("what a curator is shown", () => {
       source("s1"), entity("n2", "Eva Novak"), entity("n3", "Tool", "organization"), entity("n4", "Host", "organization"),
       memory("m1", "Eva Novak likes jazz.", ["n2"]), memory("m2", "Eva Novak told the user a secret.", ["n2"]), memory("m3", "Tool is a band.", ["n3"]),
     ))
-    const said = { said: parts(["user", "Eva Novak called."], ["tool", `play, called with {"song":"Lateralus"}, returned: playing`], ["host", "Plan renewed."], ["assistant", "Done."]) }
+    const said = { said: parts(["user", "Eva Novak called."], called(`play, called with {"song":"Lateralus"}`, "playing"), ["host", "Plan renewed."], ["assistant", "Done."]) }
     // "Tool play, …" and "Host: …" are how a curator reads those parts: neither names the band or the organization.
     expect(names(shownFor(knowledge, said))).toEqual(["the user", "Eva Novak"])
     // "User: Eva Novak called." shares no "user" with m2, so the two stay in the order written.
     expect(ids(shownFor(knowledge, said))).toEqual(["m1", "m2"])
-    // Said in the part itself, a name is found.
+    // Said in the part itself, a name is found; and so is one the model put in a call's parameters.
     expect(names(shownFor(knowledge, turn("I saw Tool live.")))).toEqual(["the user", "Tool"])
+    expect(names(shownFor(knowledge, { said: parts(["user", "Call her."], called(`dial, called with {"contact":"Eva Novak"}`, "ringing")) }))).toEqual(["the user", "Eva Novak"])
   })
 
   test("an entity the context names in full is shown after those the source names", () => {

@@ -6,7 +6,7 @@ import { EntityId, MemoryId, SourceId } from "./knowledge.entity.js"
 import type { Curation, ShownKnowledge, SourcePart, Staged } from "./knowledge.entity.js"
 import { endedBy, knowledgeOf } from "./knowledge.entity.functions.js"
 import { curationOf, draftsOf, DROPPED_BECAUSE, staged } from "./knowledge-curation.entity.functions.js"
-import { aliased, ended, entity, journalOf, memory, noon, parts, source } from "./knowledge.testing.js"
+import { aliased, called, ended, entity, journalOf, memory, noon, parts, source } from "./knowledge.testing.js"
 
 const EMPTY = `{"entities":[],"aliases":[],"memories":[],"restates":[],"forget":[]}`
 
@@ -102,7 +102,7 @@ const shown: ShownKnowledge = { entities: knowledge.entities, memories: knowledg
 const turn: { readonly said: ReadonlyArray<SourcePart> } = {
   said: parts(
     ["user", "And she moved to Braga last month. She just got a second parrot, called Kiwi."],
-    ["tool", `lookupOrder, called with {"order":"QX-77120"}, returned: {"status":"shipped","carrier":"DHL","eta":"2026-11-18"}`],
+    called(`lookupOrder, called with {"order":"QX-77120"}`, `{"status":"shipped","carrier":"DHL","eta":"2026-11-18"}`),
     ["assistant", "Noted. With a surname like Silva she may have grown up in Portugal."],
   ),
 }
@@ -246,7 +246,7 @@ describe("what of a curation is stored", () => {
   })
 
   test("who said a memory is the speaker of the part that holds its quote: the one the reply named when several do, never the assistant", () => {
-    const said = { said: parts(["user", "My order QX-77120, where is it?"], ["tool", `lookupOrder, called with {"order":"QX-77120"}, returned: shipped with DHL`], ["host", "The user is on the free plan."], ["assistant", "It shipped with DHL."]) }
+    const said = { said: parts(["user", "My order QX-77120, where is it?"], called(`lookupOrder, called with {"order":"QX-77120","carrier":"UPS"}`, "QX-77120 shipped with DHL"), ["host", "The user is on the free plan."], ["assistant", "It shipped with DHL."]) }
     const by = (quote: string, named: string) => stage({ memories: [{ kind: "fact", text: "Something to keep.", about: ["n1"], quote, by: named }] }, said).memories.map((made) => made.by)
     expect(by("shipped with DHL", "tool")).toEqual(["tool"])
     // The reply names the user, and only the tool's part holds the quote.
@@ -297,10 +297,22 @@ describe("what of a curation is stored", () => {
     expect(what(one)).toEqual([`end of "m3" by memory "Ana Silva lives in Braga since 2026-10.": ${DROPPED_BECAUSE.noCommonEntity}`])
   })
 
-  test("a memory about nothing may end any standing shown memory", () => {
+  test("a memory about nothing ends nothing: an end needs an entity the two memories share", () => {
     const one = stage({ memories: [{ kind: "fact", text: "Nobody lives in Porto any more.", about: [], quote: "she moved to Braga", by: "user", ends: ["m1"] }] })
-    expect<unknown>(one.memories.map((made) => made.ends)).toEqual([["m1"]])
-    expect(one.dropped).toEqual([])
+    // The memory is kept, and the stored one still stands.
+    expect<unknown>(one.memories.map((made) => [made.text, made.ends])).toEqual([["Nobody lives in Porto any more.", []]])
+    expect(what(one)).toEqual([`end of "m1" by memory "Nobody lives in Porto any more.": ${DROPPED_BECAUSE.noCommonEntity}`])
+  })
+
+  test("a quote found only in a tool call's name or parameters, which the model wrote, is no evidence", () => {
+    const said = { said: parts(["user", "Did I pay the electricity bill?"], called(`listPayments, called with {"payee":"EDP","expectedAmount":74.2}`, "No payments found."), ["assistant", "I see no payment."]) }
+    const one = stage({ memories: [
+      { kind: "fact", text: "The user's electricity bill is 74.2.", about: ["n1"], quote: `"expectedAmount":74.2`, by: "tool" },
+      { kind: "fact", text: "The user pays EDP.", about: ["n1"], quote: `Tool listPayments, called with {"payee":"EDP","expectedAmount":74.2}, returned: No payments found.`, by: "tool" },
+      { kind: "fact", text: "The user had no payments on record.", about: ["n1"], quote: "No payments found.", by: "tool" },
+    ] }, said)
+    expect(told(one)).toEqual(["The user had no payments on record."])
+    expect(one.dropped.map((dropped) => dropped.why)).toEqual([DROPPED_BECAUSE.quoteNotSaid, DROPPED_BECAUSE.quoteNotSaid])
   })
 
   test("an end of a memory that is not shown, that ended, or that is no memory is dropped alone; a memory is ended once", () => {

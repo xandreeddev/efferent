@@ -33,8 +33,20 @@ const LABELS: Record<SaidBy, string> = {
   host: "Host: ",
 }
 
-/** One part of a source as a curator reads it: its label, then its text. */
-export const partText = (part: SourcePart): string => `${LABELS[part.by]}${part.text}`
+/**
+ * One part of a source as a curator reads it: its label, then its text. A tool's part that names its call is the
+ * call, then what it came to: `Tool lookupOrder, called with {"order":"QX-1"}, returned: shipped` (or `failed:`).
+ */
+export const partText = (part: SourcePart): string =>
+  part.by === "tool" && part.call !== undefined
+    ? `${LABELS.tool}${part.call.text}, ${part.call.failed ? "failed" : "returned"}: ${part.text}`
+    : `${LABELS[part.by]}${part.text}`
+
+/**
+ * What a part says, to find names in: its text, and for a tool's part its call too. A name the model put in a
+ * call's parameters still shows its entity to the curator; it is evidence of nothing (`evidenceOf`).
+ */
+export const saidText = (part: SourcePart): string => (part.by === "tool" && part.call !== undefined ? `${part.call.text}\n${part.text}` : part.text)
 
 /**
  * A source as the text a curator reads: its parts in order, a line each, labelled by who said it (`User: …`,
@@ -44,8 +56,13 @@ export const partText = (part: SourcePart): string => `${LABELS[part.by]}${part.
  */
 export const sourceText = (source: { readonly said: ReadonlyArray<SourcePart> }): string => source.said.map(partText).join("\n")
 
-/** The parts of a source a memory may rest on: what the user, a tool or the host said, never the assistant's words. */
-export const evidenceOf = (source: { readonly said: ReadonlyArray<SourcePart> }): ReadonlyArray<SourcePart> => source.said.filter((part) => part.by !== "assistant")
+/**
+ * What of a source a memory may rest on: what the user said, what a tool returned and what the host wrote, each
+ * with who said it. Never the assistant's words, and never a tool call's name or parameters, which the model wrote:
+ * a quote is looked for in a part's own text.
+ */
+export const evidenceOf = (source: { readonly said: ReadonlyArray<SourcePart> }): ReadonlyArray<{ readonly by: "user" | "tool" | "host"; readonly text: string }> =>
+  source.said.flatMap((part) => (part.by === "assistant" ? [] : [{ by: part.by, text: part.text }]))
 
 const PENDING: SourceState = { _tag: "Pending" }
 const CURATED: SourceState = { _tag: "Curated" }

@@ -23,7 +23,11 @@ const result = (id: string, name: string, value: unknown, isFailure = false) => 
 const plain = (turn: number, question: string, answer: string): ReadonlyArray<readonly [number, StoredDraft]> =>
   [[turn, started(turn)], [turn, userMessage(question)], [turn, assistantMessage(answer)], [turn, closed(turn)]]
 
-const said = (source: Option.Option<TurnSource>) => Option.match(source, { onNone: () => [], onSome: (one) => one.said.map((part) => `${part.by}: ${part.text}`) })
+/** A source's parts, each as who said it and its text, a tool's call in brackets before what it returned. */
+const said = (source: Option.Option<TurnSource>) => Option.match(source, {
+  onNone: () => [],
+  onSome: (one) => one.said.map((part) => `${part.by}: ${part.by === "tool" && part.call !== undefined ? `[${part.call.text}${part.call.failed ? ", failed" : ""}] ` : ""}${part.text}`),
+})
 
 describe("a turn as a source", () => {
   const journal = journalOf(
@@ -39,11 +43,12 @@ describe("a turn as a source", () => {
 
   test("the turn's parts are each message of the user's, each tool call with its result, and the final answer, labelled in the text", () => {
     const source = turnSource(turns, 4)
+    // A tool's part is what the tool returned; the call the model wrote is beside it, and is no part of its text.
     expect(said(source)).toEqual([
       "user: Can you look up the status of my order QX-77120?",
-      `tool: lookupOrder, called with {"order":"QX-77120"}, returned: {"status":"shipped","carrier":"DHL"}`,
-      `tool: recallMemory, called with {"query":"order"}, returned: m3: The user has an order.`,
-      `tool: search, called with {"query":"DHL"}, failed: The service is down.`,
+      `tool: [lookupOrder, called with {"order":"QX-77120"}] {"status":"shipped","carrier":"DHL"}`,
+      `tool: [recallMemory, called with {"query":"order"}] m3: The user has an order.`,
+      `tool: [search, called with {"query":"DHL"}, failed] The service is down.`,
       "assistant: Your order QX-77120 has shipped with DHL.",
     ])
     expect(Option.map(source, (one) => one.text)).toEqual(Option.some([
@@ -73,7 +78,7 @@ describe("a turn as a source", () => {
   test("the calls of a tool named in `leave` are left out", () => {
     expect(said(turnSource(turns, 4, { leave: ["recallMemory", "search"] }))).toEqual([
       "user: Can you look up the status of my order QX-77120?",
-      `tool: lookupOrder, called with {"order":"QX-77120"}, returned: {"status":"shipped","carrier":"DHL"}`,
+      `tool: [lookupOrder, called with {"order":"QX-77120"}] {"status":"shipped","carrier":"DHL"}`,
       "assistant: Your order QX-77120 has shipped with DHL.",
     ])
   })
@@ -103,9 +108,10 @@ describe("a turn as a source", () => {
     expect(user?.text).toHaveLength(TURN_MESSAGE_SHOWN)
     expect(user?.text.startsWith("Summarise this: uuu")).toBe(true)
     expect(user?.text.endsWith("\n[… 1044 characters clipped]")).toBe(true)
-    expect(tool?.text.startsWith(`readFile, called with {"path":"notes.md"}, returned: rrr`)).toBe(true)
+    expect(tool?.text.startsWith("rrr")).toBe(true)
     expect(tool?.text.endsWith("\n[… 46029 characters clipped]")).toBe(true)
-    expect(tool?.text).toHaveLength(`readFile, called with {"path":"notes.md"}, returned: `.length + TURN_RESULT_SHOWN)
+    expect(tool?.text).toHaveLength(TURN_RESULT_SHOWN)
+    expect(tool).toHaveProperty("call", { text: `readFile, called with {"path":"notes.md"}`, failed: false })
     expect(answer?.text.startsWith("Here it is. aaa")).toBe(true)
     expect(answer?.text.endsWith("\n[… 1040 characters clipped]")).toBe(true)
     expect(source.text.length).toBeLessThanOrEqual(SOURCE_LIMIT)
@@ -118,11 +124,11 @@ describe("a turn as a source", () => {
       [1, assistantMessage("Saved.")], [1, closed(1)],
     ))
     const source = Option.getOrThrow(turnSource(written, 1))
-    const [, tool] = source.said
     expect(source.said.map((part) => part.by)).toEqual(["user", "tool", "assistant"])
-    expect(tool?.text.startsWith(`writeNotes, called with {"text":"nnn`)).toBe(true)
-    expect(tool?.text.endsWith("\n[… 56040 characters clipped], returned: Saved.")).toBe(true)
-    expect(tool?.text).toHaveLength("writeNotes, called with ".length + TURN_RESULT_SHOWN + ", returned: Saved.".length)
+    const line = source.text.split("\nAssistant's final answer: ")[0]?.slice("User: Save my notes.\n".length) ?? ""
+    expect(line.startsWith(`Tool writeNotes, called with {"text":"nnn`)).toBe(true)
+    expect(line.endsWith("\n[… 56040 characters clipped], returned: Saved.")).toBe(true)
+    expect(line).toHaveLength("Tool writeNotes, called with ".length + TURN_RESULT_SHOWN + ", returned: Saved.".length)
   })
 
   test("while the whole is over the limit, tool calls are left out, the oldest first, and the user's words and the answer stay", () => {
@@ -134,10 +140,10 @@ describe("a turn as a source", () => {
     ))
     const source = Option.getOrThrow(turnSource(many, 1))
     // Six results of 4,000 characters each are 24,000 and more: the oldest is left out, and five fit.
-    expect(source.said.map((part) => `${part.by} ${part.text.slice(0, 45)}`)).toEqual([
-      "user Read all six files.",
-      ...[1, 2, 3, 4, 5].map((at) => `tool readFile, called with {"path":"file-${at}.md"}, r`),
-      "assistant All read.",
+    expect(said(Option.some(source)).map((part) => part.slice(0, 52))).toEqual([
+      "user: Read all six files.",
+      ...[1, 2, 3, 4, 5].map((at) => `tool: [readFile, called with {"path":"file-${at}.md"}] ${at}`),
+      "assistant: All read.",
     ])
     expect(source.text.length).toBeLessThanOrEqual(SOURCE_LIMIT)
   })

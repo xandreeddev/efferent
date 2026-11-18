@@ -140,7 +140,7 @@ export type Quote = typeof Quote.Type
 export const SOURCE_LIMIT = 24_000
 
 /**
- * The text of one part of a source: 1 to `SOURCE_LIMIT` characters.
+ * The text of one part of a source, and of a tool call as it is shown: 1 to `SOURCE_LIMIT` characters.
  *
  * @public
  */
@@ -172,8 +172,8 @@ export const MemoryDay = Schema.String.check(Schema.isPattern(/^[0-9]{4}-(?:0[1-
 export type MemoryDay = typeof MemoryDay.Type
 
 /**
- * Who said a part of a source: the `user`, a `tool` (its call and what it returned), the `assistant` (the model's
- * answer) or the `host` (a text the host wrote itself: a decision it recorded, a note).
+ * Who said a part of a source: the `user`, a `tool` (what it returned), the `assistant` (the model's answer) or the
+ * `host` (a text the host wrote itself: a decision it recorded, a note).
  *
  * @public
  */
@@ -181,12 +181,28 @@ export const SaidBy = Schema.Literals(["user", "tool", "assistant", "host"])
 export type SaidBy = typeof SaidBy.Type
 
 /**
- * One part of a source: who said it, and its text. The checks read the parts, so they can tell the user's, a
- * tool's and the host's words from the assistant's.
+ * The call a tool's part is the result of, as a curator reads it: `text`, its name and its parameters
+ * (`lookupOrder, called with {"order":"QX-1"}`), and whether the call failed. The model wrote the parameters, so
+ * they are shown and no memory may rest on them.
  *
  * @public
  */
-export const SourcePart = Schema.Struct({ by: SaidBy, text: SourceText })
+export const SourceCall = Schema.Struct({ text: SourceText, failed: Schema.Boolean })
+export type SourceCall = typeof SourceCall.Type
+
+/**
+ * One part of a source: who said it, and its text. The checks read the parts, so they can tell the user's, a
+ * tool's and the host's words from the assistant's.
+ *
+ * A tool's part holds what the tool returned as its `text` (it may be empty), and may name the call it answers
+ * (`call`). A memory may rest on the text, never on the call.
+ *
+ * @public
+ */
+export const SourcePart = Schema.Union([
+  Schema.Struct({ by: Schema.Literals(["user", "assistant", "host"]), text: SourceText }),
+  Schema.Struct({ by: Schema.Literal("tool"), text: Schema.String.check(Schema.isMaxLength(SOURCE_LIMIT)), call: Schema.optionalKey(SourceCall) }),
+])
 export type SourcePart = typeof SourcePart.Type
 
 /**
@@ -552,7 +568,7 @@ export interface TurnSource {
 export const TURN_MESSAGE_SHOWN = 8_000
 
 /**
- * The most characters `turnSource` keeps of one tool call's parameters, and of its result.
+ * The most characters `turnSource` keeps of one tool call's parameters, and of its result, each.
  *
  * @public
  */

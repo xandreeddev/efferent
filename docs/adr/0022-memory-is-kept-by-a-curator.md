@@ -123,9 +123,11 @@ is one model.
   entity is a person, a place or any named thing, with the other names it bears; the user is entity `n1`, which no
   record stores. A memory about two entities is what joins them in this cut, which has no record for a relation.
   Whether one is added beside the sentences is not decided here ("Left open").
-- **Every memory rests on a quote** from its source, and the quote must be the user's, a tool's or the host's words,
-  never the assistant's. A source is stored in parts for that reason. A host may write a source itself (a decision it
-  recorded, a note): one part said by `host`.
+- **Every memory rests on a quote** from its source, and the quote must be the user's words, what a tool returned
+  or what the host wrote, never the assistant's. A source is stored in parts for that reason, and a tool's part
+  holds what the tool returned as its text, with the call it answers beside it (its name and parameters, and
+  whether it failed). The curator reads the call; no memory may rest on it, since the model wrote it. A host may
+  write a source itself (a decision it recorded, a note): one part said by `host`.
 - **Nothing is deleted: a memory is ended.** A memory that changed, was wrong or was asked to be forgotten gets a
   `plugin.knowledge.ended` record with the reason and, when something replaced it, that memory's id. Its own record
   stays. `knowledgeOf(journal)` folds every memory with how often and when it was said and how it ended; `standing`
@@ -146,8 +148,8 @@ is one model.
 - **The checks drop a bad item alone** (`staged`, at `KNOWLEDGE_CHECKS`). A reply is read item by item
   (`curationOf`): an item of the wrong shape is left out and counted. Then each item is checked on its own against
   the source and what the curator was shown, and one that fails is dropped with its reason while the rest is kept: a
-  memory whose quote is not in what the user, a tool or the host said; one about an entity that was not shown; an end
-  of a memory that shares no entity with the new one. A new entity whose name a stored one bears is that entity, and a
+  memory whose quote is not in what the user said, a tool returned or the host wrote; one about an entity that was
+  not shown; an end of a memory that shares no entity with the new one, so a memory about nothing ends nothing. A new entity whose name a stored one bears is that entity, and a
   sentence a standing memory already has is a restatement. `draftsOf` then makes the records, reading the knowledge as
   it stands when they are stored, since it may have moved while the model answered.
 - **This cut is the pure core.** Records, folds, the two prompts, the reply's reader, the checks and the `Curator`
@@ -173,6 +175,37 @@ is one model.
   one small set.
   `reviewPrompt` is there, and whether to use it is the host's.
 
+## Two rules of the checks, measured after the first cut
+
+Measured on 18 November 2026 on 26 more scripted turns, the same model, four runs with one call and four with a
+review. The replies of two runs were nearly the same, so these are few samples. Twelve turns hold a guess the
+assistant put in a tool call's parameters (a date in a search query, an amount, a reason): in eight the result
+confirms nothing, and in four, added after the first two runs of each kind and so run twice each way, it only says
+that something matched. Six hold an action the user agreed to in a few words, whose substance is only in the call
+("Yes, go ahead." and `bookTable`, returned "Booked."); two hold a result that says everything; six are impersonal
+statements beside stored memories they might end. What each should give was written before it was run. Every saved
+reply was then checked under both rules, with no further model call.
+
+- **A tool call's parameters are no evidence.** With a quote allowed anywhere in a tool's line, call included, a
+  guess was stored as a fact in 3 of 40 turns run with one call and 6 of 40 with a review: an expected amount in a
+  payment search (1 of 4 runs with one call, 4 of 4 with a review) and "dinner with Carla Mendes", a reason the
+  assistant gave a calendar check (2 of 2 with one call; the review took it out, 0 of 2). With the result alone
+  counted, neither was stored in any run. The cost: the review moved a true memory's quote from the result to the
+  parameters in 2 of its 4 runs ("the user has a reminder to call the dentist"), and the checks dropped it. The
+  other five actions were stored in all 8 runs under both rules, each resting on a word of the result ("Booked.",
+  "Confirmed.") or of the user's. One guess got through under both rules, in 2 of 2 review runs and 0 of 2 with one
+  call: "the user's salary from Acme Labs of 3200 arrived", quoting "1 transaction found.". Writing the call on a
+  line of its own as the assistant's, so the prompt itself tells them apart, was worse: the model then quoted that
+  line or its parameters, and an action was lost in 3 of 4 runs. So the prompt is as it was, byte for byte in all
+  160 prompts of the 40-turn runs, and those runs' replies pass the changed checks as they passed the first.
+- **A memory about nothing ends nothing.** No reply did otherwise: of the 1,123 saved replies to the 40 turns, 44
+  proposed a memory about no entity, all for one turn (a notes file of decisions), and none of those ended a stored
+  memory; no reply to these 26 turns proposed one. So nothing measures this rule. It is the stricter of the two because a wrong end was the
+  curator's destructive mistake, and a memory about nothing is never shown again to be corrected.
+- **Seen, and not decided:** "The project was shut down this morning" ended "Bruno Reis leads Project Falcon" in
+  all 8 runs, review included. The prompt says to end only what the turn itself says is over, never what merely
+  depends on it; whether that end is a mistake depends on what a reader wants of the memory.
+
 ## Left open
 
 - **A relation record** (a subject, a relation and an object, beside the sentences). This cut has none: two
@@ -180,8 +213,19 @@ is one model.
   graph could be drawn from records. Against it: two forms of one memory to keep in step. What was measured does not
   settle it. The two-memory questions such a record would serve were answered by the agent searching again in 11 to
   13 of 14, against 1 or 2 from the note alone; but that is one model, DeepSeek, over short sentences that are an easy
-  target for a second search, and a model that calls no tool answered 5 or 6 of 14 with the walk alone. It is decided
-  with how memories are recalled, in the record that comes with that cut.
+  target for a second search, and a model that calls no tool answered 5 or 6 of 14 with the walk alone. What others
+  published does not settle it either: no study found isolates the relation's label, and those that come near it
+  (graphs of passages against graphs of triples, a vendor's own triples beside its sentences) do not favour a
+  record of relations alone. One count made since, of what is found and with no model answering: on 94 two-step
+  questions generated from the scripted memory's links, a walk put both memories among eight in 19 to 23 (two
+  embedders) when it took the memories nearest the question about any entity found; in 66 to 75 when it took those
+  whose first entity is the one the first memory brings in; in 78 to 89 when it took only the links among those;
+  and in 89 to 93 when it ranked those links by the scripted relation's own label, a typed record's best case on
+  questions written from templates. So the label itself added 4 to 11 of 94, and most of what a relation would
+  give a walk was in which entity a memory names first. That holds for a memory written subject first: the
+  scripted one is by construction, and in the curator's replies to the 40 turns the entity a sentence names first
+  was first in `about` in 72 of 72 memories about two or more, though the prompt does not ask for it. It is
+  decided with how memories are recalled, in the record that comes with that cut.
 
 ## Consequences
 
@@ -200,10 +244,13 @@ is one model.
   above one sentence was left out in 3 of 8 runs, and a review did not bring it back.
 - **The checks cannot tell a true sentence from a false one.** They hold a reply to its source and to what was
   shown. A memory whose quote is in the source and whose sentence says something else passes.
-- **A tool call's parameters count as the tool's words.** A turn's tool part is one text, the call and its result
-  (`<name>, called with <parameters>, returned: <result>`), and a quote found anywhere in it passes as a tool's. The
-  parameters were written by the model, so a guess it put in a search query can be quoted as evidence. Telling the
-  two apart needs the call and the result stored as separate parts, which changes a stored shape: not done here.
+- **A guess the model put in a tool call can still be stored, by another way.** The checks refuse a quote from a
+  call's parameters. They cannot refuse a sentence that takes its substance from the parameters and its quote from
+  the result: "Booked." and "1 transaction found." are a tool's words. That is how an action is remembered at all
+  ("the user has a table at Taberna do Mar on 2026-11-20" rests on "Booked."), and how a guess a vague result seems
+  to confirm gets in. And a true memory whose quote the model takes from the parameters is dropped.
+- **A result with no letter or digit cannot be quoted** (`[]`, `{}`, an empty text): quotes are compared by their
+  words. That a search found nothing is remembered only when it can rest on the user's words.
 - **Names in a script written without spaces are not found** as runs of whole words, so their entities are shown
   only through a context or a memory that names them. Quotes are compared without that rule, and hold in any script.
 - **A memory about no entity is never shown to the curator again**, so nothing can say it again or end it. The

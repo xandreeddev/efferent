@@ -133,6 +133,7 @@ const SaidBy
 const Scored
 const ScriptedAnswer
 const SkillId
+const SourceCall
 const SourceContext
 const SourceData
 const SourceId
@@ -419,6 +420,7 @@ type ScriptedAnswer
 type ScriptedCalls
 type SkillId
 type SkillTools
+type SourceCall
 type SourceContext
 type SourceData
 type SourceId
