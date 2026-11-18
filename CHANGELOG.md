@@ -10,6 +10,22 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: ranking by meaning, as two contracts with a kit
+  each (ADR 0021). `Embedder` (`model`, and `embed(texts, as)`: one
+  `Vector` per text, in order, of one length, as a `query` or a `passage`,
+  failing with `EmbedFailed` in words) and its kit `embedderConformance`
+  (`order`, `same`, `dimension`, `empty`, `both`, over texts the subject
+  gives); `VectorStore` (`put`, whole or nothing, a key put again
+  replaced; `search(vector, { limit, among? })` by `cosine`, best first,
+  ties by key, `among` the only keys that may be found with the limit
+  still filled; `has(keys)`; `VectorsRefused` with a reason and words;
+  `VectorsUnavailable`) and its kit `vectorStoreConformance` (`replace`,
+  `order`, `ties`, `limit`, `among`, `has`, `dimension`, `empty`). The
+  stock plugins are `recordedEmbedder({ model, vectors })`, which answers
+  recorded texts and refuses any other in words, and `inMemoryVectors()`.
+  Vectors are an index of the journal, made again from it when lost and
+  never read as truth; a vector of another model is never compared. The
+  recall wrapper that uses them comes next.
 - `@xandreed/sdk/kernel`: the note of known links says how often and when.
   Each line carries how many turns said the link and the UTC day it was
   last said, `e1: Ana works at Acme. (said 3 times, last 2025-05-03)`,

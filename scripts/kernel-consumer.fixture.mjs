@@ -2,7 +2,7 @@ import assert from "node:assert/strict"
 import { Context, Effect, Layer, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inProcessJournal, Memory, memoryConformance, modelAnswer, scriptedModel, sessions, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
+import { callTool, Embedder, embedderConformance, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, scriptedModel, sessions, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -39,6 +39,14 @@ const kits = {
   memory: memoryConformance({ name: "window", budgetTokens, open: (core) => built(Memory, windowMemory({ budgetTokens }), onCore(core)) }),
   flatMemory: memoryConformance({ name: "flat", open: (core) => built(Memory, flatMemory, onCore(core)) }),
   files: filesConformance({ open: built(Files, inMemoryFiles(), Layer.empty) }),
+  embedder: embedderConformance({
+    texts: ["a cat", "a stock price", "a lemon cake"],
+    open: built(Embedder, recordedEmbedder({
+      model: "consumer",
+      vectors: { query: { "a cat": [1, 0, 0], "a stock price": [0, 1, 0], "a lemon cake": [0, 0, 1] }, passage: { "a cat": [1, 0, 0.5], "a stock price": [0, 1, 0.5], "a lemon cake": [0, 0.5, 1] } },
+    }), Layer.empty),
+  }),
+  vectors: vectorStoreConformance({ open: built(VectorStore, inMemoryVectors(), Layer.empty) }),
 }
 /** Run a kit's checks one after another: how many ran, and what each failure said. */
 const run = (checks) => Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) =>
