@@ -10,6 +10,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: knowledge curated after the turn and recalled from
+  what the conversation names (ADR 0023). `curate(session, source, { review?,
+  prompt? })` is the curation step a host's program calls after a turn: it
+  stores the source, asks the host's `Curator` (and, unless `review: false`,
+  asks it again to review its reply) outside any turn of the knowledge
+  session, checks the reply and stores what passed with
+  `plugin.knowledge.curated`, or `plugin.knowledge.failed` with the try and
+  the reason (`NOT_CURATED` when a reply holds no JSON object). It answers a
+  `CurationOutcome`; an interrupted curation leaves its source `Pending`, and
+  `curateAgain(session, id)` takes it up. `knowledgeSession` finds or makes
+  the knowledge session, `knowledgeJournal` reads it, and `keptFrom(journal,
+  source)` reads back what a curation stored. `withKnowledge({ limit?, walk?,
+  speaker?, stopWords? })` is a memory wrapper that sends each request what
+  is kept about what the conversation names, with no model and no embedder:
+  the entities the last message names (the user's by the host's speaker
+  words), else the turn before's; the memories about them and those the
+  message's words reach by the kernel's BM25, fused by rank; 8 places, then a
+  walk by subject of up to 3 more; what a memory replaced sent under it. Its
+  note, `knowledgeNote`, is new model-facing text: `[Host note: these memories
+  were kept from earlier conversations, …]` and the memories framed in
+  `<known-memories>`, a sentence each with when it was said, no ids. What
+  recall did is said live, `plugin.knowledge.recalled`
+  (`knowledgeRecalledEvent`, tagged `trace`). The pure parts are exported:
+  `askedOf`, `seedsOf`, `keywordScores`, `recallKnowledge`,
+  `knowledgeRecalledOf`, `checkedKnowledgeOptions`.
 - `@xandreed/sdk/kernel`: memory kept by a curator, its pure core (ADR 0022,
   which supersedes ADR 0019; the graph and facts contracts stay as they are
   until their lessons move). Long-term memory is written after the turn by a
