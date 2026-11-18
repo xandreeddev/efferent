@@ -671,3 +671,91 @@ export interface Staged {
   readonly forget: ReadonlyArray<MemoryId>
   readonly dropped: ReadonlyArray<Dropped>
 }
+
+/**
+ * A source a host hands the curation step (`curate`): what `plugin.knowledge.source` holds but its id, which the
+ * knowledge session mints when it stores the source.
+ *
+ * @public
+ */
+export type NewSource = Omit<SourceData, "id">
+
+/**
+ * The options of the curation step (`curate`, `curateAgain`): whether a second call reviews the first one's reply
+ * (`review`, on unless `false`: measured on 40 scripted turns, 39 of 40 right with it against 36 without, ADR 0022),
+ * and the prompt's own options (`prompt`: the kinds of entity it offers, a line of the host's own).
+ *
+ * @public
+ */
+export interface CurateOptions {
+  readonly review?: boolean
+  readonly prompt?: CurationOptions
+}
+
+/**
+ * What a curation stored for one source, as the knowledge session's journal holds it (`keptFrom`): the entities it
+ * made, the other names it gave stored ones, the memories it wrote, the memories it said again and those it ended
+ * (an end of a memory it wrote names it in `by`; a forgetting is `asked`), its `plugin.knowledge.curated` record when
+ * one is stored, and each `plugin.knowledge.failed` of the source, in the order stored.
+ *
+ * @public
+ */
+export interface KeptRecords {
+  readonly entities: ReadonlyArray<EntityData>
+  readonly aliases: ReadonlyArray<AliasedData>
+  readonly memories: ReadonlyArray<MemoryData>
+  readonly restated: ReadonlyArray<MemoryRestatedData>
+  readonly ended: ReadonlyArray<MemoryEndedData>
+  readonly curated: Option.Option<CuratedData>
+  readonly failed: ReadonlyArray<CurationFailedData>
+}
+
+/**
+ * What the curation step asked the curator and what it answered: the prompts in the order sent (the curation prompt,
+ * then the review prompt when one was sent), and a reply for each call that answered.
+ *
+ * @public
+ */
+export interface CurationCalls {
+  readonly prompts: ReadonlyArray<string>
+  readonly replies: ReadonlyArray<string>
+}
+
+/**
+ * What the curation step came to for one source (`curate`): `Curated`, with what the curator was shown, how many
+ * items of the reply it read had the wrong shape, what the checks dropped (all of it; the stored record keeps the
+ * first `DROPPED_SHOWN`) and what was stored; or `Failed`, a `plugin.knowledge.failed` stored with the try and the
+ * reason. Either way the source, the try and the calls made. A source whose curation was interrupted gets neither,
+ * and stays `Pending`.
+ *
+ * @public
+ */
+export type CurationOutcome =
+  | {
+    readonly _tag: "Curated"
+    readonly source: SourceData
+    readonly attempt: number
+    readonly calls: CurationCalls
+    readonly shown: ShownKnowledge
+    readonly malformed: number
+    readonly dropped: ReadonlyArray<Dropped>
+    readonly kept: KeptRecords
+  }
+  | {
+    readonly _tag: "Failed"
+    readonly source: SourceData
+    readonly attempt: number
+    readonly calls: CurationCalls
+    readonly reason: string
+  }
+
+/**
+ * Why a curation's try failed when the curator answered: its reply, or the review's, held no JSON object. A failed
+ * call's own reason is the curator's (`CurationFailed`'s message).
+ *
+ * @public
+ */
+export const NOT_CURATED = {
+  reply: "The curator's reply holds no JSON object.",
+  review: "The review's reply holds no JSON object.",
+} as const
