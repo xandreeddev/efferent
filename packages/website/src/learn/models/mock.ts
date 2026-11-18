@@ -12,6 +12,7 @@ import type { ChatMessage } from "../prompt-map.ts"
 import { reportIn } from "../reports.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
+import { echoCuration, echoReview, isCurationPrompt, isMemoriesNote, isReviewPrompt, memoriesIn } from "./echo-curation.ts"
 import { makeBrowserModel } from "./make.ts"
 import type { LoadedModel, ModelChoice } from "./types.ts"
 
@@ -53,8 +54,10 @@ const LINKS_CLOSE = "\n</known-links>"
 const isLinksNote = (text: string): boolean => text.startsWith(LINKS_OPEN) && text.endsWith(LINKS_CLOSE)
 /** The note of links (lesson 18): code's, as the facts' is, and not a message of the conversation. */
 const isLinks = (message: ChatMessage): boolean => message.role === "user" && isLinksNote(message.content)
-/** What a wrapper added for this request and never stored: the clock's note, the facts' or the links'. */
-const isAdded = (message: ChatMessage): boolean => isClock(message) || isFacts(message) || isLinks(message)
+/** The note of memories (lesson 18, `withKnowledge`): code's, as the links' is, and not a message of the conversation. */
+const isMemories = (message: ChatMessage): boolean => message.role === "user" && isMemoriesNote(message.content)
+/** What a wrapper added for this request and never stored: the clock's note, the facts', the links' or the memories'. */
+const isAdded = (message: ChatMessage): boolean => isClock(message) || isFacts(message) || isLinks(message) || isMemories(message)
 /**
  * A background task's report (lesson 17), known by the kernel's words: a message of the conversation, but not one
  * the person said, and no note that older turns were condensed.
@@ -100,6 +103,10 @@ const statedIn = (asked: string): string | undefined => {
 export const echoReply = (messages: ReadonlyArray<ChatMessage>): string => {
   const request = messages.findLast((message) => message.role === "user")?.content ?? ""
   if (request.includes("<conversation-transcript>")) return echoSummary(request)
+  // Lesson 18: the kernel's curation prompt and its review prompt, each known by its first line, word for word. A
+  // review is answered with the proposal unchanged.
+  if (isReviewPrompt(request)) return echoReview(request)
+  if (isCurationPrompt(request)) return echoCuration(request)
   const system = messages.find((message) => message.role === "system")
   const clock = messages.findLast(isClock)
   const turns = messages.filter((message) => message.role !== "system" && !isAdded(message))
@@ -863,6 +870,10 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   // best, in fixed words that quote them. Whatever the question asks, these two lines are the answer.
   const linked = linksIn(sent.content)
   if (question !== undefined && linked.length > 0) return { text: `From what I know: ${linked.slice(0, 2).join(" ")}`, calls: [] }
+  // One question, with memories sent for this request (lesson 18, withKnowledge): answered from the note's first two
+  // lines in the same words, a line of what a memory replaced read as "Before that: …".
+  const remembered = memoriesIn(sent.content.flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])))
+  if (question !== undefined && remembered.length > 0) return { text: `From what I know: ${remembered.slice(0, 2).join(" ")}`, calls: [] }
   // An answer of Echo's own, with no tool to call and no result to pass on: in the haiku skill's form while it is loaded.
   if (loaded.includes(HAIKU_SKILL)) return { text: HAIKU, calls: [] }
   return { text: echoReply(toChatMessages(sent)), calls: [] }
