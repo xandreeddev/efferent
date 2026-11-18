@@ -239,6 +239,18 @@ export interface Lesson {
    * waiting, reported, cancelled, stopped with the program, or its report dropped (`task-chips.ts`).
    */
   readonly tasks?: true
+  /**
+   * The lesson's graph (lesson 18): the Graph tab beside Context, which draws what the walk of each request did, and
+   * the world a `data-world` button ("Load the world") writes into the graph session. The load takes turns with the
+   * chat (`runtime.loadWorld`).
+   */
+  readonly graph?: {
+    /**
+     * Load the world: every sentence stored in the graph session in one turn, with no tool call, or nothing. What it
+     * stored, in words, or why it stored nothing. The runtime provides its own base `Sessions`.
+     */
+    readonly load: Effect.Effect<string, string, Sessions>
+  }
   /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>
   /**

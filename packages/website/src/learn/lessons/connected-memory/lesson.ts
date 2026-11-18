@@ -5,17 +5,21 @@
 // thing's links), and the kernel's flat memory wrapped with `withGraph`,
 // which adds to each request the links near what the question names, the
 // path to them first. The page's Clear context is the next conversation: the
-// store, and the graph session in it, stay.
+// store, and the graph session in it, stay. The second half loads a world of
+// 654 sentences into the graph session (load-world.ts), and the Graph tab
+// draws what each request's walk did; the controls edit the options of
+// memory.ts's one call.
 import { Effect, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { callTool, flatMemory, graphHandlers, graphTools, knownLinks, linksNote, Memory, modelAnswer, namedIn, near, questionOf, withGraph } from "@xandreed/sdk/kernel"
+import { callTool, flatMemory, graphHandlers, graphTools, linksNote, Memory, modelAnswer, namedIn, questionOf, recalledEvent, recalledOf, saidLinks, walked, withGraph } from "@xandreed/sdk/kernel"
 import { named, programOf, runStatements } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
-import { byDistance, followOnly, hopsOne } from "./config-edit.ts"
+import { byDistance, CONTROLS, followOnly, hopsOne } from "./config-edit.ts"
+import { loadWorld } from "./load-world.ts"
 import { DEFAULT_MEMORY, MEMORY_HEADER, MEMORY_IMPORTS, memoryBodyOf, memoryDocumentOf } from "./memory.source.ts"
 import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentOf } from "./tools.source.ts"
 
@@ -24,7 +28,7 @@ import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentO
  * it, so the Context tab's Memory column shows what the flat memory gave, and its Prompt column shows the note of
  * links the wrapper added after it as the code's, never as something the user said.
  */
-const memoryNames = (parts: PageParts) => ({ Effect, Layer, Option, Sessions, flatMemory: parts.watchMemory(flatMemory), knownLinks, linksNote, Memory, namedIn, near, questionOf, withGraph })
+const memoryNames = (parts: PageParts) => ({ Effect, Layer, Option, Sessions, flatMemory: parts.watchMemory(flatMemory), linksNote, Memory, namedIn, questionOf, recalledEvent, recalledOf, saidLinks, walked, withGraph })
 const toolsNames = { Effect, Schema, Tool, Toolkit, graphTools }
 
 const agentNames = (parts: PageParts, memory: unknown, tools: unknown, toolsLive: unknown) => ({
@@ -60,6 +64,13 @@ export const SEVEN = "Ana works at Acme. Acme is in Lisbon. Ana lives in Porto. 
 /** The question the page asks of them: it names Ana, and the city is two links away. */
 export const QUESTION = "In what city does Ana work?"
 
+/** The questions of the world's steps, each asked of the world once it is loaded. */
+export const ORCHID = "Where does the person who leads Project Orchid live?"
+export const NOWAK = "Where does Eva Nowak live?"
+export const BRUNO = "What does Bruno Reis eat most often?"
+export const NOVAK = "Where does Eva Novak work now?"
+export const EMPLOYS = "Who employs Ana Silva?"
+
 /** Two links and a sum, which one turn takes together: three calls in one step, then one answer. */
 const THREE = ["Ana works at Acme.", "Acme is in Lisbon.", "What is 2 + 3?"]
 
@@ -81,16 +92,19 @@ export const connectedMemory: Lesson = {
     { id: "chat", label: "chat.ts", defaultText: "", documentOf: () => CHAT, editableFrom: CHAT.length, formatPrefix: "", sections: [], folded: [], readOnly: true },
   ],
   mainFile: "memory",
-  chips: [SEVEN, QUESTION, "Acme sells paint.", "What is Acme linked to?", "Unlink e8.", "I work at Acme.", "Where do I work?"],
+  chips: [SEVEN, QUESTION, "Acme sells paint.", "What is Acme linked to?", "Unlink e8.", "I work at Acme.", "Where do I work?", ORCHID, NOWAK, BRUNO, NOVAK, EMPLOYS],
   // Sent at once, one turn takes all three: two links stored and a sum worked out in one step.
   three: THREE,
   // No button of the page sends a fill: the type asks for one, and it is the same three.
   fill: THREE,
-  controls: {},
+  // hops, limit, names and weights: each writes one option of memory.ts's withGraph call.
+  controls: CONTROLS,
   experiments: {
     "hops-one": { file: "memory", apply: hopsOne },
     "by-distance": { file: "memory", apply: byDistance },
     "follow-only": { file: "memory", apply: followOnly },
   },
   evaluate: evaluateLesson,
+  // The Graph tab, and the world "Load the world" writes into the graph session.
+  graph: { load: loadWorld },
 }

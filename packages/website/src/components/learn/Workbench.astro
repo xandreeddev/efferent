@@ -5,6 +5,8 @@
 // carries `data-*` hooks. What it shows of a lesson comes from the lesson's
 // definition. A lesson with a workspace (lesson 16) has one more tab beside
 // Context, Files: the page's files as they are, which a person can edit. A
+// lesson with a graph (lesson 18) has a Graph tab: what the walk of each
+// request did, drawn from the event the kernel says for it. A
 // lesson with background tasks (lesson 17) has a row of task chips above the
 // chat's messages.
 import { Option } from "effect"
@@ -44,6 +46,11 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
           <button role="tab" type="button" class="tab-context" data-file="context" aria-selected="false" title="What happened in each turn: the journal, memory and the prompt">
             <span class="dot" aria-hidden="true"></span>Context
           </button>
+          {lesson.graph !== undefined && (
+            <button role="tab" type="button" class="tab-graph" data-file="graph" aria-selected="false" title="What the walk of each request did: what the question named, the links it reached and ranked, and what was sent">
+              Graph
+            </button>
+          )}
           {lesson.workspace !== undefined && (
             <button role="tab" type="button" class="tab-files" data-file="files" aria-selected="false" title="The workspace's files as they are: the agent changes them with its tools, and you can change them here">
               Files
@@ -100,6 +107,20 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
           <ol class="tr-log" data-tr-log></ol>
         </details>
       </div>
+      {lesson.graph !== undefined && (
+        <div class="pane-body grp" data-graph hidden>
+          <div class="grp-bar">
+            <label>Walk of <select data-grp-pick aria-label="Which model call's walk to show"></select></label>
+            <code class="grp-options" data-grp-options></code>
+          </div>
+          <p class="grp-empty" data-grp-empty></p>
+          <div class="grp-body" data-grp-body hidden>
+            <p class="grp-question" data-grp-question></p>
+            <div class="grp-picture" data-grp-picture></div>
+            <ol class="grp-steps" data-grp-steps aria-label="What the walk did, step by step"></ol>
+          </div>
+        </div>
+      )}
       {lesson.workspace !== undefined && (
         <div class="pane-body wsp" data-files hidden>
           <p class="wsp-sub">The page's workspace, as it is now: read again after each write and each turn. Edit a file and press Save to change it as someone other than the agent.</p>

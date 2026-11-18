@@ -1456,8 +1456,13 @@ stored as `plugin.graph.restated`), then the newer. What the walk did, step
 by step (`walked`: the things named and how, every link reached with the
 thing it was reached from and the words its path met), is said live for
 every request as `plugin.graph.recalled` (`recalledOf`, never stored), so a
-client can show why each link was sent, and why others were not. It sends at most `limit` of them, best first, a sentence each with its
-id, framed as data (`linksNote`). With nothing named, nothing is added; the
+client can show why each link was sent, and why others were not; its things
+(`thing`, `from`) keep their accent marks under either naming, and only the
+question's words (`words`, `met`) lose them under loose naming. It sends at
+most `limit` of them, best first, a sentence each with its id and how often
+and when it was said, framed as data (`linksNote` over the links' `saidOf`
+entries: `e1: Ana works at Acme. (said 3 times, last 2025-05-03)`, the UTC
+day, in the words of `saidText`). With nothing named, nothing is added; the
 question is the user's last message in the conversation's journal
 (`questionOf`, the memory contract's). Nothing is stored, and a memory's
 budget does not count the links: they are bounded by `limit` and by a name's

@@ -100,6 +100,14 @@ checks.
   not the learner's wrapper, and its model is a class with no DOM that the tests
   drive (`WorkspacePane`).
 
+- A pane that shows what the kernel says live (lesson 18's Graph tab, from
+  `plugin.graph.recalled`) folds the `Event` trace the page already hears,
+  with no listener of its own, and draws a pure function of the event's data
+  with tests of its own, apart from the DOM. Seed data the page loads (lesson
+  18's world) goes straight into its session as records, in one turn, never
+  through a tool (a call per record would fill the chat's journal); a test
+  pins that the page heard every record of the burst.
+
 ## 3. Tests that can fail
 
 - `program.test.ts`: tsc over every shown file, and the program run on

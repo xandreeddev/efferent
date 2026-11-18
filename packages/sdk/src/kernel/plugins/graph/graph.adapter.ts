@@ -184,7 +184,8 @@ const weighing = (said: ReadonlyArray<SaidLink>, weights: NonNullable<GraphOptio
 /**
  * A wrapper of `Memory` (ADR 0005, ADR 0019): for each request it reads the links that stand in the graph session
  * and adds up to `limit` of those near what the question names (`near`), last, after the context the memory below
- * returned. The question is the user's last message in the conversation's journal. Nothing is stored; with nothing
+ * returned, each with how often and when it was said (`linksNote` over the links' `saidOf` entries, best first).
+ * The question is the user's last message in the conversation's journal. Nothing is stored; with nothing
  * named, or no link near it, nothing is added. What the walk did is said live for every request, `plugin.graph.recalled`
  * (`recalledOf`), whether or not anything was named; a listener that fails is logged and costs the request nothing.
  * Options that are none are refused here, where they are written: it throws, as a definition does.
@@ -206,7 +207,9 @@ export const withGraph = (options: GraphOptions) => {
           const weigh = weights === undefined ? undefined : weighing(said, weights)
           const question = questionOf(yield* session.journal)
           const walk = walked(linksOf(journal), question, { ...checked, ...(weigh === undefined ? {} : { weigh }) })
-          const chosen = walk.reached.slice(0, checked.limit).map((one) => one.link)
+          // The links sent, best first, each with how often and when it was said: what the note writes beside it.
+          const saying = new Map(said.map((one) => [one.link.id, one]))
+          const chosen = walk.reached.slice(0, checked.limit).flatMap((one) => Option.toArray(Option.fromNullishOr(saying.get(one.link.id))))
           // What the walk did is said live, for a client to draw; a listener that fails costs the request nothing.
           yield* session.publish(recalledEvent, recalledOf(question, checked, walk, said)).pipe(Effect.ignoreCause({ log: "Warn", message: "what the graph's walk did could not be said" }))
           return chosen.length === 0 ? context : [...context, { role: "user" as const, content: linksNote(chosen) }]

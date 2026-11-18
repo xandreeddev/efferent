@@ -5,7 +5,7 @@
 // 10's) the tools each model call was offered, and (lessons 4's and 11's)
 // the row of sessions, built from each session's header.
 import { afterEach, describe, expect, test } from "bun:test"
-import { Option } from "effect"
+import { Option, Result } from "effect"
 import { toolResult, userMessage } from "@xandreed/core/kernel"
 import { estimateTokens } from "@xandreed/sdk/kernel"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
@@ -428,6 +428,36 @@ describe("the Context tab's row of sessions", () => {
     expect(labels(next)).toEqual(["chat: Chat", "graph: Graph"])
     expect(next.boards.get(graph)).toBe(board)
     expect(next.retired.has(graph)).toBe(false)
+  })
+
+  test("lesson 18: a link said again in a later turn is a step of its own, \"Link said again\", and a row that says which turn said it", async () => {
+    const { runtime, all } = await boardsAfter(connectedMemory, ["Ana works at Acme.", "ANA works at  acme."])
+    const chat = runtime.conversation
+    const board = [...all.boards.values()].find((one) => one.kind === "graph")!
+    expect(turnNumbersOf(board)).toEqual([1, 2])
+    const again = viewOf(board, 2)
+    expect(again.steps.map((step) => [step.id, step.label, step.code, step.seqs])).toEqual([
+      ["opened", "Turn opened", "sessions.turn(yield* graphSession, …)", [4]], ["stored-record-1", "Link said again", "session.append(…)", [5]], ["closed", "Turn closed", "the scope ends", [6]],
+    ])
+    expect(again.steps[1]?.detail).toBe(`Record #5, plugin.graph.restated. Open it in the Journal column to read all of it. In short: link e1 said again, in turn 2 of conversation ${chat.slice(0, 8)}`)
+  })
+
+  test("lesson 18: the turn Load the world opens on the graph session stored 654 records, and is one step that counts them, not 654", async () => {
+    const { runtime, heard } = await boardsAfter(connectedMemory, [])
+    expect(await runtime.loadWorld()).toEqual(Result.succeed("Stored 654 sentences in one turn on the graph session: 557 new links, e1 to e557, and 97 said again."))
+    const all = heard.reduce<Boards>((built, trace) => heardBy(built, trace, 0), emptyBoards(runtime.conversation))
+    const board = [...all.boards.values()].find((one) => one.kind === "graph")!
+    expect(turnNumbersOf(board)).toEqual([1])
+    expect(board.records).toHaveLength(656)
+    const view = viewOf(board, 1)
+    expect(view.steps.map((step) => [step.id, step.label, step.code, step.seqs.length])).toEqual([
+      ["opened", "Turn opened", "sessions.turn(yield* graphSession, …)", 1],
+      ["stored-records", "Links stored: 557 links, 97 said again", "session.append(…), once for each", 654],
+      ["closed", "Turn closed", "the scope ends", 1],
+    ])
+    expect(view.steps[0]?.detail).toBe("Record #1, core.session.turn.started. This turn stored many records at once, with no tool call and no model: the page's Load the world writes the world's sentences straight into the graph session, one record each.")
+    expect(view.steps[1]?.detail).toBe("Records #2 to #655: 654 records stored in this one turn. Open any of them in the Journal column. The first, in short: link e1, from turn 1 of conversation world: Ana Silva works at Acme")
+    expect(view.calls[0]?.journal).toHaveLength(656)
   })
 
   test("a new conversation keeps the memory session's board, with its records, and retires every other session with the old chat's", async () => {

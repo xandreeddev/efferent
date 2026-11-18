@@ -274,7 +274,9 @@ export const QUESTION_SHOWN = 500
  * reached, best first (at most `RECALL_SHOWN`, the rest counted in `more`), each with the thing it was reached from
  * and the link that led there (`via`, null for a thing the question named), how many links away, the question's
  * words its path met, how many turns said it and when it was last said (in milliseconds), and whether the request
- * was sent it. Names are as the graph tells things apart (`normalName`), accent marks off when naming is loose.
+ * was sent it. The things (`thing`, and each link's `from`) are as the graph tells things apart (`normalName`), with
+ * their accent marks under either naming; only the question's words (`words`, `met`) are folded, accent marks off,
+ * when naming is loose.
  *
  * @public
  */

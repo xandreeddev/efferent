@@ -216,11 +216,36 @@ words its path met. `near` is its first `limit`, so the two cannot drift apart.
 tagged `trace`, never stored: the question (its first `QUESTION_SHOWN`, 500, characters),
 the options, the names, and up to `RECALL_SHOWN` (100) links reached, each with the thing it
 was reached from and the link that led there, how often and when it was last said, and
-whether it was sent, the rest counted. Names are as the graph tells things apart, so a
-client matches them by `normalName`. It is said when nothing was named too, which is
+whether it was sent, the rest counted. The things (`thing`, and the `from` of each link) are
+as the graph tells things apart, `normalName`, with their accent marks under either naming, so
+a client matches them by `normalName`; only the question's words (`words`, `met`) are folded,
+their accent marks taken off, when naming is loose. It is said when nothing was named too, which is
 when a reader most needs to know why. It is said once per model call, since memory builds
 a context for each, so a turn with tools says it several times. A listener that fails is
 logged and costs the request nothing.
+
+## Amended: the note says how often and when
+
+The note a request is sent says, beside each link, how many turns said it and the day it was
+last said: `e1: Eva Novak works at Globex. (said 3 times, last 2025-05-03)`, the UTC day of
+its latest record (`saidText`), under a first line that says the lines carry both. `linksNote`
+takes one ordered list of said links (`SaidLink`, from `saidOf` of the journal the walk read),
+so no line can lack what the first line promises; `withGraph` gives it the links it sends, best
+first. Weights still decide which links are sent under the limit and in what order; the
+count and the day are what a model reads to choose among the lines it was sent.
+
+Measured on DeepSeek V4.1 Flash through the AI Gateway, on lesson 18's world, before and
+after. With bare lines (round 1), it called `followThings` before every answer; asked "Where
+does Eva Novak work now?", it named Cyberdyne in 8 of 8 (no weight, count, 365 and 730 days)
+and called it the most recent link, and asked what Bruno Reis eats most often, it said it
+could not tell (one run with no weight, one by count). What told it which link was recent is
+not known: `followThings` lists the newest link first. With counts and days (round 2), under
+weights by count it named pizza in 2 of 2, citing three sayings against one for pho; it named
+Cyberdyne in 4 of 4 (no weight and count), citing the day; and it called no tool in any of
+the 8 runs. Qwen2.5 0.5B, with the new lines, named Lisbon in 4 of 5
+for lesson 18's first question and "Lisboa" in the fifth. In this world no two links of one
+subject and relation have their ids and their days in a different order, so the days were not
+shown to do better than the ids: a link said later was also stored later.
 
 ## What would reopen this
 

@@ -767,10 +767,13 @@ export class LessonRuntime {
     return Result.succeed(ran.value)
   }
 
-  /** The conversation's journal, as stored; none before a durable lesson's program has named a conversation. */
-  async journal(): Promise<ReadonlyArray<StoredEvent>> {
-    if (this.session === NO_CONVERSATION) return []
-    const journal = await Effect.runPromise(Context.get(this.base, Sessions).read(this.session))
+  /**
+   * A session's journal, as stored: the conversation's unless another is named (lesson 18 reads the graph session's);
+   * none before a durable lesson's program has named a conversation.
+   */
+  async journal(session: SessionId = this.session): Promise<ReadonlyArray<StoredEvent>> {
+    if (session === NO_CONVERSATION) return []
+    const journal = await Effect.runPromise(Context.get(this.base, Sessions).read(session))
     return journal.events
   }
 
@@ -827,6 +830,25 @@ export class LessonRuntime {
       return Result.succeed(await Effect.runPromise(Fiber.await(fiber)))
     } finally {
       this.aloneRun = Option.none()
+      this.kitAlone = false
+    }
+  }
+
+  /**
+   * Load the lesson's world into the graph session (lesson 18, `Lesson.graph`), on the page's own base `Sessions`,
+   * the sessions the program reads. It takes turns with the chat, as a kit that runs alone does: refused while a turn
+   * runs (`TURN_RUNNING`) or while another such run is under way, and `checking` is true until it is over, so the
+   * page's Send, chips and model picker are off. Gives what was stored in words, or why nothing was.
+   */
+  async loadWorld(): Promise<Result.Result<string, string>> {
+    const graph = this.lesson.graph
+    if (graph === undefined) return Result.fail("this lesson has no world to load.")
+    if (this.busy || this.checking) return Result.fail(this.busy ? TURN_RUNNING : "it is running already.")
+    this.kitAlone = true
+    try {
+      const ran = await Effect.runPromise(Effect.exit(graph.load.pipe(Effect.provideService(Sessions, Context.get(this.base, Sessions)))))
+      return Exit.isSuccess(ran) ? Result.succeed(ran.value) : Result.fail(Option.match(Cause.findErrorOption(ran.cause), { onNone: () => buildFailure(ran.cause), onSome: (words) => words }))
+    } finally {
       this.kitAlone = false
     }
   }
