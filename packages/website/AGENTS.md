@@ -416,9 +416,12 @@ check` (tsc over the learn code, the build, the link check) and
     one under Acme Labs (another name is a `plugin.knowledge.aliased`), a
     pet `pet` (one Rex), a place `place`, a company `organization`, a
     project `project`, anyone else `person`; one memory per first saying of
-    a sentence (or a restatement of a standing memory that says it word for
-    word), a restatement for each saying after, and a later employer or
-    home ending the earlier one when it is another entity. Over the world
+    a sentence (or a restatement of a memory that says it word for word and
+    stands, or ended after the sentence's day: the fold does not count a
+    restatement of an ended memory, so what the world said before a
+    conversation changed it stays ended), a restatement for each saying
+    after, and a later employer or home ending the earlier one when it is
+    another entity. Over the world
     alone: 554 sources, 374 entities, 2 other names, 557 memories (44 said
     more than once), 97 restatements, 3 ended, 2,141 records; the graph
     page's "97 said again" counted sayings, a count of memories said more
