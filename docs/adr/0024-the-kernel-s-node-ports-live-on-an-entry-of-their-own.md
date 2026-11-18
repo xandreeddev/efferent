@@ -100,10 +100,13 @@ knowledge) included.
   answers `ESRCH`), and from one that names this process's id, which a process before this one had. It lets the
   store go, its holder file removed, when the layer's scope closes. A process id used again by another running
   process keeps the store held: the refusal names the file to remove.
-- **SQLite's own locks are not that writer.** Tried on Bun 1.3.0 and Node 24.16, on a local disk (ext4) and on
-  tmpfs: a process that ran `BEGIN IMMEDIATE` and an insert on `bun:sqlite` and waited did not stop another
-  process (on Bun or on Node) from writing the same file, where a Node process doing the same over `node:sqlite`
-  did (`SQLITE_BUSY`). A lock the store keeps itself holds on both runtimes.
+- **SQLite's own locks are not that writer.** They order writes one transaction at a time: a process holding
+  `BEGIN IMMEDIATE` with an insert refused another's write (`SQLITE_BUSY`), on Bun 1.3.0 and Node 24.16, each
+  runtime as either side (checked twice each way on a local disk). They do not say who the store's writer is
+  between transactions, and a directory of files has no such lock at all. One writer per store is a rule about
+  processes, kept by the store's own lock file on both stores. (A first trial, while this record was written,
+  saw a `bun:sqlite` transaction fail to stop another process's write; a later check with a busy timeout of 0
+  did not reproduce it.)
 - **Two handles of one process share the hold.** They take one lane for their writes, and the lock is released
   when the last closes. That is what the storage kit's `reopens` asks of a store whose journals outlive its handle
   (a second live handle that appends after the first), and what a host that builds the stack twice gets.
@@ -115,7 +118,9 @@ knowledge) included.
 ### Recovery
 
 - **Every turn a store holds open when a process takes it was a dead writer's.** No other process can have opened
-  it, and this one has opened none yet. `recoverTurns` (`@xandreed/sdk/kernel`, the session plugin's folder) is
+  it, and this one has opened none yet. So the step runs once per process, by the code that opened the store,
+  before any turn: two stacks of one process share the hold, and one that ran it while the other had a turn open
+  would close that live turn, since a `Sessions` knows only its own turns. `recoverTurns` (`@xandreed/sdk/kernel`, the session plugin's folder) is
   the host's recovery step: it lists the store and calls `Sessions.recover` on every session it reads, which stores
   `core.session.turn.ended` with the outcome `Abandoned` for a turn left open; it passes over a session of another
   journal format, and gives the turns it closed (`RecoveredTurn`). The journal records the outcome; nothing else
@@ -134,6 +139,9 @@ knowledge) included.
   stack, and `JournalStorageError` is unchanged (`api/core--kernel.api.txt` does not move).
 - A holder whose process is a zombie, or whose id another running process now has, counts as alive: the store stays
   held, and the refusal names the file to remove.
+- A holder that names this process's own id on this machine is taken over. Two containers that share the store's
+  volume, the same host name and the same process id (1, for each) would both take it: give each its own volume,
+  or its own host name.
 - One session `recoverTurns` cannot read (`Unreadable`) fails the whole step, and no turn after it in the listing is
   closed: a host repairs or removes that session first.
 - Listing reads each session file's first line; `recoverTurns` reads every journal of the store once. A store of

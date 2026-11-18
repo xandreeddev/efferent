@@ -93,9 +93,9 @@ const decodedRows = <A>(rows: ReadonlyArray<unknown>, decode: (row: unknown) => 
  * - One writer per database, a process: the layer takes the store as it is
  *   built (the folder `<path>.writer`, ADR 0024) and fails with
  *   `JournalOpenFailed` (`Held`) while another live process holds it; it is
- *   taken over from a holder whose process is gone. SQLite's own file locks
- *   are not that writer: a `bun:sqlite` transaction did not stop another
- *   process's write on Bun 1.3.0.
+ *   taken over from a holder whose process is gone. SQLite's own locks order
+ *   one transaction at a time; they do not name the store's one writer
+ *   between transactions, which the lock folder does.
  *   Two layers of one process share the hold, each with its own connection,
  *   and their writes take one lane.
  * - The schema (`PRAGMA user_version`, `SQLITE_SCHEMA`) and the application

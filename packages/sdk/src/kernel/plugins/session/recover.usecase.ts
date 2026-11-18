@@ -14,9 +14,11 @@ import type { RecoveredTurn } from "./recover.entity.js"
  * written in another journal format is passed over, as a host passes over
  * such a conversation. Gives the turns it closed.
  *
- * Run it once, after the store's layer is built and before any turn: the
- * kernel never runs it (ADR 0010), and run while a turn of this process is
- * open it is refused there (`SessionBusy`).
+ * Run it once per process, by the code that opened the store, after the
+ * store's layer is built and before any turn: the kernel never runs it (ADR
+ * 0010). A turn this `Sessions` holds open is refused there (`SessionBusy`);
+ * one another stack of the same process holds open is not known to it, and
+ * would be closed as `Abandoned`.
  *
  * @public
  */

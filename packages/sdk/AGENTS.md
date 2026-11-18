@@ -815,11 +815,12 @@ the package roots.
   process's id with no handle of this process holding it; let go when the
   last handle of the process closes. Two handles of one process share the
   hold and the lane: the storage kit's `reopens` runs two at once. SQLite's
-  own locks are not used for it: on Bun 1.3.0 a `bun:sqlite` transaction did
-  not stop another process's write to the file (ADR 0024). The rules are the pure `verdictOf`, held to a table test.
+  own locks order one transaction at a time and name no writer between
+  them, so they are not used for it (ADR 0024). The rules are the pure `verdictOf`, held to a table test.
 - `recoverTurns` (`plugins/session/recover.usecase.ts`, exported by the
   browser entry, `RecoveredTurn`): the host's recovery step once it holds a
-  store, before any turn; `Sessions.recover` on every session it reads,
+  store, before any turn, once per process by the code that opened the store
+  (a second stack of the process would close the first's live turn); `Sessions.recover` on every session it reads,
   passing over one of another journal format.
 - `JournalOpenFailed` (`reason`: `Held`, `Format`, `Unavailable`; `store`, the
   path given) is the error of each store's layer; `JournalStorageError` is

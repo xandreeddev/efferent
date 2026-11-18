@@ -28,7 +28,9 @@ describe("recoverTurns", () => {
       const again = yield* recoverTurns
       const ends = yield* Effect.forEach([conversation, helper, free, later], (id) => Effect.map(all.read(id), (journal) =>
         journal.events.flatMap((event) => Option.toArray(Option.map(dataOf(turnEndedEvent, event), (data) => data.outcome._tag)))), { concurrency: 1 })
-      return { closed: closed.map((one) => [one.session === conversation ? "conversation" : one.session === helper ? "helper" : one.session, Number(one.turn)]), again, ends }
+      // Sessions made in one millisecond are listed by id, which is random: the turns closed are compared as a set.
+      const named = closed.map((one) => [one.session === conversation ? "conversation" : one.session === helper ? "helper" : String(one.session), Number(one.turn)] as const)
+      return { closed: named.toSorted((a, b) => (a[0] < b[0] ? -1 : a[0] > b[0] ? 1 : 0)), again, ends }
     }).pipe(Effect.provide(sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))))))
     expect(result).toEqual({
       closed: [["conversation", 1], ["helper", 1]],
