@@ -49,7 +49,7 @@ export const clockAt = (at: number, live: Clock.Clock): Clock.Clock => ({
 /** Noon, UTC, of the day a sentence was said: the time of its day's source, and of every record stored for it. */
 export const noonOf = (said: string): number => Date.parse(`${said}T12:00:00Z`)
 
-/** Names the world means as one thing: another name, then the name it is stored under. */
+/** Names the world means as one thing: another name, then the name it is stored under when it is new. */
 const SAME: ReadonlyArray<readonly [other: string, name: string]> = [["Lisboa", "Lisbon"], ["Acme", "Acme Labs"]]
 
 /** A pet's relation: its object is the pet, by its name. */
@@ -135,13 +135,17 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
     const put = (draft: StoredDraft) => drafts.push({ draft, at })
     put(stored(sourceEvent, { id, said: [{ by: "host", text: said.map(sentenceOf).join("\n") }], at, meta: WORLD_META }))
     counts.sources++
-    /** The entity a name is, made under its stored name when the knowledge holds none, and given the name as another one when it is said under it. */
+    /**
+     * The entity a name is: the one the knowledge holds under it or under another name the world means as the same,
+     * else one made under the name the world stores it as. A name it is said under that the entity does not bear yet
+     * is given it as another name.
+     */
     const entityOf = (name: string, kind: string): EntityId => {
-      const other = SAME.find(([alias]) => normalName(alias) === normalName(name))
-      const named = other === undefined ? name : other[1]
-      const known = byName.get(normalName(named)) ?? byName.get(normalName(name))
-      const found = known ?? EntityId.make(`n${entity++}`)
-      if (known === undefined) {
+      const group = SAME.find((pair) => pair.some((one) => normalName(one) === normalName(name)))
+      const named = group === undefined ? name : group[1]
+      const known = Option.firstSomeOf([name, ...(group ?? [])].map((one) => Option.fromNullishOr(byName.get(normalName(one)))))
+      const found = Option.getOrElse(known, () => EntityId.make(`n${entity++}`))
+      if (Option.isNone(known)) {
         put(stored(entityEvent, { id: found, name: named, kind, source: id }))
         counts.entities++
         byName.set(normalName(named), found)
@@ -152,6 +156,7 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
         put(stored(aliasedEvent, { id: found, alias: name, source: id }))
         counts.aliases++
         names.add(normalName(name))
+        aliasesOf.set(found, names)
         byName.set(normalName(name), found)
       }
       return found

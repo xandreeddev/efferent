@@ -1,48 +1,20 @@
 ---
-// Steps 11 to 15: controls bound to memory.ts's withGraph call (see learn/playground.ts, `data-control`, and
-// lessons/connected-memory/config-edit.ts). Each writes one line of the call and runs the code again. The names and
-// weights are chips, a radio button each, with the note under each that lesson.test.ts pins. `step` keeps each
-// step's chips a group of their own.
-import { NAMES_CHIPS, WEIGHTS_CHIPS } from "../../../learn/lessons/connected-memory/config-edit.ts"
-
-interface Props {
-  /** The step the controls are in: their radio buttons' group names. */
-  step: string
-}
-const { step } = Astro.props
+// Controls bound to memory.ts's withKnowledge call (see learn/playground.ts, `data-control`, and
+// lessons/connected-memory/config-edit.ts). Each writes one line of the call and runs the code again. A value the
+// kernel does not take is written as given, and withKnowledge refuses it in its own words.
 ---
 
 <div class="learn-controls">
   <label>
-    <span>hops</span>
-    <input type="number" min="1" max="3" step="1" data-control="hops" />
-    <small>How many links away from a thing the question names the walk goes. The kernel takes 1 to 3.</small>
-  </label>
-  <label>
     <span>limit</span>
     <input type="number" min="1" max="50" step="1" data-control="limit" />
-    <small>The most links a request is sent. The kernel takes 1 to 50.</small>
+    <small>The most memories ranked first that a request is sent. The kernel takes 1 to 50.</small>
   </label>
-  <fieldset class="chips-choice wide">
-    <legend>names</legend>
-    {NAMES_CHIPS.map((chip) => (
-      <label class="chip-choice">
-        <input type="radio" name={`names-${step}`} value={chip.value} data-control="names" />
-        <span>{chip.label}</span>
-        <small>{chip.note}</small>
-      </label>
-    ))}
-  </fieldset>
-  <fieldset class="chips-choice wide">
-    <legend>weights</legend>
-    {WEIGHTS_CHIPS.map((chip) => (
-      <label class="chip-choice">
-        <input type="radio" name={`weights-${step}`} value={chip.value} data-control="weights" />
-        <span>{chip.label}</span>
-        <small>{chip.note}</small>
-      </label>
-    ))}
-  </fieldset>
+  <label>
+    <span>walk</span>
+    <input type="number" min="0" max="10" step="1" data-control="walk" />
+    <small>How many more places the walk by subject may add. The kernel takes 0 to 10.</small>
+  </label>
 </div>
 <p class="learn-note" data-controls-note hidden>
   A control is greyed out when its line is missing from your code. Press Reset in the Code pane to bring it back.

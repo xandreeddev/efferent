@@ -1,32 +1,40 @@
-// Lesson 18's Graph tab, as a model with no DOM: the fold of what the page
-// heard (each walk the kernel said, by turn and model call, and the graph
-// session's records), and the drawing of one walk, a pure function of the
-// kernel's `RecalledData` and those records. The walks are the kernel's own
-// (`walked`, `recalledOf`) over the journal the page's Load the world
-// writes, or heard on the page's runtime with Echo.
-import { afterEach, describe, expect, test } from "bun:test"
-import { Context, Effect, Layer, Option } from "effect"
-import { kernel, Sessions } from "@xandreed/core/kernel"
+// Lesson 18's Graph tab, as a model with no DOM: the drawing of one walk of
+// the graph contract, a pure function of the kernel's `RecalledData` and the
+// graph session's records. The walks are the kernel's own (`walked`,
+// `recalledOf`) over the world written as links. Lesson 18's page keeps its
+// memory with a curator now and makes no walk of the graph; the tab's
+// drawing of the knowledge session replaces this one in the lesson's next
+// part, with its own tests.
+import { describe, expect, test } from "bun:test"
+import { Clock, Context, Effect, Layer, Option } from "effect"
+import { kernel, SessionId, Sessions, stored, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
-import { graphSession, inProcessJournal, recalledOf, saidOf, saidText, sessions, walked, weightOf } from "@xandreed/sdk/kernel"
+import { graphSession, inProcessJournal, LinkId, linkedEvent, normalName, recalledOf, restatedEvent, saidOf, saidText, sessions, walked, weightOf } from "@xandreed/sdk/kernel"
 import type { GraphOptions, Link } from "@xandreed/sdk/kernel"
-import { emptyRecalls, graphViewOf, heardRecall, NAMED_NOTHING, ordinal, pickedRecall, recallLabel, recallsStartedOver } from "./graph-model.ts"
-import type { RecallBoard } from "./graph-model.ts"
-import { connectedMemory, QUESTION, SEVEN } from "./lessons/connected-memory/lesson.ts"
-import { loadWorld } from "./lessons/connected-memory/load-world.ts"
-import { loadEcho } from "./models/mock.ts"
-import { LessonRuntime } from "./runtime.ts"
-import type { Trace } from "./runtime.ts"
+import { graphViewOf, NAMED_NOTHING, ordinal } from "./graph-model.ts"
+import { clockAt } from "./lessons/connected-memory/load-world.ts"
+import { WORLD } from "./lessons/connected-memory/world.ts"
 
-const opened: Array<LessonRuntime> = []
-afterEach(async () => { await Promise.all(opened.splice(0).map((runtime) => runtime.dispose())) })
-
-/** The graph session's journal as Load the world writes it, on a store of its own: the world, and nothing before it. */
+/**
+ * The world as links in a graph session of its own, as lesson 18 loaded it before its curator: each sentence
+ * `plugin.graph.linked` the first time its parts are seen and `plugin.graph.restated` after, each at midnight of its
+ * day. The Graph tab still draws the graph's walks; lesson 18's page no longer makes any.
+ */
 const worldJournal = (): Promise<ReadonlyArray<StoredEvent>> => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
   const built = yield* Layer.build(sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())))
   const store = Context.get(built, Sessions)
-  yield* loadWorld.pipe(Effect.provideService(Sessions, store))
   const id = yield* graphSession.pipe(Effect.provideService(Sessions, store))
+  const live = yield* Clock.Clock
+  const known = new Map<string, LinkId>()
+  yield* store.turn(id, (session) => Effect.forEach(WORLD, ([subject, relation, object, said], index) => {
+    const key = [subject, relation, object].map(normalName).join("|")
+    const from = { session: SessionId.make("world"), turn: TurnNumber.make(index + 1) }
+    const again = known.get(key)
+    const link = again ?? LinkId.make(`e${known.size + 1}`)
+    if (again === undefined) known.set(key, link)
+    const draft = again === undefined ? stored(linkedEvent, { id: link, subject, relation, object, from }) : stored(restatedEvent, { id: again, from })
+    return session.append(draft).pipe(Effect.provideService(Clock.Clock, clockAt(Date.parse(`${said}T00:00:00Z`), live)))
+  }, { concurrency: 1, discard: true }))
   return (yield* store.read(id)).events
 })))
 
@@ -39,86 +47,7 @@ const recalledOver = (records: ReadonlyArray<StoredEvent>, question: string, opt
   return recalledOf(question, options, walk, said)
 }
 
-describe("the Graph tab's fold of what the page heard", () => {
-  test("each walk said in the conversation is the next model call of its turn; the graph session's records are kept; a new conversation keeps the records and drops the walks", async () => {
-    const runtime = await LessonRuntime.create(connectedMemory)
-    opened.push(runtime)
-    runtime.setModel(loadEcho())
-    let board: RecallBoard = emptyRecalls(runtime.conversation)
-    const heard: Array<Trace> = []
-    runtime.onTrace((trace) => { heard.push(trace); board = heardRecall(board, trace) })
-    expect(await runtime.start(Object.fromEntries(connectedMemory.files.map((file) => [file.id, file.defaultText])))).toEqual({ _tag: "Built" })
-    for (const message of [SEVEN, QUESTION]) {
-      const done = new Promise<void>((resolve) => { const stop = runtime.onTrace((trace) => { if (trace._tag === "Reply") { stop(); resolve() } }) })
-      runtime.send(message)
-      await done
-    }
-    // Turn 1 called the model twice (the seven calls, then the answer), turn 2 once: one walk each.
-    expect(board.recalls.map((one) => [one.turn, one.call, one.recalled.question])).toEqual([[1, 1, SEVEN], [1, 2, SEVEN], [2, 1, QUESTION]])
-    expect(board.recalls.map((one) => recallLabel(board, one))).toEqual(["Turn 1, model call 1 of 2", "Turn 1, model call 2 of 2", "Turn 2"])
-    // The records of the graph session: the seven links, heard as they were stored, and nothing of the conversation's.
-    expect(board.records.map((one) => String(one.name))).toEqual(Array.from({ length: 7 }, () => "plugin.graph.linked"))
-    // The latest is shown unless one is picked; a pick the board no longer holds falls back to the latest.
-    expect(Option.map(pickedRecall(board, { _tag: "Latest" }), (one) => one.turn)).toEqual(Option.some(2))
-    expect(Option.map(pickedRecall(board, { _tag: "Call", turn: 1, call: 2 }), (one) => [one.turn, one.call])).toEqual(Option.some([1, 2]))
-    expect(Option.map(pickedRecall(board, { _tag: "Call", turn: 9, call: 1 }), (one) => one.turn)).toEqual(Option.some(2))
-    // Any other trace leaves the board as it was.
-    const prompt = heard.find((trace) => trace._tag === "Prompt")!
-    expect(heardRecall(board, prompt)).toBe(board)
-    const next = recallsStartedOver(board, "the-next-conversation")
-    expect([next.chat, next.recalls, next.records]).toEqual(["the-next-conversation", [], board.records])
-    // A walk said in another conversation is not this one's.
-    const walk = heard.findLast((trace) => trace._tag === "Event" && trace.event._tag === "Live")!
-    expect(heardRecall(next, walk)).toBe(next)
-  })
-})
-
 describe("the Graph tab's drawing of one walk", () => {
-  test("the page's first question over its seven links: the things by how far they are, each link from the thing it was reached from, the two sent first lit, the rest dimmed with why", async () => {
-    const runtime = await LessonRuntime.create(connectedMemory)
-    opened.push(runtime)
-    runtime.setModel(loadEcho())
-    let board: RecallBoard = emptyRecalls(runtime.conversation)
-    runtime.onTrace((trace) => { board = heardRecall(board, trace) })
-    await runtime.start(Object.fromEntries(connectedMemory.files.map((file) => [file.id, file.defaultText])))
-    for (const message of [SEVEN, QUESTION]) {
-      const done = new Promise<void>((resolve) => { const stop = runtime.onTrace((trace) => { if (trace._tag === "Reply") { stop(); resolve() } }) })
-      runtime.send(message)
-      await done
-    }
-    const view = graphViewOf(board.recalls.at(-1)!.recalled, board.records)
-    expect(view.question).toBe(QUESTION)
-    expect(view.options).toBe('hops: 2 · limit: 5 · names: "exact" · weights: none')
-    expect(view.named).toEqual(['ana, by its own words in the question: "ana"'])
-    expect(view.nothing).toEqual(Option.none())
-    expect(view.walk).toBe("The walk reached 6 links, up to 2 links away from what was named, ranked best first: by the question's words their path met, then fewer links away, then the newer.")
-    expect(view.rows.map((row) => [row.rank, row.id, row.sentence, row.reached, row.met, row.sent, Option.getOrNull(row.why)])).toEqual([
-      [1, "e1", "Ana works at Acme", "1 link away, from named ana", ["work"], true, null],
-      [2, "e2", "Acme is in Lisbon", "2 links away, from acme, reached by e1", ["work"], true, null],
-      [3, "e7", "Ana drives a red car", "1 link away, from named ana", [], true, null],
-      [4, "e6", "Ana is the sister of Eva", "1 link away, from named ana", [], true, null],
-      [5, "e4", "Ana likes tea", "1 link away, from named ana", [], true, null],
-      [6, "e3", "Ana lives in Porto", "1 link away, from named ana", [], false, "met no word of the question, and ranked 6th, past the limit of 5"],
-    ])
-    expect(view.rows.every((row) => row.said.startsWith("said once, last ") && Option.isNone(row.weight))).toBe(true)
-    expect(view.sent).toBe("Sent 5 of the 6 links reached, in a note of about 121 tokens. Sending every link the graph holds, all 7, would take about 148 tokens.")
-    // Ana, named, on the left; her links' other ends one column on; Lisbon, two links away, the next.
-    expect(view.things.map((thing) => [thing.key, thing.label, thing.column, thing.row, Option.getOrNull(thing.named)])).toEqual([
-      ["ana", "Ana", 0, 0, "words"], ["acme", "Acme", 1, 0, null], ["lisbon", "Lisbon", 2, 0, null], ["a red car", "a red car", 1, 1, null],
-      ["eva", "Eva", 1, 2, null], ["tea", "tea", 1, 3, null], ["porto", "Porto", 1, 4, null],
-    ])
-    // Each link from the thing the walk reached it from: Acme is in Lisbon goes from Acme, which e1 led to. Every link
-    // was said once, so each is drawn as thick as the most said.
-    expect(view.edges.map((edge) => [edge.id, edge.from, edge.to, edge.rank, edge.sent, edge.width])).toEqual([
-      ["e1", "ana", "acme", 1, true, 4], ["e2", "acme", "lisbon", 2, true, 4], ["e7", "ana", "a red car", 3, true, 4],
-      ["e6", "ana", "eva", 4, true, 4], ["e4", "ana", "tea", 5, true, 4], ["e3", "ana", "porto", 6, false, 4],
-    ])
-    // How often and when, in the note's words, read from the journal: the page's clock is the real one.
-    const e3 = saidOf(board.records).find((one) => one.link.id === "e3")!
-    expect(view.edges[5]?.title).toBe(`e3: Ana lives in Porto. Ranked 6th, not sent; ${saidText(e3)}.`)
-    expect(view.rows[5]?.said).toBe(saidText(e3))
-  })
-
   test("over the world: a question named loosely, links weighed by count, how often each was said and when, and the thickness of each link against the most said", async () => {
     const records = await worldJournal()
     const recalled = recalledOver(records, "Where does Eva Nowak work now?", { hops: 2, limit: 5, names: "loose", weights: "count" })

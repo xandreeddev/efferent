@@ -159,6 +159,11 @@ export type Trace =
    * turn that stored the job's source. The kernel reads and checks it; nothing of it is stored.
    */
   | { readonly _tag: "CuratorAnswered"; readonly session: string; readonly turn: number; readonly source: string; readonly attempt: number; readonly job: "extract" | "review"; readonly reply: string }
+  /**
+   * A curation was cut short as the program stopped (Stop, a rebuild, Clear context; lesson 18): its source, filed
+   * where its curator's calls are. Its source stays pending, for the next program's turn to take up.
+   */
+  | { readonly _tag: "CurationCut"; readonly session: string; readonly turn: number; readonly source: string }
   /** The program took messages off the chat's queue: the next one, or every one that waited. A report taken says nothing. */
   | { readonly _tag: "Taken"; readonly count: number }
   /** A background task's report was put in the chat's queue, behind what came before it (lesson 17): it waits for a turn of its own. */
@@ -351,6 +356,8 @@ export class LessonRuntime {
    * the program stops: a curation cut short stores nothing more, and its source stays pending.
    */
   private readonly curatingSources = new Set<string>()
+  /** Where the curator's calls for each source being kept are filed: what a curation cut short is said under. */
+  private readonly curatingPlaces = new Map<string, { readonly session: string; readonly turn: number }>()
 
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
@@ -604,6 +611,7 @@ export class LessonRuntime {
     }
     const picked = model.choice.id
     const curatingSources = this.curatingSources
+    const curatingPlaces = this.curatingPlaces
     /**
      * Where the page files a curator's calls for a source (lesson 18): the knowledge session, and the turn of it that
      * stored the source. A store that cannot be read files them under turn 0 of no session, and the call goes on.
@@ -712,6 +720,7 @@ export class LessonRuntime {
         curate: (input) => Effect.gen(function* () {
           const place = yield* placeOfSource(input.job.source)
           curatingSources.add(input.job.source)
+          curatingPlaces.set(input.job.source, place)
           const reply = yield* curator.curate(input).pipe(Effect.provideService(Curating, Option.some(place)))
           yield* emit({ _tag: "CuratorAnswered", ...place, source: input.job.source, attempt: input.job.attempt, job: input.job.purpose, reply })
           return reply
@@ -751,7 +760,12 @@ export class LessonRuntime {
     await Effect.runPromise(Fiber.interrupt(program.value.fiber))
     await Effect.runPromise(Scope.close(program.value.scope, Exit.void))
     // A curation cut short stores nothing more: its source stays pending, for the next program's turn to take up.
+    for (const source of this.curatingSources) {
+      const place = this.curatingPlaces.get(source)
+      if (place !== undefined) this.emit({ _tag: "CurationCut", ...place, source })
+    }
     this.curatingSources.clear()
+    this.curatingPlaces.clear()
   }
 
   /** Builds run one at a time, in the order asked: a build that lands while another runs waits for it. */

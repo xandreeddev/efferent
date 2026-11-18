@@ -131,6 +131,8 @@ export interface CuratorCallSeen {
   readonly job: Option.Option<"extract" | "review">
   readonly reply: Option.Option<string>
   readonly failed: Option.Option<string>
+  /** The program stopped while it waited for this call's reply: Stop, a rebuild or Clear context cut it short. */
+  readonly cut: boolean
 }
 
 /** How a board's restored records came to be read: see `Board.readBack`. */
@@ -246,7 +248,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
     case "Prompt": {
       if (trace.session !== board.session) return board
       if (trace.purpose === "curation") {
-        const call: CuratorCallSeen = { model: trace.model, messages: trace.messages, job: Option.none(), reply: Option.none(), failed: Option.none() }
+        const call: CuratorCallSeen = { model: trace.model, messages: trace.messages, job: Option.none(), reply: Option.none(), failed: Option.none(), cut: false }
         return withEntry({ ...board, curations: append(board.curations, trace.turn, call) }, {
           ...base, kind: "prompt", turn: trace.turn,
           title: `curator prompt sent to ${trace.model}: ~${tokensOf(trace.messages)} tokens (a model call of the curator's, in no turn)`,
@@ -324,6 +326,12 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
     case "Session":
       // A session's header: what the row of sessions is built from (`heardBy`), and nothing of a board's own.
       return board
+    case "CurationCut":
+      // Lesson 18: the program stopped while the curator worked: a call still waiting for its reply was cut short.
+      if (trace.session !== board.session) return board
+      return withEntry({ ...board, curations: changeLast(board.curations, trace.turn, (call) => (Option.isNone(call.reply) && Option.isNone(call.failed) ? { ...call, cut: true } : call)) }, {
+        ...base, kind: "program", turn: trace.turn, title: `the curation of ${trace.source} was cut short as the program stopped`, detail: trace.source,
+      })
     case "CuratorAnswered":
       // Lesson 18: the curator's reply, for the call it answered: the last one filed under its source's turn.
       if (trace.session !== board.session) return board
@@ -750,17 +758,20 @@ const curatorSteps = (board: Board, stored: ReadonlyArray<StoredEvent>, curation
     }
     const answered: StepView = {
       id: `curator-answered-${index + 1}`, kind: "streamed", call: index + 1, column: "prompt", seqs: [], code: "the curator's reply",
-      state: Option.isSome(call.failed) ? "failed" : Option.isSome(call.reply) ? "done" : "now",
-      label: Option.isSome(call.failed) ? "Curator failed" : "Curator answered",
+      state: Option.isSome(call.failed) ? "failed" : Option.isSome(call.reply) ? "done" : call.cut ? "skipped" : "now",
+      label: Option.isSome(call.failed) ? "Curator failed" : Option.isSome(call.reply) ? "Curator answered" : call.cut ? "Curator cut short" : "Curator answering",
       detail: Option.match(call.failed, {
         onSome: (reason) => `The call failed: ${reason}`,
-        onNone: () => Option.match(call.reply, { onNone: () => "Waiting for the curator's reply.", onSome: (reply) => `Its reply, which the kernel reads and checks before anything is stored: ${clip(reply, 600)}` }),
+        onNone: () => Option.match(call.reply, {
+          onNone: () => call.cut ? "The program stopped (Stop, Rebuild or Clear context) before the curator answered: nothing of this curation was stored." : "Waiting for the curator's reply.",
+          onSome: (reply) => `Its reply, which the kernel reads and checks before anything is stored: ${clip(reply, 600)}`,
+        }),
       }),
     }
     return [asked, answered]
   })
   const state = knowledgeOf(board.records).sources.find((one) => one.source.id === source.id)?.state
-  const waits: ReadonlyArray<StepView> = state === undefined || state._tag === "Curated" || (state._tag === "Pending" && curations.some((call) => Option.isNone(call.reply) && Option.isNone(call.failed))) ? [] : [{
+  const waits: ReadonlyArray<StepView> = state === undefined || state._tag === "Curated" || (state._tag === "Pending" && curations.some((call) => Option.isNone(call.reply) && Option.isNone(call.failed) && !call.cut)) ? [] : [{
     id: "not-curated", kind: "stored-record", call: 0, column: "journal", seqs: [], code: "curateAgain(knowledge, source, options)",
     state: state._tag === "Failed" ? "failed" : "todo",
     label: state._tag === "Failed" ? `Not curated: ${state.attempts === 1 ? "its try" : `${state.attempts} tries`} failed` : "Not curated yet",
@@ -985,10 +996,10 @@ export interface Boards {
 
 export const emptyBoards = (chat: string): Boards => ({ chat, boards: new Map([[chat, emptyBoard(chat)]]), headers: new Map(), retired: new Set() })
 
-/** The session a trace is about: an event's, a context's, a prompt's and its failure's, a usage's and a header's own; anything the program told the chat is the chat's. */
+/** The session a trace is about: an event's, a context's, a prompt's and its failure's, a usage's, a header's and a curator's call's own; anything the program told the chat is the chat's. */
 export const sessionOfTrace = (trace: Trace, chat: string): string =>
   trace._tag === "Event" ? trace.event.session
-    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "PromptFailed" || trace._tag === "Usage" || trace._tag === "Session" ? trace.session
+    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "PromptFailed" || trace._tag === "Usage" || trace._tag === "Session" || trace._tag === "CuratorAnswered" || trace._tag === "CurationCut" ? trace.session
       : chat
 
 /**
