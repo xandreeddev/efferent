@@ -174,7 +174,11 @@ model to have it for one turn, or for the whole session, kept through compaction
 - **Hooks in core**, handlers that receive a value and return a changed one. A second
   mechanism beside events, which wrapping makes unnecessary.
 - **Listeners that append to the journal during a turn.** It would make events change
-  what a turn does, in an order that is hard to see.
+  what a turn does, in an order that is hard to see. (Narrowed by ADR 0022, 18 November
+  2026: the rule is that a listener never writes to the journal of the turn it hears. One
+  that hears a turn end may write to another session's journal, in a turn of that
+  session's own, as the curator's service will to the knowledge session. That changes
+  nothing the turn it heard does.)
 
 ## What would reopen this
 

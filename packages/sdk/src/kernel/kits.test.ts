@@ -31,7 +31,8 @@ import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import type { EmbedderSubject, FilePath, FilesSubject, KeyValueStore, SummarizerSubject, Vector, VectorKey, VectorStoreSubject } from "./index.js"
+import type { CuratorSubject, EmbedderSubject, FilePath, FilesSubject, KeyValueStore, SummarizerSubject, Vector, VectorKey, VectorStoreSubject } from "./index.js"
+import { CurationFailed, curationOf, Curator, curatorConformance } from "./index.js"
 import { EmbedFailed, Embedder, embedderConformance, inMemoryVectors, recordedEmbedder, VectorsRefused, VectorStore, vectorStoreConformance } from "./index.js"
 import { FileChanged, Files, filesConformance, inMemoryFiles, flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
 
@@ -617,6 +618,34 @@ describe("the summarizer kit", () => {
     // Blank only when it is handed an earlier summary: the second half of the check.
     expect(await failedChecks(summarizerConformance(subject(({ earlier }) => Effect.succeed(Option.isSome(earlier) ? "" : "A sum."))))).toEqual(["answers"])
     expect(await failedChecks(summarizerConformance(subject(() => Effect.die("the summarizer broke"))))).toEqual(["answers"])
+  })
+})
+
+describe("the curator kit", () => {
+  const subject = (curate: Context.Service.Shape<typeof Curator>["curate"]): CuratorSubject => ({ open: Effect.succeed(Curator.of({ curate })) })
+  const nothing = `{"entities":[],"aliases":[],"memories":[],"restates":[],"forget":[]}`
+
+  test("has the check its doc comment lists, and passes on a curator that answers each prompt, or fails as the contract says", async () => {
+    const asked: Array<string> = []
+    const scripted = subject(({ prompt, job }) => Effect.sync(() => {
+      asked.push(`${job.purpose} ${job.source} ${job.attempt} ${prompt.split("\n")[0]?.slice(0, 40)}`)
+      return nothing
+    }))
+    expect(ids(curatorConformance(scripted))).toEqual(["answers"])
+    expect(await failedChecks(curatorConformance(scripted))).toEqual([])
+    // It was asked once for each purpose, with the prompt of that purpose.
+    expect(asked).toEqual(["extract s1 1 You keep the long-term memory of an assi", "review s1 1 You check a proposed update to an assist"])
+    expect(await failedChecks(curatorConformance(subject(() => Effect.fail(new CurationFailed({ message: "the model is down" })))))).toEqual([])
+    // What the kit sends as a proposal to review is a reply `curationOf` reads.
+    expect(Option.isSome(curationOf(nothing))).toBe(true)
+  })
+
+  test("fails on a curator that answers with nothing, for either purpose, and on one that dies", async () => {
+    expect(await failedChecks(curatorConformance(subject(() => Effect.succeed(" \n"))))).toEqual(["answers"])
+    // Blank only when it is asked to review: the second half of the check.
+    expect(await failedChecks(curatorConformance(subject(({ job }) => Effect.succeed(job.purpose === "review" ? "" : nothing))))).toEqual(["answers"])
+    expect(await failedChecks(curatorConformance(subject(({ job }) => Effect.succeed(job.purpose === "extract" ? "" : nothing))))).toEqual(["answers"])
+    expect(await failedChecks(curatorConformance(subject(() => Effect.die("the curator broke"))))).toEqual(["answers"])
   })
 })
 

@@ -1,6 +1,9 @@
 # ADR 0014: What an agent knows across conversations is a journal of its own
 
-- **Status:** accepted, 15 November 2026
+- **Status:** accepted, 15 November 2026. Noted 18 November 2026: ADR 0022 keeps this record's first decision (what
+  an agent knows is a journal of its own, never a store beside it) and changes who writes it: a curator after the
+  turn, not the two tools. The facts contract and its plugin stay, unchanged, until the lessons that use them are
+  moved
 - **Applies to:** `@xandreed/sdk/kernel` (the facts contract, the `facts` plugin, a host's memory)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 

@@ -150,6 +150,8 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/graph.test.ts#connect",
       "packages/sdk/src/kernel/recall.test.ts#recall-memory",
       "packages/sdk/src/kernel/recall.test.ts#by-meaning",
+      "packages/sdk/src/kernel/knowledge.test.ts#curate",
+      "packages/sdk/src/kernel/knowledge.test.ts#records",
       "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/durable.test.ts#resume",
       "packages/sdk/src/kernel/branches.test.ts#branch",

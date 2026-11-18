@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { ToolCallId } from "@xandreed/core/kernel"
 import type { Message } from "@xandreed/core/kernel"
-import { estimateContext, estimateTokens, messageText, paired, promptMessage } from "./memory.entity.functions.js"
+import { clippedMarker, clipTo, estimateContext, estimateTokens, messageText, paired, promptMessage } from "./memory.entity.functions.js"
 
 const call = (id: string) => ({ id: ToolCallId.make(id), name: "add", input: { a: 2, b: 3 } })
 const asked = (text: string, ...ids: ReadonlyArray<string>): Message => ({ _tag: "Assistant", text, toolCalls: ids.map(call) })
@@ -62,5 +62,35 @@ describe("memory's helpers", () => {
     expect(Number(estimateContext([promptMessage(asked("", "c1")), promptMessage(answered("c1"))]))).toBe(Number(estimateTokens("add {\"a\":2,\"b\":3}")) + 1)
     expect(messageText(asked("Sure.", "c1"))).toBe("Sure. add {\"a\":2,\"b\":3}")
     expect(messageText(answered("c1"))).toBe("5")
+  })
+})
+
+describe("a text held to a length", () => {
+  test("a text that fits is given as it is, at the limit too", () => {
+    expect(clipTo("hello", 5)).toBe("hello")
+    expect(clipTo("", 0)).toBe("")
+  })
+
+  test("a longer text is its start, then a marker on a line of its own that counts what was left out, within the limit", () => {
+    const text = "a".repeat(100)
+    // The room is the limit less the longest marker the text could need and the line end before it.
+    expect(clipTo(text, 50)).toBe(`${"a".repeat(23)}\n[… 77 characters clipped]`)
+    expect(clipTo(text, 50)).toHaveLength(49)
+    expect(clippedMarker(77)).toBe("[… 77 characters clipped]")
+    // What was kept and what the marker counts are the whole text.
+    expect(23 + 77).toBe(text.length)
+  })
+
+  test("the start never ends on half a character: a pair of code units is kept whole or left out whole", () => {
+    // Twenty-two letters, then an emoji of two code units: there is room for 23, which would split it.
+    const text = `${"a".repeat(22)}\u{1F600}${"b".repeat(80)}`
+    expect(clipTo(text, 50)).toBe(`${"a".repeat(22)}\n[… 82 characters clipped]`)
+    expect(clipTo("\u{1F600}\u{1F600}", 3)).toBe("\u{1F600}")
+  })
+
+  test("a limit with no room for a marker gives the start alone", () => {
+    expect(clipTo("a".repeat(100), 10)).toBe("a".repeat(10))
+    expect(clipTo("abc", 0)).toBe("")
+    expect(clipTo("abc", -1)).toBe("")
   })
 })

@@ -60,5 +60,8 @@ open:
 ## What would reopen this
 
 - A memory that must call a model in the background, outside any turn's context call.
+  (Taken up by ADR 0022, 18 November 2026: long-term memory is kept after the turn, through
+  a `Curator` contract the host provides, as this record's `Summarizer` is provided. This
+  record stands for a summary, which is still asked for inside a context call.)
 - Summaries a client must edit, which would make the summary the conversation's and not
   the memory's.
