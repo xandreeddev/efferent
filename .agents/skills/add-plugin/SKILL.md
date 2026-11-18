@@ -34,7 +34,8 @@ data in `foundry.config.ts`.
      (`effect/ai`…) by name: one that none of them imports fails. The test
      libraries (`bun:test`, `fast-check`, `effect/testing`) go in the tests'
      layer only, the provider packages (`@effect/ai-*`) only in
-     `plugin-models`, Bun (`bun:sqlite`) only in `plugin-session-sqlite`: a
+     `plugin-models`, Bun (`bun:sqlite`) only in `plugin-session-sqlite` (and,
+     loaded only on Bun, the sdk kernel's SQLite journal, ADR 0024): a
      new package reaches a provider or the host through a port;
    - add `"packages/<name>/src/index.ts"` to `CURATED_ENTRIES`, and the
      file of each subpath its `exports` adds: `quality/exports-have-consumers`

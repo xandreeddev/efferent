@@ -120,6 +120,7 @@ const RecallEntry
 const RecallList
 const RecalledByMeaningData
 const RecalledData
+const RecoveredTurn
 const RefusedBecause
 const Relation
 const RememberFact
@@ -254,6 +255,7 @@ const recalledByMeaningOf
 const recalledEvent
 const recalledOf
 const recordedEmbedder
+const recoverTurns
 const relevant
 const rememberedFacts
 const reportText
@@ -409,6 +411,7 @@ type RecallItem
 type RecallList
 type RecalledByMeaningData
 type RecalledData
+type RecoveredTurn
 type RefusedBecause
 type Relation
 type RememberedFact

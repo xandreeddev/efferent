@@ -154,6 +154,7 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/knowledge.test.ts#records",
       "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/durable.test.ts#resume",
+      "packages/sdk/src/kernel/node/durable.test.ts#durable",
       "packages/sdk/src/kernel/branches.test.ts#branch",
       "packages/sdk/src/kernel/branches.test.ts#test",
       "packages/sdk/src/kernel/files.test.ts#stack",

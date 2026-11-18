@@ -132,6 +132,10 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-plugin-embedder-recorded",
   "sdk-kernel-plugin-vectors-in-memory",
   "sdk-kernel-plugin-recall",
+  "sdk-kernel-node",
+  "sdk-kernel-node-writer",
+  "sdk-kernel-node-journal-directory",
+  "sdk-kernel-node-journal-sqlite",
   "core/kernel",
 ]
 
@@ -193,6 +197,7 @@ const CURATED_ENTRIES: ReadonlyArray<string> = [
   "packages/sdk/src/index.ts",
   "packages/sdk/src/conformance/index.ts",
   "packages/sdk/src/kernel/index.ts",
+  "packages/sdk/src/kernel/node/index.ts",
 ]
 
 /**
@@ -521,8 +526,9 @@ const config: typeof GateSuiteConfig.Encoded = {
         canImport: ["core", "core/internal"],
         externals: ["effect", "effect/ai", "effect/http", "effect/socket", "@effect/ai-anthropic", "@effect/ai-openai", "undici", "ws", "node:"],
       },
-      // The one package that imports Bun (`bun:sqlite`), and so the one that
-      // does not load on Node.
+      // The one package that imports Bun (`bun:sqlite`) as it loads, and so the
+      // one that does not load on Node (the kernel's SQLite journal imports it
+      // only when it is built on Bun).
       ...testLayer("plugin-session-files", ["plugin-session-files", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:test", "fast-check"]),
       { name: "plugin-session-files", path: src("plugin-session-files"), canImport: ["core"], externals: ["effect", "node:"] },
       ...testLayer("plugin-session-sqlite", ["plugin-session-sqlite", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:sqlite", "bun:test"]),
@@ -581,8 +587,19 @@ const config: typeof GateSuiteConfig.Encoded = {
         name: "sdk-kernel-tests",
         path: `packages/sdk/src/kernel/${glob}`,
         canImport: [...SDK_KERNEL_TESTS],
-        externals: ["effect", "effect/ai", "node:", "bun:test"],
+        externals: ["effect", "effect/ai", "node:", "bun:sqlite", "bun:test"],
       })),
+      // The kernel's Node entry (`packages/sdk/src/kernel/node`, `./kernel/node`, ADR 0024): the ports that need a
+      // runtime's modules, which Node 24 and Bun both provide. One layer per folder: the one-writer lock
+      // (`writer/`), shared by the stores, and each port's folder, which imports core's kernel, the contracts and
+      // the lock, never another port's folder; then the entry, which reaches them all. None is in `sdk-kernel`'s
+      // `canImport`, so the browser entry cannot import one. `bun:sqlite` is imported only when the SQLite journal
+      // is built on Bun (`node:sqlite` on Node), so the entry loads on both. A new port's folder gets its layer
+      // here, its name in the entry's `canImport` and in `SDK_KERNEL_TESTS`.
+      { name: "sdk-kernel-node-writer", path: "packages/sdk/src/kernel/node/writer/**", canImport: ["core/kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-journal-directory", path: "packages/sdk/src/kernel/node/journal-directory/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-journal-sqlite", path: "packages/sdk/src/kernel/node/journal-sqlite/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:", "bun:sqlite"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
@@ -630,7 +647,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       ),
       ...testLayer("process-host", ["process-host", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-session-files", "plugin-sessions", "plugin-tasks", "plugin-tool-discovery"], ["effect", "effect/ai", "fast-check", "node:", "bun:test"]),
       { name: "process-host", path: src("process-host"), canImport: ["core"], externals: ["effect", "node:"] },
-      { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"], restricted: ["kernel"] },
+      { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"], restricted: ["kernel/node", "kernel"] },
       // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
       ...testLayer("plugin-render", ["plugin-render", "core", "core/internal"], ["effect", "node:", "bun:test"]),
       { name: "plugin-render", path: src("plugin-render"), canImport: ["core"], externals: ["effect", "effect/ai", "node:"] },
