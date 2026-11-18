@@ -88,6 +88,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const busy = () => state.runtime?.busy ?? false
   /** A kit that runs alone is running (lesson 12's checks): the chat takes no message, and no model is changed, until it is done. */
   const checking = () => state.runtime?.checking ?? false
+  /** The program's curator is keeping a turn (lesson 18): Stop cuts it, and what takes turns with the chat waits. */
+  const curating = () => state.runtime?.curating ?? false
   /** The buttons of the kits that run alone: off while a turn runs or a message waits for one, while a model loads, and while such a kit runs. */
   const aloneButtons = [
     ...[...document.querySelectorAll<HTMLButtonElement>("[data-kit]")].filter((button) => lesson.kits?.[button.dataset.kit ?? ""]?.alone === true),
@@ -170,14 +172,14 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const refresh = () => {
     const ready = Boolean(state.runtime && state.model && state.alive && !state.building && !checking())
     chat.setState({
-      ready, running: busy() || waitingCount(board) > 0,
+      ready, running: busy() || curating() || waitingCount(board) > 0,
       hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…"
         : checking() ? `${lesson.evals !== undefined ? "The evals are running" : lesson.calibration !== undefined ? "The graders are being checked" : lesson.graph !== undefined ? "The world is being loaded" : "The checks are running"}. The chat takes messages again when that is done.` : "Your program is not running. Fix it, then press Rebuild.",
     })
-    models.setBusy(state.loading || busy() || checking())
+    models.setBusy(state.loading || busy() || curating() || checking())
     // A kit that runs alone and the chat take turns: its button is off while a turn runs or a message waits for one.
     // It is off while a model loads too: the load lets go of the model a check would run on.
-    const aloneOff = checking() || state.loading || busy() || waitingCount(board) > 0
+    const aloneOff = checking() || state.loading || busy() || curating() || waitingCount(board) > 0
     aloneButtons.forEach((button) => { if (button.disabled !== aloneOff) button.disabled = aloneOff })
     if (state.loading) return setChip("loading model…", "idle")
     if (!state.runtime) return setChip("starting…", "idle")

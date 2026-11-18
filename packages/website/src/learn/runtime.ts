@@ -21,12 +21,19 @@
 // into the conversation: the person's messages and, in lesson 17, the reports
 // of background tasks, in the order they came. A turn's `drain` takes the
 // messages and leaves the reports, each of which gets a turn of its own; a
-// report still waiting when the program stops is dropped.
+// report still waiting when the program stops is dropped. A lesson whose
+// program keeps a memory with a curator (lesson 18) is given the curator's
+// model (`curatorModel`: the model picked when it is Echo or the gateway's,
+// else a page Echo) and has its curator watched (`watchCurator`): the
+// curator's model calls are traced as the curator's, on the knowledge
+// session and the turn that stored their source, never as the chat's.
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Schema, Scope, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
-import { Core, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
+import { Core, dataOf, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { Approval, CurrentTurn, Files, inMemoryFiles, inProcessJournal, Memory, sessions, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
+import {
+  Approval, curatedEvent, curationFailedEvent, Curator, CurrentTurn, Files, inMemoryFiles, inProcessJournal, knowledgeSession, Memory, sessions, sourceEvent, Summarizer, TaskReports,
+} from "@xandreed/sdk/kernel"
 import type { Decision, KeyValueStore, TaskReport } from "@xandreed/sdk/kernel"
 import { CHAT_OWNER, chatsOf } from "./chats.ts"
 import type { ChatEntry } from "./chats.ts"
@@ -99,6 +106,9 @@ export const KIT_TIMEOUT = "5 seconds"
 /** What `runKit` says of a kit that runs alone, asked for while a turn runs in the chat. */
 export const TURN_RUNNING = "a turn is running in the chat. Run this when it has answered."
 
+/** What the page says of a run that takes turns with the chat, asked for while the curator keeps a turn (lesson 18). */
+export const CURATING = "the curator is keeping the last turn. Run this when it is done."
+
 /**
  * A message as the page shows it: who it is from, its text, and the key that matches it to the record it came
  * from (a tool call and a result have no text of their own to match by: they match by the call's id).
@@ -134,16 +144,21 @@ export type Trace =
    * model it was sent to, as its answers name it, and `picked` the model picked when it was sent: they differ for
    * the spare's prompts (lesson 14).
    */
-  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly model: string; readonly picked: string; readonly purpose?: "summary"; readonly givenTurn?: true }
+  | { readonly _tag: "Prompt"; readonly session: string; readonly turn: number; readonly messages: ReadonlyArray<Said>; readonly tools: ReadonlyArray<string>; readonly model: string; readonly picked: string; readonly purpose?: Purpose; readonly givenTurn?: true }
   /**
    * The stream of the session's turn's last prompt failed, in these words: that attempt has no answer (lesson 14,
    * a call under a plan). Said by the stream itself, so it always follows its own prompt and comes before the
    * next. A stream that was stopped is not said to have failed. A summarizer's (`purpose: "summary"`) is no try of
    * the turn's model call.
    */
-  | { readonly _tag: "PromptFailed"; readonly session: string; readonly turn: number; readonly reason: string; readonly purpose?: "summary" }
-  /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`. */
-  | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: "summary" }
+  | { readonly _tag: "PromptFailed"; readonly session: string; readonly turn: number; readonly reason: string; readonly purpose?: Purpose }
+  /** What the provider reported the last prompt cost, a summarizer's with `purpose: "summary"`, a curator's with `purpose: "curation"`. */
+  | { readonly _tag: "Usage"; readonly session: string; readonly turn: number; readonly usage: Reported; readonly purpose?: Purpose }
+  /**
+   * The curator answered (lesson 18): its reply's text, for the job named, filed on the knowledge session under the
+   * turn that stored the job's source. The kernel reads and checks it; nothing of it is stored.
+   */
+  | { readonly _tag: "CuratorAnswered"; readonly session: string; readonly turn: number; readonly source: string; readonly attempt: number; readonly job: "extract" | "review"; readonly reply: string }
   /** The program took messages off the chat's queue: the next one, or every one that waited. A report taken says nothing. */
   | { readonly _tag: "Taken"; readonly count: number }
   /** A background task's report was put in the chat's queue, behind what came before it (lesson 17): it waits for a turn of its own. */
@@ -181,6 +196,12 @@ export type Trace =
    */
   | { readonly _tag: "Session"; readonly session: string; readonly owner: string; readonly parent?: string }
 
+/**
+ * Whose model call a prompt is, when it is not the turn's loop's: a summarizer's, made while memory compacted
+ * (lesson 5), or a curator's, made while a turn was kept (lesson 18).
+ */
+export type Purpose = "summary" | "curation"
+
 export type BuildResult =
   | { readonly _tag: "Built" }
   | { readonly _tag: "Refused"; readonly message: string }
@@ -193,6 +214,13 @@ type BaseServices = Core | JournalStorage | Sessions
  * makes is told from the turn's by what it runs in, however many run at once.
  */
 const Summarizing = Context.Reference<boolean>("learn/Summarizing", { defaultValue: () => false })
+
+/**
+ * The curator's job under way, if any (lesson 18): the page's own, as `Summarizing` is. `watchCurator` provides it
+ * around `curate`, with the knowledge session and the turn that stored the job's source, and the model watcher files
+ * a call made in it there, as the curator's.
+ */
+const Curating = Context.Reference<Option.Option<{ readonly session: string; readonly turn: number }>>("learn/Curating", { defaultValue: () => Option.none() })
 
 const count = (value: unknown, key: string): Option.Option<number> =>
   typeof value === "object" && value !== null && key in value && typeof (value as Record<string, unknown>)[key] === "number"
@@ -311,6 +339,19 @@ export class LessonRuntime {
   /** The page's spare (lesson 14): a second Echo, built once, which a plan's second step provides. */
   private readonly spare: LoadedModel = loadEcho(undefined, SPARE)
 
+  /**
+   * The curator's Echo (lesson 18): what curates while a model that runs in the browser is picked. A local model
+   * cannot read the curation prompt (about 2,300 tokens) in one request, so Echo curates by rule in its place.
+   */
+  private readonly curatorEcho: LoadedModel = loadEcho()
+
+  /**
+   * The sources the program's curator is keeping now (lesson 18): from the record that stored a source, or the
+   * curator's first call for one taken up again, until the record that says it was curated or failed. Emptied when
+   * the program stops: a curation cut short stores nothing more, and its source stays pending.
+   */
+  private readonly curatingSources = new Set<string>()
+
   /** A durable lesson's store, once its program has built one: what the base's storage hands every call to. */
   private store: Option.Option<Context.Service.Shape<typeof JournalStorage>> = Option.none()
 
@@ -428,10 +469,15 @@ export class LessonRuntime {
     })
     const ended = (session: string) => { this.openTurns.delete(session) }
     const heard = (event: KernelEvent) => this.emit({ _tag: "Event", event })
+    const curating = this.curatingSources
     return Effect.gen(function* () {
       // Waited for, so a prompt sent in a turn finds that turn here.
       yield* core.on(turnStartedEvent, (event) => Effect.andThen(Effect.sync(() => started(sessionOf(event), event.data.turn)), named(sessionOf(event))), { name: "page-turns", wait: true })
       yield* core.on(turnEndedEvent, (event) => Effect.sync(() => ended(sessionOf(event))), { name: "page-turns", wait: true })
+      // Lesson 18: a source stored starts a curation, and the record that it was curated or failed ends it.
+      yield* core.on(sourceEvent, (event) => Effect.sync(() => { curating.add(event.data.id) }), { name: "page-curations", wait: true })
+      yield* core.on(curatedEvent, (event) => Effect.sync(() => { curating.delete(event.data.source) }), { name: "page-curations", wait: true })
+      yield* core.on(curationFailedEvent, (event) => Effect.sync(() => { curating.delete(event.data.source) }), { name: "page-curations", wait: true })
       yield* Effect.forkScoped(Stream.runForEach(core.events, (event) => Effect.sync(() => heard(event))), { startImmediately: true })
     })
   }
@@ -449,6 +495,20 @@ export class LessonRuntime {
   /** Whether a kit that runs alone is running: the chat takes no message until it is done. */
   get checking(): boolean {
     return this.kitAlone
+  }
+
+  /**
+   * Whether the program's curator is keeping a turn (lesson 18): the program takes the next message once it is done.
+   * A run that takes turns with the chat (Load the world, a kit that runs alone) is refused meanwhile, so no two
+   * writers hit the knowledge session at once.
+   */
+  get curating(): boolean {
+    return this.curatingSources.size > 0
+  }
+
+  /** Why a run that takes turns with the chat cannot start now, if it cannot: a turn runs, the curator keeps one, or another such run is under way. */
+  private notAlone(): Option.Option<string> {
+    return this.busy ? Option.some(TURN_RUNNING) : this.curating ? Option.some(CURATING) : this.checking ? Option.some("it is running already.") : Option.none()
   }
 
   /** Whether a program runs. */
@@ -543,6 +603,19 @@ export class LessonRuntime {
       return { session, turn: this.openTurns.get(session) ?? 0 }
     }
     const picked = model.choice.id
+    const curatingSources = this.curatingSources
+    /**
+     * Where the page files a curator's calls for a source (lesson 18): the knowledge session, and the turn of it that
+     * stored the source. A store that cannot be read files them under turn 0 of no session, and the call goes on.
+     */
+    const placeOfSource = (source: string): Effect.Effect<{ readonly session: string; readonly turn: number }> =>
+      Effect.provideService(knowledgeSession, Sessions, sessionsOf).pipe(
+        Effect.flatMap((session) => Effect.map(sessionsOf.read(session), (journal) => ({
+          session: String(session),
+          turn: Number(journal.events.find((event) => Option.exists(dataOf(sourceEvent, event), (data) => data.id === source))?.turn ?? 0),
+        }))),
+        Effect.catchCause(() => Effect.succeed({ session: "", turn: 0 })),
+      )
     /**
      * A model as the page hands it to the program, watched: each prompt it is sent and the usage it reports are
      * traced under `name`, the name its answers give, and a stream that fails says so (`PromptFailed`). `failures`
@@ -559,16 +632,18 @@ export class LessonRuntime {
         streamText: ((options: { readonly prompt: Prompt.RawInput; readonly toolkit?: unknown }) => Stream.unwrap(Effect.gen(function* () {
           const current = yield* Effect.serviceOption(CurrentTurn)
           const summarizing = yield* Summarizing
-          const { session, turn } = Option.match(current, { onNone: guessed, onSome: (running) => ({ session: String(running.id), turn: Number(running.turn) }) })
+          const curation = yield* Curating
+          // A curator's call (lesson 18) runs in no turn: it is filed on the knowledge session, under its source's turn.
+          const { session, turn } = Option.getOrElse(curation, () => Option.match(current, { onNone: guessed, onSome: (running) => ({ session: String(running.id), turn: Number(running.turn) }) }))
           const kit = options.toolkit
           const tools = typeof kit === "object" && kit !== null && "tools" in kit && typeof kit.tools === "object" && kit.tools !== null ? Object.keys(kit.tools) : []
-          const purpose = summarizing ? { purpose: "summary" as const } : {}
+          const purpose = Option.isSome(curation) ? { purpose: "curation" as const } : summarizing ? { purpose: "summary" as const } : {}
           // A stream that runs with a turn was handed to the kernel's `modelAnswer` (or is a summarizer's): the Context
           // tab then names that function, not the lines a loop would write by hand.
           const given = Option.isSome(current) ? { givenTurn: true as const } : {}
           yield* emit({ _tag: "Prompt", session, turn, messages: saidOf(options.prompt), tools, model: name, picked, ...purpose, ...given })
-          // A summarizer's call is not one the list counts.
-          const made = summarizing ? Option.none() : Option.fromNullishOr(failures[counted++])
+          // A summarizer's call is not one the list counts, nor a curator's.
+          const made = summarizing || Option.isSome(curation) ? Option.none() : Option.fromNullishOr(failures[counted++])
           const failed = (reason: string) => emit({ _tag: "PromptFailed", session, turn, reason, ...purpose })
           return Option.match(made, { onNone: () => Reflect.apply(inner.streamText, inner, [options]), onSome: (failure) => madeFailure(name, failure) }).pipe(
             Stream.tap((part: unknown) => Option.match(usageOf(part), { onNone: () => Effect.void, onSome: (usage) => emit({ _tag: "Usage", session, turn, usage, ...purpose }) })),
@@ -627,6 +702,21 @@ export class LessonRuntime {
       watchSummarizer: (layer) => Layer.effect(Summarizer, Effect.map(Effect.gen(function* () { return yield* Summarizer }), (summarizer) => Summarizer.of({
         summarize: (input) => summarizer.summarize(input).pipe(Effect.provideService(Summarizing, true)),
       }))).pipe(Layer.provide(layer)),
+      // Lesson 18: the model the curator asks. The model picked when it is Echo or the gateway's; a model that runs in
+      // the browser cannot read the curation prompt in one request, so the page's Echo curates by rule in its place.
+      curatorModel: Layer.succeed(LanguageModel.LanguageModel, model.choice.kind === "echo" || model.choice.kind === "gateway" ? watch(model.model, picked) : watch(this.curatorEcho.model, this.curatorEcho.choice.id)),
+      // A model call made inside `curate` is the curator's: it runs with `Curating` set to the knowledge session and the
+      // turn that stored its source, which the model watcher reads. Its reply is traced too: nothing of it is stored.
+      // The source counts as being kept from the curator's first call, so a source taken up again counts too.
+      watchCurator: (layer) => Layer.effect(Curator, Effect.map(Effect.gen(function* () { return yield* Curator }), (curator) => Curator.of({
+        curate: (input) => Effect.gen(function* () {
+          const place = yield* placeOfSource(input.job.source)
+          curatingSources.add(input.job.source)
+          const reply = yield* curator.curate(input).pipe(Effect.provideService(Curating, Option.some(place)))
+          yield* emit({ _tag: "CuratorAnswered", ...place, source: input.job.source, attempt: input.job.attempt, job: input.job.purpose, reply })
+          return reply
+        }),
+      }))).pipe(Layer.provide(layer)),
       // The learner's store is built, and is what the base's storage hands every call to from here on.
       storeOn: (layer) => Layer.effect(JournalStorage, Effect.map(Effect.gen(function* () { return yield* JournalStorage }), (store) => {
         this.store = Option.some(store)
@@ -660,6 +750,8 @@ export class LessonRuntime {
     if (Option.isNone(program)) return
     await Effect.runPromise(Fiber.interrupt(program.value.fiber))
     await Effect.runPromise(Scope.close(program.value.scope, Exit.void))
+    // A curation cut short stores nothing more: its source stays pending, for the next program's turn to take up.
+    this.curatingSources.clear()
   }
 
   /** Builds run one at a time, in the order asked: a build that lands while another runs waits for it. */
@@ -714,6 +806,7 @@ export class LessonRuntime {
     const dropped = textsOf(takeExcept(this.queue, isReport))
     if (Option.isSome(this.model)) this.model.value.interrupt()
     this.spare.interrupt()
+    this.curatorEcho.interrupt()
     return { dropped, result: await this.start(this.last) }
   }
 
@@ -792,7 +885,8 @@ export class LessonRuntime {
     const kit = this.lesson.kits?.[id]
     if (kit === undefined) return Result.fail(`this lesson has no kit named ${id}`)
     const alone = kit.alone === true
-    if (alone && (this.busy || this.checking)) return Result.fail(this.busy ? TURN_RUNNING : "it is running already.")
+    const refused = this.notAlone()
+    if (alone && Option.isSome(refused)) return Result.fail(refused.value)
     const model = Option.map(this.model, (loaded) => Layer.succeed(LanguageModel.LanguageModel, loaded.model))
     const checks = kit.checks(sources, memoryStore, model)
     if (Result.isFailure(checks)) return Result.fail(checks.failure)
@@ -820,7 +914,8 @@ export class LessonRuntime {
    * was stopped ends interrupted.
    */
   async runAlone<A>(start: (model: Option.Option<LoadedModel>) => Promise<Result.Result<Effect.Effect<A, unknown>, string>>): Promise<Result.Result<Exit.Exit<A, unknown>, string>> {
-    if (this.busy || this.checking) return Result.fail(this.busy ? TURN_RUNNING : "it is running already.")
+    const refused = this.notAlone()
+    if (Option.isSome(refused)) return Result.fail(refused.value)
     this.kitAlone = true
     try {
       const made = await start(this.model)
@@ -835,15 +930,17 @@ export class LessonRuntime {
   }
 
   /**
-   * Load the lesson's world into the graph session (lesson 18, `Lesson.graph`), on the page's own base `Sessions`,
+   * Load the lesson's world into the knowledge session (lesson 18, `Lesson.graph`), on the page's own base `Sessions`,
    * the sessions the program reads. It takes turns with the chat, as a kit that runs alone does: refused while a turn
-   * runs (`TURN_RUNNING`) or while another such run is under way, and `checking` is true until it is over, so the
-   * page's Send, chips and model picker are off. Gives what was stored in words, or why nothing was.
+   * runs (`TURN_RUNNING`), while the curator keeps a turn (`CURATING`) or while another such run is under way, and
+   * `checking` is true until it is over, so the page's Send, chips and model picker are off. Gives what was stored in
+   * words, or why nothing was.
    */
   async loadWorld(): Promise<Result.Result<string, string>> {
     const graph = this.lesson.graph
     if (graph === undefined) return Result.fail("this lesson has no world to load.")
-    if (this.busy || this.checking) return Result.fail(this.busy ? TURN_RUNNING : "it is running already.")
+    const refused = this.notAlone()
+    if (Option.isSome(refused)) return Result.fail(refused.value)
     this.kitAlone = true
     try {
       const ran = await Effect.runPromise(Effect.exit(graph.load.pipe(Effect.provideService(Sessions, Context.get(this.base, Sessions)))))

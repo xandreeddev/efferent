@@ -879,6 +879,9 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   return { text: echoReply(toChatMessages(sent)), calls: [] }
 }
 
+/** Whether a request is one the curator sends (lesson 18): its reply comes at once, with no wait between words. */
+const isCurationReply = (request: string): boolean => isCurationPrompt(request) || isReviewPrompt(request)
+
 /** This page load's ids for Echo's tool calls. */
 const echoCallId = callIds("echo-call")
 
@@ -902,6 +905,10 @@ export const loadEcho = (callId: () => string = echoCallId, name: string = echoC
       const messages = toChatMessages(options.prompt)
       const { text: reply, calls } = uses === "tools" && options.tools.length > 0 ? echoStep(options.prompt, options.tools.map((tool) => tool.name)) : { text: echoReply(messages), calls: [] }
       const asked = calls.map((call) => ({ type: "tool-call" as const, id: callId(), name: call.name, params: call.params }))
+      // A curator's reply (lesson 18) is data for the kernel to read, not words for a person: it comes in one piece, at once.
+      const curation = isCurationReply(messages.findLast((message) => message.role === "user")?.content ?? "")
+      const pieces = curation ? [reply] : words(reply)
+      const pause = curation ? Effect.void : Effect.sleep("35 millis")
       return Stream.unwrap(Effect.acquireRelease(
         Effect.sync(() => {
           const answer = { stopped: false }
@@ -909,8 +916,8 @@ export const loadEcho = (callId: () => string = echoCallId, name: string = echoC
           return answer
         }),
         (answer) => Effect.sync(() => { writing.delete(answer) }),
-      ).pipe(Effect.map((answer) => Stream.fromIterable(words(reply)).pipe(
-        Stream.mapEffect((word) => Effect.sleep("35 millis").pipe(Effect.as(word))),
+      ).pipe(Effect.map((answer) => Stream.fromIterable(pieces).pipe(
+        Stream.mapEffect((word) => pause.pipe(Effect.as(word))),
         Stream.takeWhile(() => !answer.stopped),
         Stream.map(streamDelta),
         (deltas) => Stream.concat(Stream.concat(Stream.make(streamStart), deltas), Stream.suspend(() => Stream.fromIterable([streamEnd, ...(answer.stopped ? [] : asked), streamFinish(usageOf(messages, reply))]))),

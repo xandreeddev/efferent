@@ -1844,7 +1844,7 @@ describe("Echo as the curator, and Echo reading the note of memories (lesson 18)
     const { outcomes, knowledge } = await curated([["Where does Bo work? Ana knows Bo.", "Bo works at Globex, I think."]])
     expect(droppedOf(outcomes)).toEqual([])
     expect(knowledge.memories).toEqual([])
-    expect(knowledge.entities.map((entity) => entity.id)).toEqual(["n1"])
+    expect(knowledge.entities.map((entity) => String(entity.id))).toEqual(["n1"])
   })
 
   test("the review prompt is answered with the proposal unchanged; the rules are asleep unless the prompt's first line is the kernel's, word for word", () => {

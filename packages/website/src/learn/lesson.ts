@@ -6,7 +6,7 @@ import { Option } from "effect"
 import type { Duration, Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xandreed/core/kernel"
-import type { Approval, Files, KeyValueStore, Memory, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
+import type { Approval, Curator, Files, KeyValueStore, Memory, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 import type { EvalsView } from "./lessons/evals/board.ts"
 import type { GradersView } from "./lessons/grade-the-grader/board.ts"
@@ -101,6 +101,16 @@ export interface PageParts {
   readonly watchMemory: <E, R>(layer: Layer.Layer<Memory, E, R>) => Layer.Layer<Memory, E, R>
   /** A wrapper around the learner's summarizer (lesson 5), so the page tells its model calls from the turn's. */
   readonly watchSummarizer: <E, R>(layer: Layer.Layer<Summarizer, E, R>) => Layer.Layer<Summarizer, E, R>
+  /**
+   * The model a curator asks (lesson 18): the model picked when it is Echo or a gateway's model, else the page's own
+   * Echo, which curates by rule: a model that runs in the browser cannot read the curation prompt in one request.
+   */
+  readonly curatorModel: Layer.Layer<LanguageModel.LanguageModel>
+  /**
+   * A wrapper around the learner's curator (lesson 18), so the page files its model calls as the curator's, on the
+   * knowledge session and the turn that stored their source, and hears each reply.
+   */
+  readonly watchCurator: <E, R>(layer: Layer.Layer<Curator, E, R>) => Layer.Layer<Curator, E, R>
   /**
    * A durable lesson's store (lesson 7): the learner's layer is built, and the base's sessions, the page's own
    * reads and the program all go through it from then on.
@@ -240,13 +250,12 @@ export interface Lesson {
    */
   readonly tasks?: true
   /**
-   * The lesson's graph (lesson 18): the Graph tab beside Context, which draws what the walk of each request did, and
-   * the world a `data-world` button ("Load the world") writes into the graph session. The load takes turns with the
-   * chat (`runtime.loadWorld`).
+   * The lesson's graph (lesson 18): the Graph tab beside Context, and the world a `data-world` button ("Load the
+   * world") writes into the knowledge session. The load takes turns with the chat (`runtime.loadWorld`).
    */
   readonly graph?: {
     /**
-     * Load the world: every sentence stored in the graph session in one turn, with no tool call, or nothing. What it
+     * Load the world: every sentence kept in the knowledge session in one turn, with no model, or nothing. What it
      * stored, in words, or why it stored nothing. The runtime provides its own base `Sessions`.
      */
     readonly load: Effect.Effect<string, string, Sessions>
