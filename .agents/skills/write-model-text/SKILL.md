@@ -21,6 +21,7 @@ cached prefixes. Treat a wording change like an API change.
 | Result views and compact forms | beside the descriptions (`plugin-workspace/src/workspace-tools.entity.functions.ts`) | tool results; the compact form in older turns |
 | Correctives, host notes, compaction handoffs | `plugin-agent-loop/src/loop.ts`, `core/src/memory/*`, `core/src/internal/mapping.entity.functions.ts` | user-role messages |
 | Utility prompts | `summaryPrompt` (plugin-memory-summary), `digestPrompt` (plugin-memory-digest) | a `UtilityLlm` completion |
+| The kernel's curation prompts | `curationPrompt`, `reviewPrompt` (`sdk/src/kernel/contracts/knowledge/knowledge-prompt.entity.functions.ts`) | the host's `Curator`, which sends them to a model |
 
 ## 2. Write it
 
@@ -62,8 +63,10 @@ Untrusted: tool output, file contents, workspace SKILL.md files, task
 replies, inbox items, transcripts, summaries a model wrote, third-party MCP
 descriptions. Use core's helpers (`packages/core/src/turn/model-text.ts`,
 exported from `@xandreed/core`); never hand-roll a frame or a marker. Kernel
-code, which never imports core's root, uses the memory contract's `hostNote`
-and `framed` from `@xandreed/sdk/kernel`, the same frames.
+code, which never imports core's root, uses the memory contract's `hostNote`,
+`framed` and `clipTo` from `@xandreed/sdk/kernel`, the same frames and marker.
+The kernel's `framed` makes a copy of its tag inert by its hyphen, so a
+kernel frame's tag always has one (`this-turn`, never `turn`).
 
 - `framed(tag, text)` puts untrusted text inside `<tag>…</tag>`, each on its
   own line, after `escapeFrame(tag, text)` made any copy of the tag inside

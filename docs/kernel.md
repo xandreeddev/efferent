@@ -860,6 +860,14 @@ when its writer has them.
 | `plugin.window.dropped` | the window memory, when whole turns leave the window | stored; may be skipped | `memory` |
 | `plugin.window.pressure` | the window memory, when a context came close to the budget | live only | `memory` |
 | `plugin.graph.recalled` | the graph's memory wrapper, for every model call, with what its walk did | live only | `trace` |
+| `plugin.knowledge.source` | whoever keeps the knowledge, before a curator is asked: what was said, in parts | stored, in the knowledge session | `memory` |
+| `plugin.knowledge.entity` | the same, from a checked reply: a named thing | stored | `memory` |
+| `plugin.knowledge.aliased` | the same: another name an entity bears | stored; may be skipped | `memory` |
+| `plugin.knowledge.memory` | the same: a sentence about entities, with the quote it rests on | stored | `memory` |
+| `plugin.knowledge.restated` | the same: a standing memory said again | stored; may be skipped | `memory` |
+| `plugin.knowledge.ended` | the same: a memory that no longer stands, why, and what replaced it | stored | `memory` |
+| `plugin.knowledge.curated` | the service that curates, after a source was read (the service comes next) | stored | `memory` |
+| `plugin.knowledge.failed` | the same, after a try that failed | stored | `memory` |
 | `plugin.inbox.queued` | the inbox, as it queues a message, with its ticket | live only; about the session, no turn | `ui` |
 | `core.listener.failed` | core, when a listener fails where nothing can fail for it | live only | `trace` |
 
@@ -1601,6 +1609,147 @@ in the kernel: on the questions held out from every choice, a keyword
 ranking added over the vectors answered fewer than the vectors alone, read
 from the stored ranks after the fact (ADR 0021 has the counts); a host that wants one writes it as its `reorder`.
 
+## Knowledge kept by a curator
+
+Facts and links are written by the agent, with tools, while it answers. What
+it writes it does not keep up: it does not say a thing again, and nothing
+marks what stopped being true. The knowledge contract moves that work out of
+the turn (ADR 0022). A turn is answered first; then what was said is stored
+as a **source**, a **curator** reads it beside what is already stored, and
+what it proposes is checked and appended to a journal of its own, the
+knowledge session (`KNOWLEDGE_OWNER`). The curator is a contract the host
+provides, `Curator`, over the model it picked: no kernel plugin calls a
+model.
+
+This cut holds the pure parts and the contract. The service that hears a
+turn end and curates it, and how memories are recalled for a request, come
+next; until then a host's own program puts the parts together, as this
+function of the test does:
+
+<!-- pinned: packages/sdk/src/kernel/knowledge.test.ts#curate -->
+
+```ts
+/** One source kept: stored, read by the host's curator, checked, and what passed appended. It answers what the checks dropped. */
+const keep = (session: SessionId, turn: TurnSource, at: number, from: { readonly session: SessionId; readonly turn: TurnNumber }) => Effect.gen(function* () {
+  const all = yield* Sessions
+  const curator = yield* Curator
+  // The source is stored first, in a turn of the knowledge session: every later record names it.
+  const source = yield* all.turn(session, (open) => Effect.gen(function* () {
+    const id = nextIds(knowledgeOf(yield* open.journal)).source
+    const made: SourceData = { id, said: turn.said, context: turn.context, at, from }
+    yield* open.append(stored(sourceEvent, made))
+    return made
+  }))
+  // The curator is shown what is stored about the entities the source names, and asked with the kernel's prompt.
+  const shown = shownFor(knowledgeOf((yield* all.read(session)).events), source)
+  const reply = yield* curator.curate({ prompt: curationPrompt(source, shown), job: { source: source.id, attempt: 1, purpose: "extract" } })
+  // The reply is read item by item; each item is checked alone against the source and what was shown.
+  const read = yield* Effect.fromOption(curationOf(reply), () => new CurationFailed({ message: "the reply holds no JSON object" }))
+  const stage = staged(read.curation, source, shown)
+  // What passed is stored in one turn, over the knowledge as it stands now.
+  yield* all.turn(session, (open) => Effect.gen(function* () {
+    const drafts = draftsOf(stage, knowledgeOf(yield* open.journal), source)
+    yield* Effect.forEach(drafts, (draft) => open.append(draft), { concurrency: 1, discard: true })
+  }))
+  return stage.dropped
+})
+```
+
+- **A source** is what a memory rests on: `plugin.knowledge.source`, what
+  was said in parts, each with who said it (`user`, `tool`, `assistant` or
+  `host`), what came before it (`context`) and when it happened (`at`).
+  `turnSource(turnsOf(journal), turn)` makes one from a turn: each message
+  of the person's, each tool call with its parameters and its result, and
+  the final answer, each bounded on its own with what was cut counted, and
+  the two turns before as context. A host may write a source itself, as one part said by
+  `host`. `sourceText(source)` is the parts as the curator reads them, a
+  labelled line each; it is never stored beside them.
+- **What the curator is shown** is `shownFor(knowledge, source)`: the user,
+  the entities the source or its context names, and what is stored about
+  them, up to thirty memories each and forty in all. It is not the
+  memories most like the source: the one a turn changes often shares no
+  word with it ("And she moved to Braga last month" against "Ana Silva
+  lives in Porto"). Names are compared folded, so case, accent marks and
+  punctuation do not tell them apart, in any script, and they are looked
+  for in what was said, not in the labels the curator reads it under.
+- **The prompt** is the kernel's: `curationPrompt(source, shown, options?)`,
+  the task, seven rules, the source and the stored items in frames as data,
+  and the shape of the JSON to answer with. A host may give its own kinds
+  of entity and one line of its own. `reviewPrompt(prompt, reply)` asks for
+  a second call that checks the first.
+- **The reply** is read by `curationOf(reply)`: the JSON object from the
+  first `{` to the last `}`, each list on its own, an item of the wrong
+  shape left out and counted. A reply with no object is none.
+- **The checks** are `staged(curation, source, shown)`. Each item is checked
+  alone, and a bad one is dropped with its reason while the rest is kept. A
+  memory must rest on a quote found in what the user, a tool or the host
+  said, never in the assistant's words; it may be about shown entities and
+  new ones of the same reply only; a sentence a standing memory already has
+  becomes a restatement; an end must name a standing shown memory that
+  shares an entity with the new one. A new entity whose name a stored one
+  bears is that entity.
+- **The records** are `draftsOf(staged, knowledge, source)`: entities,
+  other names, each memory followed by what it ends, restatements, then
+  what is forgotten. It reads the knowledge as it stands when the records
+  are stored, since it may have moved while the model answered.
+
+`knowledgeOf(journal)` folds the session back: the entities with their other
+names, every memory with how often and when it was said (its source's `at`,
+when that happened, not when a record was stored), and every source with
+its state (`Pending`, `Curated`, or `Failed` with its tries). Nothing
+is deleted. A memory that changed, was wrong or was asked to be forgotten
+is ended by a record that says why and what replaced it, and it stays in
+the list:
+
+<!-- pinned: packages/sdk/src/kernel/knowledge.test.ts#records -->
+
+```ts
+const knowledge = knowledgeOf(journal)
+// Nothing is deleted: the memory the second turn replaced is still there, ended, and names what came in its place.
+expect(knowledge.memories.map((memory) => `${memory.id}: ${memory.text} ${Option.match(memory.ended, {
+  onNone: () => "(stands)",
+  onSome: (ended) => `(ended: ${ended.why}, by ${Option.getOrElse(ended.by, () => "nothing")})`,
+})}`)).toEqual([
+  "m1: Ana Silva lives in Porto. (ended: changed, by m3)",
+  "m2: Ana Silva is the user's friend. (stands)",
+  "m3: Ana Silva lives in Braga since 2026-10. (stands)",
+])
+expect(standing(knowledge).map((memory) => memory.text)).toEqual(["Ana Silva is the user's friend.", "Ana Silva lives in Braga since 2026-10."])
+expect(endedBy(knowledge, MemoryId.make("m3")).map((memory) => memory.text)).toEqual(["Ana Silva lives in Porto."])
+// A memory is a sentence about entities, with the words of the source it rests on.
+expect(knowledge.entities.map((entity) => `${entity.id} ${entity.name} (${entity.kind})`)).toEqual(["n1 the user (person)", "n2 Ana Silva (person)", "n3 Porto (place)", "n4 Braga (place)"])
+expect<unknown>(knowledge.memories.map((memory) => [memory.about, memory.quote, memory.by, Option.getOrNull(memory.on)])).toEqual([
+  [["n2", "n3"], "My friend Ana Silva lives in Porto.", "user", null],
+  [["n1", "n2"], "My friend Ana Silva", "user", null],
+  [["n2", "n4"], "she moved to Braga last month", "user", "2026-10"],
+])
+// The journal is the whole of it: each source in a turn of its own, then what its curation kept.
+expect(journal.map((event) => String(event.name)).filter((name) => name.startsWith("plugin."))).toEqual([
+  "plugin.knowledge.source", "plugin.knowledge.entity", "plugin.knowledge.entity", "plugin.knowledge.memory", "plugin.knowledge.memory",
+  "plugin.knowledge.source", "plugin.knowledge.entity", "plugin.knowledge.memory", "plugin.knowledge.ended",
+])
+```
+
+`standing(knowledge)` is the memories that stand, `endedBy(knowledge, id)`
+what a memory replaced, and `nextIds(knowledge)` the ids the next source,
+entity and memory take. The user is entity `n1` (`USER_ENTITY`), which
+every fold holds and no record stores. A record the fold does not know, or
+one that names an id that is not there, is passed over: a fold refuses no
+journal.
+
+A host proves its own curator with `curatorConformance`: asked for a first
+call and for a review, it answers with text that is not blank or fails with
+`CurationFailed`, and never dies. A reply that is no JSON is still a reply:
+reading it is the caller's.
+
+What it costs: one model call more for each turn kept, two with a review,
+after the answer, whether or not the turn held anything to keep. Memory lags
+the conversation by one curation. The checks hold a reply to its source and
+to what was shown; they cannot tell a true sentence from a false one. A
+name in a script written without spaces is not found as a run of whole
+words, and a memory about no entity is not shown to the curator again.
+ADR 0022 has the measurements and their limits.
+
 ## The inbox: queueing messages for a turn
 
 The inbox is a plugin over the host's own turn, and the proof that a plugin
@@ -2247,6 +2396,7 @@ fail on a careless plugin written for it.
 | `Sessions` | `sessionsConformance`, over the plugin and the store it runs on | |
 | `Memory` | `memoryConformance`; a wrapper of it, `memoryWrapperConformance` | |
 | `Summarizer` | `summarizerConformance` | |
+| `Curator` | `curatorConformance` | |
 | `Core` | none | core has one implementation, `kernel()`, held by its own tests |
 | `Inbox` | none | one stock plugin, held by its own tests; a kit comes with a second plugin |
 | `CurrentTurn` | none | a value the loop provides, with nothing to check beyond its type |
@@ -2257,6 +2407,7 @@ fail on a careless plugin written for it.
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
 | graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
 | recall | none of its own | nothing a host implements but its embedder and store, which have their kits: pure functions and a wrapper. `withRecall` passes the memory wrapper kit |
+| knowledge | none of its own | nothing a host implements but its curator, which has its kit: records, folds, two prompts and the checks, held by their own tests |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
 | `Embedder` | `embedderConformance`, over texts the subject gives | |
@@ -2291,10 +2442,15 @@ are not made by accident.
 - **The view vocabulary** (ADR 0009). `Text`, `List`, `Table` and `Card`,
   closed. Open: whether hosts add shapes of their own, and whether a view
   bounds its size in its schema rather than in the tool that makes it.
-- **Where `hostNote` and `framed` live.** They are the memory contract's,
-  because a memory was the first kernel code to frame text; tools and hosts
-  frame text too. They are copies of core's root helpers, which the kernel
-  does not import.
+- **Where `hostNote`, `framed` and `clipTo` live.** They are the memory
+  contract's, because a memory was the first kernel code to frame text;
+  tools, prompts and hosts frame and bound text too. They are copies of
+  core's root helpers, which the kernel does not import. `clipTo` and its
+  marker `clippedMarker` (`[… N characters clipped]`, never half a
+  character) came with the knowledge contract's prompts; the contracts that
+  cut a model's text in a failure (facts, graph, files, skills, tasks,
+  approvals, the embedder) still hold a few lines of their own for it, each
+  quoting what it cuts.
 - **What a draft's data holds is checked by the compiler alone.** Untyped
   code can append data its definition does not describe; it is found when
   the record is read (a listener fails, a fold passes over it).

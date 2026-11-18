@@ -10,6 +10,48 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: memory kept by a curator, its pure core (ADR 0022,
+  which supersedes ADR 0019; the graph and facts contracts stay as they are
+  until their lessons move). Long-term memory is written after the turn by a
+  curator the host provides, never by the agent's tools. This cut ships no
+  service, listener, tool or recall: a host's program puts the parts
+  together. `Curator` (`curate({ prompt, job })` to the model's reply as
+  text; `CurationJob`: the source, the try, and `extract` or `review`;
+  `CurationFailed`) with its kit `curatorConformance` (`answers`). Eight
+  records in a journal of its own (`KNOWLEDGE_OWNER`, `KNOWLEDGE_VOCABULARY`),
+  all tagged `memory`: `plugin.knowledge.source` (`sourceEvent`: what was
+  said, in parts, each with who said it), `.entity`, `.aliased`, `.memory` (a
+  sentence about up to eight entities, resting on a quote that is never the
+  assistant's), `.restated`, `.ended` (why, and what replaced it), `.curated`
+  and `.failed`. `knowledgeOf(journal)` folds them (`Knowledge`: entities
+  with their other names, every memory with how often and when it was said
+  and how it ended, each time its source's `at` and never when a record was
+  stored, sources with their state), with `standing`, `endedBy`
+  and `nextIds`; nothing is deleted, and a record naming an id that is not
+  there is passed over. `turnSource(turns, at, { leave? })` makes a source
+  of one turn from `turnsOf`'s list, each part bounded on its own;
+  `sourceText` is the parts as a curator reads them. `shownFor(knowledge,
+  source, limits?)` chooses what the curator is shown: what is stored about
+  the entities the source or its context names, up to thirty memories each
+  and forty in all, names compared whatever their case, accents and
+  punctuation, in any script. Two prompts, pinned word for word under
+  `KNOWLEDGE_PROMPT`: `curationPrompt(source, shown, { kinds?, instructions?
+  })` (the task, seven rules, the source in `<this-turn>`, its context in
+  `<earlier-turns>`, the stored items in `<stored-entities>` and
+  `<stored-memories>`, and the JSON shape to reply with) and
+  `reviewPrompt(prompt, reply)` (`<curation-task>`, `<proposed-update>`).
+  `curationOf(reply)` reads a reply item by item, a wrong-shaped item left
+  out and counted; `staged(curation, source, shown)` checks each item alone
+  and drops a bad one with a reason in one sentence (`KNOWLEDGE_CHECKS`);
+  `draftsOf(staged, knowledge, source)` makes the records over the knowledge
+  as it stands when they are stored. With the ids and texts `SourceId`,
+  `EntityId`, `MemoryId`, `USER_ENTITY`, `EntityName`, `EntityKind`,
+  `MemoryText`, `MemoryKind`, `MemoryDay`, `Quote`, `SourceText`,
+  `SourceContext` and their limits.
+- `@xandreed/sdk/kernel`: `clipTo(text, max)` and `clippedMarker(dropped)`,
+  the memory contract's: a text's start and `[… N characters clipped]` on a
+  line of its own, within `max`, never ending on half a character. What
+  bounds a text in a kernel prompt, beside `hostNote` and `framed`.
 - `@xandreed/sdk/kernel`: recall by meaning (ADR 0021, amended).
   `withRecall({ limit, pool?, reorder? })`, a memory wrapper over the host's
   `Embedder` and `VectorStore`, sends for each request the links and facts

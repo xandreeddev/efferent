@@ -23,6 +23,32 @@ export const framed = (tag: string, text: string): string =>
   `<${tag}>\n${text.replace(new RegExp(`<\\s*/?\\s*${tag}(?![\\w-])[^>]*>`, "gi"), (found) => found.replaceAll("-", "_"))}\n</${tag}>`
 
 /**
+ * The marker a clip leaves in place of the characters it dropped: `[… 1234 characters clipped]`.
+ *
+ * @public
+ */
+export const clippedMarker = (dropped: number): string => `[… ${dropped} characters clipped]`
+
+/** The place at or before `end` where a text can be cut without leaving half a character (the first half of a surrogate pair). */
+const wholeEnd = (text: string, end: number): number => (end > 0 && end < text.length && (text.charCodeAt(end - 1) & 0xfc00) === 0xd800 ? end - 1 : end)
+
+/**
+ * A text in at most `max` characters: itself when it fits; otherwise its start, then, on a line of its own, a
+ * marker that counts what was left out (`clippedMarker`). The start never ends on half a character. When `max` has
+ * no room for a marker, only the start is given. Every text of unknown length that a kernel prompt holds is
+ * bounded with it, so a model is told that something is missing and how much.
+ *
+ * @public
+ */
+export const clipTo = (text: string, max: number): string => {
+  if (text.length <= max) return text
+  const room = max - clippedMarker(text.length).length - 1
+  if (room <= 0) return text.slice(0, wholeEnd(text, Math.max(0, max)))
+  const end = wholeEnd(text, room)
+  return `${text.slice(0, end)}\n${clippedMarker(text.length - end)}`
+}
+
+/**
  * The estimate of what a text costs, in tokens: a quarter of its
  * characters, rounded up. An approximation, and the only one: memory, the
  * kits and every reader count with this function.

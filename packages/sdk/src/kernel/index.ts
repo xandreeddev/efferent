@@ -6,7 +6,7 @@
 // the host's own program, which asks for the layers it uses. Nothing
 // here imports the rest of the sdk, the runtime or a runtime module.
 export { InvalidBudget, OverBudget, Tokens } from "./contracts/memory/memory.entity.js"
-export { estimateContext, estimateTokens, framed, hostNote, isOverBudget, messageText, paired, promptMessage, questionOf } from "./contracts/memory/memory.entity.functions.js"
+export { clippedMarker, clipTo, estimateContext, estimateTokens, framed, hostNote, isOverBudget, messageText, paired, promptMessage, questionOf } from "./contracts/memory/memory.entity.functions.js"
 export { READ_RESULT, READ_RESULT_PAGE, ResultPage } from "./contracts/memory/pointer.entity.js"
 export type { PointerOptions } from "./contracts/memory/pointer.entity.js"
 export { pointed, resultText } from "./contracts/memory/pointer.entity.functions.js"
@@ -61,6 +61,23 @@ export { MODEL_LIMIT, RecalledByMeaningData, recalledByMeaningEvent, RecallEntry
 export { recalledByMeaningOf, recallItems, recallKey, recallNote, recallText } from "./contracts/recall/recall.entity.functions.js"
 export { withRecall } from "./plugins/recall/recall.adapter.js"
 export { ReorderInvalid } from "./plugins/recall/recall.entity.js"
+export type { About, CurationOptions, Ended, Knowledge, KnownEntity, KnownMemory, KnownSource, NextIds, ReadCuration, ShownKnowledge, ShownLimits, Staged, TurnSource, TurnSourceOptions } from "./contracts/knowledge/knowledge.entity.js"
+export {
+  AliasedData, aliasedEvent, CONTEXT_LIMIT, CuratedData, curatedEvent, Curation, CurationFailedData, curationFailedEvent, CurationRef, Dropped, DROPPED_SHOWN, EndedWhy,
+  ENTITY_KINDS, ENTITY_NAME_LIMIT, EntityData, entityEvent, EntityId, EntityKind, EntityName, KNOWLEDGE_CHECKS, KNOWLEDGE_OWNER, KNOWLEDGE_PROMPT, KNOWLEDGE_VOCABULARY,
+  MEMORY_LIMIT, MemoryData, MemoryDay, MemoryEndedData, memoryEndedEvent, memoryEvent, MemoryId, MemoryKind, MemoryRestatedData, memoryRestatedEvent, MemoryText, Quote,
+  QUOTE_LIMIT, SaidBy, SHOWN_LIMITS, SOURCE_LIMIT, SourceContext, SourceData, sourceEvent, SourceId, SourcePart, SourceState, SourceText, TURN_MESSAGE_SHOWN,
+  TURN_RESULT_SHOWN, USER_ALIASES, USER_ENTITY, USER_NAME,
+} from "./contracts/knowledge/knowledge.entity.js"
+export { endedBy, knowledgeOf, nextIds, sourceText, standing } from "./contracts/knowledge/knowledge.entity.functions.js"
+export { turnSource } from "./contracts/knowledge/knowledge-source.entity.functions.js"
+export { shownFor } from "./contracts/knowledge/knowledge-shown.entity.functions.js"
+export { curationPrompt, reviewPrompt } from "./contracts/knowledge/knowledge-prompt.entity.functions.js"
+export { curationOf, draftsOf, staged } from "./contracts/knowledge/knowledge-curation.entity.functions.js"
+export { Curator } from "./contracts/knowledge/curator.port.js"
+export { CurationFailed, CurationJob } from "./contracts/knowledge/curator.entity.js"
+export { curatorConformance } from "./contracts/knowledge/curator.conformance.js"
+export type { CuratorSubject } from "./contracts/knowledge/curator.conformance.js"
 export { TaskReports, Tasks } from "./contracts/task/task.port.js"
 export { CANCEL_TASK, DEFAULT_RUNNING, REPORT_LIMIT, START_TASK, StartedTask, TASK_LIMIT, TaskId, TaskOutcome, TaskRefused, TaskReport, TASKS_OWNER } from "./contracts/task/task.entity.js"
 export type { TasksOptions } from "./contracts/task/task.entity.js"
