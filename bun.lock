@@ -274,6 +274,7 @@
       "name": "@xandreed/sdk",
       "version": "0.22.0",
       "dependencies": {
+        "@effect/ai-anthropic": "4.0.7",
         "@xandreed/core": "workspace:*",
         "@xandreed/runtime": "workspace:*",
         "effect": "4.0.7",

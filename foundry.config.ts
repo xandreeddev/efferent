@@ -136,6 +136,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-writer",
   "sdk-kernel-node-journal-directory",
   "sdk-kernel-node-journal-sqlite",
+  "sdk-kernel-node-model-spend",
   "core/kernel",
 ]
 
@@ -599,7 +600,11 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-node-writer", path: "packages/sdk/src/kernel/node/writer/**", canImport: ["core/kernel"], externals: ["effect", "node:"] },
       { name: "sdk-kernel-node-journal-directory", path: "packages/sdk/src/kernel/node/journal-directory/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:"] },
       { name: "sdk-kernel-node-journal-sqlite", path: "packages/sdk/src/kernel/node/journal-sqlite/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:", "bun:sqlite"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite"], externals: [] },
+      // The model providers (ADR 0026): the spend charge both share (`model-spend/`, as the stores share the lock), and
+      // a folder per provider. The Anthropic one is the only layer outside the models plugin that names a provider
+      // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
+      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },

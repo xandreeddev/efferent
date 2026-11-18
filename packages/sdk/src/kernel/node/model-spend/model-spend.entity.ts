@@ -1,0 +1,80 @@
+import { Schema } from "effect"
+import { ModelSpendExceeded, SpendAmount, SpendCaps } from "@xandreed/core/kernel"
+
+const PerMillion = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
+const Tokens = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
+
+/**
+ * What a model costs, in USD per million tokens: `input` and `output`, and the dearer or cheaper price of input
+ * read from (`cacheRead`) or written to (`cacheWrite`) the provider's cache, each the input price when absent.
+ * `maxOutput` is the most a request is reserved for, and sent with as its output cap, when the provider's options
+ * name none.
+ *
+ * @public
+ */
+export const ModelPrice = Schema.Struct({
+  input: PerMillion,
+  output: PerMillion,
+  cacheRead: Schema.optionalKey(PerMillion),
+  cacheWrite: Schema.optionalKey(PerMillion),
+  maxOutput: Schema.optionalKey(Tokens),
+})
+export type ModelPrice = typeof ModelPrice.Type
+
+/**
+ * How a model provider charges the `ModelSpend` ledger in its context (ADR 0026). `prices`: each model's price, by
+ * the model id the provider sends; a call to a model with no entry is refused before it is sent, unless `uncapped`
+ * names it, when nothing is held and the call is settled at the cost the provider bills, if it says. `caps`: the caps
+ * each reservation names, none by default, so the ledger provided decides (an eval run's caps every reservation at its
+ * budget). `bytesPerToken`: how many bytes of a request's body the worst case counts as one input token; 1, the
+ * default, bounds any tokenizer that reads at least a byte a token.
+ *
+ * @public
+ */
+export const SpendOptions = Schema.Struct({
+  prices: Schema.Record(Schema.String, ModelPrice),
+  uncapped: Schema.optionalKey(Schema.Array(Schema.String)),
+  caps: Schema.optionalKey(SpendCaps),
+  bytesPerToken: Schema.optionalKey(Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1))),
+})
+export type SpendOptions = typeof SpendOptions.Type
+
+/**
+ * What one call holds before it is sent: `Held`, its worst case at the model's price; or `Unheld`, a model the host
+ * marked uncapped, sent with nothing held.
+ */
+export const Charge = Schema.Union([
+  Schema.TaggedStruct("Held", { amount: SpendAmount, price: ModelPrice }),
+  Schema.TaggedStruct("Unheld", {}),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type Charge = typeof Charge.Type
+
+/**
+ * How far a call's request got, which decides what a call whose usage never came back costs. `Unsent`: it never left
+ * (the call ended before its request was made, or the connection never opened). `Refused`: the provider answered it
+ * with a refusal status (4xx but 408) before generating anything. `Sent`: it left and nothing says it was refused, so
+ * the provider may have generated, and billed, an answer (a stream cut, an interruption, a timeout, a 5xx).
+ */
+export const Reach = Schema.Literals(["Unsent", "Refused", "Sent"])
+export type Reach = typeof Reach.Type
+
+/**
+ * What a provider reported a call used, once the call's answer was whole: the tokens, in Effect AI's counts (`input`
+ * holds the cached shares too), and what the provider billed for it, when it says (the gateway does).
+ */
+export interface Reported {
+  readonly input: number
+  readonly output: number
+  readonly cacheRead: number
+  readonly cacheWrite: number
+  readonly billed: number | undefined
+}
+
+/**
+ * The key, in an `AiError` reason's metadata, under which a spend refusal is carried: Effect AI sets an `AiError`'s
+ * `cause` to its reason, so the ledger's `ModelSpendExceeded` rides, encoded, in the reason's metadata.
+ */
+export const REFUSAL_KEY = "ModelSpend"
+
+/** The ledger's refusal, read back from a reason's metadata. */
+export const CarriedRefusal = Schema.Struct({ [REFUSAL_KEY]: ModelSpendExceeded })
