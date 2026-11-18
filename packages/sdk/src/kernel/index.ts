@@ -34,7 +34,7 @@ export { factsNote, factsOf, relevant } from "./contracts/facts/facts.entity.fun
 export { factHandlers, factTools, ForgetFact, memorySession, rememberedFacts, RememberFact, withFacts } from "./plugins/facts/facts.adapter.js"
 export type { Followed, GraphOptions, Link, LinkedThings, LinkShown, NamedThing, Naming, SaidLink, Speaker, Walked, Weights } from "./contracts/graph/graph.entity.js"
 export { FOLLOW_LIMIT, FOLLOW_THINGS, GRAPH_OWNER, LINK_THINGS, LinkedData, linkedEvent, LinkId, NAME_LIMIT, Relation, QUESTION_SHOWN, RECALL_SHOWN, RecalledData, recalledEvent, RELATION_LIMIT, RestatedData, restatedEvent, ThingName, UNLINK_THINGS, UnlinkedData, unlinkedEvent } from "./contracts/graph/graph.entity.js"
-export { linksNote, linksOf, namedIn, near, normalName, recalledOf, saidOf, walked, weightOf } from "./contracts/graph/graph.entity.functions.js"
+export { linksNote, linksOf, namedIn, near, normalName, recalledOf, saidOf, saidText, walked, weightOf } from "./contracts/graph/graph.entity.functions.js"
 export { FollowThings, graphHandlers, graphSession, graphTools, knownLinks, LinkThings, saidLinks, UnlinkThings, withGraph } from "./plugins/graph/graph.adapter.js"
 export { Files } from "./contracts/files/files.port.js"
 export { EDIT_FILE, Expected, FILE_PAGE, FileChanged, FileList, FileNotFound, FilePage, FilePath, FilesRefused, FilesUnavailable, FileWritten, LIST_FILES, LIST_LIMIT, PATH_LIMIT, READ_FILE, WRITE_FILE, WRITE_LIMIT, WrittenData, writtenEvent } from "./contracts/files/files.entity.js"

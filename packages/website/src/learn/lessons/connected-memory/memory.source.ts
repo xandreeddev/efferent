@@ -3,8 +3,9 @@
 // statements: the wrapper is made as the file runs, so options `withGraph`
 // refuses refuse the build. `flatMemory` is the name the page hands a
 // watched memory under, so the Context tab shows what the wrapper added after
-// it as the code's. The learner edits all of it; the page runs it as written,
-// and program.test.ts compiles and runs it.
+// it as the code's. The page's controls edit the options of the one call, a
+// line each (config-edit.ts). The learner edits all of it; the page runs it
+// as written, and program.test.ts compiles and runs it.
 import { INTRO } from "../remember/memory.source.ts"
 
 /**
@@ -14,23 +15,37 @@ import { INTRO } from "../remember/memory.source.ts"
  */
 export const MEMORY_IMPORTS = `import { Effect, Layer, Option } from "effect"
 import { Sessions } from "@xandreed/core/kernel"
-import { flatMemory, knownLinks, linksNote, Memory, namedIn, near, questionOf, withGraph } from "@xandreed/sdk/kernel"`
+import { flatMemory, linksNote, Memory, namedIn, questionOf, recalledEvent, recalledOf, saidLinks, walked, withGraph } from "@xandreed/sdk/kernel"`
 
 /** Everything before the editable part. */
 export const MEMORY_HEADER = `${MEMORY_IMPORTS}\n\n`
 
 export { INTRO }
 
+/** The comment over the one statement. */
+export const WRAPPED_HEAD = `// The memory a conversation reads with, wrapped: each request is sent the conversation, then
+// the links near what the question names. withGraph reads the links that stand in the graph
+// session and adds them last, best first, framed as data. It stores nothing. Options it does
+// not take are refused here, as the file runs.`
+
+/** The `hops` option with its comment: how far the walk goes. */
+export const HOPS_LINE = `  // How many links away from a thing the question names the walk goes, from 1 to 3.
+  hops: 2,`
+
+/** The `limit` option with its comment: how many links a request is sent at most. */
+export const LIMIT_LINE = `  // The most links a request is sent, from 1 to 50: the best ranked first.
+  limit: 5,`
+
+/** The `speaker` option with its comment: who "I" is. */
+export const SPEAKER_LINE = `  // The person the agent talks with: "I", "me" or "my" in a question names the thing "user".
+  speaker: { name: "user", words: ["i", "me", "my"] },`
+
 /** The one statement, with its comment: the memory agent.ts provides. Options `withGraph` refuses are refused here, as the file runs. */
-export const WRAPPED = `// The memory a conversation reads with, wrapped: each request is sent the conversation, then up
-// to five links near what the question names, two links away at most. "I", "me" and "my" name
-// the thing called "user". withGraph reads the links that stand in the graph session and adds
-// them last, best first, framed as data. It stores nothing. Options it does not take are refused
-// here, as the file runs.
+export const WRAPPED = `${WRAPPED_HEAD}
 export const memory = withGraph({
-  hops: 2,
-  limit: 5,
-  speaker: { name: "user", words: ["i", "me", "my"] },
+${HOPS_LINE}
+${LIMIT_LINE}
+${SPEAKER_LINE}
 })(flatMemory)`
 
 /** What the learner edits. Plain JavaScript, so the page runs it as written. */

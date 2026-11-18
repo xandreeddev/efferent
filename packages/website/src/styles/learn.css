@@ -863,6 +863,57 @@ body.app {
   font-size: 0.88rem;
   color: var(--text-faint);
 }
+/* Lesson 18: a choice of chips, each a radio button with its note under it. */
+.learn-controls .chips-choice {
+  grid-column: 1 / -1;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(150px, 1fr));
+  gap: 0.5rem;
+  margin: 0;
+  padding: 0;
+  border: 0;
+  min-width: 0;
+}
+.learn-controls .chips-choice legend {
+  padding: 0 0 0.3rem;
+  font-size: 0.86rem;
+  color: var(--text-dim);
+}
+.learn-controls .chip-choice {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  align-items: center;
+  gap: 0.2rem 0.4rem;
+  padding: 0.45rem 0.55rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--bg);
+  cursor: pointer;
+}
+.learn-controls .chip-choice span {
+  color: var(--text);
+  font-family: var(--font-mono);
+  font-size: 0.84rem;
+}
+.learn-controls .chip-choice small {
+  grid-column: 1 / -1;
+}
+.learn-controls .chip-choice:has(input:checked) {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 1px var(--accent);
+}
+.learn-controls .chip-choice:has(input:disabled) {
+  opacity: 0.55;
+}
+.learn-world {
+  display: grid;
+  gap: 0.5rem;
+  margin: 1.2rem 0;
+  justify-items: start;
+}
+.learn-world [data-world-result][data-state="error"] {
+  color: #ff8b7b;
+}
 
 /* ── Experiments ─────────────────────────────────────────────────────────── */
 .learn-exp {
@@ -1450,6 +1501,184 @@ body.app {
   .wsp-file textarea {
     min-height: 9rem;
   }
+}
+
+/* ── The Graph tab (lesson 18): what the walk of one request did ──────────── */
+.files .tab-graph {
+  margin-left: 0.2rem;
+  font-family: var(--font-sans, inherit);
+  font-weight: 600;
+  color: var(--accent-3);
+}
+.grp {
+  display: flex;
+  flex-direction: column;
+  gap: 0.6rem;
+  padding: 0.7rem 0.8rem;
+  min-height: 0;
+  overflow: auto;
+}
+.grp[hidden] {
+  display: none !important;
+}
+.grp-bar {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 0.5rem 0.9rem;
+  font-size: 0.8rem;
+  color: var(--text-dim);
+}
+.grp-bar select {
+  font: inherit;
+  color: var(--text);
+  background: var(--bg);
+  border: 1px solid var(--border);
+  border-radius: 6px;
+  padding: 0.2rem 0.4rem;
+  max-width: 100%;
+}
+.grp-options {
+  font-family: var(--font-mono);
+  font-size: 0.74rem;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
+}
+.grp-empty,
+.grp-question {
+  margin: 0;
+  font-size: 0.84rem;
+  color: var(--text-dim);
+}
+.grp-question {
+  color: var(--text);
+}
+.grp-body[hidden],
+.grp-empty[hidden] {
+  display: none;
+}
+.grp-picture {
+  overflow: auto;
+  max-height: 22rem;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--surface);
+}
+.grp-svg {
+  display: block;
+  /* Drawn at its own size and scrolled inside the box, never shrunk to fit: names stay readable at every width. */
+  max-width: none;
+}
+.grp-svg text {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  fill: var(--text-dim);
+  /* A halo of the picture's background, so a line passing under a name or a label never hides it. */
+  paint-order: stroke;
+  stroke: var(--surface);
+  stroke-width: 4px;
+  stroke-linejoin: round;
+}
+.grp-thing[data-named] .grp-name {
+  fill: var(--text);
+  font-weight: 600;
+}
+.grp-dot {
+  fill: var(--bg-soft);
+  stroke: var(--text-faint);
+  stroke-width: 1.5;
+}
+.grp-thing[data-named] .grp-dot {
+  fill: var(--accent);
+  stroke: var(--accent);
+}
+.grp-thing[data-named="loose"] .grp-dot {
+  fill: #d6a24a;
+  stroke: #d6a24a;
+}
+.grp-thing[data-named="speaker"] .grp-dot {
+  fill: var(--accent-3);
+  stroke: var(--accent-3);
+}
+.grp-edge {
+  stroke: var(--border);
+  opacity: 0.55;
+}
+.grp-head {
+  fill: var(--border);
+}
+.grp-head-sent {
+  fill: var(--accent);
+}
+.grp-link[data-sent] .grp-edge {
+  stroke: var(--accent);
+  opacity: 1;
+}
+.grp-svg .grp-relation {
+  fill: var(--accent);
+  font-size: 10px;
+}
+.grp-steps {
+  margin: 0;
+  padding-left: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.7rem;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+.grp-steps > li > strong {
+  color: var(--text);
+}
+.grp-steps p {
+  margin: 0.25rem 0 0;
+}
+.grp-named {
+  margin: 0.25rem 0 0;
+  padding-left: 1.1rem;
+}
+.grp-rows {
+  margin: 0.4rem 0 0;
+  padding: 0;
+  list-style: none;
+  display: grid;
+  gap: 0.3rem;
+}
+.grp-row {
+  display: grid;
+  gap: 0.1rem;
+  padding: 0.3rem 0.5rem;
+  border-left: 3px solid var(--border);
+  background: var(--bg-soft);
+  border-radius: 4px;
+  opacity: 0.75;
+}
+.grp-row[data-sent] {
+  border-left-color: var(--accent);
+  opacity: 1;
+}
+.grp-row-head {
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.grp-rank {
+  display: inline-block;
+  min-width: 2.2em;
+  color: var(--text-faint);
+}
+.grp-mark {
+  white-space: nowrap;
+  color: var(--text-faint);
+}
+.grp-row[data-sent] .grp-mark {
+  color: var(--accent);
+}
+.grp-row-detail,
+.grp-why,
+.grp-more {
+  font-size: 0.76rem;
+  color: var(--text-faint);
+  overflow-wrap: anywhere;
 }
 
 /* ── The Context tab: what happened in each turn ─────────────────────────── */

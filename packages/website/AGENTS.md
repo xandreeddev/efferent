@@ -173,8 +173,11 @@ check` (tsc over the learn code, the build, the link check) and
     their records. A turn on either is three steps (opened, the fact's
     or the link's record, closed) and no model call; a fact's or a
     link's record is summed up with where it came from, and its row says
-    what it is. The pane (`panes/trace.ts`) draws what these functions
-    give; the DOM wiring itself is type-checked, not run by a test.
+    what it is. A turn that stored many records at once (lesson 18's
+    Load the world, 654 in one turn) is one step that counts them by
+    kind ("Links stored: 557 links, 97 said again"), not one step each.
+    The pane (`panes/trace.ts`) draws what these functions give; the DOM
+    wiring itself is type-checked, not run by a test.
   - A turn has one context per model call, and one prompt per attempt: a
     call under a plan (lesson 14) may be tried again, and each try is a
     prompt. The prompts are grouped by call from the prompts' own marks
@@ -365,6 +368,59 @@ check` (tsc over the learn code, the build, the link check) and
     workspace (the start of the kernel's words for `FilesRefused`), or
     failed. The line stays until the next turn starts, when the program's
     own line is put back (`underWorkspace` in `playground.ts`).
+- **Lesson 18's graph** (`Lesson.graph`, ADR 0019): a Graph tab beside
+  Context, and a world the page loads into the graph session.
+  - The world (`lessons/connected-memory/world.ts`) is data: 654 generated
+    sentences, `[subject, relation, object, day]` in the order said, the
+    same entries the ADR's numbers were measured on. `loadWorld`
+    (`load-world.ts`) writes them into the graph session in one turn, with
+    no tool call, as `linkThings` would store each: `plugin.graph.linked`
+    the first time its normalised parts are seen (ids going on from the
+    `plugin.graph.linked` records ever stored), `plugin.graph.restated`
+    after, each with a `from` of its own (the session `world`, the
+    sentence's place as the turn) so a repeat counts. The journal stamps a
+    record with the clock of the fiber that appends it, so each append is
+    given `clockAt(day, live)`, a `Clock` written out member by member (no
+    cast). A graph session that holds the world refuses a second load in
+    words (`LOADED_ALREADY`), before any turn opens.
+  - `runtime.loadWorld()` runs it on the page's base `Sessions` and takes
+    turns with the chat as a kit that runs alone does: refused while a turn
+    runs (`TURN_RUNNING`), and `checking` true while it loads, so Send, the
+    chips and the model picker are off; the `data-world` button is one of
+    the buttons a turn turns off (`aloneButtons`). Core's hub holds 256
+    events for a reader that is behind; a test pins that the page heard all
+    656 records of the burst, in order.
+  - The Graph tab (`data-file="graph"`, a step's `focus="graph"`) draws
+    `graph-model.ts` (no DOM) through `panes/graph.ts`. It is built on the
+    `Event` trace the page already hears: `heardRecall` folds each
+    `plugin.graph.recalled` of the conversation shown, the n-th of a turn
+    being its n-th model call, and the graph session's records (linked,
+    restated, unlinked) from any session. `graphViewOf(recalled, records)`
+    is pure: the things named and how, every link reached (at most
+    `RECALL_SHOWN`) with its rank, the words its path met, its count and
+    last day in the note's own words (the kernel's `saidText`, so the panel
+    and the note never disagree about a day near midnight), its weight when the walk weighed (by count ln(1 + count); by
+    a half-life against the heaviest link reached, which needs no clock),
+    whether it was sent and why not; the note's tokens (`linksNote` over the
+    sent links with the count and day the event gives, by `estimateTokens`)
+    against those of every link standing (`linksNote` of `saidOf`);
+    and the picture: each thing in a column by how many links from a named
+    thing it is, each link an arrow from the thing it was reached from,
+    thicker the more often said against the most said link reached. It
+    draws no "now": dates and counts only. A walk is picked by turn and
+    call ("Turn 3, model call 1 of 2"), the latest by default; Clear context
+    drops the walks and keeps the records. A memory with no `withGraph`
+    walks nothing, and the tab says so (`NO_WALK`).
+  - Its controls (`config-edit.ts`, `CONTROLS`) each read and write one
+    option line of memory.ts's `withGraph({ … })(flatMemory)` call: `hops`
+    and `limit` as numbers, written as given so the kernel refuses a bad
+    one in its words; `names` and `weights` as chips, a radio button each
+    with its note under it (`NAMES_CHIPS`, `WEIGHTS_CHIPS`, each note's
+    claim pinned in lesson.test.ts), a choice the kernel's default is
+    written as no line. `syncControls` checks the radio whose value the
+    line holds; a radio unchecked writes nothing.
+  - `runtime.journal(session)` reads any session's journal, the
+    conversation's by default (lesson 18's tests read the graph session's).
 - **Background tasks** (lesson 17, ADR 0018): a helper works on a task in
   a session of its own while the chat goes on, and its report comes back
   into the chat's one queue.
@@ -773,11 +829,15 @@ check` (tsc over the learn code, the build, the link check) and
     tool's. With no call to make, one question sent with the kernel's note
     of links (`linksNote`: its first line, word for word, then the frame)
     is answered from the note's first two lines, whatever it asks ("From
-    what I know: Ana works at Acme. Acme is in Lisbon."). The follow rule
+    what I know: Ana works at Acme. Acme is in Lisbon."), each without the
+    bracket the note writes after its sentence (how often and when it was
+    said, `saidText`: a test fails without the strip). The follow rule
     is a call, so it comes before that reading, with a test that fails
     when the reading is moved before the calls: "What is Acme linked to?"
     names Acme and is sent a note too. The note of links is read past as
-    the facts' is (`isAdded`).
+    the facts' is (`isAdded`). The world's questions need no rule of their
+    own: each is answered from the note's first two lines, so the order the
+    walk gives is what Echo says.
   - Lesson 13's rule, in `echoReply`, after every other rule but the
     last: one message that says what something is and then asks about it
     under the same name ("The meeting is on Tuesday. When is the

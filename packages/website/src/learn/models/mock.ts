@@ -383,7 +383,8 @@ const UNLINK_ASKED = /^\s*(?:please\s+)?unlink\s+(e[1-9][0-9]*)\b/i
 
 /**
  * The links a prompt's note of links lists, as sentences, best first: read from the last user message that is the
- * kernel's note (its first line, then the frame), a line each, `id: sentence`. No other message is read.
+ * kernel's note (its first line, then the frame), a line each, `id: sentence (said …)`, the bracket taken off. No
+ * other message is read.
  */
 const linksIn = (messages: Prompt.Prompt["content"]): ReadonlyArray<string> => {
   const note = messages
@@ -392,9 +393,13 @@ const linksIn = (messages: Prompt.Prompt["content"]): ReadonlyArray<string> => {
   if (note === undefined) return []
   return note.slice(LINKS_OPEN.length, note.length - LINKS_CLOSE.length).split("\n").flatMap((line) => {
     const entry = /^e[1-9][0-9]*: (.+)$/.exec(line)
-    return entry === null ? [] : [entry[1] ?? ""]
+    // The sentence alone: how often and when it was said (`saidText`, in brackets after it) is no part of what Echo quotes.
+    return entry === null ? [] : [(entry[1] ?? "").replace(SAID_SUFFIX, "")]
   })
 }
+
+/** What the note writes after a link's sentence: how often and when it was said, as the kernel's `saidText` words it. */
+const SAID_SUFFIX = / \(said (?:once|[0-9]+ times), last [0-9]{4}-[0-9]{2}-[0-9]{2}\)$/
 
 /** The id a successful result of `linkThings` gives. */
 const linkedBy = (part: ResultPart): string | undefined =>

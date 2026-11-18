@@ -171,6 +171,10 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
       'memory.ts did not run: withGraph\'s speaker needs a name with a letter or a digit, and words that are each one word, such as "me"',
     ],
     ["memory", "const memory = withGraph(flatMemory)", `${NO_HOPS} undefined`],
+    // A way of naming the kernel does not know, and weights that are neither "count" nor a half-life above 0.
+    ["memory", 'const memory = withGraph({ hops: 2, limit: 5, names: "fuzzy" })(flatMemory)', 'memory.ts did not run: withGraph\'s names is "exact" or "loose": how a question names a thing. It was given "fuzzy"'],
+    ["memory", 'const memory = withGraph({ hops: 2, limit: 5, weights: "often" })(flatMemory)', 'memory.ts did not run: withGraph\'s weights is "count" or { halfLifeDays }, a number of days above 0: how links are weighed. It was given "often"'],
+    ["memory", "const memory = withGraph({ hops: 2, limit: 5, weights: { halfLifeDays: 0 } })(flatMemory)", 'memory.ts did not run: withGraph\'s weights is "count" or { halfLifeDays }, a number of days above 0: how links are weighed. It was given {"halfLifeDays":0}'],
     ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), graphTools)."],
     ["tools", "const tools = graphTools\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be Toolkit.make(calculator).toLayer({ … })."],
     ["agent", "const main = 42", NO_PROGRAM],

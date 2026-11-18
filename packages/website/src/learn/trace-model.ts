@@ -565,8 +565,14 @@ const callViewOf = (board: Board, turn: number, index: number, tried: ReadonlyAr
 
 /** What a turn of the memory session (lesson 11) or the graph session (lesson 18) says of itself, by the session's kind. */
 const KEPT_WORDS = {
-  memory: { code: "sessions.turn(yield* memorySession, …)", opened: "A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open." },
-  graph: { code: "sessions.turn(yield* graphSession, …)", opened: "A call of linkThings or unlinkThings is one turn on the graph session, opened while the conversation's own turn is open." },
+  memory: {
+    code: "sessions.turn(yield* memorySession, …)", opened: "A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open.",
+    batch: "This turn stored many records at once, with no tool call.",
+  },
+  graph: {
+    code: "sessions.turn(yield* graphSession, …)", opened: "A call of linkThings or unlinkThings is one turn on the graph session, opened while the conversation's own turn is open.",
+    batch: "This turn stored many records at once, with no tool call and no model: the page's Load the world writes the world's sentences straight into the graph session, one record each.",
+  },
 } as const
 
 /** A record of the memory session or the graph session, named for what it says. */
@@ -577,6 +583,30 @@ const keptLabel = (record: StoredEvent): string =>
         : Option.isSome(dataOf(unlinkedEvent, record)) ? "Link removed"
           : Option.isSome(dataOf(restatedEvent, record)) ? "Link said again"
             : "Record stored"
+
+/**
+ * The one step of a turn that stored many records at once: how many of each kind, by what each says ("Links stored:
+ * 557 links, 97 said again"), and the places of the first and the last.
+ */
+const batchStep = (stored: ReadonlyArray<StoredEvent>): StepView => {
+  const counts = new Map<string, number>()
+  for (const one of stored) counts.set(keptLabel(one), (counts.get(keptLabel(one)) ?? 0) + 1)
+  const said = (label: string, one: string, many: string) => {
+    const n = counts.get(label) ?? 0
+    return n === 0 ? [] : [`${n} ${n === 1 ? one : many}`]
+  }
+  const parts = [
+    ...said("Link stored", "link", "links"), ...said("Link said again", "said again", "said again"), ...said("Link removed", "removed", "removed"),
+    ...said("Fact learned", "fact", "facts"), ...said("Fact forgotten", "forgotten", "forgotten"), ...said("Record stored", "other record", "other records"),
+  ]
+  const first = stored[0]!
+  const last = stored.at(-1)!
+  return {
+    id: "stored-records", kind: "stored-record", call: 0, column: "journal", state: "done", seqs: stored.map((one) => one.seq), code: "session.append(…), once for each",
+    label: `${counts.has("Fact learned") || counts.has("Fact forgotten") ? "Facts" : "Links"} stored: ${parts.join(", ")}`,
+    detail: `Records #${first.seq} to #${last.seq}: ${plural(stored.length, "record")} stored in this one turn. Open any of them in the Journal column. The first, in short: ${summaryOf(first)}`,
+  }
+}
 
 /**
  * One turn of the memory session (lesson 11) or the graph session (lesson 18): it was opened by a call of a tool
@@ -594,14 +624,16 @@ const memoryTurnOf = (board: Board, turn: number, words: (typeof KEPT_WORDS)[key
       state: Option.isSome(started) ? "done" : "now", seqs: Option.toArray(started),
       detail: Option.match(started, {
         onNone: () => "Opening the turn.",
-        onSome: (seq) => `Record #${seq}, ${turnStartedEvent.name}. ${words.opened}`,
+        onSome: (seq) => `Record #${seq}, ${turnStartedEvent.name}. ${stored.length > 1 ? words.batch : words.opened}`,
       }),
     },
-    ...stored.map((one, index): StepView => ({
+    // A turn that stored many records at once (lesson 18's Load the world: 654 in one turn) is one step that counts
+    // them, so the track stays readable; a tool's turn, which stores one, is a step for its record.
+    ...(stored.length > 1 ? [batchStep(stored)] : stored.map((one, index): StepView => ({
       id: `stored-record-${index + 1}`, kind: "stored-record", call: 0, column: "journal", state: "done", seqs: [one.seq], code: "session.append(…)",
       label: keptLabel(one),
       detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}`,
-    })),
+    }))),
     {
       id: "closed", kind: "closed", call: 0, label: "Turn closed", code: "the scope ends", column: "journal",
       state: Option.isNone(ended) ? (stored.length > 0 ? "now" : "todo") : failed ? "failed" : "done", seqs: Option.match(ended, { onNone: () => [], onSome: (one) => [one.seq] }),

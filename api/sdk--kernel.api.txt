@@ -171,6 +171,7 @@ const resultText
 const retryable
 const saidLinks
 const saidOf
+const saidText
 const scriptedModel
 const sessions
 const showView

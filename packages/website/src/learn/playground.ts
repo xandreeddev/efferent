@@ -2,7 +2,8 @@
 // lesson runtime, which runs the kernel in the page and the learner's
 // program over it. What it runs, and what the controls and experiments
 // change, comes from the lesson's definition. A lesson with a workspace
-// (lesson 16) has a Files tab too, over the page's own files.
+// (lesson 16) has a Files tab too, over the page's own files, and a lesson
+// with a graph (lesson 18) a Graph tab, over what each request's walk did.
 import { Option, Result } from "effect"
 import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
@@ -28,6 +29,9 @@ import type { EvalsPane } from "./panes/evals.ts"
 import { mountGraders } from "./panes/graders.ts"
 import type { GradersPane } from "./panes/graders.ts"
 import { mountFiles } from "./panes/files.ts"
+import { LATEST, mountGraph } from "./panes/graph.ts"
+import { emptyRecalls, graphViewOf, heardRecall, NO_WALK, pickedRecall, recallLabel, recallsStartedOver } from "./graph-model.ts"
+import type { GraphView, HeardRecall, RecallBoard, RecallPick } from "./graph-model.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
 import type { BuildResult, LessonRuntime, Trace } from "./runtime.ts"
@@ -37,6 +41,8 @@ import { workspaceLine, WorkspacePane } from "./workspace-pane.ts"
 const CONTEXT_TAB = "context"
 /** The Files tab of a lesson with a workspace (lesson 16). */
 const FILES_TAB = "files"
+/** The Graph tab of a lesson with a graph (lesson 18). */
+const GRAPH_TAB = "graph"
 
 const root = document.querySelector<HTMLElement>(".wb-bench")
 if (root) {
@@ -61,6 +67,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   const traceHost = q("[data-trace]")
   /** The Files tab's body: only a lesson with a workspace has one. */
   const filesHost = root.querySelector<HTMLElement>("[data-files]")
+  /** The Graph tab's body: only a lesson with a graph has one. */
+  const graphHost = root.querySelector<HTMLElement>("[data-graph]")
   const contextTab = q<HTMLButtonElement>(`[data-file="${CONTEXT_TAB}"]`)
   const rebuildButton = q<HTMLButtonElement>("[data-rebuild]")
   const formatButton = q<HTMLButtonElement>("[data-format]")
@@ -83,8 +91,10 @@ function boot(root: HTMLElement, lesson: Lesson) {
   /** The buttons of the kits that run alone: off while a turn runs or a message waits for one, while a model loads, and while such a kit runs. */
   const aloneButtons = [
     ...[...document.querySelectorAll<HTMLButtonElement>("[data-kit]")].filter((button) => lesson.kits?.[button.dataset.kit ?? ""]?.alone === true),
-    // Lesson 13's "Run evals" takes turns with the chat too, and so does lesson 19's "Check the graders".
+    // Lesson 13's "Run evals" takes turns with the chat too, and so do lesson 19's "Check the graders" and lesson 18's
+    // "Load the world".
     ...document.querySelectorAll<HTMLButtonElement>('[data-evals="run"]'),
+    ...document.querySelectorAll<HTMLButtonElement>("[data-world]"),
     ...document.querySelectorAll<HTMLButtonElement>('[data-graders="run"]'),
   ]
 
@@ -112,6 +122,45 @@ function boot(root: HTMLElement, lesson: Lesson) {
     save: () => void workspacePane?.save(),
   })
 
+  // Lesson 18: the Graph tab, drawn from the walks the page heard (graph-model.ts). The latest is shown unless one is
+  // picked; a walk's view is worked out once, and again only when the graph session's records change.
+  let recalls: RecallBoard = emptyRecalls("")
+  let recallPick: RecallPick = { _tag: "Latest" }
+  let graphCache: { readonly heard: HeardRecall; readonly records: number; readonly view: GraphView } | undefined
+  const viewOfHeard = (heard: HeardRecall): GraphView => {
+    if (graphCache?.heard === heard && graphCache.records === recalls.records.length) return graphCache.view
+    const view = graphViewOf(heard.recalled, recalls.records)
+    graphCache = { heard, records: recalls.records.length, view }
+    return view
+  }
+  const graphPane = graphHost === null ? undefined : mountGraph(graphHost, {
+    pick: (value) => {
+      const [turn, call] = value.split(":").map(Number)
+      recallPick = value === LATEST || turn === undefined || call === undefined ? { _tag: "Latest" } : { _tag: "Call", turn, call }
+      paintGraph()
+    },
+  })
+  let graphFrame = 0
+  function paintGraph() {
+    graphFrame = 0
+    if (graphPane === undefined || graphHost === null || graphHost.hidden) return
+    graphPane.render({
+      choices: recalls.recalls.map((one) => ({ value: `${one.turn}:${one.call}`, label: recallLabel(recalls, one) })),
+      picked: recallPick._tag === "Latest" ? LATEST : `${recallPick.turn}:${recallPick.call}`,
+      // The walk drawn is named whichever way it was picked: "The latest" alone says no turn.
+      shown: Option.match(pickedRecall(recalls, recallPick), { onNone: () => "", onSome: (one) => recallLabel(recalls, one) }),
+      view: Option.map(pickedRecall(recalls, recallPick), viewOfHeard),
+      empty: NO_WALK,
+    })
+  }
+  const paintGraphSoon = () => { if (graphFrame === 0) graphFrame = requestAnimationFrame(paintGraph) }
+  /** A new conversation: its walks start over, and the graph's records stay. */
+  const graphStartedOver = (chat: string) => {
+    recalls = recallsStartedOver(recalls, chat)
+    recallPick = { _tag: "Latest" }
+    paintGraphSoon()
+  }
+
   // ── status ──────────────────────────────────────────────────────────────
   // Called after every trace the page hears: a chip already showing this is left alone.
   const setChip = (text: string, kind: "idle" | "ready" | "error") => {
@@ -123,7 +172,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     chat.setState({
       ready, running: busy() || waitingCount(board) > 0,
       hint: ready ? "" : !state.model ? "Pick a model from the bar above." : state.building ? "Starting your program…"
-        : checking() ? `${lesson.evals !== undefined ? "The evals are running" : lesson.calibration !== undefined ? "The graders are being checked" : "The checks are running"}. The chat takes messages again when they are done.` : "Your program is not running. Fix it, then press Rebuild.",
+        : checking() ? `${lesson.evals !== undefined ? "The evals are running" : lesson.calibration !== undefined ? "The graders are being checked" : lesson.graph !== undefined ? "The world is being loaded" : "The checks are running"}. The chat takes messages again when that is done.` : "Your program is not running. Fix it, then press Rebuild.",
     })
     models.setBusy(state.loading || busy() || checking())
     // A kit that runs alone and the chat take turns: its button is off while a turn runs or a message waits for one.
@@ -189,6 +238,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       const tab = lesson.durable === undefined ? undefined : tabStorage()
       const runtime = await LessonRuntime.create(lesson, { ...(storage === undefined ? {} : { storage }), ...(tab === undefined ? {} : { tab }) })
       trace.reset(runtime.conversation)
+      graphStartedOver(runtime.conversation)
       runtime.onTrace(heard)
       state.runtime = runtime
       Option.map(runtime.workspace, (files) => {
@@ -245,6 +295,12 @@ function boot(root: HTMLElement, lesson: Lesson) {
       trace.reset(event.session)
     }
     trace.hear(event)
+    // Lesson 18: a walk said for a request, or a record of the graph session's, redraws the Graph tab.
+    if (graphPane !== undefined) {
+      const before = recalls
+      recalls = heardRecall(recalls, event)
+      if (recalls !== before) paintGraphSoon()
+    }
     if (contextTab.getAttribute("aria-selected") !== "true" && !unseen) { unseen = true; contextTab.dataset.unseen = "" }
     window.dispatchEvent(new CustomEvent("learn:trace", { detail: event }))
     // Lesson 16: the Files tab reads the workspace again after a write a tool said, and after every turn's end.
@@ -471,22 +527,26 @@ function boot(root: HTMLElement, lesson: Lesson) {
     }, 350)
   }
 
-  /** A file the lesson has, the Context tab, the Files tab where the lesson has one, or the main file. */
+  /** A file the lesson has, the Context tab, the Files and Graph tabs where the lesson has them, or the main file. */
   const tabOf = (id: string | undefined): string =>
-    id === CONTEXT_TAB || (id === FILES_TAB && filesHost !== null) ? id : lesson.files.find((file) => file.id === id)?.id ?? lesson.mainFile
+    id === CONTEXT_TAB || (id === FILES_TAB && filesHost !== null) || (id === GRAPH_TAB && graphHost !== null) ? id : lesson.files.find((file) => file.id === id)?.id ?? lesson.mainFile
   root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((tab) => tab.addEventListener("click", () => showTab(tabOf(tab.dataset.file))))
   const showTab = (tab: string) => {
     const context = tab === CONTEXT_TAB
     const files = tab === FILES_TAB && filesHost !== null
-    const code = !context && !files
+    const graph = tab === GRAPH_TAB && graphHost !== null
+    const code = !context && !files && !graph
     editorHost.hidden = !code
     traceHost.hidden = !context
     if (filesHost !== null) filesHost.hidden = !files
+    if (graphHost !== null) graphHost.hidden = !graph
     formatButton.hidden = !code
     syntaxBox.hidden = !code
     if (context) { unseen = false; delete contextTab.dataset.unseen } else if (code) editor.showFile(tab)
     // The Files tab shows the workspace as it is now.
     if (files) void workspacePane?.refresh()
+    // The Graph tab shows the walk picked, as the page has heard it.
+    if (graph) paintGraph()
     const readOnly = lesson.files.find((file) => file.id === tab)?.readOnly === true
     formatButton.disabled = readOnly
     root.querySelectorAll<HTMLButtonElement>("[data-file]").forEach((button) => button.setAttribute("aria-selected", String(button.dataset.file === tab)))
@@ -549,6 +609,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       chatRecords.length = 0
       views.reset()
       trace.reset(runtime.conversation)
+      graphStartedOver(runtime.conversation)
     }
     statusBox.textContent = ""
     underWorkspace = undefined
@@ -594,11 +655,12 @@ function boot(root: HTMLElement, lesson: Lesson) {
     // A step about the context opens the Context tab in the Code pane; one about the files (lesson 16), its Files tab.
     const context = detail.pane === "context" || detail.file === CONTEXT_TAB
     const files = filesHost !== null && (detail.pane === FILES_TAB || detail.file === FILES_TAB)
-    const pane = context || files ? "code" : detail.pane
-    if (detail.wide === "true" || context) grid.dataset.wide = "true"; else delete grid.dataset.wide
+    const graph = graphHost !== null && (detail.pane === GRAPH_TAB || detail.file === GRAPH_TAB)
+    const pane = context || files || graph ? "code" : detail.pane
+    if (detail.wide === "true" || context || graph) grid.dataset.wide = "true"; else delete grid.dataset.wide
     if (pane) { grid.dataset.focus = pane; root.dataset.focus = detail.pane ?? pane } else { delete grid.dataset.focus; delete root.dataset.focus }
     const file = tabOf(detail.file)
-    if (file !== CONTEXT_TAB && file !== FILES_TAB) {
+    if (file !== CONTEXT_TAB && file !== FILES_TAB && file !== GRAPH_TAB) {
       showTab(file)
       const open = new Set((detail.unfold ?? "").split(",").map((s) => s.trim()))
       const folded = lesson.files.find((entry) => entry.id === file)?.folded ?? []
@@ -606,6 +668,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     }
     if (context) showTab(CONTEXT_TAB)
     if (files) showTab(FILES_TAB)
+    if (graph) showTab(GRAPH_TAB)
   }
   window.addEventListener("learn:focus", (event) => applyFocus((event as CustomEvent<Focus>).detail))
   const active = document.querySelector<HTMLElement>("[data-step][data-active]")
@@ -619,7 +682,9 @@ function boot(root: HTMLElement, lesson: Lesson) {
     controlEls.forEach((control) => {
       const value = readControl(control.dataset.control ?? "")
       control.disabled = Option.isNone(value)
-      if (Option.isSome(value) && document.activeElement !== control) control.value = String(value.value)
+      // A choice of chips (lesson 18's names and weights) is a radio button each: the one whose value the line holds is checked.
+      if (control instanceof HTMLInputElement && control.type === "radio") control.checked = Option.isSome(value) && control.value === String(value.value)
+      else if (Option.isSome(value) && document.activeElement !== control) control.value = String(value.value)
     })
     document.querySelectorAll<HTMLElement>("[data-controls-note]").forEach((note) => { note.hidden = controlEls.every((control) => !control.disabled) })
   }
@@ -627,6 +692,8 @@ function boot(root: HTMLElement, lesson: Lesson) {
   controlEls.forEach((control) => control.addEventListener("input", () => {
     const bound = controlOf(control.dataset.control ?? "")
     if (Option.isNone(bound)) return
+    // A radio button says only that it was checked: the one unchecked by it writes nothing.
+    if (control instanceof HTMLInputElement && control.type === "radio" && !control.checked) return
     // A number field or a slider writes a number; text and a choice write text.
     const numeric = control instanceof HTMLInputElement && (control.type === "number" || control.type === "range")
     const raw = numeric ? Number(control.value) : control.value
@@ -773,6 +840,21 @@ function boot(root: HTMLElement, lesson: Lesson) {
     if (Result.isFailure(ran)) pane.say(`The graders were not checked: ${ran.failure}`)
   }))
   document.querySelectorAll<HTMLButtonElement>('[data-graders="stop"]').forEach((button) => button.addEventListener("click", () => void state.runtime?.stopAlone()))
+  // Lesson 18: write the world into the graph session, in one turn, and say what was stored under the button. It
+  // takes turns with the chat: Send and the chips are off while it runs, and it is off while a turn runs.
+  document.querySelectorAll<HTMLButtonElement>("[data-world]").forEach((button) => button.addEventListener("click", async () => {
+    const result = (button.closest("[data-step]") ?? document).querySelector<HTMLElement>("[data-world-result]")
+    button.disabled = true
+    const loading = (await ensureRuntime()).loadWorld()
+    refresh()
+    const loaded = await loading
+    refresh()
+    if (result !== null) {
+      result.textContent = Result.match(loaded, { onSuccess: (words) => words, onFailure: (why) => `Nothing was stored: ${why}` })
+      result.dataset.state = Result.isSuccess(loaded) ? "ok" : "error"
+      result.hidden = false
+    }
+  }))
   // Lesson 7: reload the page as it stands, a turn in progress included.
   document.querySelectorAll<HTMLButtonElement>("[data-reload]").forEach((button) => button.addEventListener("click", () => window.location.reload()))
   // Lesson 7: forget everything this lesson stored (its journals and the edits kept for a reload), and start again.
