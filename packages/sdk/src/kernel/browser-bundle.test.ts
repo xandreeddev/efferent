@@ -16,9 +16,16 @@ const builtins = new Set(builtinModules.flatMap((name) => [name, `node:${name}`]
 const isRuntimeModule = (specifier: string) =>
   specifier.startsWith("node:") || specifier.startsWith("bun:") || specifier === "bun" || builtins.has(specifier) || builtins.has(specifier.split("/")[0] ?? specifier)
 
-/** Build an entry for a browser; what failed, how much came out, and the runtime modules its graph asked for, with who asked. */
+/** Where the kernel's Node entry and its ports are (`./kernel/node`, ADR 0024): no module of the browser entry's graph is there. */
+const NODE_ENTRY = "/src/kernel/node/"
+
+/**
+ * Build an entry for a browser; what failed, how much came out, the runtime modules its graph asked for, with who
+ * asked, and the modules of the Node entry it reached (every module that imports anything is an importer).
+ */
 const bundle = async (entry: string) => {
   const asked: Array<string> = []
+  const reached: Array<string> = []
   const built = await Bun.build({
     entrypoints: [entry],
     target: "browser",
@@ -29,13 +36,15 @@ const bundle = async (entry: string) => {
       setup: (build) => {
         build.onResolve({ filter: /.*/ }, (args) => {
           if (isRuntimeModule(args.path)) asked.push(`${args.path} <- ${args.importer.split("/").slice(-3).join("/")}`)
+          const importer = String(args.importer ?? "")
+          if (importer.includes(NODE_ENTRY)) reached.push(importer.slice(importer.indexOf(NODE_ENTRY) + NODE_ENTRY.length))
           return undefined
         })
       },
     }],
   })
   const sizes = await Promise.all(built.outputs.map((output) => output.text().then((text) => text.length)))
-  return { built: built.success, size: sizes.reduce((sum, size) => sum + size, 0), asked: Arr.sort(Arr.dedupe(asked), Order.String) }
+  return { built: built.success, size: sizes.reduce((sum, size) => sum + size, 0), asked: Arr.sort(Arr.dedupe(asked), Order.String), reached: Arr.sort(Arr.dedupe(reached), Order.String) }
 }
 
 test("a browser bundle of @xandreed/sdk/kernel resolves no runtime module: none by a node: or bun: name, none by a bare builtin name", async () => {
@@ -48,6 +57,17 @@ test("a browser bundle of @xandreed/sdk/kernel resolves no runtime module: none 
 test("the same check catches an entry that imports one: the kernel's entry beside node:path", async () => {
   const control = await bundle(`${import.meta.dir}/../../fixtures/kernel-node-import.ts`)
   expect(control.asked).toEqual(["node:path <- sdk/fixtures/kernel-node-import.ts"])
+}, 60_000)
+
+test("a browser bundle of @xandreed/sdk/kernel reaches no module of the Node entry", async () => {
+  const kernel = await bundle(`${import.meta.dir}/index.ts`)
+  expect(kernel.reached).toEqual([])
+}, 60_000)
+
+test("the same check catches an entry that imports the Node entry: the kernel's entry beside it", async () => {
+  const control = await bundle(`${import.meta.dir}/../../fixtures/kernel-node-entry-import.ts`)
+  expect(control.reached).toContain("index.ts")
+  expect(control.reached).toContain("journal-directory/directory-journal.adapter.ts")
 }, 60_000)
 
 test("a runtime module is told by any of its names", () => {
