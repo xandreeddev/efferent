@@ -69,6 +69,10 @@ caught up.
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
 | `inMemoryFiles(initial?)` | sdk, `plugins/files-in-memory` | a workspace in memory |
+| The embedder contract | sdk, `contracts/embedder` | `Embedder`, which turns texts into vectors, the host's; `Vector`, `cosine` |
+| `recordedEmbedder({ model, vectors })` | sdk, `plugins/embedder-recorded` | an embedder of recorded vectors, for tests and a page with no model |
+| The vector store contract | sdk, `contracts/vector-store` | `VectorStore`, an index of the journal found by meaning, the host's; `VectorKey`, `Scored` |
+| `inMemoryVectors()` | sdk, `plugins/vectors-in-memory` | a store of vectors in memory |
 | `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
 | The task contract | sdk, `contracts/task` | `Tasks`, `TaskReports` (where the host takes a report), `TaskReport`, `taskReport`: a report the program stores as a user message whose `from` is the task's session |
 | `tasks(run)`, `taskTools`, `taskHandlers` | sdk, `plugins/tasks` | background tasks: the host's helper on a fiber of the plugin, the two tools that start and cancel one |
@@ -1482,6 +1486,59 @@ dies inside a turn on the graph session leaves it busy until the host
 recovers it (`graphSession`, `Sessions.recover`), and every agent on one
 store shares its graph.
 
+### Vectors: what an agent knows, found by meaning
+
+Facts and links are ranked for a question by the words it shares with them,
+so a question that says "employs" misses a link that says "works at". Two
+contracts let a host rank by meaning instead (ADR 0021): an `Embedder`
+turns texts into vectors, and a `VectorStore` finds the vectors closest to
+a question's. Both are the host's: a model in the page or the process, or a
+service over the network; a store in memory, or a database. The kernel
+ships `recordedEmbedder`, which answers the texts it was given and refuses
+any other in words, and `inMemoryVectors()`. No kernel plugin calls a
+model.
+
+- **Vectors are an index of the journal, never a store of truth.** What is
+  embedded is a link's sentence or a fact's text; the store keeps its
+  vector under a key the caller makes from the text, and the item itself is
+  read from the journal. A store that is lost is made again from the
+  journal, and no part rebuilds the agent's state from it.
+- **The index is keyed by the model and the text,** never by an id: ids
+  belong to one journal, so a key made from one would miss vectors made
+  ahead. `Embedder.model` names what made the vectors, and the caller makes
+  each key from it and the text, so vectors of two models are never compared: with another
+  model `has` finds none, and the items are embedded again. A store keeps
+  vectors of one length, so a model of another length needs a fresh
+  store.
+- **`embed(texts, as)`** gives one vector per text, in order, all of one
+  length, as a question (`query`) or as a text kept to be found
+  (`passage`), which many models embed differently. A text it cannot embed
+  fails the call with `EmbedFailed`, in words, and no vector of it is made.
+- **`put(entries)`** keeps each vector under its key, a key put again
+  replaced, the whole put or none of it. A vector of another length than
+  the store's, numbers that are no vector, or a key that is no key (1 to
+  `KEY_LIMIT`, 400, characters) is refused with `VectorsRefused`, a reason
+  and words.
+- **`search(vector, { limit, among? })`** finds the keys by `cosine`, best
+  first, keys of one score by code unit, at most `limit`. `among` is what
+  still stands: a link removed, a fact forgotten or an item of another
+  model may keep its vector, and a search among the standing keys of the
+  present model never finds it, and still fills its limit from those
+  that stand. `has(keys)` says which are stored, so a
+  caller embeds only what is missing.
+- **Likeness is not counting.** A claim said again and one that contradicts
+  it sit at the same likeness (ADR 0021's measurement), so how often a
+  thing was said is counted by records, as the graph's
+  `plugin.graph.restated` does, never by vectors that are alike.
+
+A host proves its own embedder with `embedderConformance` (n texts give n
+vectors in order, each pointing where its text's vector alone points; the
+same vector twice; one length; no texts, no vectors; a query and a passage
+of one length), over three or more texts it gives, and its own store with
+`vectorStoreConformance`. The wrapper that recalls by meaning for each
+request, with its note and the event that says what it found, is the next
+cut.
+
 ## The inbox: queueing messages for a turn
 
 The inbox is a plugin over the host's own turn, and the proof that a plugin
@@ -2139,6 +2196,8 @@ fail on a careless plugin written for it.
 | graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
+| `Embedder` | `embedderConformance`, over texts the subject gives | |
+| `VectorStore` | `vectorStoreConformance` | |
 | `ModelSpend` | `modelSpendConformance` | |
 | `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |
 | `TaskReports` | none | the host's sink, one call that puts a report in its queue: the tests hold the plugin's side (a delivery that waits keeps its task's slot) |

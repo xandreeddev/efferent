@@ -276,7 +276,29 @@ it: `./kernel` is a `restricted` subpath.
   prompt sends); `writtenEvent` (`plugin.files.written`, live, tagged
   `trace`); the tools' pure rules and words (`editText`, a compare and
   set, `filePageOf` on `pointer`'s `pageAt`); and its kit
-  (`filesConformance`, `FilesSubject`); `contracts/task` holds background
+  (`filesConformance`, `FilesSubject`); `contracts/embedder` and
+  `contracts/vector-store` hold ranking by meaning (ADR 0021): `Embedder`
+  (`model`, the name each vector's key is made from with its item, so
+  vectors of two models are never compared, and `embed(texts, as)`, one `Vector` per text in order,
+  of one length, as a `query` or a `passage` (`EmbedAs`), failing with
+  `EmbedFailed` in words), `cosine` (0 for a vector of zeros and for two
+  lengths), and its kit (`embedderConformance`, `EmbedderSubject`: `order`,
+  `same`, `dimension`, `empty`, `both`, over three or more texts the
+  subject gives, so a recorded embedder and a model pass the same kit);
+  `VectorStore` (`put(entries)`, a key put again replaced, whole or
+  nothing; `search(vector, { limit, among? })` by cosine, best first, ties
+  by key in code-unit order, `among` the only keys found, those not stored
+  passed over and the limit still filled; `has(keys)`, the stored ones in
+  the order given, each once), `VectorKey` (1 to `KEY_LIMIT`, 400,
+  characters), `VectorEntry`, `Scored`, `SearchOptions`, `VectorsRefused`
+  (`reason`: `dimension`, `vector`, `key` or `limit`, and words; a refused
+  put keeps nothing), `VectorsUnavailable` (the medium failed: a defect of
+  the caller's call, as `FilesUnavailable` is), the pure `refusedPut`,
+  `refusedSearch` and `ranked` its plugin is made of, and its kit
+  (`vectorStoreConformance`, `VectorStoreSubject`: `replace`, `order`,
+  `ties`, `limit`, `among`, `has`, `dimension`, `empty`); vectors are an
+  index of the journal, made again from it when lost, never read as truth;
+  `contracts/task` holds background
   tasks (ADR 0018): `Tasks` (`start(parent, task)` at once, `cancel(parent,
   task)`, a session's own tasks only) and `TaskReports` (`deliver(report)`,
   the host's: into the one queue its loop takes messages from; a task counts
@@ -350,7 +372,15 @@ it: `./kernel` is a `restricted` subpath.
   length is asked; it declares `CurrentTurn` and carries `SentWhole`),
   `files-in-memory` (`inMemoryFiles(initial?)`, a workspace in a map, its
   write's compare and set one `Ref.modify`; a path in `initial` that is no
-  `FilePath` throws where written), `tool-files` (`ReadFile`, `ListFiles`,
+  `FilePath` throws where written), `embedder-recorded`
+  (`recordedEmbedder({ model, vectors })`, the vectors recorded for each
+  text as a `query` and as a `passage` (`RecordedOptions`,
+  `RecordedVectors`); a text not recorded as what it is asked for fails
+  with `EmbedFailed`, `No <as> vector is recorded for "<text>".`, the text
+  cut at 80 characters with what was cut counted; vectors of two lengths,
+  numbers that are no vector or a model with no name throw where written),
+  `vectors-in-memory` (`inMemoryVectors()`, a map in a `Ref`, each put one
+  `Ref.modify`, whole or nothing), `tool-files` (`ReadFile`, `ListFiles`,
   `WriteFile`, `EditFile`, `fileTools`, `fileHandlers`: they never ask,
   since permission is the app's; `readFile` carries `SentWhole`; `writeFile`
   and `editFile` declare `CurrentTurn` to publish `plugin.files.written`),
@@ -549,11 +579,18 @@ it: `./kernel` is a `restricted` subpath.
   a failing summarizer; the note's words and its frame), `plugins/inbox/*` (the transitions as a
   table, and the inbox's rules, among them an announcement before its turn
   and in ticket order under a scheduler that makes every fiber yield after
-  a few operations), `kits` (the storage, sessions, memory and files kits on the
+  a few operations), `kits` (the storage, sessions, memory, files, embedder and vector store kits on the
   stock plugins, the memory kit on the three memories (the summary one
   over a summarizer that answers in a few words), and on careless ones:
   each careless plugin fails the checks of what it is careless about and
-  no others, and between them every check; the memory kit's `pairs` check
+  no others, and between them every check (the embedder kit's on
+  `recordedEmbedder` with its `embed` replaced: out of order, drifting
+  between calls, one text of another length, failing on no texts, a
+  passage longer than a query; the store kit's on `inMemoryVectors` with
+  a call replaced: not replacing, worst first, ties in put order, the
+  limit ignored, `among` ignored, `among` cut before the limit is filled,
+  `has` answering every key, a put kept entry by entry, a search of an
+  empty store refused); the memory kit's `pairs` check
   has the careless `unpaired`, which sends a call no result answers,
   `byid`, which pairs by id alone, `bymessage`, which tells the calls
   of one answer apart by their id alone, and `bylast`, which sends the
@@ -563,7 +600,10 @@ it: `./kernel` is a `restricted` subpath.
   beside the contracts' files their own
   (`contracts/memory/memory.entity.functions.test.ts`: a record's prompt
   message, tool calls and results included, `paired`, and the estimate;
-  `contracts/render/render.entity.functions.test.ts`: `viewsOf`). A test whose claim is the compiler's says
+  `contracts/render/render.entity.functions.test.ts`: `viewsOf`;
+  `contracts/embedder/embedder.entity.functions.test.ts`: `cosine`;
+  `contracts/vector-store/vector-store.entity.functions.test.ts`: the
+  refusals' words and `ranked`; and beside the two plugins their own). A test whose claim is the compiler's says
   `type-level:` in its title. `testing.ts` holds the test turn
   (`testTurn(system)`, a `Turn` needing `TurnNeeds`, which refuses a
   message of no text with its own `EmptyMessage` and fails a model's error
@@ -572,7 +612,7 @@ it: `./kernel` is a `restricted` subpath.
   `send` returns the reply's text); `testing.port.ts` holds `Label`, a
   stand-in contract for `wrapping`, and `Helper`, the contract the
   `delegate` tool of `sub-agent` needs, quoted by `docs/kernel.md`. `scripts/kernel-consumer.fixture.mjs`
-  runs the storage, sessions, memory and files kits, one turn of a host's own over a stack of layers,
+  runs the storage, sessions, memory, files, embedder and vector store kits, one turn of a host's own over a stack of layers,
   two messages queued with the inbox, a host's turn with tools (`toolTurn`)
   and a consumer's own contract
   composed as a layer, from the packed packages, on Node and on Bun
@@ -585,7 +625,7 @@ it: `./kernel` is a `restricted` subpath.
 - Core's host API, re-exported by name (`src/index.ts`) so that a host defining an agent and running its turns imports one package: a turn's input (`UserMessage`, `mediaFromBytes`, `mediaFromBase64`, `RunId`, `ConversationId`, `SessionAddress`, the types `TurnInput` and `NewTurn`); the turn and its result (the types `Turn`, `TurnPolicy`, `TurnOutcome`, `TurnResult`); the sessions turns begin in (`Sessions`, `SessionLog`, `SessionLogMemoryLive`, `TurnAdmission`, `TurnAdmissionOpen`, `TurnRefused`); the host's capabilities and plugins (`defineTool`, `defineSkill`, `definePromptSection`, `defineCapability`, the type `Capability`, `definePlugin`, `publishToolProgress`, `Failure`, `Media`, `SessionEnvironment`, `ActionPolicy`, `PermissionGrants`); the turn's events and the journal's records of its messages and end (`TurnEvent`, `TurnEvents`, the types `TurnEventOf` and `TurnEventsService`, `onEvent`, `onTool`, `subscribeAll`, `defineHostEvent`, `AssistantMessage`, `TurnEndedData`, `turnEndedOf`); what a turn fails with (`HarnessError`, `isHarnessError`, `harnessCodeOf`, `TurnBeginError`, `turnBeginCodes`, the type `TurnError`, `isTurnError`, `turnEndingOf`); and what the process has in flight and how it stops (`awaitIdle`, `processActivity`, `shutdownGracefully`, `DEFAULT_SHUTDOWN_DEADLINE`, `TurnShutdown`, `isShutdownRefusal`, the types `ShutdownOptions` and `ShutdownReport`). A port to implement and its entities, memory, model requests, stored payloads and References are imported from `@xandreed/core`, a kit from `@xandreed/core/conformance`: the sdk is the host's entry, not a second copy of core's surface. A name joins the list when a host writes it beside `Agent` in the common case, not because one test needs it.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
-- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `questionOf`, `OverBudget`, `isOverBudget`, `InvalidBudget`, `pointed` (`PointerOptions`), `resultText`, `ResultPage`, `READ_RESULT`, `READ_RESULT_PAGE`; the tool call's: `CurrentTurn`, `callTool` (`ModelToolCall`, `ToolNeeds`, `OwnTools`), `SentWhole`, `planned`, `retryable`, `AnswerCut`, `attemptEvent` (`AttemptData`), `turnsOf` (`TurnRead`, `StepRead`, `CallRead`, `ResultRead`, `MessageRead`, `ClosedRead`), and the tool `ReadResult` with its handler `readResult`; asking before acting: `Approval`, `approve`, `approveIn`, `grantsOf`, `ApprovalRequest`, `Decision`, `DecidedData`, `decidedEvent`, `APPROVAL_REFUSED` (`ApprovalRefusal`, the type `approve` fails with), `DETAIL_LIMIT`, and the wrapper `autoApprove`; skills: `defineSkill` (`Skill`, `SkillOptions`), `SkillId`, `catalogue`, `loadedOf`, `LoadedSkill`, `LOAD_SKILL`, the tool `LoadSkill`, and `skills(base, ...skills)` (`SkillSet`, `SkillTools`, `Offered`, `OwnSkills`), the one value over a host's tools and skills; the facts': `Fact`, `FactId`, `FactText`, `FACT_LIMIT`, `FACTS_OWNER`, `learnedEvent` (`LearnedData`), `forgottenEvent` (`ForgottenData`), `factsOf`, `relevant`, `factsNote`, `REMEMBER_FACT`, `FORGET_FACT`, `RememberedFact`, `FactsOptions`, and from the plugin the tools `RememberFact` and `ForgetFact`, `factTools`, `factHandlers`, `memorySession`, `rememberedFacts` and `withFacts`; the graph's: `Link`, `LinkId`, `ThingName`, `Relation`, `NAME_LIMIT`, `RELATION_LIMIT`, `GRAPH_OWNER`, `linkedEvent` (`LinkedData`), `unlinkedEvent` (`UnlinkedData`), `linksOf`, `normalName`, `namedIn`, `near`, `linksNote`, `LINK_THINGS`, `UNLINK_THINGS`, `FOLLOW_THINGS`, `FOLLOW_LIMIT`, `LinkedThings`, `LinkShown`, `Followed`, `Speaker`, `GraphOptions`, `Naming`, `RestatedData`, `restatedEvent`, `SaidLink`, `saidOf`, `saidText`, `Weights`, `weightOf`, `walked`, `Walked`, `NamedThing`, `RecalledData`, `recalledEvent`, `recalledOf`, `RECALL_SHOWN`, `QUESTION_SHOWN`, and from the plugin the tools `LinkThings`, `UnlinkThings` and `FollowThings`, `graphTools`, `graphHandlers`, `graphSession`, `knownLinks`, `saidLinks` and `withGraph`; the summary's: `Summarizer`, `SummaryFailed`, `summarizerConformance` (`SummarizerSubject`); what the UI shows: `View`, `TextView`, `ListView`, `TableView`, `CardView`, `ViewId`, `ViewData`, `viewEvent`, `showView`, `ProgressData`, `progressEvent`, `viewsOf` (`Shown`); the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ScriptedAnswer` with its `Calls` answer and its `Fails`, worth another try or not, before anything or after some pieces, `ScriptedCalls`), the model that follows a script, for kits and tests, the inbox: `inbox`, `inboxOf` (`InboxOptions`), and the workspace: `Files`, `FilePath`, `workspacePath`, `Expected`, `FileNotFound`, `FileChanged`, `FilesRefused`, `FilesUnavailable`, `FilePage`, `FileList`, `FileWritten`, `WrittenData`, `writtenEvent`, `FILE_PAGE`, `WRITE_LIMIT`, `LIST_LIMIT`, `PATH_LIMIT`, `READ_FILE`, `LIST_FILES`, `WRITE_FILE`, `EDIT_FILE`, `filesConformance` (`FilesSubject`), `inMemoryFiles`, and the tools `ReadFile`, `ListFiles`, `WriteFile`, `EditFile` with `fileTools` and `fileHandlers`, and background tasks: `Tasks`, `TaskReports`, `TaskId`, `TaskReport`, `TaskOutcome`, `StartedTask`, `TaskRefused`, `TasksOptions`, `taskReport`, `TASKS_OWNER`, `TASK_LIMIT`, `REPORT_LIMIT`, `DEFAULT_RUNNING`, `START_TASK`, `CANCEL_TASK`, `tasks` (`TaskRun`), and the tools `StartTask`, `CancelTask` with `taskTools` and `taskHandlers`. No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
+- `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `questionOf`, `OverBudget`, `isOverBudget`, `InvalidBudget`, `pointed` (`PointerOptions`), `resultText`, `ResultPage`, `READ_RESULT`, `READ_RESULT_PAGE`; the tool call's: `CurrentTurn`, `callTool` (`ModelToolCall`, `ToolNeeds`, `OwnTools`), `SentWhole`, `planned`, `retryable`, `AnswerCut`, `attemptEvent` (`AttemptData`), `turnsOf` (`TurnRead`, `StepRead`, `CallRead`, `ResultRead`, `MessageRead`, `ClosedRead`), and the tool `ReadResult` with its handler `readResult`; asking before acting: `Approval`, `approve`, `approveIn`, `grantsOf`, `ApprovalRequest`, `Decision`, `DecidedData`, `decidedEvent`, `APPROVAL_REFUSED` (`ApprovalRefusal`, the type `approve` fails with), `DETAIL_LIMIT`, and the wrapper `autoApprove`; skills: `defineSkill` (`Skill`, `SkillOptions`), `SkillId`, `catalogue`, `loadedOf`, `LoadedSkill`, `LOAD_SKILL`, the tool `LoadSkill`, and `skills(base, ...skills)` (`SkillSet`, `SkillTools`, `Offered`, `OwnSkills`), the one value over a host's tools and skills; the facts': `Fact`, `FactId`, `FactText`, `FACT_LIMIT`, `FACTS_OWNER`, `learnedEvent` (`LearnedData`), `forgottenEvent` (`ForgottenData`), `factsOf`, `relevant`, `factsNote`, `REMEMBER_FACT`, `FORGET_FACT`, `RememberedFact`, `FactsOptions`, and from the plugin the tools `RememberFact` and `ForgetFact`, `factTools`, `factHandlers`, `memorySession`, `rememberedFacts` and `withFacts`; the graph's: `Link`, `LinkId`, `ThingName`, `Relation`, `NAME_LIMIT`, `RELATION_LIMIT`, `GRAPH_OWNER`, `linkedEvent` (`LinkedData`), `unlinkedEvent` (`UnlinkedData`), `linksOf`, `normalName`, `namedIn`, `near`, `linksNote`, `LINK_THINGS`, `UNLINK_THINGS`, `FOLLOW_THINGS`, `FOLLOW_LIMIT`, `LinkedThings`, `LinkShown`, `Followed`, `Speaker`, `GraphOptions`, `Naming`, `RestatedData`, `restatedEvent`, `SaidLink`, `saidOf`, `saidText`, `Weights`, `weightOf`, `walked`, `Walked`, `NamedThing`, `RecalledData`, `recalledEvent`, `recalledOf`, `RECALL_SHOWN`, `QUESTION_SHOWN`, and from the plugin the tools `LinkThings`, `UnlinkThings` and `FollowThings`, `graphTools`, `graphHandlers`, `graphSession`, `knownLinks`, `saidLinks` and `withGraph`; the summary's: `Summarizer`, `SummaryFailed`, `summarizerConformance` (`SummarizerSubject`); what the UI shows: `View`, `TextView`, `ListView`, `TableView`, `CardView`, `ViewId`, `ViewData`, `viewEvent`, `showView`, `ProgressData`, `progressEvent`, `viewsOf` (`Shown`); the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ScriptedAnswer` with its `Calls` answer and its `Fails`, worth another try or not, before anything or after some pieces, `ScriptedCalls`), the model that follows a script, for kits and tests, the inbox: `inbox`, `inboxOf` (`InboxOptions`), and the workspace: `Files`, `FilePath`, `workspacePath`, `Expected`, `FileNotFound`, `FileChanged`, `FilesRefused`, `FilesUnavailable`, `FilePage`, `FileList`, `FileWritten`, `WrittenData`, `writtenEvent`, `FILE_PAGE`, `WRITE_LIMIT`, `LIST_LIMIT`, `PATH_LIMIT`, `READ_FILE`, `LIST_FILES`, `WRITE_FILE`, `EDIT_FILE`, `filesConformance` (`FilesSubject`), `inMemoryFiles`, and the tools `ReadFile`, `ListFiles`, `WriteFile`, `EditFile` with `fileTools` and `fileHandlers`, ranking by meaning: `Embedder`, `EmbedAs`, `EmbedFailed`, `Vector`, `cosine`, `embedderConformance` (`EmbedderSubject`), `recordedEmbedder` (`RecordedOptions`, `RecordedVectors`), `VectorStore`, `VectorKey`, `VectorEntry`, `Scored`, `SearchOptions`, `RefusedBecause`, `VectorsRefused`, `VectorsUnavailable`, `KEY_LIMIT`, `vectorStoreConformance` (`VectorStoreSubject`) and `inMemoryVectors`, and background tasks: `Tasks`, `TaskReports`, `TaskId`, `TaskReport`, `TaskOutcome`, `StartedTask`, `TaskRefused`, `TasksOptions`, `taskReport`, `TASKS_OWNER`, `TASK_LIMIT`, `REPORT_LIMIT`, `DEFAULT_RUNNING`, `START_TASK`, `CANCEL_TASK`, `tasks` (`TaskRun`), and the tools `StartTask`, `CancelTask` with `taskTools` and `taskHandlers`. No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

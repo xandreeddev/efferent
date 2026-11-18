@@ -31,11 +31,12 @@ import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import type { FilePath, FilesSubject, KeyValueStore, SummarizerSubject } from "./index.js"
+import type { EmbedderSubject, FilePath, FilesSubject, KeyValueStore, SummarizerSubject, Vector, VectorKey, VectorStoreSubject } from "./index.js"
+import { EmbedFailed, Embedder, embedderConformance, inMemoryVectors, recordedEmbedder, VectorsRefused, VectorStore, vectorStoreConformance } from "./index.js"
 import { FileChanged, Files, filesConformance, inMemoryFiles, flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
 
 /*
- * The three contracts' kits: each passes on its stock plugin, and each
+ * The contracts' kits: each passes on its stock plugin, and each
  * careless plugin written here fails the checks of what it is careless
  * about and no others, so a check holds only for a plugin that keeps the
  * promise it checks.
@@ -669,6 +670,132 @@ describe("the files kit", () => {
       blind: ["changed"],
       unordered: ["list"],
       byStart: ["list"],
+    })
+  })
+})
+
+describe("the embedder kit", () => {
+  type EmbedderShape = Context.Service.Shape<typeof Embedder>
+  const texts = ["The cat sleeps on the mat.", "Stock prices fell sharply today.", "A recipe for lemon cake."]
+  const stock = recordedEmbedder({
+    model: "kit-model",
+    vectors: {
+      query: { [texts[0] ?? ""]: [1, 0, 0, 0], [texts[1] ?? ""]: [0, 1, 0, 0], [texts[2] ?? ""]: [0, 0, 1, 0] },
+      passage: { [texts[0] ?? ""]: [1, 0, 0, 0.5], [texts[1] ?? ""]: [0, 1, 0, 0.5], [texts[2] ?? ""]: [0, 0, 1, 0.5] },
+    },
+  })
+  /** The recorded embedder with its `embed` replaced, given the one it replaces. */
+  const careless = (change: (inner: EmbedderShape) => EmbedderShape["embed"]): EmbedderSubject => ({
+    texts,
+    open: Effect.map(built(Embedder, stock, Layer.empty), (inner) => Embedder.of({ ...inner, embed: change(inner) })),
+  })
+
+  test("has the checks its doc comment lists, and passes on the recorded embedder", async () => {
+    const subject: EmbedderSubject = { texts, open: built(Embedder, stock, Layer.empty) }
+    expect(ids(embedderConformance(subject))).toEqual(["order", "same", "dimension", "empty", "both"])
+    expect(await failedChecks(embedderConformance(subject))).toEqual([])
+  })
+
+  test("a subject with fewer than three texts, or texts too alike to tell apart, fails order in words", async () => {
+    const run = (subject: EmbedderSubject) => Effect.runPromise(Effect.flip(embedderConformance(subject)[0]?.run ?? Effect.die("the kit has no checks")))
+    expect((await run({ texts: texts.slice(0, 2), open: built(Embedder, stock, Layer.empty) })).message).toBe("the subject gives 2 texts: the kit needs three or more")
+    const alike = recordedEmbedder({ model: "alike", vectors: { query: {}, passage: { a: [1, 0], b: [2, 0], c: [0, 1] } } })
+    expect((await run({ texts: ["a", "b", "c"], open: built(Embedder, alike, Layer.empty) })).message).toBe("\"a\" and \"b\" gave vectors too alike to tell apart (cosine 1.0000): give texts of different meanings")
+  })
+
+  test("each careless embedder fails the check of what it is careless about, and between them every check", async () => {
+    let calls = 0
+    const failed = {
+      // It gives a batch's vectors in the reverse order.
+      outOfOrder: await failedChecks(embedderConformance(careless((inner) => (batch, as) => Effect.map(inner.embed(batch, as), (vectors) => [...vectors].reverse())))),
+      // Its vectors grow a little longer with every call: they point the same way, but are not the same.
+      drifting: await failedChecks(embedderConformance(careless((inner) => (batch, as) => Effect.map(inner.embed(batch, as), (vectors) => {
+        calls += 1
+        return vectors.map((vector) => vector.map((x) => x * (1 + calls / 1000)))
+      })))),
+      // It gives one text a vector one number longer.
+      mixed: await failedChecks(embedderConformance(careless((inner) => (batch, as) => Effect.map(inner.embed(batch, as), (vectors) =>
+        vectors.map((vector, index): Vector => batch[index] === texts[2] ? [...vector, 0] : vector))))),
+      // It fails when it is given no texts.
+      emptyFailing: await failedChecks(embedderConformance(careless((inner) => (batch, as) =>
+        batch.length === 0 ? Effect.fail(new EmbedFailed({ message: "nothing to embed" })) : inner.embed(batch, as)))),
+      // It gives a passage a vector one number longer than a query's.
+      passageLonger: await failedChecks(embedderConformance(careless((inner) => (batch, as) => Effect.map(inner.embed(batch, as), (vectors) =>
+        as === "passage" ? vectors.map((vector): Vector => [...vector, 0]) : vectors)))),
+    }
+    expect(failed).toEqual({
+      outOfOrder: ["order"],
+      drifting: ["same"],
+      mixed: ["dimension"],
+      emptyFailing: ["empty"],
+      passageLonger: ["both"],
+    })
+  })
+})
+
+describe("the vector store kit", () => {
+  type StoreShape = Context.Service.Shape<typeof VectorStore>
+  const everything = Number.MAX_SAFE_INTEGER
+  /** A store in memory with some of its calls replaced, each given the one it replaces. */
+  const careless = (change: (inner: StoreShape) => Partial<StoreShape>): VectorStoreSubject => ({
+    open: Effect.map(built(VectorStore, inMemoryVectors(), Layer.empty), (inner) => VectorStore.of({ ...inner, ...change(inner) })),
+  })
+
+  test("has the checks its doc comment lists, and passes on the store in memory", async () => {
+    const stock: VectorStoreSubject = { open: built(VectorStore, inMemoryVectors(), Layer.empty) }
+    expect(ids(vectorStoreConformance(stock))).toEqual(["replace", "order", "ties", "limit", "among", "has", "dimension", "empty"])
+    expect(await failedChecks(vectorStoreConformance(stock))).toEqual([])
+  })
+
+  test("each careless store fails the check of what it is careless about, and between them every check", async () => {
+    const failed = {
+      // It keeps the first vector put under a key.
+      notReplacing: await failedChecks(vectorStoreConformance(careless((inner) => ({
+        put: (entries) => Effect.flatMap(inner.has(entries.map((entry) => entry.key)), (stored) => inner.put(entries.filter((entry) => !stored.includes(entry.key)))),
+      })))),
+      // It finds the least alike first (keys of one score still by code unit).
+      wrongWay: await failedChecks(vectorStoreConformance(careless((inner) => ({
+        search: (vector, options) => Effect.map(Effect.andThen(inner.search(vector, options), inner.search(vector, { ...options, limit: everything })), (found) =>
+          Arr.sort(found, Order.combine(Order.mapInput(Order.Number, (scored: typeof found[number]) => scored.score), Order.mapInput(Order.String, (scored: typeof found[number]) => scored.key))).slice(0, options.limit)),
+      })))),
+      // It finds keys of one score in the order they were put.
+      putOrder: await failedChecks(vectorStoreConformance(careless((inner) => {
+        const order: Array<VectorKey> = []
+        return {
+          put: (entries) => Effect.tap(inner.put(entries), () => Effect.sync(() => { for (const { key } of entries) if (!order.includes(key)) order.push(key) })),
+          search: (vector, options) => Effect.map(Effect.andThen(inner.search(vector, options), inner.search(vector, { ...options, limit: everything })), (found) =>
+            Arr.sort(found, Order.combine(Order.mapInput(Order.flip(Order.Number), (scored: typeof found[number]) => scored.score), Order.mapInput(Order.Number, (scored: typeof found[number]) => order.indexOf(scored.key)))).slice(0, options.limit)),
+        }
+      }))),
+      // It finds every key it holds, whatever the limit.
+      unlimited: await failedChecks(vectorStoreConformance(careless((inner) => ({ search: (vector, options) => inner.search(vector, { ...options, limit: everything }) })))),
+      // It searches the whole store, whatever it is searched among.
+      ignoringAmong: await failedChecks(vectorStoreConformance(careless((inner) => ({ search: (vector, options) => inner.search(vector, { limit: options.limit }) })))),
+      // It cuts the keys to search among at the limit before it passes over those not stored.
+      cuttingAmong: await failedChecks(vectorStoreConformance(careless((inner) => ({
+        search: (vector, options) => inner.search(vector, options.among === undefined ? options : { limit: options.limit, among: options.among.slice(0, options.limit) }),
+      })))),
+      // It says every key it is asked about is stored.
+      lyingHas: await failedChecks(vectorStoreConformance(careless(() => ({ has: (keys) => Effect.succeed(keys) })))),
+      // It keeps each entry of a put on its own, so a refused put keeps those before the one refused.
+      halfPut: await failedChecks(vectorStoreConformance(careless((inner) => ({ put: (entries) => Effect.forEach(entries, (entry) => inner.put([entry]), { concurrency: 1, discard: true }) })))),
+      // It refuses a search while it holds no vector, having no length to compare with.
+      emptyRefusing: await failedChecks(vectorStoreConformance(careless((inner) => ({
+        search: (vector, options) => Effect.flatMap(inner.search(vector, { limit: everything }), (all) => all.length === 0
+          ? Effect.fail(new VectorsRefused({ reason: "dimension", message: "this store holds no vector yet" }))
+          : inner.search(vector, options)),
+      })))),
+    }
+    expect(failed).toEqual({
+      notReplacing: ["replace"],
+      wrongWay: ["order"],
+      putOrder: ["ties"],
+      unlimited: ["limit"],
+      ignoringAmong: ["among"],
+      cuttingAmong: ["among"],
+      lyingHas: ["has"],
+      halfPut: ["dimension"],
+      emptyRefusing: ["empty"],
     })
   })
 })

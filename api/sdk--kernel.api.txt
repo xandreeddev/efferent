@@ -1,6 +1,8 @@
 class AnswerCut
 class Approval
 class CurrentTurn
+class EmbedFailed
+class Embedder
 class FileChanged
 class FileNotFound
 class Files
@@ -19,6 +21,9 @@ class SummaryFailed
 class TaskRefused
 class TaskReports
 class Tasks
+class VectorStore
+class VectorsRefused
+class VectorsUnavailable
 const APPROVAL_REFUSED
 const ApprovalRequest
 const AttemptData
@@ -31,6 +36,7 @@ const DecidedData
 const Decision
 const EDIT_FILE
 const EditFile
+const EmbedAs
 const Expected
 const FACTS_OWNER
 const FACT_LIMIT
@@ -49,6 +55,7 @@ const ForgetFact
 const ForgottenData
 const GRAPH_OWNER
 const InboxQueuedData
+const KEY_LIMIT
 const LINK_THINGS
 const LIST_FILES
 const LIST_LIMIT
@@ -76,12 +83,14 @@ const REPORT_LIMIT
 const ReadFile
 const ReadResult
 const RecalledData
+const RefusedBecause
 const Relation
 const RememberFact
 const RememberedFact
 const RestatedData
 const ResultPage
 const START_TASK
+const Scored
 const ScriptedAnswer
 const SkillId
 const StartTask
@@ -100,6 +109,9 @@ const Tokens
 const UNLINK_THINGS
 const UnlinkThings
 const UnlinkedData
+const Vector
+const VectorEntry
+const VectorKey
 const View
 const ViewData
 const ViewId
@@ -115,8 +127,10 @@ const attemptEvent
 const autoApprove
 const callTool
 const catalogue
+const cosine
 const decidedEvent
 const defineSkill
+const embedderConformance
 const estimateContext
 const estimateTokens
 const factHandlers
@@ -135,6 +149,7 @@ const graphSession
 const graphTools
 const hostNote
 const inMemoryFiles
+const inMemoryVectors
 const inProcessJournal
 const inbox
 const inboxOf
@@ -163,6 +178,7 @@ const questionOf
 const readResult
 const recalledEvent
 const recalledOf
+const recordedEmbedder
 const relevant
 const rememberedFacts
 const reportText
@@ -185,6 +201,7 @@ const taskTools
 const tasks
 const turnsOf
 const unlinkedEvent
+const vectorStoreConformance
 const viewEvent
 const viewsOf
 const walked
@@ -200,6 +217,7 @@ const writtenEvent
 interface Answered
 interface CallRead
 interface ClosedRead
+interface EmbedderSubject
 interface FactsOptions
 interface FilesSubject
 interface GraphOptions
@@ -212,9 +230,12 @@ interface ModelToolCall
 interface NamedThing
 interface PointerOptions
 interface Queued
+interface RecordedOptions
+interface RecordedVectors
 interface ResultRead
 interface RunningTurn
 interface SaidLink
+interface SearchOptions
 interface SessionsOptions
 interface Shown
 interface Skill
@@ -226,6 +247,7 @@ interface SummarizerSubject
 interface SummaryOptions
 interface TasksOptions
 interface TurnRead
+interface VectorStoreSubject
 interface Walked
 interface WebStorageJournalOptions
 interface WindowOptions
@@ -234,6 +256,7 @@ type ApprovalRequest
 type AttemptData
 type DecidedData
 type Decision
+type EmbedAs
 type Expected
 type Fact
 type FactId
@@ -262,10 +285,12 @@ type OwnSkills
 type OwnTools
 type ProgressData
 type RecalledData
+type RefusedBecause
 type Relation
 type RememberedFact
 type RestatedData
 type ResultPage
+type Scored
 type ScriptedAnswer
 type ScriptedCalls
 type SkillId
@@ -281,6 +306,9 @@ type Ticket
 type Tokens
 type ToolNeeds
 type UnlinkedData
+type Vector
+type VectorEntry
+type VectorKey
 type View
 type ViewData
 type ViewId
