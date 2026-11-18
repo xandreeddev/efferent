@@ -764,6 +764,79 @@ it: `./kernel` is a `restricted` subpath.
   composed as a layer, from the packed packages, on Node and on Bun
   (`bun run verify:packages`). Run: `bun test packages/sdk/src/kernel`.
 
+## The kernel's Node entry (`src/kernel/node`)
+
+`@xandreed/sdk/kernel/node` holds the kernel's ports that need a runtime's
+modules (ADR 0024): Node 24 and Bun both load it, and the browser entry
+imports none of it (`browser-bundle.test.ts` finds no module of `node/` in
+that entry's graph, with a control, `fixtures/kernel-node-entry-import.ts`,
+that does). Each folder is a layer of its own, before `sdk-kernel`:
+`sdk-kernel-node-writer` (`writer/`, the one-writer lock the stores share),
+one per port (`journal-directory/`, `journal-sqlite/`), which imports core's
+kernel and the lock and never another port's folder, and `sdk-kernel-node`,
+the entry. `./kernel/node` is a `restricted` subpath. A new port is a folder
+here with its layer, its name in the entry's `canImport` and in
+`SDK_KERNEL_TESTS`, its exports in `node/index.ts` and, when it has a kit, the
+kit run over it in its tests and in `scripts/kernel-consumer.fixture.mjs` on
+Node and Bun. The entry becomes `@xandreed/sdk/node` when the kernel moves to
+the package roots.
+
+- `directoryJournal({ directory })` (`journal-directory/`): one file per
+  session under `sessions/`, the header on line 1 and an event a line, each
+  line `<crc32> <json>` (`lineOf`, `linesOf`); a session's file name is its
+  id, or `~` and its bytes in hexadecimal (`fileNameOf`). An append
+  `datasync`s its line before it returns; `create` and `fork` write the whole
+  file in `tmp/`, sync it and publish it by an exclusive hard link, then sync
+  the folder. Bytes after the last line break are a torn tail: a read leaves
+  them out, the next append cuts them (logged). A whole line whose CRC-32 does
+  not match, or an event out of its place, is `Unreadable`. Writes take the
+  process's lane and run uninterruptibly. An append trusts its own last write
+  while the file's size and `ctimeNs` are unchanged, else reads the file
+  again. `store.json` (`DirectoryMarker`: `DIRECTORY_STORE`,
+  `DIRECTORY_LAYOUT`) is checked as it opens; another one, or a directory
+  holding other files and no marker, is `Format`.
+- `sqliteJournal({ path })` (`journal-sqlite/`): one adapter over Bun's
+  `bun:sqlite` and Node's `node:sqlite`, the driver imported when the layer is
+  built (a static import of either would stop the entry loading on the other
+  runtime). WAL, `synchronous = FULL`; each write one `BEGIN IMMEDIATE`
+  transaction, in the process's lane and the connection's turn, rolled back
+  when it refuses or throws. `user_version` (`SQLITE_SCHEMA`) and
+  `application_id` (`SQLITE_APPLICATION_ID`) are checked as it opens: another
+  schema, another application's database and a file that is no database are
+  `Format`, left as they were.
+- One writer per store (`writer/`, `holdWriter`): the store's layer takes the
+  store as it is built, in a folder of holder files (`<n>.json`: pid, host,
+  token, time), the highest number the holder; the next number is published
+  by an exclusive hard link and the folder listed again (a higher number
+  wins). Refused (`JournalOpenFailed`, `Held`) while the holder is a running
+  process of this machine, a process of another machine, or a file that names
+  none; taken over from a holder whose process is gone, or that names this
+  process's id with no handle of this process holding it; let go when the
+  last handle of the process closes. Two handles of one process share the
+  hold and the lane: the storage kit's `reopens` runs two at once. SQLite's
+  own locks are not used for it: on Bun 1.3.0 they do not hold across
+  processes. The rules are the pure `verdictOf`, held to a table test.
+- `recoverTurns` (`plugins/session/recover.usecase.ts`, exported by the
+  browser entry, `RecoveredTurn`): the host's recovery step once it holds a
+  store, before any turn; `Sessions.recover` on every session it reads,
+  passing over one of another journal format.
+- `JournalOpenFailed` (`reason`: `Held`, `Format`, `Unavailable`; `store`, the
+  path given) is the error of each store's layer; `JournalStorageError` is
+  unchanged.
+- Tests: `journal-directory/*.test.ts` (the storage kit with `reopens` and the
+  sessions kit; a reopen; a torn tail left out and cut; a damaged line; the
+  directories refused; file names), `journal-sqlite/*.test.ts` (the kits; a
+  process killed inside an uncommitted insert; the databases refused),
+  `writer/*.test.ts` (the verdict table; on each store, a second process
+  refused and the store taken over once the first is killed, a process
+  refused while this one holds it; two handles of one process; another
+  machine's holder, a stale one with this process's id, a file that names
+  none) and `durable.test.ts` (on each store, a process killed with `SIGKILL`
+  inside a turn, recovered by the next and a new turn taken; a host's turns
+  read back by the next process; the region `docs/kernel.md` quotes). The
+  killed processes run `fixtures/kernel-store-holder.ts`. Run: `bun test
+  packages/sdk/src/kernel/node`.
+
 ## Public surface
 
 - `Agent` (`Agent.define`) and the types `AgentConfig`, `AgentPluginEntry` and `AgentTurn` (`src/agent.adapter.ts`; `Agent<S>`, `AgentConfig<S>`: the type of `services`, which `use` reads without the turn requiring it, while plugins and tools check theirs by key when they open), and `agentTaskExecutor(agent, { services, steering?, child?, react? })` (`src/task-executor.adapter.ts`): a `Layer<TaskExecutor>` whose child and reaction turns run with `services` and the calling `Tasks`, and are, by default, the turn's skills selected, then one run of the step loop, its text the reply.
@@ -772,6 +845,7 @@ it: `./kernel` is a `restricted` subpath.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
 - `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `clipTo`, `clippedMarker`, `questionOf`, `OverBudget`, `isOverBudget`, `InvalidBudget`, `pointed` (`PointerOptions`), `resultText`, `ResultPage`, `READ_RESULT`, `READ_RESULT_PAGE`; the tool call's: `CurrentTurn`, `callTool` (`ModelToolCall`, `ToolNeeds`, `OwnTools`), `SentWhole`, `planned`, `retryable`, `AnswerCut`, `attemptEvent` (`AttemptData`), `turnsOf` (`TurnRead`, `StepRead`, `CallRead`, `ResultRead`, `MessageRead`, `ClosedRead`), and the tool `ReadResult` with its handler `readResult`; asking before acting: `Approval`, `approve`, `approveIn`, `grantsOf`, `ApprovalRequest`, `Decision`, `DecidedData`, `decidedEvent`, `APPROVAL_REFUSED` (`ApprovalRefusal`, the type `approve` fails with), `DETAIL_LIMIT`, and the wrapper `autoApprove`; skills: `defineSkill` (`Skill`, `SkillOptions`), `SkillId`, `catalogue`, `loadedOf`, `LoadedSkill`, `LOAD_SKILL`, the tool `LoadSkill`, and `skills(base, ...skills)` (`SkillSet`, `SkillTools`, `Offered`, `OwnSkills`), the one value over a host's tools and skills; the facts': `Fact`, `FactId`, `FactText`, `FACT_LIMIT`, `FACTS_OWNER`, `learnedEvent` (`LearnedData`), `forgottenEvent` (`ForgottenData`), `factsOf`, `relevant`, `factsNote`, `REMEMBER_FACT`, `FORGET_FACT`, `RememberedFact`, `FactsOptions`, and from the plugin the tools `RememberFact` and `ForgetFact`, `factTools`, `factHandlers`, `memorySession`, `rememberedFacts` and `withFacts`; the graph's: `Link`, `LinkId`, `ThingName`, `Relation`, `NAME_LIMIT`, `RELATION_LIMIT`, `GRAPH_OWNER`, `linkedEvent` (`LinkedData`), `unlinkedEvent` (`UnlinkedData`), `linksOf`, `normalName`, `namedIn`, `near`, `linksNote`, `LINK_THINGS`, `UNLINK_THINGS`, `FOLLOW_THINGS`, `FOLLOW_LIMIT`, `LinkedThings`, `LinkShown`, `Followed`, `Speaker`, `GraphOptions`, `Naming`, `RestatedData`, `restatedEvent`, `SaidLink`, `saidOf`, `saidText`, `Weights`, `weightOf`, `walked`, `Walked`, `NamedThing`, `RecalledData`, `recalledEvent`, `recalledOf`, `RECALL_SHOWN`, `QUESTION_SHOWN`, and from the plugin the tools `LinkThings`, `UnlinkThings` and `FollowThings`, `graphTools`, `graphHandlers`, `graphSession`, `knownLinks`, `saidLinks` and `withGraph`; the summary's: `Summarizer`, `SummaryFailed`, `summarizerConformance` (`SummarizerSubject`); what the UI shows: `View`, `TextView`, `ListView`, `TableView`, `CardView`, `ViewId`, `ViewData`, `viewEvent`, `showView`, `ProgressData`, `progressEvent`, `viewsOf` (`Shown`); the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ScriptedAnswer` with its `Calls` answer and its `Fails`, worth another try or not, before anything or after some pieces, `ScriptedCalls`), the model that follows a script, for kits and tests, the inbox: `inbox`, `inboxOf` (`InboxOptions`), and the workspace: `Files`, `FilePath`, `workspacePath`, `Expected`, `FileNotFound`, `FileChanged`, `FilesRefused`, `FilesUnavailable`, `FilePage`, `FileList`, `FileWritten`, `WrittenData`, `writtenEvent`, `FILE_PAGE`, `WRITE_LIMIT`, `LIST_LIMIT`, `PATH_LIMIT`, `READ_FILE`, `LIST_FILES`, `WRITE_FILE`, `EDIT_FILE`, `filesConformance` (`FilesSubject`), `inMemoryFiles`, and the tools `ReadFile`, `ListFiles`, `WriteFile`, `EditFile` with `fileTools` and `fileHandlers`, ranking by meaning: `Embedder`, `EmbedAs`, `EmbedFailed`, `Vector`, `cosine`, `embedderConformance` (`EmbedderSubject`), `recordedEmbedder` (`RecordedOptions`, `RecordedVectors`), `VectorStore`, `VectorKey`, `VectorEntry`, `Scored`, `SearchOptions`, `RefusedBecause`, `VectorsRefused`, `VectorsUnavailable`, `KEY_LIMIT`, `vectorStoreConformance` (`VectorStoreSubject`) and `inMemoryVectors`, recall by meaning: `RecallItem`, `RecallOptions`, `MODEL_LIMIT`, `recallItems`, `recallText`, `recallKey`, `recallNote`, `RecallEntry`, `RecallList`, `RecalledByMeaningData`, `recalledByMeaningEvent`, `recalledByMeaningOf`, the facts' `learnedOf` (`LearnedFact`), and the wrapper `withRecall` with its `ReorderInvalid`, knowledge kept by a curator: `Curator`, `CurationJob`, `CurationFailed`, `curatorConformance` (`CuratorSubject`), the ids and texts `SourceId`, `EntityId`, `MemoryId`, `USER_ENTITY`, `USER_NAME`, `USER_ALIASES`, `EntityName`, `EntityKind`, `ENTITY_KINDS`, `ENTITY_NAME_LIMIT`, `MemoryText`, `MemoryKind`, `MemoryDay`, `MEMORY_LIMIT`, `Quote`, `QUOTE_LIMIT`, `SourceText`, `SOURCE_LIMIT`, `SourceContext`, `CONTEXT_LIMIT`, `SaidBy`, `SourcePart`, `SourceCall`, the records `sourceEvent` (`SourceData`), `entityEvent` (`EntityData`), `aliasedEvent` (`AliasedData`), `memoryEvent` (`MemoryData`), `memoryRestatedEvent` (`MemoryRestatedData`), `memoryEndedEvent` (`MemoryEndedData`, `EndedWhy`), `curatedEvent` (`CuratedData`, `Dropped`, `DROPPED_SHOWN`), `curationFailedEvent` (`CurationFailedData`), `KNOWLEDGE_OWNER`, `KNOWLEDGE_VOCABULARY`, `KNOWLEDGE_PROMPT`, `KNOWLEDGE_CHECKS`, the fold `knowledgeOf` (`Knowledge`, `KnownEntity`, `KnownMemory`, `Ended`, `KnownSource`, `SourceState`), `standing`, `endedBy`, `nextIds` (`NextIds`), `sourceText`, `turnSource` (`TurnSource`, `TurnSourceOptions`, `TURN_MESSAGE_SHOWN`, `TURN_RESULT_SHOWN`), `shownFor` (`ShownKnowledge`, `ShownLimits`, `SHOWN_LIMITS`), `curationPrompt` (`CurationOptions`), `reviewPrompt`, `curationOf` (`ReadCuration`, `Curation`, `CurationRef`), `staged` (`Staged`, `About`) and `draftsOf`, and background tasks: `Tasks`, `TaskReports`, `TaskId`, `TaskReport`, `TaskOutcome`, `StartedTask`, `TaskRefused`, `TasksOptions`, `taskReport`, `TASKS_OWNER`, `TASK_LIMIT`, `REPORT_LIMIT`, `DEFAULT_RUNNING`, `START_TASK`, `CANCEL_TASK`, `tasks` (`TaskRun`), and the tools `StartTask`, `CancelTask` with `taskTools` and `taskHandlers`. No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
+- `@xandreed/sdk/kernel/node` (`src/kernel/node/index.ts`): `directoryJournal` (`DirectoryJournalOptions`, `DirectoryMarker`, `DIRECTORY_STORE`, `DIRECTORY_LAYOUT`), `sqliteJournal` (`SqliteJournalOptions`, `SQLITE_SCHEMA`, `SQLITE_APPLICATION_ID`) and `JournalOpenFailed` (`OpenRefusal`); the browser entry adds `recoverTurns` and `RecoveredTurn`.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text
