@@ -421,8 +421,9 @@ it: `./kernel` is a `restricted` subpath.
   embedder (`knowledge-recall.entity.functions.ts`, ADR 0023): `askedOf`
   (the person's last message and the turn before, by the records' names),
   `seedsOf` (named in the last message, the user's entity by the host's
-  speaker words alone, else people by a first name of three letters or
-  more, `first-name`, else named in the turn before), `keywordScores`
+  speaker words alone, people by a first name of three letters or more,
+  `first-name`, when nobody is named in full, else named in the turn
+  before), `keywordScores`
   (BM25 over the memories given, `k1` 1.2, `b` 0.75, the host's stop
   words, two words meeting when the same or both four characters or more
   and one starts the other, in tf and df alike), `recallKnowledge` (the

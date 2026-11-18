@@ -157,8 +157,8 @@ the triples with links between entities.
   3), `speaker` and `stopWords` (each one word; none).
 - **The seeds** are the entities the last message names, by name or another name they bear, as a run of whole
   words, folded as `shownFor` compares names; the user's entity when the message holds one of the host's speaker
-  words; when it names nobody in full and holds no speaker's word, the people (kind `person`) whose first name it
-  holds, a whole word of three letters or more, as `shownFor` reads one (`first-name`); and only when none of those,
+  words; when it names nobody in full (a speaker's word or not: "Where does my friend Ana work?"), the people
+  (kind `person`) whose first name it holds, a whole word of three letters or more, as `shownFor` reads one (`first-name`); and only when none of those,
   the entities the turn before names (the person's messages and its answer). The user's entity is never named by a name: its own ("the user", "I", "me") are the
   curation prompt's English, and which words name the user is the host's to say. The speaker's words are not read in
   the turn before, where its answer's "I" is the assistant.
@@ -216,6 +216,14 @@ the triples with links between entities.
   words are the host's.
 
 ## Consequences
+
+- **A note also carries memories about nobody the question names.** The words' list reaches any memory that shares
+  a word with the question, so with a seed named, 1.8 to 4.8 memories a question about no seed and no bridge were
+  sent on the sets above (46 over 25 single questions, 447 over the 94 generated). Leaving them out whenever a seed
+  exists lost answers: single 20 to 19, two-memory 8 to 7, after an unrelated turn 24 to 22, the others unchanged.
+  So they stay, after the memories about a seed, which the fusion ranks first. The ended-memory rule above was
+  chosen on the same 18 curated questions it is scored on, and no set asks by a first name alone: both are owed to
+  the memory eval.
 
 - **A question whose words the memory does not hold finds nothing by its words.** "Who employs Ana Silva?" holds no
   word of "Ana Silva works at Acme" but her name: the name finds it, and a question that names nobody and says

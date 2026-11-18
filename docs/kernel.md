@@ -1760,8 +1760,8 @@ const memory = withKnowledge({ limit: 8, walk: 3, speaker: ["i", "me", "my"], st
 - **The seeds** are the entities the last message names (by name or
   another name, as a run of whole words, folded), the user's entity when
   the message holds one of the host's `speaker` words, the people whose
-  first name it holds when it names nobody in full and holds no speaker's
-  word ("Where does Ana work?"), and, only when none of those, the
+  first name it holds when it names nobody in full ("Where does Ana
+  work?", "Where does my friend Ana work?"), and, only when none of those, the
   entities the turn before names. `askedOf(journal)` reads the
   last message and the turn before from the conversation's journal.
 - **Two lists, fused by rank**: the memories about a seed, and those the

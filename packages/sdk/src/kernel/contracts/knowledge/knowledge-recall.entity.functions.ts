@@ -88,14 +88,16 @@ export const seedsOf = (knowledge: Knowledge, asked: Asked, speaker: ReadonlyArr
     ...(spoken === undefined || user === undefined ? [] : [{ id: user.id, name: user.name, by: "speaker" as const, word: spoken }]),
     ...named(asked.last, "name"),
   ]
-  if (last.length > 0) return last
-  // A person by a first name of three letters or more, as a whole word, as `shownFor` reads one.
+  if (last.some((seed) => seed.by === "name")) return last
+  // A person by a first name of three letters or more, as a whole word, as `shownFor` reads one: when the message
+  // names nobody in full, a speaker's word or not ("Where does my friend Ana work?" seeds the user and every Ana).
   const lastWords = folded(asked.last)
   const firsts = knowledge.entities.flatMap((entity): ReadonlyArray<Seed> => {
     const first = folded(entity.name).split(" ")[0] ?? ""
     return entity.id !== USER_ENTITY && entity.kind === PERSON && first.length >= 3 && holdsRun(lastWords, first) ? [{ id: entity.id, name: entity.name, by: "first-name", word: first }] : []
   })
-  return firsts.length > 0 ? firsts : named(`${asked.before.user}\n${asked.before.answer}`, "before")
+  if (last.length > 0 || firsts.length > 0) return [...last, ...firsts]
+  return named(`${asked.before.user}\n${asked.before.answer}`, "before")
 }
 
 /** The kind of entity whose first name alone can name it. */
