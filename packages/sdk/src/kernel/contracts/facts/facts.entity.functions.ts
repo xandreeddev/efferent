@@ -3,7 +3,7 @@ import { dataOf, stored } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { framed, hostNote } from "../memory/memory.entity.functions.js"
 import { FACT_LIMIT, FactId, FactText, forgottenEvent, learnedEvent, REMEMBER_FACT } from "./facts.entity.js"
-import type { Fact, FactsOptions } from "./facts.entity.js"
+import type { Fact, FactsOptions, LearnedFact } from "./facts.entity.js"
 
 /** `plugin.facts.learned`: a fact, and where it was learned. */
 export const learned = (fact: Fact): StoredDraft => stored(learnedEvent, fact)
@@ -22,6 +22,22 @@ export const factsOf = (journal: ReadonlyArray<StoredEvent>): ReadonlyArray<Fact
   const standing = new Map<FactId, Fact>()
   for (const event of journal) {
     Option.map(dataOf(learnedEvent, event), (fact) => standing.set(fact.id, fact))
+    Option.map(dataOf(forgottenEvent, event), ({ id }) => standing.delete(id))
+  }
+  return [...standing.values()]
+}
+
+/**
+ * The facts that stand, in the order learned, each with the time its record was stored (`LearnedFact`): the day a
+ * note says it was said. A pure fold of the same journal `factsOf` reads; no stored shape holds the time but the
+ * record's own `at`.
+ *
+ * @public
+ */
+export const learnedOf = (journal: ReadonlyArray<StoredEvent>): ReadonlyArray<LearnedFact> => {
+  const standing = new Map<FactId, LearnedFact>()
+  for (const event of journal) {
+    Option.map(dataOf(learnedEvent, event), (fact) => standing.set(fact.id, { fact, at: event.at }))
     Option.map(dataOf(forgottenEvent, event), ({ id }) => standing.delete(id))
   }
   return [...standing.values()]

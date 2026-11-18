@@ -270,6 +270,15 @@ export const near = (
   walked(links, question, options).reached.slice(0, Math.max(0, options.limit)).map((one) => one.link)
 
 /**
+ * A question as an event of what was recalled repeats it: its first `QUESTION_SHOWN` characters (never half a
+ * character), and how many were cut.
+ */
+export const questionShown = (question: string): string => {
+  const end = question.length <= QUESTION_SHOWN ? question.length : (question.charCodeAt(QUESTION_SHOWN - 1) & 0xfc00) === 0xd800 ? QUESTION_SHOWN - 1 : QUESTION_SHOWN
+  return end === question.length ? question : `${question.slice(0, end)} [… ${question.length - end} characters clipped]`
+}
+
+/**
  * What one request's walk did, as `plugin.graph.recalled` says it: the question, the options, the things named, and
  * the links reached, best first, the first `limit` of them sent, each with how often and when it was last said (a link
  * `said` does not name counts once, said at 0).
@@ -278,9 +287,8 @@ export const near = (
  */
 export const recalledOf = (question: string, options: GraphOptions, walk: Walked, said: ReadonlyArray<SaidLink>): RecalledData => {
   const saying = new Map(said.map((one) => [one.link.id, one]))
-  const end = question.length <= QUESTION_SHOWN ? question.length : (question.charCodeAt(QUESTION_SHOWN - 1) & 0xfc00) === 0xd800 ? QUESTION_SHOWN - 1 : QUESTION_SHOWN
   return {
-    question: end === question.length ? question : `${question.slice(0, end)} [… ${question.length - end} characters clipped]`,
+    question: questionShown(question),
     hops: options.hops,
     limit: options.limit,
     names: options.names ?? "exact",
@@ -303,8 +311,11 @@ export const recalledOf = (question: string, options: GraphOptions, walk: Walked
   }
 }
 
-/** A link as a sentence: subject, relation, object, ending with a stop unless the object ends a sentence already. */
-const sentenceOf = (link: Link): string => `${link.subject} ${link.relation} ${link.object}${/[.!?]$/.test(link.object) ? "" : "."}`
+/**
+ * A link as a sentence: subject, relation, object, ending with a stop unless the object ends a sentence already. The
+ * note of links writes it so, and so does the note of what was recalled by meaning, whose vectors are made from it.
+ */
+export const sentenceOf = (link: Link): string => `${link.subject} ${link.relation} ${link.object}${/[.!?]$/.test(link.object) ? "" : "."}`
 
 /**
  * How often and when a link was said, as the note of links writes it: `said once, last 2025-05-03`, `said 3 times,

@@ -44,6 +44,17 @@ export type LearnedData = typeof LearnedData.Type
 export type Fact = LearnedData
 
 /**
+ * A fact that stands, with when it was learned: `at` is the time its `plugin.facts.learned` record was stored, in
+ * milliseconds. What `learnedOf` gives.
+ *
+ * @public
+ */
+export interface LearnedFact {
+  readonly fact: Fact
+  readonly at: number
+}
+
+/**
  * `plugin.facts.learned`: a fact was remembered (ADR 0014). Stored in the memory session, a journal of its own,
  * tagged `memory`. A reader of facts that does not know it must not pass over it.
  *

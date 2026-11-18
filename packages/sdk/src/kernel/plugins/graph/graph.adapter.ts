@@ -1,23 +1,14 @@
 import { Effect, Layer, Option, Result, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { currentFormat, Sessions } from "@xandreed/core/kernel"
-import type { InvalidSession, JournalStorageError, SessionHeader, SessionId, StoredEvent } from "@xandreed/core/kernel"
+import { Sessions } from "@xandreed/core/kernel"
+import type { InvalidSession, JournalStorageError, SessionId } from "@xandreed/core/kernel"
 import { checkedOptions, followed, GRAPH_BUSY, linked, linkFrom, linksNote, linksOf, linkToUnlink, nextLinkId, recalledOf, restated, sameLink, saidIn, saidOf, unlinked, walked, weightOf } from "../../contracts/graph/graph.entity.functions.js"
 import { Followed, FOLLOW_LIMIT, FOLLOW_THINGS, GRAPH_OWNER, LINK_THINGS, LinkedThings, NAME_LIMIT, recalledEvent, RELATION_LIMIT, UNLINK_THINGS } from "../../contracts/graph/graph.entity.js"
 import type { GraphOptions, Link, SaidLink } from "../../contracts/graph/graph.entity.js"
+import { graphAmong, graphJournal } from "../../contracts/graph/graph.usecase.js"
 import { questionOf } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import { CurrentTurn } from "../../contracts/turn/current-turn.port.js"
-
-/**
- * The graph session among a store's headers: the first by creation that the plugin owns, that continues no other,
- * and that this kernel reads, as the memory session of facts is found (ADR 0014).
- */
-const graphAmong = (headers: ReadonlyArray<SessionHeader>): Option.Option<SessionId> =>
-  Option.map(
-    Option.fromNullishOr(headers.find((header) => header.owner === GRAPH_OWNER && header.parent === undefined && Result.isSuccess(currentFormat(header)))),
-    (header) => header.id,
-  )
 
 /**
  * The graph session (ADR 0019): the journal that holds an agent's links. It is the first session, by creation, that
@@ -49,15 +40,6 @@ export const knownLinks: Effect.Effect<ReadonlyArray<Link>, JournalStorageError,
  * @public
  */
 export const saidLinks: Effect.Effect<ReadonlyArray<SaidLink>, JournalStorageError, Sessions> = Effect.suspend(() => Effect.map(graphJournal, saidOf))
-
-/** The graph session's journal, or none when there is no graph session: reading stores nothing. */
-const graphJournal: Effect.Effect<ReadonlyArray<StoredEvent>, JournalStorageError, Sessions> = Effect.gen(function* () {
-  const sessions = yield* Sessions
-  return yield* Option.match(graphAmong(yield* sessions.list), {
-    onNone: () => Effect.succeed<ReadonlyArray<StoredEvent>>([]),
-    onSome: (id) => Effect.map(sessions.read(id), (journal) => journal.events),
-  })
-})
 
 /**
  * The tool that stores a link between two things (ADR 0019). It stores the link in the graph session, a journal of

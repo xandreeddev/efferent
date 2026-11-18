@@ -60,7 +60,7 @@ The chat runs `main`. A check takes `program` and gives it parts of its own. Tha
 
 The other five are the modules `main` has: your tools.ts, your memory.ts, and the kernel's `sessions()`, `inProcessJournal()` and `kernel()`, each called anew for each check. Every check has a journal of its own, which no other check writes to, and the chat's journal is not touched. Nothing of the program is replaced by a stand-in written for the test.
 
-In TypeScript a stack that leaves out a layer the program needs does not compile. Without the tools' line the compiler says `Type 'Handler<"calculator">' is not assignable to type 'never'`. Without the model's it says `Type 'LanguageModel' is not assignable to type 'never'`. `LanguageModel` is the model's contract: what the program asks for when it calls a model.
+In TypeScript a stack that leaves out a layer the program needs does not compile. Without the tools' line the compiler says that the handler of one of the tools, written `Handler<"…">` with the tool's name, `is not assignable to type 'never'`. Without the model's it says `Type 'LanguageModel' is not assignable to type 'never'`. `LanguageModel` is the model's contract: what the program asks for when it calls a model.
 
 </Step>
 

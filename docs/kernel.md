@@ -73,6 +73,8 @@ caught up.
 | `recordedEmbedder({ model, vectors })` | sdk, `plugins/embedder-recorded` | an embedder of recorded vectors, for tests and a page with no model |
 | The vector store contract | sdk, `contracts/vector-store` | `VectorStore`, an index of the journal found by meaning, the host's; `VectorKey`, `Scored` |
 | `inMemoryVectors()` | sdk, `plugins/vectors-in-memory` | a store of vectors in memory |
+| The recall contract | sdk, `contracts/recall` | `RecallItem`, `recallText`, `recallKey`, `recallNote`; the live `plugin.recall.recalled` |
+| `withRecall({ limit, pool?, reorder? })` | sdk, `plugins/recall` | a memory wrapper that sends the links and facts nearest a question by meaning, over the host's `Embedder` and `VectorStore` |
 | `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
 | The task contract | sdk, `contracts/task` | `Tasks`, `TaskReports` (where the host takes a report), `TaskReport`, `taskReport`: a report the program stores as a user message whose `from` is the task's session |
 | `tasks(run)`, `taskTools`, `taskHandlers` | sdk, `plugins/tasks` | background tasks: the host's helper on a fiber of the plugin, the two tools that start and cancel one |
@@ -1535,9 +1537,69 @@ A host proves its own embedder with `embedderConformance` (n texts give n
 vectors in order, each pointing where its text's vector alone points; the
 same vector twice; one length; no texts, no vectors; a query and a passage
 of one length), over three or more texts it gives, and its own store with
-`vectorStoreConformance`. The wrapper that recalls by meaning for each
-request, with its note and the event that says what it found, is the next
-cut.
+`vectorStoreConformance`.
+
+A wrapper of `Memory` uses the two for each request (ADR 0021, amended):
+
+<!-- pinned: packages/sdk/src/kernel/recall.test.ts#recall-memory -->
+
+```ts
+// The vectors of an embedding model, recorded: a host gives its own embedder, a model in the page or a service.
+const embedder = recordedEmbedder({ model: recording.model, vectors: recording.vectors })
+// The memory a conversation reads with, wrapped: each request is sent the conversation, then the three links or
+// facts nearest by meaning to the question, among the twenty the search finds.
+const memory = withRecall({ limit: 3 })(flatMemory)
+```
+
+So a question that shares no word with the link that answers it, but a
+name, is sent that link first:
+
+<!-- pinned: packages/sdk/src/kernel/recall.test.ts#by-meaning -->
+
+```ts
+const ran = await Effect.runPromise(run(Effect.andThen(seeded(), ask("Who employs Ana Silva?"))))
+// No word of the question but the name is in the link, yet it is nearest by meaning, and sent first.
+expect(done(ran)).toEqual([
+  "Who employs Ana Silva?",
+  noteOf("e1: Ana Silva works at Acme.", "e2: Ana Silva lives in Lisbon.", "e15: Eva Novak is the sister of Ana Silva."),
+])
+```
+
+`withRecall({ limit, pool?, reorder? })` needs `Embedder`, `VectorStore`
+and `Sessions`. For each request it reads the graph session's journal and
+the memory session's once (`graphJournal`, `memoryJournal`: neither creates
+a session), and takes what stands as items (`recallItems`: each link with
+how often and when it was said, then each fact with the day its record was
+stored, `learnedOf`). Each item's text is `recallText` (a link's sentence, as
+the note of links writes it, or a fact's text), its key `recallKey(model,
+item)`: the embedder's model, a line feed and the text, so a fact and a link
+that say one sentence share one vector, and a vector made ahead under the
+same key is found. It asks `has`, embeds what is missing as passages, 32
+texts a call, and puts each call's vectors; then it embeds the question (the
+user's last message, `questionOf`) as a query and searches `pool` keys
+(20, or `limit` when more, at most 100) among the keys of what stands. A
+key found stands for every standing item with its text, links first, each
+counted against the limit. A host's `reorder`, when given, scores the
+items found (a keyword ranking, a cross-encoder: the host's function, not a
+contract); the items are put in its order, ties in the order found. The
+first `limit` are added last, after what the memory below gave, as
+`recallNote`: a host note that the lines are facts and links stored earlier,
+each with when it was said, then a line each in `<recalled-items>`, a fact as
+`f3: <text> (said on 2025-05-03)` and a link as `e5: <sentence> (said 3
+times, last 2025-05-03)`. With nothing standing, or no question, nothing is
+embedded and nothing added.
+
+What it found is said live for every request, `plugin.recall.recalled`
+(`recalledByMeaningOf`, tagged `trace`, never stored): the question, the
+model, the items found with their cosines, the host's order with its scores
+when it ran, at most 100 entries a list with the rest counted, and the ids
+sent. An embedder that fails, a store that refuses, a reorder that fails or
+whose scores are not one finite number per item (`ReorderInvalid`) fail the
+context as they are, in words: no request is sent as though nothing were
+known. A store whose medium fails is a defect. There is no keyword ranking
+in the kernel: on the questions held out from every choice, a keyword
+ranking added over the vectors answered fewer than the vectors alone, read
+from the stored ranks after the fact (ADR 0021 has the counts); a host that wants one writes it as its `reorder`.
 
 ## The inbox: queueing messages for a turn
 
@@ -2194,6 +2256,7 @@ fail on a careless plugin written for it.
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
 | graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
+| recall | none of its own | nothing a host implements but its embedder and store, which have their kits: pure functions and a wrapper. `withRecall` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
 | `Embedder` | `embedderConformance`, over texts the subject gives | |

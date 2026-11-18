@@ -1,24 +1,14 @@
 import { Effect, Layer, Option, Result, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { currentFormat, Sessions } from "@xandreed/core/kernel"
-import type { InvalidSession, JournalStorageError, SessionHeader, SessionId } from "@xandreed/core/kernel"
+import { Sessions } from "@xandreed/core/kernel"
+import type { InvalidSession, JournalStorageError, SessionId } from "@xandreed/core/kernel"
 import { checkedLimit, factFrom, factsNote, factsOf, factToForget, forgotten, learned, MEMORY_BUSY, nextFactId, relevant } from "../../contracts/facts/facts.entity.functions.js"
 import { FACT_LIMIT, FACTS_OWNER, FORGET_FACT, REMEMBER_FACT, RememberedFact } from "../../contracts/facts/facts.entity.js"
 import type { Fact, FactsOptions } from "../../contracts/facts/facts.entity.js"
+import { memoryAmong, memoryJournal } from "../../contracts/facts/facts.usecase.js"
 import { questionOf } from "../../contracts/memory/memory.entity.functions.js"
 import { Memory } from "../../contracts/memory/memory.port.js"
 import { CurrentTurn } from "../../contracts/turn/current-turn.port.js"
-
-/**
- * The memory session among a store's headers: the first by creation that the plugin owns, that continues no
- * other, and that this kernel reads. One written in another journal format is passed over, as a host passes over
- * such a conversation: old journals are not migrated, and the facts start again in a new session.
- */
-const memoryAmong = (headers: ReadonlyArray<SessionHeader>): Option.Option<SessionId> =>
-  Option.map(
-    Option.fromNullishOr(headers.find((header) => header.owner === FACTS_OWNER && header.parent === undefined && Result.isSuccess(currentFormat(header)))),
-    (header) => header.id,
-  )
 
 /**
  * The memory session (ADR 0014): the journal that holds an agent's facts. It is the first session, by creation,
@@ -45,13 +35,7 @@ export const memorySession: Effect.Effect<SessionId, InvalidSession | JournalSto
  *
  * @public
  */
-export const rememberedFacts: Effect.Effect<ReadonlyArray<Fact>, JournalStorageError, Sessions> = Effect.gen(function* () {
-  const sessions = yield* Sessions
-  return yield* Option.match(memoryAmong(yield* sessions.list), {
-    onNone: () => Effect.succeed<ReadonlyArray<Fact>>([]),
-    onSome: (id) => Effect.map(sessions.read(id), (journal) => factsOf(journal.events)),
-  })
-})
+export const rememberedFacts: Effect.Effect<ReadonlyArray<Fact>, JournalStorageError, Sessions> = Effect.suspend(() => Effect.map(memoryJournal, factsOf))
 
 /**
  * The tool that remembers a fact across conversations (ADR 0014). It stores the fact in the memory session, a
