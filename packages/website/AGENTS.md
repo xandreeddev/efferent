@@ -146,6 +146,27 @@ check` (tsc over the learn code, the build, the link check) and
     answer starts and shows them first. The lesson calls `failing` once a
     build, so the list starts again whenever the program is built:
     Rebuild, Stop, Clear context and a model picked.
+  - Lesson 18's parts: `PageParts.curatorModel`, the model a curator asks:
+    the model picked when its kind is `echo` or `gateway`, else a page Echo
+    built once per runtime (a model that runs in the browser cannot read the
+    curation prompt, about 2,300 tokens, in one request); and
+    `PageParts.watchCurator(layer)`, a wrapper of the learner's `Curator`
+    that runs each `curate` with the page's `Curating` reference set to the
+    knowledge session and the turn that stored the job's source (read from
+    its journal), so the model watcher files the call there with `purpose:
+    "curation"`, never under the chat's last memory call, and counts it in
+    no failures list; the reply is traced as `CuratorAnswered`. The lesson
+    calls the learner's `curatorOn(curatorModel)` once at build, so one that
+    makes no layer refuses the build, and hands agent.ts a `curatorOn` whose
+    layer is watched. `runtime.curating` is true from a source's record (a
+    waited listener of `plugin.knowledge.source`), or a curator's first call
+    for a source taken up again, until its `plugin.knowledge.curated` or
+    `plugin.knowledge.failed`; Load the world, a kit that runs alone and
+    `runAlone` are refused meanwhile (`CURATING`), and the page keeps the
+    world button and the model picker off and Stop on. Stop, Rebuild and
+    Clear context stop the program, which cuts a curation short: its source
+    stays pending (the kernel stores nothing more), the page says so in a
+    `CurationCut` trace for each source being kept, and empties the set.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
   - What a turn's records say (its start, its messages, each answer's
@@ -160,8 +181,10 @@ check` (tsc over the learn code, the build, the link check) and
     owns (`plugin.tasks`, "Task N" and its task, lesson 17), drawn as a
     helper's is; the memory session, which the facts plugin owns
     and which has no parent ("Memory", lesson 11); the graph session,
-    which the graph plugin owns and which has no parent ("Graph", lesson
-    18); any other session of the program's own ("Session N"). The
+    which the graph plugin owns and which has no parent ("Graph"); the
+    knowledge session, owned by `KNOWLEDGE_OWNER` with no parent
+    ("Memory", kind `knowledge`, lesson 18); any other session of the
+    program's own ("Session N"). The
     runtime tells the page a session's header in a `Session` trace, for
     every session but the chat's, from its waited listener of a turn's
     start: so before the first record of that session's first turn here,
@@ -169,13 +192,23 @@ check` (tsc over the learn code, the build, the link check) and
     "another", not a helper. A new conversation (`startedOver`: Clear
     context, or a durable lesson's program naming another one) retires
     every other session with the old chat's, but the memory session's
-    board and the graph session's, which are no conversation's and keep
-    their records. A turn on either is three steps (opened, the fact's
+    board, the graph session's and the knowledge session's, which are no
+    conversation's and keep their records. A turn on either is three steps (opened, the fact's
     or the link's record, closed) and no model call; a fact's or a
     link's record is summed up with where it came from, and its row says
     what it is. A turn that stored many records at once (lesson 18's
-    Load the world, 654 in one turn) is one step that counts them by
-    kind ("Links stored: 557 links, 97 said again"), not one step each.
+    Load the world, 2,141 in one turn) is one step that counts them by
+    kind ("Kept: 557 memories, 97 said again, 3 ended, 374 entities, 2
+    other names, 554 sources, 554 curated"), not one step each. A turn of
+    the knowledge session that stored a source is followed by a step for
+    each curator call filed under it (`Board.curations`, from the `Prompt`
+    traces with `purpose: "curation"` and `CuratorAnswered`): "Curator
+    asked (extract)" with the prompt in the Prompt column as one message
+    added by the code, "Curator answered" with the reply, "Curator failed",
+    or "Curator cut short" after a `CurationCut`; then, while no curation
+    kept the source, "Not curated yet" (or that its tries failed), read
+    from the board's records with `knowledgeOf`: the program's next turn
+    takes it up, nothing else does.
     The pane (`panes/trace.ts`) draws what these functions give; the DOM
     wiring itself is type-checked, not run by a test.
   - A turn has one context per model call, and one prompt per attempt: a
@@ -369,7 +402,28 @@ check` (tsc over the learn code, the build, the link check) and
     failed. The line stays until the next turn starts, when the program's
     own line is put back (`underWorkspace` in `playground.ts`).
 - **Lesson 18's graph** (`Lesson.graph`, ADR 0019): a Graph tab beside
-  Context, and a world the page loads into the graph session.
+  Context, and a world the page loads into the knowledge session (ADR
+  0022). The world's loader is the curated lesson's (below); what follows
+  of the Graph tab describes the graph contract's walk, which lesson 18's
+  program no longer makes, until the tab draws the knowledge session.
+  - The world as kept memories (`load-world.ts`, `worldDrafts`): one
+    `plugin.knowledge.source` per day the world says something (a host part
+    listing that day's sentences, at noon UTC that day, `meta` naming Load
+    the world) and a `plugin.knowledge.curated` of no model call closing
+    each, so no program takes one up; an entity per name as `normalName`
+    compares names, reused when the knowledge holds it by a name or another
+    name, Lisboa and Lisbon one entity under Lisbon and Acme and Acme Labs
+    one under Acme Labs (another name is a `plugin.knowledge.aliased`), a
+    pet `pet` (one Rex), a place `place`, a company `organization`, a
+    project `project`, anyone else `person`; one memory per first saying of
+    a sentence (or a restatement of a standing memory that says it word for
+    word), a restatement for each saying after, and a later employer or
+    home ending the earlier one when it is another entity. Over the world
+    alone: 554 sources, 374 entities, 2 other names, 557 memories (44 said
+    more than once), 97 restatements, 3 ended, 2,141 records; the graph
+    page's "97 said again" counted sayings, a count of memories said more
+    than once gives 44. A knowledge session that holds a source Load the
+    world wrote refuses a second load (`LOADED_ALREADY`).
   - The world (`lessons/connected-memory/world.ts`) is data: 654 generated
     sentences, `[subject, relation, object, day]` in the order said, the
     same entries the ADR's numbers were measured on. `loadWorld`
@@ -389,7 +443,7 @@ check` (tsc over the learn code, the build, the link check) and
     chips and the model picker are off; the `data-world` button is one of
     the buttons a turn turns off (`aloneButtons`). Core's hub holds 256
     events for a reader that is behind; a test pins that the page heard all
-    656 records of the burst, in order.
+    2,143 records of the burst, in order.
   - The Graph tab (`data-file="graph"`, a step's `focus="graph"`) draws
     `graph-model.ts` (no DOM) through `panes/graph.ts`. It is built on the
     `Event` trace the page already hears: `heardRecall` folds each
@@ -811,6 +865,34 @@ check` (tsc over the learn code, the build, the link check) and
     (`isReport`). The helper is offered tools.ts's tools and uses them by
     the same rules: a task that is a sum calls the calculator, and the
     report reads "The tool answered: calculator says 42.".
+  - Lesson 18's curator's rules (`models/echo-curation.ts`), in
+    `echoReply`, first after the summarizer's, so they answer a curator's
+    call, which offers no tool, whatever path it takes; each asleep unless
+    the request's first line is the kernel's, word for word
+    (`CURATION_HEAD`, `REVIEW_HEAD`): the kernel's prompt is never changed
+    for Echo. A review prompt is answered with the proposal unchanged. A
+    curation prompt is answered from its `<this-turn>` block's `User:` lines
+    alone, so Echo never rests a memory on the assistant's words: each
+    sentence "<thing> <relation> <thing>." with a relation of
+    `MEMORY_RELATIONS` (the links' list) is a memory about the two, the
+    subject first in `about`, quoting the sentence ("My friend Ana Silva" is
+    Ana Silva); a thing `<stored-entities>` holds by a name or another name
+    is that entity, any other a new one under a key of its own, its kind
+    from its place in the relation ("works at": a person and an
+    organization; "lives in" and "is in": the object a place; "is the sister
+    of": two people; "sells": an organization; anything else a thing, never
+    from capitals); "I …" sentences are about `n1`; "X now <relation> Y."
+    also ends the standing memory about X with that relation, from
+    `<stored-memories>`, as `changed`; "Forget X." lists the standing
+    memories about X in `forget`; a sentence a standing memory says word for
+    word is a restatement. A question says nothing. Echo streams a curator's
+    reply in one piece, at once. With no call to make, one question sent with
+    the kernel's note of memories (`knowledgeNote`: its first line, word for
+    word, then the frame) is answered from the note's first two lines, each
+    without when it was said, a line of what a memory replaced read as
+    "Before that: <sentence>" ("From what I know: Ana Silva works at Globex.
+    Before that: Ana Silva works at Acme."); the note is read past as the
+    links' is (`isAdded`).
   - Lesson 18's rules, for links, each asleep where its tool is not
     offered, placed after lesson 11's rules and before lesson 16's. In a
     message that does not end with a question mark, each sentence
