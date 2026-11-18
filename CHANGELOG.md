@@ -659,6 +659,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     holds a store, closing every turn left open as `Abandoned`, in every
     session of the store. A process killed inside a turn no longer leaves
     its session busy after a restart.
+- `@xandreed/sdk/kernel/node`: model providers that charge the kernel's
+  spend ledger (ADR 0026, which amends ADR 0020), each a layer that gives
+  Effect AI's `LanguageModel` and needs `ModelSpend`, so an eval run's
+  budget now caps what a first-party provider sends:
+  - `openAiCompatibleModel({ model, baseUrl, apiKey, maxOutputTokens?,
+    outputField?, extra?, timeouts?, spend })`: chat completions, streamed,
+    with tool calls; one adapter for OpenAI, Gemini's OpenAI-compatible
+    endpoint and the Vercel AI Gateway (its `providerOptions` given in
+    `extra`, sent as they are).
+  - `anthropicModel({ model, apiKey, baseUrl?, maxOutputTokens?, cache?,
+    timeouts?, spend })`: Anthropic's Messages API through
+    `@effect/ai-anthropic`, now a dependency of `@xandreed/sdk`, with prompt
+    caching (`cache`: `5m` by default, `1h`, `off`).
+  - Each call holds its worst case before it is sent (its body's size and
+    its output cap, which it is sent with, at the model's `ModelPrice`) and
+    is settled at what the provider billed or reported, or at the amount
+    held when the request left and nothing came back (a stream cut, an
+    interruption, a timeout, a 5xx); a call that never left, or that the
+    provider refused with a 4xx, is released. A model with no price, a
+    priced call with no output cap and a call over the ledger's cap are
+    refused before anything is sent; `isSpendRefusal` and `spendRefusalOf`
+    tell the cap's refusal from any other failure.
+  - Failures are `AiError`s whose reason says whether another try is worth
+    it: a rate limit, a provider's own failure, a lost connection and an
+    answer cut part way are; a refused key, no credit and a refused request
+    are not. An answer whose stream ends before its finish fails rather than
+    being taken as whole.
 
 ### Repository
 

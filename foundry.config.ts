@@ -29,7 +29,8 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * modules; each `effect/<module>` barrel (effect/ai was @effect/ai in v3;
  * effect/testing holds the test services) is named by itself, and no layer
  * takes the raw `effect/` or `@effect/` prefix. So the provider packages
- * (`@effect/ai-*`) are the models plugin's alone, Bun the SQLite session
+ * (`@effect/ai-*`) are the models plugin's and, `@effect/ai-anthropic` alone,
+ * the sdk kernel's Anthropic provider's (ADR 0026), Bun the SQLite session
  * log's alone (`bun:sqlite`; the models plugin reaches Bun's fetch and
  * WebSocket as globals), and the test libraries (`bun:test`, `fast-check`,
  * `effect/testing`) the `-tests` layers' alone.
@@ -515,7 +516,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "plugin-knowledge-postgres", path: src("plugin-knowledge-postgres"), canImport: ["core"], externals: ["effect", "postgres"] },
       ...testLayer("plugin-tool-discovery", ["plugin-tool-discovery", "core", "core/internal"], ["effect", "effect/ai", "bun:test"]),
       { name: "plugin-tool-discovery", path: src("plugin-tool-discovery"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
-      // The one package that imports a provider package (`@effect/ai-*`). It
+      // The package that imports the provider packages (`@effect/ai-*`; the sdk kernel's Anthropic provider imports
+      // `@effect/ai-anthropic` too, ADR 0026). It
       // tells Bun by `process.versions` and reaches its fetch and WebSocket as
       // globals, so it imports no `bun` module.
       ...testLayer(
