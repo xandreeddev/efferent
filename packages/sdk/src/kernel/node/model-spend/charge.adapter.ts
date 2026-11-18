@@ -89,8 +89,8 @@ export const chargedSend = <S, A, E1, E2, R1>(
   charging: Charging,
   method: string,
   charge: Charge,
-  send: (report: Held["report"]) => Effect.Effect<readonly [S, Stream.Stream<A, E2>], E1, R1>,
-): Effect.Effect<readonly [S, Stream.Stream<A, E2>], E1 | AiError.AiError, Exclude<R1, CallReach>> =>
+  send: (report: Held["report"]) => Effect.Effect<[S, Stream.Stream<A, E2>], E1, R1>,
+): Effect.Effect<[S, Stream.Stream<A, E2>], E1 | AiError.AiError, Exclude<R1, CallReach>> =>
   Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
     const own = yield* Scope.make()
     const outer = yield* Effect.serviceOption(Scope.Scope)
@@ -99,7 +99,8 @@ export const chargedSend = <S, A, E1, E2, R1>(
     const [sent, stream] = yield* restore(send(held.report).pipe(Effect.provideService(CallReach, held.reach))).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(own, exit) : Effect.void)),
     )
-    return [sent, stream.pipe(Stream.onExit((exit) => Scope.close(own, exit)))] as const
+    const charged: [S, Stream.Stream<A, E2>] = [sent, stream.pipe(Stream.onExit((exit) => Scope.close(own, exit)))]
+    return charged
   }))
 
 const timedOut = (request: HttpClientRequest.HttpClientRequest, wait: Duration.Duration) =>

@@ -138,6 +138,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-journal-sqlite",
   "sdk-kernel-node-model-spend",
   "sdk-kernel-node-model-openai-compatible",
+  "sdk-kernel-node-model-anthropic",
   "core/kernel",
 ]
 
@@ -606,7 +607,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
       { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible"], externals: [] },
+      { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
