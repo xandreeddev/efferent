@@ -66,8 +66,9 @@ export const checkedKnowledgeOptions = (options: KnowledgeOptions): Result.Resul
  * as a run of whole words, compared folded (case, accent marks and punctuation aside); the user's entity when the
  * message holds one of the speaker's words; and, only when the last message names none of them, those the turn before
  * names (the person's messages and the answer), by name. The user's entity is never named by a name: its own ("the
- * user", "I", "me") are the curation prompt's English, and the speaker's words are the host's. In the order the
- * knowledge holds the entities, each once.
+ * user", "I", "me") are the curation prompt's English, and the speaker's words are the host's; those are not read in
+ * the turn before, whose answer's "I" is the assistant. The user's entity first, then the others in the order the
+ * knowledge holds them, each once.
  *
  * @public
  */
