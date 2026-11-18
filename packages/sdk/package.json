@@ -7,7 +7,8 @@
   "exports": {
     ".": "./src/index.ts",
     "./conformance": "./src/conformance/index.ts",
-    "./kernel": "./src/kernel/index.ts"
+    "./kernel": "./src/kernel/index.ts",
+    "./kernel/node": "./src/kernel/node/index.ts"
   },
   "dependencies": {
     "@xandreed/core": "workspace:*",
