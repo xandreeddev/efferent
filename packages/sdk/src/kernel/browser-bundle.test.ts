@@ -47,8 +47,11 @@ const bundle = async (entry: string) => {
   return { built: built.success, size: sizes.reduce((sum, size) => sum + size, 0), asked: Arr.sort(Arr.dedupe(asked), Order.String), reached: Arr.sort(Arr.dedupe(reached), Order.String) }
 }
 
+/** The browser entry's bundle, built once for the tests that read it: a second build of one entry in a process can fail to resolve on Bun 1.3.0. */
+const browserEntry = bundle(`${import.meta.dir}/index.ts`)
+
 test("a browser bundle of @xandreed/sdk/kernel resolves no runtime module: none by a node: or bun: name, none by a bare builtin name", async () => {
-  const kernel = await bundle(`${import.meta.dir}/index.ts`)
+  const kernel = await browserEntry
   expect(kernel.asked).toEqual([])
   expect(kernel.built).toBe(true)
   expect(kernel.size).toBeGreaterThan(1000)
@@ -60,7 +63,7 @@ test("the same check catches an entry that imports one: the kernel's entry besid
 }, 60_000)
 
 test("a browser bundle of @xandreed/sdk/kernel reaches no module of the Node entry", async () => {
-  const kernel = await bundle(`${import.meta.dir}/index.ts`)
+  const kernel = await browserEntry
   expect(kernel.reached).toEqual([])
   expect(kernel.built).toBe(true)
 }, 60_000)
