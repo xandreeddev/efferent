@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option, Result, Schema } from "effect"
 import { readJournal, stored, storedEvent, userMessage } from "@xandreed/core/kernel"
 import { EntityKind, EntityName, KNOWLEDGE_VOCABULARY, MemoryData, MemoryDay, MemoryId, MemoryText, Quote, SourceData, sourceEvent, USER_ENTITY } from "./knowledge.entity.js"
-import { dayOf, endedBy, evidenceOf, folded, holdsRun, knowledgeOf, nextIds, quoted, sourceText, standing } from "./knowledge.entity.functions.js"
+import { dayOf, endedBy, evidenceOf, folded, holdsRun, keptFrom, knowledgeOf, nextIds, quoted, sourceText, standing } from "./knowledge.entity.functions.js"
 import { aliased, called, curated, ended, entity, failed, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
 
 const texts = (knowledge: ReturnType<typeof knowledgeOf>) => knowledge.memories.map((one) => `${one.id}: ${one.text}`)
@@ -223,5 +223,28 @@ describe("what a knowledge session's journal holds", () => {
     expect(knowledge.entities.map((one) => one.name)).toEqual(["the user", "Ana Silva"])
     expect(knowledge.memories.map((one) => [one.text, one.count, dayOf(one.last), Option.map(one.ended, (end) => `${end.why} on ${dayOf(end.at)}`)]))
       .toEqual([["Ana Silva works at Acme.", 1, "2026-11-12", Option.some("wrong on 2026-11-14")]])
+  })
+})
+
+describe("what a curation stored for a source", () => {
+  test("keptFrom reads back every record that names the source, by kind, in the order stored, and passes over the rest", () => {
+    const journal = journalOf(
+      source("s1"), entity("n2", "Ana Silva"), memory("m1", "Ana Silva lives in Porto.", ["n2"]), curated("s1", 2),
+      source("s2"), failed("s2", 1, "The curator's reply holds no JSON object."),
+      entity("n3", "Braga", "place", "s2"), aliased("n2", "Ana", "s2"), memory("m2", "Ana Silva lives in Braga.", ["n2", "n3"], { from: "s2" }),
+      ended("m1", "changed", { by: "m2", from: "s2" }), restated("m2", "s2"), ended("m2", "asked", { from: "s3" }), curated("s2", 5),
+      userMessage("Not a record of the knowledge."),
+    )
+    const kept = keptFrom(journal, SourceData.fields.id.make("s2"))
+    expect<unknown>({ ...kept, curated: Option.getOrNull(kept.curated) }).toEqual({
+      entities: [{ id: "n3", name: "Braga", kind: "place", source: "s2" }],
+      aliases: [{ id: "n2", alias: "Ana", source: "s2" }],
+      memories: [{ id: "m2", kind: "fact", text: "Ana Silva lives in Braga.", about: ["n2", "n3"], quote: "Ana Silva lives in Braga.", by: "user", source: "s2" }],
+      restated: [{ id: "m2", source: "s2", quote: "said again" }],
+      ended: [{ id: "m1", why: "changed", by: "m2", source: "s2" }],
+      curated: { source: "s2", calls: 1, kept: 5, dropped: [] },
+      failed: [{ source: "s2", attempt: 1, reason: "The curator's reply holds no JSON object." }],
+    })
+    expect(Option.isNone(keptFrom(journal, SourceData.fields.id.make("s9")).curated)).toBe(true)
   })
 })
