@@ -25,9 +25,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   speaker?, stopWords? })` is a memory wrapper that sends each request what
   is kept about what the conversation names, with no model and no embedder:
   the entities the last message names (the user's by the host's speaker
-  words), else the turn before's; the memories about them and those the
-  message's words reach by the kernel's BM25, fused by rank; 8 places, then a
-  walk by subject of up to 3 more; what a memory replaced sent under it. Its
+  words, people by a first name when nobody is named in full), else the turn
+  before's; the memories about them and those the message's words reach by
+  the kernel's BM25 ("work" meeting "works"), fused by rank, an ended memory
+  ranking for what replaced it; 8 places, then a walk by subject of up to 3
+  more; what a memory replaced sent under it. Its
   note, `knowledgeNote`, is new model-facing text: `[Host note: these memories
   were kept from earlier conversations, …]` and the memories framed in
   `<known-memories>`, a sentence each with when it was said, no ids. What

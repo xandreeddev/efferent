@@ -1759,20 +1759,24 @@ const memory = withKnowledge({ limit: 8, walk: 3, speaker: ["i", "me", "my"], st
 
 - **The seeds** are the entities the last message names (by name or
   another name, as a run of whole words, folded), the user's entity when
-  the message holds one of the host's `speaker` words, and, only when it
-  names none, those the turn before names. `askedOf(journal)` reads the
+  the message holds one of the host's `speaker` words, the people whose
+  first name it holds when it names nobody in full and holds no speaker's
+  word ("Where does Ana work?"), and, only when none of those, the
+  entities the turn before names. `askedOf(journal)` reads the
   last message and the turn before from the conversation's journal.
-- **Two lists, fused by rank**: the standing memories about a seed, and
-  those the last message's words reach by BM25 (`keywordScores`, the
-  kernel's own, the host's `stopWords` passed over), each ordered by that
-  score, then how often and how lately said. A place `p` (from 0) adds
+- **Two lists, fused by rank**: the memories about a seed, and those the
+  last message's words reach by BM25 (`keywordScores`, the kernel's own,
+  the host's `stopWords` passed over, "work" meeting "works": two words of
+  four characters or more meet when one starts the other), each ordered
+  by that score, then how often and how lately said. A place `p` (from 0) adds
   `1 / (10 + p)` in the first and `0.5 / (10 + p)` in the second. The first
   `limit` (8 unless given) are sent.
 - **The walk by subject**: up to `walk` more (3 unless given, on top of the
   limit) whose first `about` is an entity the three best memories about a
   seed bring in and the message did not name. "Ana Silva works at Acme"
   brings in Acme, and the walk finds "Acme is in Lisbon".
-- **What ended** is never sent alone: a memory sent carries those it
+- **What ended** is never sent alone: an ended memory that ranks takes
+  its place for what replaced it, and a memory sent carries those it
   replaced, newest first, at most three (`BEFORE_SHOWN`), as "before that"
   lines with until when they held.
 
@@ -1804,7 +1808,7 @@ with its place in each list, its score and words, whether it was sent and
 why or why not, and the note's tokens. On a memory written from the learn
 track's world (711 memories), with 44 English stop words, this recall found the memories 20 of 25
 single questions need, both memories of 8 of 14 that need two, and both of
-71 of 94 generated two-step questions; with no walk, 20, 1 and 0. ADR 0023
+78 of 94 generated two-step questions; with no walk, 20, 1 and 0. ADR 0023
 has the counts and what they rest on. A question whose words the memory
 does not hold, and that names nobody, finds nothing: that is recall by
 meaning's (ADR 0021).

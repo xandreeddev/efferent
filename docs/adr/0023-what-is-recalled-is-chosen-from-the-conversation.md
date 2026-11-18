@@ -39,21 +39,57 @@ after an unrelated turn, and 94 two-step questions generated from the memory's p
 Carla Novak's employer in?"). They were written for the earlier measurements, before this recall; the generated ones
 come from templates, which favours any walk that follows a sentence's subject.
 
-The decisions were made on scratch code; the rows marked † were then run through the kernel's own functions, over
-the same memory with the 44 English stop words and the speaker's words of the measurement (`i`, `me`, `my`, `mine`,
-`myself`), and gave the same counts, set by set. The other rows are arms the kernel's recall cannot be set to (a
-list left out, the walk inside the places, the walk from another list), counted by the scratch code alone.
+The first decisions were made on scratch code, where a word of BM25 counted only where a sentence held it as it
+is, seeds were full names alone, and only standing memories were ranked: the rows marked † were run through the
+kernel's own functions at that point, over the same memory with the 44 English stop words and the speaker's words
+of the measurement (`i`, `me`, `my`, `mine`, `myself`), and gave the same counts, set by set. The rows marked ‡ are
+the kernel as it ships, after the three changes the second table measures. The other rows are arms the kernel's
+recall cannot be set to (a list left out, the walk inside the places, the walk from another list), counted by the
+scratch code alone.
 
 | What is sent | single (25) | two (14) | follow-ups (24) | after an unrelated turn (39) | generated two-step (94) |
 |---|---|---|---|---|---|
 | memories about a seed, 8 places, no walk | 15 | 0 | 13 | 15 | 0 |
 | the two lists fused, 8 places, no walk † | 20 | 1 | 13 | 17 | 0 |
 | the two lists fused, 11 places, no walk † | 20 | 1 | 16 | 21 | 0 |
-| **the two lists fused, 8 places, then a walk by subject of up to 3 more** † | **20** | **8** | **14** | **24** | **71** |
+| the two lists fused, 8 places, then a walk by subject of up to 3 more † | 20 | 8 | 14 | 24 | 71 |
 | the same walk taking 3 of the 8 places | 19 | 7 | 10 | 22 | 71 |
 | the walk from the fused list's three best, not the seed list's, 3 of 8 places | 19 | 8 | 10 | 21 | 44 |
 | memories about a seed alone, then the walk, 3 of 8 places | 14 | 7 | 10 | 21 | 71 |
 | the chosen recall with no stop words † | 18 | 7 | 14 | 21 | 77 |
+| the kernel, 8 places, no walk ‡ | 20 | 1 | 22 | 17 | 0 |
+| the kernel, 11 places, no walk ‡ | 21 | 1 | 22 | 22 | 0 |
+| **the kernel: 8 places, then a walk by subject of up to 3 more** ‡ | **20** | **8** | **22** | **24** | **78** |
+| the kernel with no stop words ‡ | 18 | 7 | 22 | 21 | 85 |
+
+Three changes were then measured one by one on the same sets, each kept only if no set dropped, and on 18 questions
+about what the curator wrote for ADR 0022's 40 turns (over those memories: 740, 10 of them ended; a question is
+found when a sentence sent says what it asks, and one about something forgotten when nothing sent says it):
+
+| Recall, 8 places and a walk of 3 | single | two | follow-ups | unrelated | generated | curated (18) |
+|---|---|---|---|---|---|---|
+| the first cut (†) | 20 | 8 | 14 | 24 | 71 | 13 |
+| words that start one another meet in BM25 | 20 | 8 | 22 | 24 | 78 | 13 |
+| a person's first name seeds | 20 | 8 | 14 | 24 | 71 | 13 |
+| both | 20 | 8 | 22 | 24 | 78 | 13 |
+| an ended memory ranks for what replaced it, alone | 20 | 8 | 14 | 24 | 71 | 14 |
+| **all three (the kernel)** | **20** | **8** | **22** | **24** | **78** | **16** |
+
+- **Words that meet.** "In what city does Ana Silva work?" held no word of "Ana Silva works at Acme" but her name,
+  so over the world's 557 memories it was sixth of her memories, the walk had no bridge, and nothing about Acme was
+  sent; with "work" meeting "works" it is first, and the walk starts from Acme. The follow-ups ("And where does she
+  live?") gain 8 of 24 the same way. The rule is `shownFor`'s: the same word, or both four characters or more and
+  one the start of the other, in how often a sentence holds a word and in how many do alike.
+- **First names** change none of these sets, which name people in full; they are for "Where does Ana work?", which
+  named nobody before (8 memories sent that merely held "Ana") and now seeds both Anas, their employers first.
+- **An ended memory ranks for what replaced it.** On the curated questions, "Where does Ana Silva live now?" found
+  "Ana Silva moved to Braga in October 2026" only when the ended "Ana Silva lives in Porto", which shares the
+  question's words, took a place for it; "Does he still live in Porto?" and "Where does Bruno Reis work now?" the
+  same. No old memory was sent as standing either way. The two curated questions still missed ask for what nothing
+  stored says ("what does she think of her job") or what no word reaches ("food I should avoid" against "can't
+  stand coriander").
+
+Over the first table:
 
 - **The list the message's words reach** (BM25) adds 5 single questions to the list about a seed (15 to 20), and
   costs nothing elsewhere.
@@ -79,7 +115,7 @@ list left out, the walk inside the places, the walk from another list), counted 
 - **Answers.** On the 14 questions that need two memories, one model (DeepSeek V4.1 Flash) answered 1 or 2 from a
   note of the 8 nearest by meaning, 5 or 6 when the note also held a short walk, and 11 to 13 when it could call a
   recall tool again (ADR 0022). No model answered from this recall's note in this measurement.
-- **Cost.** About 2 ms for one recall over the 711 memories, on one machine; the fold of the knowledge session's
+- **Cost.** About 3 ms for one recall over the 711 memories (2 ms for the first cut), on one machine; the fold of the knowledge session's
   journal comes before it, once per request.
 
 What others published, read for the relation record: no study isolates a relation's label. Relation triples alone
@@ -121,28 +157,28 @@ the triples with links between entities.
   3), `speaker` and `stopWords` (each one word; none).
 - **The seeds** are the entities the last message names, by name or another name they bear, as a run of whole
   words, folded as `shownFor` compares names; the user's entity when the message holds one of the host's speaker
-  words; and only when the last message names none of them, the entities the turn before names (the person's
-  messages and its answer). The user's entity is never named by a name: its own ("the user", "I", "me") are the
+  words; when it names nobody in full and holds no speaker's word, the people (kind `person`) whose first name it
+  holds, a whole word of three letters or more, as `shownFor` reads one (`first-name`); and only when none of those,
+  the entities the turn before names (the person's messages and its answer). The user's entity is never named by a name: its own ("the user", "I", "me") are the
   curation prompt's English, and which words name the user is the host's to say. The speaker's words are not read in
   the turn before, where its answer's "I" is the assistant.
-- **Two lists, fused by rank.** The standing memories about a seed, and every standing memory the last message's
-  words reach by BM25 (the kernel's own, over the standing memories' sentences, `k1` 1.2, `b` 0.75, a word folded and
-  more than one character, the host's stop words passed over); each ordered by that score, then how often said, then
-  the latest said. A memory at place `p` (from 0) of a list adds `1 / (10 + p)` for the list about a seed and
+- **Two lists, fused by rank.** The memories about a seed, and every memory the last message's words reach by BM25
+  (the kernel's own, `k1` 1.2, `b` 0.75, a word folded and more than one character, the host's stop words passed
+  over, a word meeting one it starts or that starts it when both are four characters or more, in how often and in
+  how many sentences alike); each ordered by that score, then how often said, then the latest said. The candidates
+  are the memories that stand and those that ended as `changed` with a standing memory as what came in their place
+  (followed through), BM25 counted over them all; an ended one takes its place for the standing memory that
+  replaced it, which keeps the first place it or one it replaced took. A memory at place `p` (from 0) of a list adds `1 / (10 + p)` for the list about a seed and
   `0.5 / (10 + p)` for the words'. The first `limit` of the fused list are sent.
 - **The walk by subject.** The entities the three best memories about a seed are about, but the user's and those the
   last message named, are bridges; up to `walk` more standing memories whose first `about` is a bridge, not already
   sent, best by the same order, are sent after the `limit`, on top of it. A seed from the turn before can be a
   bridge, since the last message did not name it.
-- **An ended memory is never sent alone.** Only standing memories are ranked, as measured; each memory sent carries
-  those it replaced (ended as `changed`, with it as what came in their place, and what those replaced), newest
-  first, at most `BEFORE_SHOWN` (3), sent under it as "before that", so a fact that changes often does not grow every
-  note. An ended memory is no candidate of its own: a question that reaches only the old one, through a seed or a
-  word the replacement does not share ("Who works at Acme?" once Ana Silva moved to Globex), sends neither. The
-  checks let a memory end another only when the two share a stored entity, so a seed they share finds the
-  replacement, and with it the old one. This is narrower than sending what replaced any ended memory that would
-  rank: that changes what BM25 counts, and was not measured. A memory ended as `wrong` was never true, and one
-  forgotten was asked to be: neither is sent.
+- **An ended memory is never sent alone.** When one would rank, what replaced it is sent in its place (the 18
+  curated questions: 13 found without it, 16 with it and words that meet). Each memory sent carries those it
+  replaced (ended as `changed`, with it as what came in their place, and what those replaced), newest first, at
+  most `BEFORE_SHOWN` (3), sent under it as "before that", so a fact that changes often does not grow every note. A
+  memory ended as `wrong` was never true, and one forgotten was asked to be: neither ranks nor is sent.
 - **The note** (`knowledgeNote`) is `hostNote` text, then the memories framed in `<known-memories>`, a line each: its
   sentence and when it was said (`said on YYYY-MM-DD`, or `said N times, last YYYY-MM-DD`, the day of its source's
   `at`), and under it `  before that: <sentence> (<when said>, until YYYY-MM-DD)` for each it replaced. No ids: the
@@ -171,8 +207,10 @@ the triples with links between entities.
 - **The walk inside the 8 places**: follow-ups 14 to 10 of 24.
 - **The walk from the fused list's best**: 44 of 94 against 71.
 - **More plain places instead of a walk**: 11 places found 1 of 14 and 0 of 94.
-- **Ended memories as candidates, mapped to what replaced them.** It changes what BM25 counts and was not measured.
-  The cost of leaving it out is in "Decision": a question that reaches only the old memory sends neither.
+- **Ranking standing memories alone**, as the first cut did: 13 of the 18 curated questions against 14 (16 with
+  words that meet); a question that reached only the old memory ("Where does Ana Silva live now?" against "Ana Silva
+  lives in Porto") sent neither.
+- **Words compared as they are** in BM25: follow-ups 14 against 22 of 24, generated questions 71 against 78.
 - **A typed relation record.** See "Decision" and "Measured".
 - **English in the kernel.** The user's names in the fold are the prompt's English; the speaker's words and the stop
   words are the host's.
@@ -187,7 +225,11 @@ the triples with links between entities.
 - **A follow-up after an unrelated turn** reads the turn before, which the unrelated turn is: 24 of 39 found.
 - **The user's memories take places** whenever a message holds a speaker's word, even when it is about someone else
   ("my friend Ana Silva"). With a dozen of the user's memories it cost no hit; with hundreds it would.
-- **Every request folds the knowledge session's journal.** About 2 ms for the recall over 711 memories; the fold
+- **The walk takes what its subject's memories say most often and most lately**, when the question's words reach
+  none of them. Over the world's 557 memories, "In what city does Ana Silva work?" walks from Acme to "Acme Labs
+  partners with Globex", "Acme hosts meetup in Madrid" and "Acme was renamed Acme Labs", and not to "Acme is in
+  Lisboa", said once and earlier: "city" is no word of it.
+- **Every request folds the knowledge session's journal.** About 3 ms for the recall over 711 memories; the fold
   grows with the journal.
 - **The page's curator and its recall are one host's choices.** A host with no review, other stop words, or another
   language's speaker's words gets other counts.

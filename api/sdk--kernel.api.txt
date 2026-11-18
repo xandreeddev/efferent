@@ -345,6 +345,7 @@ interface KnownEntity
 interface KnownMemory
 interface KnownSource
 interface LearnedFact
+interface ListPlace
 interface MemorySubject
 interface MemoryWrapperSubject
 interface MessageRead
