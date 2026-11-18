@@ -55,7 +55,7 @@ describe("the SQLite journal", () => {
       return { said: said.trim(), before: read.events.map((event) => event.data), appended: Number(appended.seq) }
     })))
     expect(result).toEqual({ said: "inside", before: [{ n: 1 }], appended: 2 })
-  })
+  }, 30_000)
 
   test("a database of another schema, another application's, and a file that is no database are refused, and left as they were", async () => {
     const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {

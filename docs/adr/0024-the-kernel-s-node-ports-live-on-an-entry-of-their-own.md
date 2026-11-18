@@ -132,6 +132,10 @@ knowledge) included.
   holds (an inspector beside a running agent) is not possible yet.
 - `JournalOpenFailed` is the Node entry's own error, in the layer's error type: a store that cannot open builds no
   stack, and `JournalStorageError` is unchanged (`api/core--kernel.api.txt` does not move).
+- A holder whose process is a zombie, or whose id another running process now has, counts as alive: the store stays
+  held, and the refusal names the file to remove.
+- One session `recoverTurns` cannot read (`Unreadable`) fails the whole step, and no turn after it in the listing is
+  closed: a host repairs or removes that session first.
 - Listing reads each session file's first line; `recoverTurns` reads every journal of the store once. A store of
   many long journals makes a slow start: an index of open turns would be the store's, and is not kept.
 

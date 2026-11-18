@@ -19,7 +19,8 @@ sessions, several memory strategies. The kernel starts from the other end:
 the smallest set of agreements that lets the parts of an agent be written,
 replaced and tested apart. It imports nothing of the engine and the engine
 imports nothing of it; nothing in it imports a runtime module, so it runs
-in a browser as it is. It is a first cut: [what it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
+in a browser as it is, its Node entry aside (`@xandreed/sdk/kernel/node`,
+the stores on a disk). It is a first cut: [what it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
 is listed below. The engine stays the one to build on until the kernel has
 caught up.
 

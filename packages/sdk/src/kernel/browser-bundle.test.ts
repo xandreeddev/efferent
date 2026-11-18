@@ -47,7 +47,7 @@ const bundle = async (entry: string) => {
   return { built: built.success, size: sizes.reduce((sum, size) => sum + size, 0), asked: Arr.sort(Arr.dedupe(asked), Order.String), reached: Arr.sort(Arr.dedupe(reached), Order.String) }
 }
 
-/** The browser entry's bundle, built once for the tests that read it: a second build of one entry in a process can fail to resolve on Bun 1.3.0. */
+/** The browser entry's bundle, built once and read by both checks of it. */
 const browserEntry = bundle(`${import.meta.dir}/index.ts`)
 
 test("a browser bundle of @xandreed/sdk/kernel resolves no runtime module: none by a node: or bun: name, none by a bare builtin name", async () => {
