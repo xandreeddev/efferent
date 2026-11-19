@@ -31,7 +31,8 @@ import { memoryConformance } from "./contracts/memory/memory.conformance.js"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { ConformanceCheck, JournalStorageSubject, Message, OpenSession, PluginFailure, ReservedTag, SessionsSubject, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import type { MemorySubject } from "./contracts/memory/memory.conformance.js"
-import type { CuratorSubject, EmbedderSubject, FilePath, FilesSubject, KeyValueStore, SummarizerSubject, Vector, VectorKey, VectorStoreSubject } from "./index.js"
+import type { CuratorSubject, EmbedderSubject, FilePath, FilesSubject, KeyValueStore, SearchSubject, SummarizerSubject, Vector, VectorKey, VectorStoreSubject } from "./index.js"
+import { filesSearch, Search, searchConformance } from "./index.js"
 import { CurationFailed, curationOf, Curator, curatorConformance } from "./index.js"
 import { EmbedFailed, Embedder, embedderConformance, inMemoryVectors, recordedEmbedder, VectorsRefused, VectorStore, vectorStoreConformance } from "./index.js"
 import { FileChanged, Files, filesConformance, inMemoryFiles, flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
@@ -699,6 +700,60 @@ describe("the files kit", () => {
       blind: ["changed"],
       unordered: ["list"],
       byStart: ["list"],
+    })
+  })
+})
+
+describe("the search kit", () => {
+  type SearchShape = Context.Service.Shape<typeof Search>
+  /** The search over a workspace in memory holding `files`. */
+  const over = (files: Readonly<Record<string, string>>) => built(Search, filesSearch(), inMemoryFiles(files))
+  /** The search with its `find` replaced, given the one it replaces. */
+  const careless = (change: (inner: SearchShape) => SearchShape["find"]): SearchSubject => ({
+    open: (files) => Effect.map(over(files), (inner) => Search.of({ find: change(inner) })),
+  })
+
+  test("has the checks its doc comment lists, and passes on the search over a workspace in memory", async () => {
+    const stock: SearchSubject = { open: over }
+    expect(ids(searchConformance(stock))).toEqual(["literal", "regex", "order", "folder", "glob", "limit", "line", "refused", "none"])
+    expect(await failedChecks(searchConformance(stock))).toEqual([])
+  })
+
+  test("each careless search fails the check of what it is careless about, and between them every check", async () => {
+    const failed = {
+      // It reads every pattern as a regular expression.
+      alwaysRegex: await failedChecks(searchConformance(careless((inner) => (query) => inner.find({ ...query, regex: true })))),
+      // It reads every pattern as it is written.
+      neverRegex: await failedChecks(searchConformance(careless((inner) => (query) => inner.find({ ...query, regex: false })))),
+      // It gives the matches last file first.
+      backwards: await failedChecks(searchConformance(careless((inner) => (query) => Effect.map(inner.find(query), (found) => ({
+        ...found, matches: Arr.sort(found.matches, Order.mapInput(Order.flip(Order.String), (match: { readonly path: string }) => match.path)),
+      }))))),
+      // It searches the whole workspace, whatever the folder.
+      everywhere: await failedChecks(searchConformance(careless((inner) => ({ folder: _, ...query }) => inner.find(query)))),
+      // It matches a glob against the whole path, slash or not.
+      byPath: await failedChecks(searchConformance(careless((inner) => (query) => query.glob === undefined || query.glob.includes("/") ? inner.find(query) : inner.find({ ...query, glob: `**/${query.glob}` }).pipe(
+        Effect.map((found) => ({ ...found, matches: found.matches.filter((match) => match.path === query.glob) })),
+      )))),
+      // It gives every match, past the limit.
+      unlimited: await failedChecks(searchConformance(careless((inner) => (query) => Effect.map(inner.find({ ...query, limit: 1_000 }), (found) => ({ ...found, more: false }))))),
+      // It counts columns from 0.
+      fromZero: await failedChecks(searchConformance(careless((inner) => (query) => Effect.map(inner.find(query), (found) => ({ ...found, matches: found.matches.map((match) => ({ ...match, column: match.column - 1 })) }))))),
+      // It finds nothing where it cannot use a pattern.
+      quiet: await failedChecks(searchConformance(careless((inner) => (query) => Effect.catchTag(inner.find(query), "PatternInvalid", () => Effect.succeed({ matches: [], more: false, skipped: 0 }))))),
+      // It says there is more when it finds nothing.
+      hopeful: await failedChecks(searchConformance(careless((inner) => (query) => Effect.map(inner.find(query), (found) => found.matches.length === 0 ? { ...found, more: true } : found)))),
+    }
+    expect(failed).toEqual({
+      alwaysRegex: ["literal"],
+      neverRegex: ["refused", "regex"],
+      backwards: ["limit", "order"],
+      everywhere: ["folder"],
+      byPath: ["glob"],
+      unlimited: ["limit"],
+      fromZero: ["line"],
+      quiet: ["refused"],
+      hopeful: ["none"],
     })
   })
 })

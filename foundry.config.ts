@@ -134,6 +134,10 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-plugin-vectors-in-memory",
   "sdk-kernel-plugin-recall",
   "sdk-kernel-plugin-knowledge",
+  "sdk-kernel-plugin-shell-scripted",
+  "sdk-kernel-plugin-tool-shell",
+  "sdk-kernel-plugin-search-files",
+  "sdk-kernel-plugin-tool-search",
   "sdk-kernel-node",
   "sdk-kernel-node-writer",
   "sdk-kernel-node-journal-directory",
@@ -141,6 +145,8 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-model-spend",
   "sdk-kernel-node-model-openai-compatible",
   "sdk-kernel-node-model-anthropic",
+  "sdk-kernel-node-shell-process",
+  "sdk-kernel-node-files-disk",
   "core/kernel",
 ]
 
@@ -613,7 +619,11 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic"], externals: [] },
+      // The workspace's ports (ADR 0028): a shell over `node:child_process`, and files in a folder of the disk. Each imports the contract it implements
+      // from `sdk-kernel-contracts` and nothing of another port's folder; it holds no store, so it takes no lock.
+      { name: "sdk-kernel-node-shell-process", path: "packages/sdk/src/kernel/node/shell-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-files-disk", path: "packages/sdk/src/kernel/node/files-disk/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
@@ -635,7 +645,11 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-plugin-vectors-in-memory", path: "packages/sdk/src/kernel/plugins/vectors-in-memory/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-recall", path: "packages/sdk/src/kernel/plugins/recall/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-knowledge", path: "packages/sdk/src/kernel/plugins/knowledge/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-graph", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-recall", "sdk-kernel-plugin-knowledge"], externals: [] },
+      { name: "sdk-kernel-plugin-shell-scripted", path: "packages/sdk/src/kernel/plugins/shell-scripted/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-tool-shell", path: "packages/sdk/src/kernel/plugins/tool-shell/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-search-files", path: "packages/sdk/src/kernel/plugins/search-files/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-tool-search", path: "packages/sdk/src/kernel/plugins/tool-search/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-graph", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-recall", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
       // as written, so they import only what a consumer can.

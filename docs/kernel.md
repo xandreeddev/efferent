@@ -1978,7 +1978,8 @@ it over from one whose process is gone, and lets it go when its scope
 closes. So a host that has built the layer knows what `Sessions.recover`
 asks it to know: every turn the store holds open was a dead writer's.
 `recoverTurns` closes them all, in every session of the store, the facts,
-graph and knowledge sessions included, and gives the turns it closed:
+graph and knowledge sessions included, and gives the turns it closed and the
+sessions it could not read:
 
 <!-- pinned: packages/sdk/src/kernel/node/durable.test.ts#durable -->
 
@@ -2003,13 +2004,15 @@ const over = (directory: string) => sessions().pipe(
 /**
  * Go on with a conversation of the store. First, before any turn: every turn
  * the store holds open was a writer's that is gone, since no other process can
- * hold the store, so `recoverTurns` closes each as `Abandoned`.
+ * hold the store, so `recoverTurns` closes each as `Abandoned`. A session the
+ * store cannot read (a damaged line) is passed over and named in `unreadable`:
+ * the host repairs or removes it, and the others are recovered all the same.
  */
 const goOn = (directory: string, conversation: SessionId) => Effect.gen(function* () {
-  const closed = yield* recoverTurns
+  const { closed, unreadable } = yield* recoverTurns
   const turns = yield* Sessions
   const turn = yield* turns.turn(conversation, (session) => Effect.succeed(session.turn))
-  return { closed: closed.length, turn }
+  return { closed: closed.length, unreadable: unreadable.map((one) => one.session), turn }
 }).pipe(Effect.provide(over(directory)))
 ```
 
@@ -2081,7 +2084,8 @@ test("a branch starts as the conversation up to the turn it was cut after, and g
 Files are the world an agent acts on, not a store of the agent (ADR 0017).
 The workspace is a contract, `Files` (`read`, `list`, `write`), which the
 host provides: `inMemoryFiles()` here, a page's storage, a test's map, a
-command line's disk (the kernel ships no disk). Four tools reach it,
+command line's disk (`diskFiles`, on the Node entry; the browser entry ships
+no disk). Four tools reach it,
 `readFile`, `listFiles`, `writeFile` and `editFile` (`fileTools`, with
 `fileHandlers`); a program provides `Files` alone, and one that leaves it
 out does not compile where it calls them:
@@ -2216,6 +2220,99 @@ freely, and no asking. `filesConformance` checks a host's own `Files`: a
 file read back as written, `FileNotFound`, an overwrite, a write that
 expects, one refused with `FileChanged` that writes nothing, and a folder
 listed by code unit, never a name that only starts like it.
+
+### On Node and Bun: a folder, a shell and a search
+
+The Node entry holds a workspace in a folder of the disk, `diskFiles({ root
+})`, and a shell, `processShell({ cwd, env })`; the browser entry holds the
+`Shell` and `Search` contracts with their kits and tools, and `filesSearch`,
+a search over any `Files` ([ADR 0028](adr/0028-the-workspace-s-ports-are-the-app-s-to-plug-in.md)).
+Each is a layer a host plugs in or leaves out:
+
+<!-- pinned: packages/sdk/src/kernel/node/workspace.test.ts#workspace -->
+
+```ts
+import { Layer } from "effect"
+import { Toolkit } from "effect/ai"
+import { fileHandlers, fileTools, filesSearch, searchHandlers, searchTools, shellHandlers, shellTools } from "@xandreed/sdk/kernel"
+import { diskFiles, processShell } from "@xandreed/sdk/kernel/node"
+
+/**
+ * The tools a host offers and what they run over: the file tools and the search over a folder of the disk, and a shell
+ * that starts there with only the `PATH` the host gives. Each is a layer the host plugs in or leaves out; none asks
+ * anyone, so a host that wants a rule or a person wraps the contract or asks in its loop.
+ */
+const tools = Toolkit.merge(fileTools, searchTools, shellTools)
+
+const workspace = (folder: string) => Layer.mergeAll(fileHandlers, searchHandlers, shellHandlers).pipe(
+  Layer.provideMerge(filesSearch()),
+  Layer.provideMerge(diskFiles({ root: folder })),
+  Layer.provideMerge(processShell({ cwd: folder, env: { PATH: "/usr/bin:/bin" } })),
+)
+```
+
+- **`diskFiles` keeps every path in the root**: a `FilePath` holds no `..`,
+  and a path whose real path, links followed, is outside the root's is
+  declined (`FilesRefused`), read or written. A file that is not UTF-8, or
+  is over `maxBytes` (1 MiB), is declined in words; a write goes to a
+  temporary file in the same folder and is renamed over the old one, and its
+  compare and set holds within the process, not against another process.
+  `list` passes over `.git`, `node_modules` (`ignore` replaces them), names
+  that make no `FilePath`, links that lead outside, to nothing or to a
+  folder, and a write's temporary files.
+- **`runCommand` runs `sh -c` with the host's rights**, starting in the
+  shell's folder, which is a starting place and no bound. A command sees
+  only the variables of the shell's `env`: the adapter never reads the host
+  process's own. It answers how the command ended (`exited` with its code,
+  `timed out`, `killed`) and the end of its stdout and stderr, with the bytes
+  cut before them. A timeout, the command's return, an interrupted run and
+  the shell's close each stop the command's whole process group, so nothing
+  it started in the background outlives its run (`shellConformance`'s
+  `*-kills` checks, on Node and Bun).
+- **`searchFiles` finds a text, or a JavaScript regular expression**, in
+  the files of a folder that a glob keeps, by path and then line, at most 50
+  lines, and counts the files it could not read as text. It reads through
+  `Files`, so it searches a page's workspace as it does a folder; there is
+  no ripgrep adapter, whose regular expressions are not JavaScript's. A
+  regular expression that repeats a group holding a choice or a repetition
+  (`(a|aa)+`, `(a+)+`) is refused; one the check misses can still hold the
+  process, since nothing can stop the engine, so a host that cannot afford
+  that gives `filesSearch({ regex: false })`, and the model is told in
+  fixed words to search for text as it is written.
+
+Permission is the app's here too. A `Shell` of its own declines by a rule:
+
+<!-- pinned: packages/sdk/src/kernel/shell.test.ts#shell-declining -->
+
+```ts
+// A `Shell` of the app's over the one it was given: a command that names `rm` is declined, every other passes.
+const keepFiles = <E, R>(shell: Layer.Layer<Shell, E, R>) => Layer.effect(Shell, Effect.gen(function* () {
+  const inner = yield* Shell
+  return Shell.of({
+    run: (request) => /(^|[\s;&|])rm\s/.test(request.command)
+      ? Effect.fail(new ShellRefused({ reason: "this agent may not remove files", message: `declined ${request.command}` }))
+      : inner.run(request),
+  })
+})).pipe(Layer.provide(shell))
+```
+
+and the app's loop asks a person before a command runs:
+
+<!-- pinned: packages/sdk/src/kernel/shell.test.ts#shell-asking -->
+
+```ts
+// The app's turn asks before it runs a command: the tool never asks, and a `Shell` cannot, since an answer is
+// stored in a turn. One key for every command, so "always" stands for the shell; an app keys by command if it likes.
+const askFirst: BeforeCall<Approval> = (session, call) => call.name !== "runCommand"
+  ? Effect.succeed(true)
+  : approveIn(session, { action: "shell.run", detail: `Let the agent run: ${JSON.stringify(call.params)}` }).pipe(Effect.matchEffect({
+    onFailure: (refusal) => Effect.as(Effect.orDie(session.append(toolResult(call, refusal, true))), false),
+    onSuccess: () => Effect.succeed(true),
+  }))
+```
+
+A test gives `runCommand` a `scriptedShell(script)`, which answers the
+script and runs nothing, so a tool's test spawns no process.
 
 ## Background tasks: work that goes on while the conversation does
 
