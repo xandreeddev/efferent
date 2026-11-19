@@ -695,7 +695,8 @@ it: `./kernel` is a `restricted` subpath.
   in the event; an ended memory found by meaning giving its place to what
   replaced it; a greeting sent the nearest; vectors put once, 32 a call,
   then only the message embedded, a memory kept after embedded alone, a
-  lost store filled again, vectors shipped ahead under `meaningKey` reused;
+  lost store filled again, vectors shipped ahead under `meaningKey` reused,
+  a stale vector of a text no memory holds never found;
   `EmbedFailed` and `VectorsRefused` failing the context; nothing embedded
   with the list off, the context `withKnowledge`'s; the wrapper kit;
   options refused; a model's name too long refused where the layer is

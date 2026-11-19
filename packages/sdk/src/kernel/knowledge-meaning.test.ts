@@ -238,6 +238,18 @@ describe("vectors are an index of the journal", () => {
     expect(ahead.calls).toEqual([["query", 1]])
   })
 
+  test("the search is held to the keys of what can be ranked: a vector the store keeps for a text no memory holds is never found", async () => {
+    // A text kept earlier and since gone from the journal, its vector the question's own: nearest of all, if searched.
+    const stale = Layer.effectDiscard(Effect.flatMap(VectorStore, (vectors) => vectors.put([{ key: keyOf(recording.model, "A text nobody keeps any more."), vector: recording.vectors.query["Who keeps a bird?"] ?? [] }])))
+      .pipe(Layer.provideMerge(inMemoryVectors()))
+    const listen = hearing()
+    await Effect.runPromise(Effect.gen(function* () {
+      yield* keep(KEPT)
+      yield* ask("Who keeps a bird?")
+    }).pipe(Effect.provide(Layer.mergeAll(withKnowledgeByMeaning({ limit: 3, walk: 0, pool: 1, ...english })(flatMemory), listen.layer).pipe(Layer.provideMerge(Layer.mergeAll(store(), embedder, stale)))), Effect.orDie))
+    expect<unknown>(listen.heard[0]?.sent).toEqual(["m3"])
+  })
+
   test("the key is the embedder's model, a line feed and the text, never an id; a model's name of more than 99 characters makes none", () => {
     expect(meaningKey("Xenova/e5-small-v2", "Ana Silva has parrot Pip.")).toEqual(meaningKey("Xenova/e5-small-v2", "Ana Silva has parrot Pip."))
     expect<string>(keyOf("e5", "Acme is in Lisbon.")).toBe("e5\nAcme is in Lisbon.")

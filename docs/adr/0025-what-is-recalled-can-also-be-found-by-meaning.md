@@ -72,10 +72,14 @@ list about a seed. A probe made while this cut was planned put the parrot at fus
 weights; this code gives 15, 4 and 2: the probe placed the list by meaning one place lower (`w / (11 + p)`) and ranked
 standing memories only.
 
-- **1.5 is the only weight best or tied-best on both embedders, set by set**: on e5 it ties 1 in every set (189); on
-  Gemini it is one above 1 (194 against 193, a question asked after an unrelated turn), and at least as high in every
-  set. It is also the only weight that sends the parrot in all four acceptance rows. No setting tied it on both, so the
-  rule to prefer the lower weight on a tie did not apply.
+- **1.5 is the only weight of the three best or tied-best on both embedders, set by set**: on e5 it ties 1 in every
+  set (189); on Gemini it is one above 1 (194 against 193, one question asked after an unrelated turn), and at least as
+  high in every set. On e5 alone, 1 and 1.5 tie and both pass the acceptance rows (the two e5 ones), so the rule to
+  prefer the lower weight on a tie would give 1: the choice of 1.5 rests on that one Gemini question. 1.5 is also the
+  only one of the three that sends the parrot in the two Gemini rows, which were not acceptance rows.
+- **Above the grid**, run after the choice from the same caches: 2 found 190 on e5 (one more after an unrelated turn)
+  and 194 on Gemini, no set lower than at 1.5; 3 found 191 and 194, but one follow-up fewer on e5. The weight was
+  chosen among 0.5, 1 and 1.5, as planned, and is left there; a later measurement may move it to 2.
 - **No question was lost** at 1.5 against the list off, on either embedder, in any set. What it gains: "Who suffers
   from seasickness?", "Who blocks out street noise at bedtime?", "These days, which racket sport does Carla Mendes
   play?" and "How did Bruno Reis get to work before he moved to Lisbon?" on both; on Gemini also "Is there any food I
@@ -83,7 +87,7 @@ standing memories only.
   have a pet?") and one that needs two memories. The rest of the 11 to 16 more is after an unrelated turn.
 - **The pool.** At 1.5, ranking 20 texts found 189 (e5, one follow-up fewer and one unrelated question more) and 194
   (Gemini); 100 found 189 and 194: 50 is kept.
-- **The identifier questions** were all found by words alone already, as ADR 0023's measurement said for meaning.
+- **The identifier questions** were all found by words alone already, and stay found with the list on.
 
 ## Decision
 
@@ -145,7 +149,7 @@ What was not measured:
 
 - No model answered from this note; these are counts of what is sent.
 - The weight was chosen on the same sets it is scored on (there are no held-out sets for it), and the sets were
-  written before the list by meaning existed.
+  written before the list by meaning existed. No weight between 1.5 and 2 was tried.
 - e5 vectors were embedded one text at a time; a page that embeds in batches gets vectors a little different (ADR
   0021: a cosine of 0.9939 or more to each alone).
 - A user with hundreds of memories of their own, another language, and a knowledge too large to hand the store every
@@ -154,7 +158,8 @@ What was not measured:
 
 ## What would reopen this
 
-- A held-out set on which another weight or pool is better on both embedders.
+- A held-out set on which another weight or pool is better on both embedders; the counts at 2 above already are, on
+  these sets.
 - An embedder whose cosines put unrelated memories first often enough that a floor is worth its number.
 - A knowledge too large for `among` to hold every key, or for the first request to embed it all.
 - The answers measured with a model, where the third list's places cost answers.
