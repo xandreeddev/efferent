@@ -507,8 +507,10 @@ check` (tsc over the learn code, the build, the link check) and
     in a worker of its own, each text embedded alone in a call of its own,
     so a batch gives the same vectors; the download is said under the button
     and kept by the browser (IndexedDB where the Cache API is missing).
-  - The world's vectors are shipped (`vectors.ts`, about 310 KB, imported only
-    when Load the world is pressed): each of the 557 memory texts as the page's
+  - The world's vectors are shipped (`vectors.ts`, about 310 KB, imported with
+    their codec only when Load the world is pressed, `ship.ts`; the embedder's
+    module, `models/meaning.ts`, only when its button is; the model's name and
+    revision are `model.ts`, so every page carries neither): each of the 557 memory texts as the page's
     own worker embedded it in Chrome, kept as 8-bit numbers and a scale
     (`shipped.ts`), put under `meaningKey(model, text)` before the world's
     records (`Lesson.meaning.ship`, run first by `runtime.loadWorld`), so a

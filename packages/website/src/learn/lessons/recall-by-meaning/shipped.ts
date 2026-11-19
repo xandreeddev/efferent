@@ -8,16 +8,15 @@
 // base64, under the memory's text. Load the world puts each one in the page's
 // store under the key the kernel's `meaningKey` makes (the model, a line feed
 // and the text), so the kernel's `has` finds it and embeds only what is new.
-// The data, vectors.ts, is imported only when Load the world is pressed: no
-// page carries it before.
+// This codec and the data, vectors.ts, are imported only when Load the world
+// is pressed (ship.ts): no page carries them before.
 import { Result, Schema } from "effect"
 import { meaningKey } from "@xandreed/sdk/kernel"
 import type { VectorEntry } from "@xandreed/sdk/kernel"
 
-/** The model the vectors were made with: the page's embedder, whose name keys them. */
-export const EMBEDDER_MODEL = "Xenova/e5-small-v2"
-/** The model's files, pinned: the page's worker loads this revision, and the vectors were made with it. */
-export const EMBEDDER_REVISION = "02af79985278377e65c724a76275707cb0333c70"
+import { EMBEDDER_MODEL, EMBEDDER_REVISION } from "./model.ts"
+
+export { EMBEDDER_MODEL, EMBEDDER_REVISION }
 
 /** The file as it is shipped: who made the vectors, how long each is, and each memory's vector under its text. */
 export const ShippedFile = Schema.Struct({

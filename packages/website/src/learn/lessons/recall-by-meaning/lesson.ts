@@ -9,11 +9,12 @@
 // words alone, and the status line says so. Load the world writes lesson 18's
 // world, and puts the vectors made ahead for its memories in the store first,
 // so a request embeds only its message.
-import { Effect, Layer, Schema } from "effect"
+import { Effect, Layer } from "effect"
 import { Sessions } from "@xandreed/core/kernel"
-import { flatMemory, VectorStore, withKnowledgeByMeaning } from "@xandreed/sdk/kernel"
+import { flatMemory, withKnowledgeByMeaning } from "@xandreed/sdk/kernel"
+import type { VectorStore } from "@xandreed/sdk/kernel"
 import type { Lesson, PageParts } from "../../lesson.ts"
-import { loadEmbedder } from "../../models/meaning.ts"
+import type { EmbedderService } from "../../models/meaning.ts"
 import { Chat } from "../../page-chat.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { CURATOR_HEADER, CURATOR_IMPORTS, curatorDocumentOf, DEFAULT_CURATOR } from "../connected-memory/curator.source.ts"
@@ -23,7 +24,7 @@ import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsDocumentOf } from "../
 import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
 import { CONTROLS, floorOn, meaningOff, wordsOff } from "./config-edit.ts"
 import { DEFAULT_MEMORY, MEMORY_HEADER, MEMORY_IMPORTS, memoryDocumentOf } from "./memory.source.ts"
-import { EMBEDDER_MODEL, ShippedFile, shippedEntries } from "./shipped.ts"
+import { EMBEDDER_MODEL } from "./model.ts"
 
 export { BIRD, ORCHID }
 
@@ -81,17 +82,17 @@ export const evaluateLesson = evaluateKnowledge({
 })
 
 /**
- * The vectors made ahead for the world's memories, into the page's store: imported only now, so no page carries them
- * before Load the world is pressed; each under the kernel's key for its text. What was put, in words, or why nothing was.
+ * The vectors made ahead for the world's memories, into the page's store (ship.ts): imported only now, with their
+ * codec, so no page carries them before Load the world is pressed. What was put, in words, or why nothing was.
  */
-export const shipVectors: Effect.Effect<string, string, VectorStore> = Effect.gen(function* () {
-  const { SHIPPED } = yield* Effect.tryPromise({ try: () => import("./vectors.ts"), catch: () => "the world's vectors could not be loaded. Reload the page to try again." })
-  const file = yield* Effect.mapError(Schema.decodeUnknownEffect(Schema.fromJsonString(ShippedFile))(SHIPPED), () => "the world's vectors are not in the shape the page reads.")
-  const entries = yield* Effect.fromResult(shippedEntries(file))
-  const store = yield* VectorStore
-  yield* Effect.mapError(store.put(entries), (failed) => `the page's store refused the world's vectors: ${failed.message}`)
-  return `Put ${entries.length} vectors in the page's store, made ahead by the page's embedder, one for each memory's text: a message is the only text turned into numbers when you ask.`
-})
+export const shipVectors: Effect.Effect<string, string, VectorStore> = Effect.flatMap(
+  Effect.tryPromise({ try: () => import("./ship.ts"), catch: () => "the world's vectors could not be loaded. Reload the page to try again." }),
+  (ship) => ship.shipVectors,
+)
+
+/** The page's embedder, its module imported only when "Load the embedder" is pressed: no page carries it before. */
+const loadEmbedder = (onProgress: (text: string) => void): Promise<EmbedderService> =>
+  import("../../models/meaning.ts").then((meaning) => meaning.loadEmbedder(onProgress))
 
 export const recallByMeaning: Lesson = {
   slug: "recall-by-meaning",

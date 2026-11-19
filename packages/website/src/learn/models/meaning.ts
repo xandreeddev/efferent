@@ -1,12 +1,13 @@
 // The page's embedder (lesson 20), on the main thread's side: e5-small-v2 in
 // a worker of its own (meaning-worker.ts), made when "Load the embedder" is
-// pressed, as the kernel's `Embedder`. Its `model` is the name the world's
+// pressed, as the kernel's `Embedder`. Lesson 20's page imports this module
+// only when the button is pressed: no other page carries it. Its `model` is the name the world's
 // vectors were made under, so the kernel finds them. Every message from the
 // worker is decoded before it is read; a worker that fails says so in words,
 // as `EmbedFailed`.
 import { Context, Effect, Option, Schema } from "effect"
 import { Embedder, EmbedFailed } from "@xandreed/sdk/kernel"
-import { EMBEDDER_MODEL, EMBEDDER_REVISION } from "../lessons/recall-by-meaning/shipped.ts"
+import { EMBEDDER_MODEL, EMBEDDER_REVISION } from "../lessons/recall-by-meaning/model.ts"
 
 /** An embedder as the kernel's port holds it. */
 export type EmbedderService = Context.Service.Shape<typeof Embedder>
