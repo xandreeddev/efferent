@@ -1,4 +1,4 @@
-import { Effect, Option, Result } from "effect"
+import { Effect, Match, Option, Result } from "effect"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff } from "./diff.entity.functions.js"
@@ -7,9 +7,10 @@ import { Forge } from "./forge.port.js"
 import type { LogDigest } from "./log-digest.entity.js"
 import { plainText } from "./log-digest.entity.functions.js"
 import type { DroppedFile } from "./packed-diff.entity.js"
-import type { FailingRun, PrepareOptions, PreparedReview, ReviewPolicies, SkipReason, Validation } from "./prepare-review.entity.js"
+import type { FailingRun, PrepareOptions, PreparedReview, ReviewedAt, ReviewPolicies, SkipReason, Validation } from "./prepare-review.entity.js"
+import { reviewFolderOf } from "./prepare-review.entity.functions.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
-import type { PullNumber, PullRequest, RepoName } from "./pull-request.entity.js"
+import type { PullNumber, RepoName } from "./pull-request.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import { ReviewLogs } from "./review-logs.port.js"
 import { Validations } from "./validations.port.js"
@@ -17,15 +18,15 @@ import { Validations } from "./validations.port.js"
 /** The longest the reason a failed log could not be read is kept, in characters. */
 const UNAVAILABLE_SHOWN = 300
 
-/** The folder a review's logs go in, under the repository's: the pull request and the first twelve digits of its head. */
-const logFolderOf = (pull: PullRequest): string => `${pull.number}-${pull.head.sha.slice(0, 12)}`
 
 /**
  * Prepare a pull request for review, asking no model, each policy from `policies` (`STOCK_POLICIES` by default): read
- * it from the forge; fetch its head and base; read the diff from where the head left the base, drop the files no
+ * it from the forge; choose the commit under review (`options.at`: the head, the first head, or a sha) and its base
+ * (for a commit other than the head, where its history meets the pull request's base); fetch them; read the diff from
+ * where the commit left the base, drop the files no
  * reviewer reads (`verdict`, with `.gitattributes` at the base) and pack the rest under the budget (`pack`); read the instruction files along the changed paths at the base, a text
  * met twice kept once; list the head's CI runs and digest each failed one's log, the whole log kept (a log that cannot be read is
- * that run's `Unavailable` entry and fails nothing else); and run the
+ * that run's `Unavailable` entry and fails nothing else; the runs are those of the commit under review); and run the
  * commands asked for in a worktree of the head, only for a head in the base repository whose author may write to it
  * and only through the `Validations` the host provides (a sandbox; with none, nothing runs and no worktree is made).
  */
@@ -35,8 +36,20 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
   const logs = yield* ReviewLogs
   const pull = yield* forge.pullRequest(repo, number)
   yield* checkout.fetch(repo, pull.base, { sha: pull.head.sha, fetchRef: pull.fetchRef })
-  const files = yield* Effect.fromResult(parseUnifiedDiff(yield* checkout.diff(repo, pull.base.sha, pull.head.sha)))
-  const attributes = Option.match(yield* checkout.show(repo, pull.base.sha, ".gitattributes"), { onNone: () => [], onSome: attributesOf })
+  const chosen = yield* Match.valueTags(options.at, {
+    Head: () => Effect.succeed({ sha: pull.head.sha, source: "head" as const }),
+    First: () => forge.firstHead(repo, pull),
+    Sha: ({ sha }) => Effect.succeed({ sha, source: "sha" as const }),
+  })
+  const at: ReviewedAt = chosen.sha === pull.head.sha
+    ? { sha: chosen.sha, source: chosen.source, base: pull.base.sha }
+    : yield* Effect.gen(function* () {
+      // A commit the head's ref no longer reaches (a force-push) is fetched by its sha.
+      yield* checkout.fetch(repo, pull.base, { sha: chosen.sha, fetchRef: pull.fetchRef })
+      return { sha: chosen.sha, source: chosen.source, base: yield* checkout.mergeBase(repo, pull.base.sha, chosen.sha) }
+    })
+  const files = yield* Effect.fromResult(parseUnifiedDiff(yield* checkout.diff(repo, at.base, at.sha)))
+  const attributes = Option.match(yield* checkout.show(repo, at.base, ".gitattributes"), { onNone: () => [], onSome: attributesOf })
   const verdicts = files.map((file) => policies.verdict(file.path, file, attributes))
   const dropped: ReadonlyArray<DroppedFile> = verdicts.flatMap((verdict, at) => {
     const file = files[at]
@@ -46,14 +59,14 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
   const diff = policies.pack(kept, options.budgetTokens, dropped)
   const changedPaths = files.flatMap((file) => [file.path, ...Option.toArray(file.oldPath)])
 
-  const found = yield* Effect.forEach(policies.rulesAlong(changedPaths), (path) => Effect.map(checkout.show(repo, pull.base.sha, path), (text) => ({ path, text })), { concurrency: 4 })
+  const found = yield* Effect.forEach(policies.rulesAlong(changedPaths), (path) => Effect.map(checkout.show(repo, at.base, path), (text) => ({ path, text })), { concurrency: 4 })
   const rules = found.reduce<Array<RepoRules>>((all, { path, text }) => Option.match(text, {
     onNone: () => all,
-    onSome: (body) => all.some((rule) => rule.text === body) ? all : [...all, { path, text: body, from: pull.base.sha }],
+    onSome: (body) => all.some((rule) => rule.text === body) ? all : [...all, { path, text: body, from: at.base }],
   }), [])
 
-  const ci = yield* forge.ciRuns(repo, pull.head.sha, options.workflows)
-  const folder = logFolderOf(pull)
+  const ci = yield* forge.ciRuns(repo, at.sha, options.workflows)
+  const folder = reviewFolderOf(pull.number, at.sha)
   const failing = yield* Effect.forEach(ci.filter(policies.failed), (run) => Effect.gen(function* () {
     const read = yield* Effect.result(forge.failedLog(repo, run.id))
     if (Result.isFailure(read)) return { run, log: { _tag: "Unavailable", reason: clipTo(plainText(read.failure.message), UNAVAILABLE_SHOWN) } } satisfies FailingRun
@@ -83,7 +96,7 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
     : yield* Option.match(skipped, {
       onSome: (reason) => Effect.succeed<Validation>({ _tag: "Skipped", reason }),
       onNone: () => Effect.scoped(Effect.gen(function* () {
-        const cwd = yield* checkout.worktree(repo, pull.head.sha)
+        const cwd = yield* checkout.worktree(repo, at.sha)
         const digests = yield* Option.match(validations, {
           onNone: () => Effect.succeed([]),
           onSome: (service) => service.run({ commands: options.run, cwd, logFolder: folder, changedPaths, limits: options.limits, timeoutMs: options.timeoutMs }),
@@ -92,6 +105,6 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       })),
     })
 
-  const prepared: PreparedReview = { pullRequest: pull, verdicts, diff, rules, ci, failing, validation }
+  const prepared: PreparedReview = { pullRequest: pull, at, files, verdicts, diff, rules, ci, failing, validation }
   return prepared
 })

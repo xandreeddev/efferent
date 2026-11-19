@@ -2,15 +2,18 @@ import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, rm } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve } from "node:path"
-import { Effect, Layer, Option } from "effect"
-import { CacheRootRefused, CommitMissing } from "./checkout.entity.js"
-import type { Transport } from "./checkout.entity.js"
-import { gitArgv } from "./checkout.entity.functions.js"
+import { Effect, Layer, Option, Schema } from "effect"
+import { CacheRootRefused, CommitMissing, PatternRefused } from "./checkout.entity.js"
+import type { BlobSha, GrepRequest, Transport, TreeEntry } from "./checkout.entity.js"
+import { entryOf, gitArgv, grepHitsOf, LS_ENTRY, REGULAR } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
 import { CommandFailed } from "./host-command.entity.js"
 import { runWhole } from "./host-shell.adapter.js"
 import type { HostShell } from "./host-shell.port.js"
-import type { CommitSha, HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
+import { CommitSha } from "./pull-request.entity.js"
+import type { HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
+import { plainText } from "./log-digest.entity.functions.js"
+import { clipTo } from "@xandreed/sdk"
 
 /** The flags every diff is read with, whatever the host's git config says: no colour, no driver, `a/` and `b/`. */
 export const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "-U5", "-M", "--src-prefix=a/", "--dst-prefix=b/"] as const
@@ -25,6 +28,9 @@ export interface GitCheckoutOptions {
   /** The transports git may use, `https` alone by default (`gitArgv`). */
   readonly transports?: ReadonlyArray<Transport>
 }
+
+/** How long a search of a commit's files may run before it is stopped, in milliseconds. */
+export const GREP_TIMEOUT_MS = 30_000
 
 /** The folder at or above `path` that holds a `.git`, if any. */
 const repositoryAbove = (path: string): Option.Option<string> => {
@@ -104,5 +110,40 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     )
   }, provided)
 
-  return Checkout.of({ fetch, diff, show, worktree })
+  const entry = Effect.fn("checkout.entry")(function* (repo: RepoName, at: CommitSha, path: string) {
+    const listed = yield* runWhole(git(repo, "ls-tree", "-z", at, "--", path))
+    const found = listed.stdout.split("\0").find((line) => line.endsWith(`\t${path}`))
+    const match = found === undefined ? null : LS_ENTRY.exec(found)
+    return match === null ? { _tag: "Missing" } satisfies TreeEntry : entryOf(match[1] ?? "", match[2] ?? "", match[3] ?? "")
+  }, provided)
+
+  const blob = Effect.fn("checkout.blob")(function* (repo: RepoName, id: BlobSha) {
+    return (yield* runWhole(git(repo, "cat-file", "blob", id))).stdout
+  }, provided)
+
+  const files = Effect.fn("checkout.files")(function* (repo: RepoName, at: CommitSha) {
+    const listed = yield* runWhole(git(repo, "ls-tree", "-r", "-z", "--full-tree", at))
+    return listed.stdout.split("\0").flatMap((line) => {
+      const match = LS_ENTRY.exec(line)
+      return match !== null && match[2] === "blob" && REGULAR.includes(match[1] ?? "") ? [line.slice(match[0].length)] : []
+    })
+  }, provided)
+
+  const grep = Effect.fn("checkout.grep")(function* (repo: RepoName, at: CommitSha, request: GrepRequest) {
+    // The pattern always follows -e and the paths --, so a pattern that starts with - is a pattern, never an option.
+    const args = git(repo, "grep", "-z", "-n", "-I", "--no-color", "--no-textconv", request.regex ? "-E" : "-F", "-e", request.pattern, at, "--", ...Option.toArray(request.path))
+    const whole = yield* runWhole(args, { exits: [0, 1, 128], timeoutMs: GREP_TIMEOUT_MS })
+    if (whole.code === 128) return yield* Effect.fail(new PatternRefused({ message: clipTo(plainText(whole.stderr.trim()), 300) }))
+    return grepHitsOf(whole.stdout, at)
+  }, provided)
+
+  const mergeBase = Effect.fn("checkout.merge_base")(function* (repo: RepoName, one: CommitSha, other: CommitSha) {
+    const args = git(repo, "merge-base", one, other)
+    const sha = (yield* runWhole(args)).stdout.trim()
+    return yield* Schema.decodeUnknownEffect(CommitSha)(sha).pipe(
+      Effect.mapError(() => new CommitMissing({ sha: `${one}...${other}`, message: `${one} and ${other} have no commit in common in ${repo}` })),
+    )
+  }, provided)
+
+  return Checkout.of({ fetch, diff, show, worktree, entry, blob, files, grep, mergeBase })
 }))

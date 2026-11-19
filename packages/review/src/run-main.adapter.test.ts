@@ -52,5 +52,5 @@ test("the command's own exit code is kept, and a typed failure prints <tag>: <me
 test("the bin runs on Node 24 through tsx: a usage error is printed and exits 1", () => {
   const ran = Bun.spawnSync(["node", join(import.meta.dir, "..", "bin", "efferent-review.mjs"), "prepare"], { env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin" } })
   expect(ran.exitCode).toBe(1)
-  expect(ran.stderr.toString().split("\n")[0]).toBe("UsageError: efferent-review takes the command prepare and a pull request's number")
+  expect(ran.stderr.toString().split("\n")[0]).toBe("UsageError: efferent-review takes the command prepare or review and a pull request's number")
 })

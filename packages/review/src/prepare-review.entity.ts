@@ -3,19 +3,56 @@ import type { AttributeRule, FileStats } from "./file-verdict.entity.js"
 import type { FileDiff as DiffFile } from "./diff.entity.js"
 import type { Digested } from "./log-digest.entity.js"
 import type { DroppedFile } from "./packed-diff.entity.js"
-import { CiRun } from "./forge.entity.js"
+import { CiRun, FirstHeadSource } from "./forge.entity.js"
 import { FileVerdict } from "./file-verdict.entity.js"
 import { DigestLimits, LogDigest } from "./log-digest.entity.js"
 import { PackedDiff } from "./packed-diff.entity.js"
-import { PullRequest } from "./pull-request.entity.js"
+import { CommitSha, PullRequest } from "./pull-request.entity.js"
+import { FileDiff } from "./diff.entity.js"
 import { RepoRules } from "./repo-rules.entity.js"
 
 /**
- * What a preparation is asked: the token budget of the diff, the commands to run in the worktree (none: nothing is
+ * Which commit of a pull request is reviewed: its head now (`Head`); its first head (`First`), the commit its earliest
+ * `pull_request` CI run tested, or its first commit when no run is known, to compare a review with what later commits
+ * fixed; or a commit given by its sha (`Sha`).
+ */
+export const ReviewAt = Schema.Union([
+  Schema.TaggedStruct("Head", {}),
+  Schema.TaggedStruct("First", {}),
+  Schema.TaggedStruct("Sha", { sha: CommitSha }),
+])
+export type ReviewAt = typeof ReviewAt.Type
+
+/** Where the commit under review came from: the head, the earliest CI run, the first commit, or a sha given. */
+export const AtSource = Schema.Literals(["head", ...FirstHeadSource.literals, "sha"])
+export type AtSource = typeof AtSource.Type
+
+/** The words for each source, for a person. */
+export const AT_SOURCE_WORDS: Readonly<Record<AtSource, string>> = {
+  head: "its head",
+  "first-ci-run": "its first head, the commit its earliest pull_request CI run tested",
+  "first-commit": "its first commit, since no pull_request CI run of it is known",
+  sha: "the commit asked for",
+}
+
+/**
+ * The commit under review (`sha`), where it came from, and the base its diff and rules are read from: the pull
+ * request's base for its head; for another commit, where its history meets the base's (`git merge-base`).
+ */
+export const ReviewedAt = Schema.Struct({
+  sha: CommitSha,
+  source: AtSource,
+  base: CommitSha,
+})
+export type ReviewedAt = typeof ReviewedAt.Type
+
+/**
+ * What a preparation is asked: which commit to review, the token budget of the diff, the commands to run in the worktree (none: nothing is
  * run), the workflow files whose CI runs count (none: every one the `pull_request` event started), the digest's
  * limits and how long each command may run.
  */
 export const PrepareOptions = Schema.Struct({
+  at: ReviewAt,
   budgetTokens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   run: Schema.Array(Schema.String),
   workflows: Schema.Array(Schema.String),
@@ -65,12 +102,14 @@ export const FailingRun = Schema.Struct({
 export type FailingRun = typeof FailingRun.Type
 
 /**
- * A pull request prepared for review, with no model asked: the pull request, each changed file's verdict, the diff
- * packed under its budget, the repository's rules at the base commit, the CI runs of the head with a digest of each
+ * A pull request prepared for review, with no model asked: the pull request, the commit under review and its base,
+ * every changed file's diff (`files`, whole), each changed file's verdict, the diff packed under its budget, the repository's rules at the base commit, the CI runs of the head with a digest of each
  * failed one, and the commands asked for.
  */
 export const PreparedReview = Schema.Struct({
   pullRequest: PullRequest,
+  at: ReviewedAt,
+  files: Schema.Array(FileDiff),
   verdicts: Schema.Array(FileVerdict),
   diff: PackedDiff,
   rules: Schema.Array(RepoRules),

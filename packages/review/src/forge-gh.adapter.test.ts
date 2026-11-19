@@ -156,3 +156,29 @@ describe("ghForge", () => {
     expect(reason?._tag === "Fail" && reason.error._tag).toBe("OutputCut")
   })
 })
+
+describe("ghForge.firstHead", () => {
+  const FIRST = "3".repeat(40)
+  const BRANCH_RUNS = "gh api --paginate --slurp 'repos/owner/project/actions/runs?event=pull_request&branch=fix-sum&per_page=100'"
+  const twoCommits = () => Effect.flatMap(Forge, (forge) => forge.pullRequest(repo, PullNumber.make(7)))
+  const commits = [
+    { oid: FIRST, messageHeadline: "first", authoredDate: "2026-11-01T09:00:00Z", committedDate: "2026-11-01T09:00:00Z", authors: [] },
+    { oid: HEAD, messageHeadline: "fix the sum", authoredDate: "2026-11-01T10:00:00Z", committedDate: "2026-11-01T10:00:00Z", authors: [] },
+  ]
+
+  test("the commit the head branch's earliest pull_request run tested, among the pull request's commits; a merged pull request's runs name no pull request", async () => {
+    const runs = JSON.stringify([{ workflow_runs: [
+      { head_sha: HEAD, created_at: "2026-11-01T10:05:00Z", pull_requests: [] },
+      { head_sha: "9".repeat(40), created_at: "2026-10-01T00:00:00Z", pull_requests: [] },
+      { head_sha: FIRST, created_at: "2026-11-01T09:05:00Z", pull_requests: [] },
+    ] }])
+    const { exit, asked } = await withForge({ [VIEW]: exited(pull({ commits })), [PERMISSION]: exited(JSON.stringify({ permission: "write" })), [BRANCH_RUNS]: exited(runs) }, (forge) => Effect.flatMap(twoCommits().pipe(Effect.provideService(Forge, forge)), (read) => forge.firstHead(repo, read)))
+    expect<unknown>(Exit.isSuccess(exit) && exit.value).toEqual({ sha: FIRST, source: "first-ci-run" })
+    expect(asked.at(-1)).toBe(BRANCH_RUNS)
+  })
+
+  test("with no run of its commits, the first commit of its list, said so", async () => {
+    const { exit } = await withForge({ [VIEW]: exited(pull({ commits })), [PERMISSION]: exited(JSON.stringify({ permission: "write" })), [BRANCH_RUNS]: exited(JSON.stringify([{ workflow_runs: [] }])) }, (forge) => Effect.flatMap(twoCommits().pipe(Effect.provideService(Forge, forge)), (read) => forge.firstHead(repo, read)))
+    expect<unknown>(Exit.isSuccess(exit) && exit.value).toEqual({ sha: FIRST, source: "first-commit" })
+  })
+})

@@ -319,9 +319,10 @@ const config: typeof GateSuiteConfig.Encoded = {
       // no runtime module. A package that imports `@xandreed/core` names `core-kernel`; the layer keeps its name.
       { name: "core-kernel-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-kernel"], externals: ["effect", "bun:test"] },
       { name: "core-kernel", path: "packages/core/src/**", canImport: [], externals: ["effect"] },
-      // The reviewer: a command line over the kernel's shell (`@xandreed/sdk/node`'s `processShell`) and Node's modules.
-      ...testLayer("review", ["review", "sdk-kernel", "sdk-kernel/node", "core-kernel"], ["effect", "node:", "bun:test"]),
-      { name: "review", path: src("review"), canImport: ["sdk-kernel", "sdk-kernel/node"], externals: ["effect", "node:"] },
+      // The reviewer: a command line over the kernel's shell (`@xandreed/sdk/node`'s `processShell`) and Node's modules,
+      // whose passes are a host's loop on the kernel: core's sessions and spend ledger, Effect AI's model and tools.
+      ...testLayer("review", ["review", "sdk-kernel", "sdk-kernel/node", "core-kernel"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
+      { name: "review", path: src("review"), canImport: ["core-kernel", "sdk-kernel", "sdk-kernel/node"], externals: ["effect", "effect/ai", "node:"] },
       ...testLayer("foundry", ["foundry"], ["effect", "effect/testing", "typescript", "node:", "bun:test"]),
       { name: "foundry", path: src("foundry"), canImport: [], externals: ["effect", "typescript", "node:"] },
       // The sdk's kernel (`packages/sdk/src`, the package's root entry; its

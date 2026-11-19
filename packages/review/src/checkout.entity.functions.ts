@@ -1,4 +1,6 @@
-import type { Transport } from "./checkout.entity.js"
+import { Option, Schema } from "effect"
+import { BlobSha } from "./checkout.entity.js"
+import type { GrepHit, Transport, TreeEntry } from "./checkout.entity.js"
 
 /**
  * A host-side git command's argv: no hook runs (`core.hooksPath=/dev/null`), no file-system monitor starts, no
@@ -16,3 +18,40 @@ export const gitArgv = (transports: ReadonlyArray<Transport>, gitDir: string | n
   ...(gitDir === null ? [] : ["-C", gitDir]),
   ...args,
 ]
+
+/** A regular file's modes in a tree: the only entries a tool reads. */
+export const REGULAR: ReadonlyArray<string> = ["100644", "100755"]
+
+/** One `ls-tree -z` entry: its mode, type and object, then its path after a tab. */
+export const LS_ENTRY = /^(\d+) (\w+) ([0-9a-f]+)\t/
+
+/** What a listed entry is, by its mode and type. */
+export const entryOf = (mode: string, type: string, object: string): TreeEntry => {
+  if (type === "tree") return { _tag: "Folder" }
+  if (type === "commit") return { _tag: "Submodule" }
+  if (mode === "120000") return { _tag: "Link" }
+  const blob = Schema.decodeUnknownOption(BlobSha)(object)
+  return REGULAR.includes(mode) && Option.isSome(blob) ? { _tag: "File", blob: blob.value } : { _tag: "Missing" }
+}
+
+/**
+ * The lines of `git grep -z -n` at a commit: each `<commit>:<path>` NUL `<line>` NUL `<text>` and a line feed, read in
+ * order, so a path that holds a line feed is read whole.
+ */
+export const grepHitsOf = (output: string, at: string): ReadonlyArray<GrepHit> => {
+  const hits: Array<GrepHit> = []
+  const prefix = `${at}:`
+  let from = 0
+  while (from < output.length) {
+    if (!output.startsWith(prefix, from)) break
+    const pathEnd = output.indexOf("\0", from)
+    const lineEnd = pathEnd < 0 ? -1 : output.indexOf("\0", pathEnd + 1)
+    if (lineEnd < 0) break
+    const textEnd = output.indexOf("\n", lineEnd + 1)
+    const end = textEnd < 0 ? output.length : textEnd
+    const line = Number(output.slice(pathEnd + 1, lineEnd))
+    if (Number.isInteger(line) && line >= 1) hits.push({ path: output.slice(from + prefix.length, pathEnd), line, text: output.slice(lineEnd + 1, end) })
+    from = end + 1
+  }
+  return hits
+}
