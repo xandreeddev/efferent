@@ -615,7 +615,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // The model providers (ADR 0026): the spend charge both share (`model-spend/`, as the stores share the lock), and
       // a folder per provider. The Anthropic one is the only layer outside the models plugin that names a provider
       // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
-      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
       // The workspace's ports (ADR 0028): a shell over `node:child_process`, and files in a folder of the disk. Each imports the contract it implements

@@ -3,7 +3,7 @@ import { ConfigProvider, Effect, Layer, Metric, Option, Redacted, Schema, Stream
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
-import { callTool, curate, CurationFailed, Curator, flatMemory, inProcessJournal, knowledgeSession, Memory, modelAnswer, scriptedModel, sessions } from "../index.js"
+import { callTool, curate, CurationFailed, Curator, flatMemory, inProcessJournal, knowledgeSession, Memory, modelAnswer, sessions } from "../index.js"
 import { flushTelemetry, openAiCompatibleModel, otlpTelemetry, otlpTelemetryFromEnv } from "./index.js"
 import type { OtlpTelemetryOptions } from "./index.js"
 
@@ -214,7 +214,7 @@ describe("a kernel host's turn, exported over OTLP", () => {
     })
   })
 
-  test("the metrics: model calls by model and outcome, tokens by kind, the cost the ledger settled, tool calls by tool; none names a session or a turn", async () => {
+  test("the metrics: model calls by model and outcome and tokens by kind, counted by the charge, the cost the ledger settled with its basis, tool calls by tool; none names a session or a turn", async () => {
     const run = await exported({}, askAdd)
     const metrics = metricsOf(run.posts)
     expect(metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.outcome": "answered" }, value: 2 }])
@@ -226,7 +226,7 @@ describe("a kernel host's turn, exported over OTLP", () => {
     ])
     // The cost is what the ledger settled, and nothing else: the two calls at the model's price.
     expect(run.result.totals.settled).toBeCloseTo((60 * 1 + 40 * 0.5 + 10 * 4 + 150 * 1 + 5 * 4) / 1_000_000, 12)
-    expect(metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL }, value: run.result.totals.settled }])
+    expect(metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.cost.basis": "usage" }, value: run.result.totals.settled }])
     expect(metrics["efferent.tool.calls"]).toEqual([{ attributes: { "efferent.tool": "add", "efferent.outcome": "succeeded" }, value: 1 }])
     const keys = Object.values(metrics).flatMap((points) => points.flatMap((point) => Object.keys(point.attributes)))
     expect(keys.filter((key) => ["efferent.session.id", "gen_ai.conversation.id", "efferent.turn"].includes(key))).toEqual([])
@@ -336,33 +336,42 @@ const modelCurator = Layer.effect(Curator, Effect.map(LanguageModel.LanguageMode
 const NOTHING_KEPT = "{\"entities\":[],\"aliases\":[],\"memories\":[],\"restates\":[],\"forget\":[]}"
 
 describe("a curation, which runs in no turn", () => {
-  test("is a trace of its own: the curator's model calls under knowledge.curate, its root, or under the host's span", async () => {
+  test("is a trace of its own, the curator's model calls under knowledge.curate, its root or under the host's span; its calls are counted with their tokens and cost", async () => {
+    const kept = sse([{ choices: [{ delta: { content: NOTHING_KEPT }, finish_reason: "stop" }] }, { choices: [], usage: { prompt_tokens: 300, completion_tokens: 20 } }])
     const curated = (program: Effect.Effect<unknown, unknown, Sessions | Curator>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { url, posts } = yield* collector
-      const { model } = yield* scriptedModel([{ _tag: "Answers", pieces: [NOTHING_KEPT] }, { _tag: "Answers", pieces: [NOTHING_KEPT] }])
+      const model = yield* modelServer([kept])
+      const provider = openAiCompatibleModel({ model: MODEL, baseUrl: model.url, maxOutputTokens: 100, spend: { prices: { [MODEL]: PRICE } } })
       yield* program.pipe(
-        Effect.provide(modelCurator.pipe(Layer.provideMerge(model), Layer.merge(sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))))),
+        Effect.provide(modelCurator.pipe(Layer.provideMerge(provider), Layer.provideMerge(modelSpendMemory), Layer.merge(sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))))),
         Effect.tap(() => flushTelemetry),
         Effect.provide(otlpTelemetry({ baseUrl: url, protocol: "http/json", exportInterval: "1 hour" })),
         Effect.provideService(Metric.MetricRegistry, new Map()),
       )
-      return spansOf([...posts])
+      return { spans: spansOf([...posts]), metrics: metricsOf([...posts]) }
     })))
     const keep = Effect.flatMap(knowledgeSession, (session) => curate(session, { said: [{ by: "user", text: "My friend Ana Silva lives in Porto." }], at: Date.parse("2026-11-09T12:00:00Z") }))
 
     const alone = await curated(keep)
-    const [root] = named(alone, "knowledge.curate")
+    const [root] = named(alone.spans, "knowledge.curate")
     expect(isRoot(root!)).toBe(true)
-    expect(new Set(alone.map((span) => span.traceId)).size).toBe(1)
+    expect(new Set(alone.spans.map((span) => span.traceId)).size).toBe(1)
     // The source stored in a turn, the curator asked outside any turn (extract, then review), what passed stored in another.
-    expect(childrenOf(alone, root!).filter((name) => name === "session.turn" || name === "LanguageModel.streamText"))
+    expect(childrenOf(alone.spans, root!).filter((name) => name === "session.turn" || name === "LanguageModel.streamText"))
       .toEqual(["session.turn", "LanguageModel.streamText", "LanguageModel.streamText", "session.turn"])
+    // Its two calls are counted where the charge counts every call, with what they cost: no loop of the host's ran.
+    expect(alone.metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.outcome": "answered" }, value: 2 }])
+    expect(alone.metrics["efferent.model.tokens"]).toEqual([
+      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "input" }, value: 600 },
+      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "output" }, value: 40 },
+    ])
+    expect(alone.metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.cost.basis": "usage" }, value: 2 * (300 * 1 + 20 * 4) / 1_000_000 }])
 
     const hosted = await curated(keep.pipe(Effect.withSpan("host.after_turn")))
-    const [host] = named(hosted, "host.after_turn")
+    const [host] = named(hosted.spans, "host.after_turn")
     expect(isRoot(host!)).toBe(true)
-    expect(childrenOf(hosted, host!)).toEqual(["knowledge.curate"])
-    expect(new Set(hosted.map((span) => span.traceId)).size).toBe(1)
+    expect(childrenOf(hosted.spans, host!)).toEqual(["knowledge.curate"])
+    expect(new Set(hosted.spans.map((span) => span.traceId)).size).toBe(1)
   })
 })
 

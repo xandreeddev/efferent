@@ -4,9 +4,11 @@ import { HttpClient, HttpClientError } from "effect/http"
 import type { HttpClientRequest } from "effect/http"
 import type { ModelSpend, ModelSpendExceeded, ModelSpendUnavailable } from "@xandreed/core/kernel"
 import { CallReach } from "./call-reach.port.js"
-import { COST_MODEL_ATTRIBUTE, DEFAULT_TIMEOUTS, modelCost } from "./model-spend.entity.js"
+import { DEFAULT_TIMEOUTS, modelCalls, modelCost, modelTokens } from "./model-spend.entity.js"
 import type { Charge, Reach, Reported, SpendOptions, Timeouts } from "./model-spend.entity.js"
-import { heldBy, isRefusalStatus, ledgerUnavailable, metredCostOf, neverConnected, settlementOf, spendRefused } from "./model-spend.entity.functions.js"
+import { callOutcomeOf, heldBy, isRefusalStatus, ledgerUnavailable, metredCostOf, neverConnected, settlementOf, spendRefused, tokensOf } from "./model-spend.entity.functions.js"
+import { COST_BASIS_ATTRIBUTE, MODEL_ATTRIBUTE, OUTCOME_ATTRIBUTE, TOKEN_KIND_ATTRIBUTE } from "../../contracts/turn/telemetry.entity.js"
+import type { CallOutcome } from "../../contracts/turn/telemetry.entity.js"
 
 /** What charges a provider's calls: the ledger in its context, the host's spend options, and names for its failures. */
 export interface Charging {
@@ -29,12 +31,20 @@ const refusedBy = (charging: Charging, method: string) => (error: ModelSpendExce
     ModelSpendUnavailable: (unavailable) => ledgerUnavailable(unavailable, charging.module, method),
   })
 
+/** Count one call the charge held: by the model asked and how it ended, and the tokens its provider reported, by kind. */
+const counted = (model: string, outcome: CallOutcome, usage: Option.Option<Reported>): Effect.Effect<void> => Effect.andThen(
+  Metric.update(Metric.withAttributes(modelCalls, { [MODEL_ATTRIBUTE]: model, [OUTCOME_ATTRIBUTE]: outcome }), 1),
+  Effect.forEach(Option.match(usage, { onNone: () => [], onSome: tokensOf }), ([kind, count]) =>
+    Metric.update(Metric.withAttributes(modelTokens, { [MODEL_ATTRIBUTE]: model, [TOKEN_KIND_ATTRIBUTE]: kind }), count), { concurrency: 1, discard: true }),
+)
+
 /**
  * Take one call's hold in the scope it runs in, before anything is sent, and close it when that scope closes,
  * whatever ended it (an answer, a failure, an interruption): settled at what the provider reported, else at the
  * amount held once the request left, else released (`settlementOf`). The reservation is the acquire of an
  * `acquireRelease`, so it runs uninterruptibly with the finalizer that closes it: a hold the ledger took is always
- * closed. A refused reservation sends nothing and fails the call with the ledger's refusal, non-retryable
+ * closed; as it closes, the call is counted (`efferent.model.calls`, `efferent.model.tokens`) and, once the ledger
+ * settled it, its cost (`efferent.model.cost`). A refused reservation sends nothing and fails the call with the ledger's refusal, non-retryable
  * (`spendRefused`); a ledger that cannot be reached fails it too (closed, not sent). A close the ledger fails is
  * logged: a finalizer cannot fail.
  */
@@ -43,15 +53,19 @@ export const holdIn = Effect.fnUntraced(function* (charging: Charging, method: s
   const reported = yield* Ref.make(Option.none<Reported>())
   yield* Effect.acquireRelease(
     charging.spend.reserve({ amount: heldBy(charge), caps: charging.options.caps ?? {} }).pipe(Effect.mapError(refusedBy(charging, method))),
-    (hold) => Effect.all([Ref.get(reported), Ref.get(reach)], { concurrency: 1 }).pipe(
-      Effect.flatMap(([usage, at]) => Option.match(settlementOf(charge, usage, at), {
-        // Counted once the ledger took it: the ledger is the one source of what a call cost.
-        onSome: (cost) => Effect.andThen(charging.spend.settle(hold, cost), Option.match(metredCostOf(charge, usage, at), {
-          onNone: () => Effect.void,
-          onSome: (metred) => Metric.update(Metric.withAttributes(modelCost, { [COST_MODEL_ATTRIBUTE]: charging.model }), metred),
-        })),
-        onNone: () => charging.spend.release(hold),
-      })),
+    (hold, exit) => Effect.all([Ref.get(reported), Ref.get(reach)], { concurrency: 1 }).pipe(
+      Effect.flatMap(([usage, at]) => Effect.andThen(
+        // Counted whatever the ledger does with the hold: the call was sent, or held, and ended so.
+        counted(charging.model, callOutcomeOf(exit, at), usage),
+        Option.match(settlementOf(charge, usage, at), {
+          // The cost counted once the ledger took it: the ledger is the one source of what a call cost.
+          onSome: (cost) => Effect.andThen(charging.spend.settle(hold, cost), Option.match(metredCostOf(charge, usage, at), {
+            onNone: () => Effect.void,
+            onSome: (metred) => Metric.update(Metric.withAttributes(modelCost, { [MODEL_ATTRIBUTE]: charging.model, [COST_BASIS_ATTRIBUTE]: metred.basis }), metred.cost),
+          })),
+          onNone: () => charging.spend.release(hold),
+        }),
+      )),
       Effect.ignore({ log: "Warn", message: "a model call's spend hold could not be closed in the ledger" }),
     ),
   )

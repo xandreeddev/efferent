@@ -1,4 +1,5 @@
-import { Option, Predicate, Result, Schema } from "effect"
+import { Cause, Exit, Match, Option, Predicate, Result, Schema } from "effect"
+import type { CallOutcome, CostBasis, TokenKind } from "../../contracts/turn/telemetry.entity.js"
 import { AiError } from "effect/ai"
 import type { ModelSpendExceeded, ModelSpendUnavailable } from "@xandreed/core/kernel"
 import { CarriedRefusal, REFUSAL_KEY } from "./model-spend.entity.js"
@@ -63,15 +64,45 @@ export const settlementOf = (charge: Charge, reported: Option.Option<Reported>, 
     onNone: () => (reach === "Sent" ? Option.some(heldBy(charge)) : Option.none()),
   })
 
+/** A cost point: what the ledger settled a call at, and what that amount came from. */
+export interface MetredCost {
+  readonly cost: number
+  readonly basis: CostBasis
+}
+
 /**
- * What a settled call cost, as the cost metric counts it: what the ledger settled a held call at, or what the provider
- * billed an uncapped model's call; none for a call that is released, or an uncapped model's call with no bill, which
- * the ledger settles at 0 for want of a price, not because it was free.
+ * What a settled call cost, as the cost metric counts it, with its basis: a held call at what the ledger settled it
+ * at (its bill, else its usage at the price, else, sent with nothing reported, its hold), an uncapped model's call at
+ * its bill; none for a call that is released, or an uncapped model's call with no bill, which the ledger settles at 0
+ * for want of a price, not because it was free.
  */
-export const metredCostOf = (charge: Charge, reported: Option.Option<Reported>, reach: Reach): Option.Option<number> =>
-  charge._tag === "Held"
-    ? settlementOf(charge, reported, reach)
-    : Option.flatMap(reported, (usage) => Option.fromNullishOr(usage.billed))
+export const metredCostOf = (charge: Charge, reported: Option.Option<Reported>, reach: Reach): Option.Option<MetredCost> => {
+  const basis: CostBasis = Option.match(reported, { onNone: () => "held", onSome: (usage) => (usage.billed === undefined ? "usage" : "billed") })
+  return charge._tag === "Held"
+    ? Option.map(settlementOf(charge, reported, reach), (cost) => ({ cost, basis }))
+    : Option.map(Option.flatMap(reported, (usage) => Option.fromNullishOr(usage.billed)), (cost) => ({ cost, basis: "billed" }))
+}
+
+/** A reported usage's tokens by kind, apart as `costOf` prices them; a cache's share only when it has one. */
+export const tokensOf = (reported: Reported): ReadonlyArray<readonly [TokenKind, number]> => [
+  ["input", Math.max(0, reported.input - reported.cacheRead - reported.cacheWrite)],
+  ...(reported.cacheRead > 0 ? [["cache_read", reported.cacheRead] as const] : []),
+  ...(reported.cacheWrite > 0 ? [["cache_write", reported.cacheWrite] as const] : []),
+  ["output", reported.output],
+]
+
+/**
+ * How a call the charge held ended, from the exit its scope closed with and how far its request got: whole, stopped,
+ * or failed, a failure told apart by whether the provider refused it (`refused`) or it never left (`unsent`).
+ */
+export const callOutcomeOf = (exit: Exit.Exit<unknown, unknown>, reach: Reach): CallOutcome => Exit.match(exit, {
+  onSuccess: (): CallOutcome => "answered",
+  onFailure: (cause): CallOutcome => Cause.hasInterruptsOnly(cause) ? "interrupted" : Match.value(reach).pipe(
+    Match.when("Refused", (): CallOutcome => "refused"),
+    Match.when("Unsent", (): CallOutcome => "unsent"),
+    Match.orElse((): CallOutcome => "failed"),
+  ),
+})
 
 /** The statuses a refusal before any generation is answered with: a 4xx, but 408, a request that outlived its wait. */
 export const isRefusalStatus = (status: number): boolean => status >= 400 && status < 500 && status !== 408

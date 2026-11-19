@@ -1,8 +1,8 @@
 import { describe, expect, test } from "bun:test"
-import { Option, Result } from "effect"
+import { Exit, Option, Result } from "effect"
 import { AiError } from "effect/ai"
 import { ModelSpendExceeded } from "@xandreed/core/kernel"
-import { chargeOf, costOf, isRefusalStatus, isSpendRefusal, metredCostOf, neverConnected, settlementOf, spendRefusalOf, spendRefused, unchargeable, worstCaseOf } from "./model-spend.entity.functions.js"
+import { callOutcomeOf, chargeOf, costOf, isRefusalStatus, isSpendRefusal, metredCostOf, neverConnected, settlementOf, spendRefusalOf, spendRefused, tokensOf, unchargeable, worstCaseOf } from "./model-spend.entity.functions.js"
 import type { Charge, Reported } from "./model-spend.entity.js"
 
 const price = { input: 2, output: 10, cacheRead: 0.5, cacheWrite: 4, maxOutput: 1000 }
@@ -60,7 +60,7 @@ describe("how a hold is closed, as a table", () => {
     ])
   })
 
-  test("what the cost metric counts: what a held call settled at, or an uncapped call's bill; never the 0 an unpriced call settles at", () => {
+  test("what the cost metric counts and from what: a held call's settlement (its bill, its usage at the price, or, nothing reported, its hold), an uncapped call's bill; never the 0 an unpriced call settles at", () => {
     const rows = [
       ["reported usage", metredCostOf(held, Option.some(used(1_000, 100)), "Sent")],
       ["the provider's bill", metredCostOf(held, Option.some(used(1_000, 100, 0, 0, 0.0005)), "Sent")],
@@ -70,15 +70,35 @@ describe("how a hold is closed, as a table", () => {
       ["uncapped, usage alone", metredCostOf({ _tag: "Unheld" }, Option.some(used(1, 1)), "Sent")],
       ["uncapped, cut", metredCostOf({ _tag: "Unheld" }, Option.none(), "Sent")],
     ] as const
-    expect(rows.map(([name, cost]) => [name, Option.getOrElse(Option.map(cost, (amount) => `count ${amount}`), () => "nothing")])).toEqual([
-      ["reported usage", `count ${(1_000 * 2 + 100 * 10) / 1_000_000}`],
-      ["the provider's bill", "count 0.0005"],
-      ["sent, nothing reported", "count 0.03"],
+    expect(rows.map(([name, cost]) => [name, Option.getOrElse(Option.map(cost, (point) => `${point.basis} ${point.cost}`), () => "nothing")])).toEqual([
+      ["reported usage", `usage ${(1_000 * 2 + 100 * 10) / 1_000_000}`],
+      ["the provider's bill", "billed 0.0005"],
+      ["sent, nothing reported", "held 0.03"],
       ["never left", "nothing"],
-      ["uncapped, billed", "count 0.0007"],
+      ["uncapped, billed", "billed 0.0007"],
       ["uncapped, usage alone", "nothing"],
       ["uncapped, cut", "nothing"],
     ])
+  })
+
+  test("a call's outcome, from the exit its scope closed with and how far its request got", () => {
+    const failed = Exit.fail("down")
+    expect([
+      callOutcomeOf(Exit.succeed(undefined), "Sent"),
+      callOutcomeOf(Exit.interrupt(1), "Sent"),
+      callOutcomeOf(failed, "Sent"),
+      callOutcomeOf(failed, "Refused"),
+      callOutcomeOf(failed, "Unsent"),
+      callOutcomeOf(Exit.die("broken"), "Sent"),
+    ]).toEqual(["answered", "interrupted", "failed", "refused", "unsent", "failed"])
+  })
+
+  test("a report's tokens by kind, apart as costOf prices them, so tokens at the price give the cost", () => {
+    const report = used(1_000, 100, 600, 200)
+    expect(tokensOf(report)).toEqual([["input", 200], ["cache_read", 600], ["cache_write", 200], ["output", 100]])
+    expect(tokensOf(used(50, 5))).toEqual([["input", 50], ["output", 5]])
+    const rate = { input: price.input, cache_read: price.cacheRead, cache_write: price.cacheWrite, output: price.output }
+    expect(tokensOf(report).reduce((sum, [kind, count]) => sum + count * rate[kind], 0) / 1_000_000).toBeCloseTo(costOf(report, price), 15)
   })
 
   test("a refusal status is a 4xx but 408; a 5xx and a timeout are not", () => {

@@ -418,7 +418,9 @@ assert.equal(exportedTurn, "It is 5.")
 assert.ok(turnSpan !== undefined && toolSpan !== undefined)
 assert.equal(toolSpan.parentSpanId, turnSpan.spanId)
 assert.deepEqual(toolSpan.attributes.filter((entry) => entry.key === "parameters"), [])
-assert.ok(exportedMetrics.includes("efferent.model.calls") && exportedMetrics.includes("efferent.tool.calls"))
+// The tool call is counted. The scripted model charges no ledger, so its calls are not: the charge counts a model call
+// (ADR 0030), and this registry's model calls are the providers' above.
+assert.ok(exportedMetrics.includes("efferent.tool.calls"))
 
 console.log(`kernel ${JSON.stringify({
   runtime: typeof Bun === "undefined" ? "Node" : "Bun",

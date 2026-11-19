@@ -94,15 +94,40 @@ export interface Timeouts {
 /** The waits a provider gives up after when its options name none: a minute for the headers, two between pieces. */
 export const DEFAULT_TIMEOUTS = { response: Duration.minutes(1), idle: Duration.minutes(2) } as const
 
-/**
- * What the ledger settled each model call at, in USD, by the model the call was priced as (`efferent.model`, the key
- * the kernel's model metrics share; ADR 0030). The ledger is the one source of a call's cost (ADR 0020): a call that
- * is released, and one whose cost is not known (an uncapped model's, unpriced, with no bill), adds nothing, never 0.
+/*
+ * The model calls' counts (ADR 0030), kept here because the charge is the one place that sees every call a provider
+ * of the Node entry sends (a host's loop's, a curator's, a summarizer's): calls, tokens and cost come from the same
+ * report and settlement, so they cannot disagree. Their attribute keys are the kernel's (`contracts/turn`).
  */
-export const modelCost = Metric.counter("efferent.model.cost", {
-  description: "what the spend ledger settled each model call at, in USD, by the model priced",
+
+/**
+ * Each call the charge held, one per attempt a plan sent, by the model asked (`efferent.model`) and how it ended
+ * (`efferent.outcome`, a `CallOutcome`). A call the ledger refused, or one refused before it is sent for want of a
+ * price or an output bound, held nothing and is not counted.
+ */
+export const modelCalls = Metric.counter("efferent.model.calls", {
+  description: "model calls a provider sent and charged, each attempt one, by the model asked and how the call ended",
   incremental: true,
 })
 
-/** The attribute `efferent.model.cost` names the model under. */
-export const COST_MODEL_ATTRIBUTE = "efferent.model"
+/**
+ * The tokens a provider reported for each call it charged, by model and kind (`efferent.token.kind`: the input not
+ * read from the cache, `cache_read`, `cache_write`, `output`, apart as the charge prices them). A call with nothing
+ * reported (cut, interrupted, refused) adds none.
+ */
+export const modelTokens = Metric.counter("efferent.model.tokens", {
+  description: "tokens a provider reported for each call it charged, by model and kind",
+  incremental: true,
+})
+
+/**
+ * What the ledger settled each call at, in USD, by model and what it was settled from (`efferent.cost.basis`:
+ * `billed`, the provider's bill; `usage`, the reported tokens at the host's price; `held`, the call's worst case,
+ * when it was sent and nothing came back, an estimate a dashboard tells apart). The ledger is the one source of a
+ * call's cost (ADR 0020): a call that is released, and one whose cost is not known (an uncapped model's, unpriced,
+ * with no bill), adds nothing, never 0.
+ */
+export const modelCost = Metric.counter("efferent.model.cost", {
+  description: "what the spend ledger settled each model call at, in USD, by the model priced and the basis of the amount",
+  incremental: true,
+})

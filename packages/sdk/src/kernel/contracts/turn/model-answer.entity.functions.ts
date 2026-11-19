@@ -1,11 +1,10 @@
-import { Effect, Exit, Match, Option, Predicate, Ref, Stream } from "effect"
+import { Effect, Match, Option, Predicate, Stream } from "effect"
 import type { Response } from "effect/ai"
 import { assistantMessage } from "@xandreed/core/kernel"
 import type { OpenSession, Usage } from "@xandreed/core/kernel"
 import { CurrentTurn } from "./current-turn.port.js"
 import { ModelAnswerFailed } from "./model-answer.entity.js"
 import { runningTurn } from "./running-turn.entity.functions.js"
-import { answerOutcomeOf, countAnswer } from "./telemetry.entity.functions.js"
 import type { ModelToolCall } from "./tool-call.entity.functions.js"
 
 /**
@@ -48,11 +47,9 @@ const nothing: Answered = { text: "", toolCalls: [], usage: Option.none(), model
  * provided as `CurrentTurn` while the stream runs, so a wrapper of the model
  * reaches the session its call is for. A stream that reports an error fails
  * with `ModelAnswerFailed` and stores nothing. The stream is the host's: it
- * calls the model with its own prompt, tools and options. Each call is
- * counted (`efferent.model.calls`, by the model that answered and how it
- * ended) with the tokens its provider reported (`efferent.model.tokens`); the
- * call's span is the model's own (`LanguageModel.streamText`), and none is
- * added here.
+ * calls the model with its own prompt, tools and options. The call's span is
+ * the model's own (`LanguageModel.streamText`), and none is added here; its
+ * provider counts it (ADR 0030).
  *
  * @public
  */
@@ -61,24 +58,19 @@ export const modelAnswer = <E, R, E2 = never, R2 = never>(
   session: OpenSession,
   options: { readonly onText?: (piece: string) => Effect.Effect<void, E2, R2> } = {},
 ) =>
-  // The model the stream named so far, so a call that fails part way is counted under it.
-  Effect.flatMap(Ref.make(Option.none<string>()), (named) => stream.pipe(
+  stream.pipe(
     Stream.runFoldEffect((): Answered => nothing, (answer, part) => Match.value(part).pipe(
       Match.discriminator("type")("text-delta", ({ delta }) => Effect.as(options.onText === undefined ? Effect.void : options.onText(delta), { ...answer, text: answer.text + delta })),
       Match.discriminator("type")("tool-call", ({ id, name, params }) => Effect.succeed({ ...answer, toolCalls: [...answer.toolCalls, { id, name, params }] })),
       Match.discriminator("type")("error", ({ error }) => Effect.fail(new ModelAnswerFailed({ message: messageOf(error), cause: error }))),
       Match.discriminator("type")("finish", ({ usage }) => Effect.succeed({ ...answer, usage: usageOf(usage) })),
-      Match.discriminator("type")("response-metadata", ({ modelId }) => Effect.as(Ref.set(named, Option.fromNullishOr(modelId)), { ...answer, model: Option.fromNullishOr(modelId) })),
+      Match.discriminator("type")("response-metadata", ({ modelId }) => Effect.succeed({ ...answer, model: Option.fromNullishOr(modelId) })),
       Match.orElse(() => Effect.succeed(answer)),
     )),
-    Effect.onExit((exit) => Effect.flatMap(Ref.get(named), (model) => Exit.match(exit, {
-      onSuccess: (answer) => countAnswer(Option.orElse(answer.model, () => model), "answered", answer.usage),
-      onFailure: () => countAnswer(model, answerOutcomeOf(exit), Option.none()),
-    }))),
     Effect.provideService(CurrentTurn, runningTurn(session)),
     Effect.tap((answer) => session.append(assistantMessage(answer.text, {
       toolCalls: answer.toolCalls,
       ...Option.match(answer.usage, { onNone: () => ({}), onSome: (usage) => ({ usage }) }),
       ...Option.match(answer.model, { onNone: () => ({}), onSome: (model) => ({ model }) }),
     }))),
-  ))
+  )

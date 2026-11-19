@@ -2,12 +2,13 @@
 // 2026-11-16 (DeepSeek V4.1 Flash on Baseten): reasoning deltas, a call's arguments in pieces, two calls by index,
 // the usage and the billed cost in the last chunk. No network.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream, Tracer } from "effect"
+import { Deferred, Effect, Fiber, Layer, Metric, Redacted, Schema, Stream, Tracer } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
 import { callTool, flatMemory, inProcessJournal, Memory, modelAnswer, sessions } from "../../index.js"
 import { isSpendRefusal } from "../model-spend/model-spend.entity.functions.js"
+import { modelCalls, modelCost, modelTokens } from "../model-spend/model-spend.entity.js"
 import type { SpendOptions } from "../model-spend/model-spend.entity.js"
 import { openAiCompatibleModel } from "./openai-compatible.adapter.js"
 import type { OpenAiCompatibleOptions } from "./openai-compatible.entity.js"
@@ -313,5 +314,36 @@ describe("the OpenAI-compatible provider's span", () => {
     const { spans, tracer } = recording()
     await over(fakeFetch(stream(words)).fetch, options(priced, { provider: "gcp.gemini" }), streamed.pipe(Effect.withTracer(tracer)))
     expect(callSpans(spans).map((span) => span.attributes.get("gen_ai.provider.name"))).toEqual(["gcp.gemini"])
+  })
+})
+
+describe("the OpenAI-compatible provider's counts", () => {
+  test("each call is counted by how it ended with the tokens it reported by kind, and its cost with what the ledger settled it from: a bill, usage at the price, the hold", async () => {
+    const registry = new Map()
+    const run = (body: string) => Effect.runPromise(Effect.gen(function* () {
+      yield* Effect.result(streamed)
+      return (yield* (yield* ModelSpend).totals).settled
+    }).pipe(
+      Effect.provide(openAiCompatibleModel(options(priced)).pipe(Layer.provideMerge(modelSpendMemory))),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch(stream(body)).fetch),
+      Effect.provideService(Metric.MetricRegistry, registry),
+    ))
+    const billed = await run(words)
+    const usage = await run(sse([delta({ content: "Hi." }, "stop"), { choices: [], usage: { prompt_tokens: 1000, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 800 } } }]))
+    const held = await run(sse([delta({ content: "12 × 3" })], false))
+    const counts = await Effect.runPromise(Effect.gen(function* () {
+      const count = (metric: typeof modelCalls, attributes: Record<string, string>) => Effect.map(Metric.value(Metric.withAttributes(metric, attributes)), (state) => state.count)
+      return {
+        calls: [yield* count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": "answered" }), yield* count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": "failed" })],
+        tokens: yield* Effect.forEach(["input", "cache_read", "output"], (kind) => count(modelTokens, { "efferent.model": MODEL, "efferent.token.kind": kind })),
+        cost: yield* Effect.forEach(["billed", "usage", "held"], (basis) => count(modelCost, { "efferent.model": MODEL, "efferent.cost.basis": basis })),
+      }
+    }).pipe(Effect.provideService(Metric.MetricRegistry, registry)))
+    expect(counts.calls).toEqual([2, 1])
+    // The cut call reported nothing: the tokens are the two answers' (411 read, 256 of them cached; 1,000, 800 cached).
+    expect(counts.tokens).toEqual([(411 - 256) + (1000 - 800), 256 + 800, 81 + 10])
+    expect(counts.cost).toEqual([billed, usage, held])
+    expect([billed, usage]).toEqual([0.0002205, (200 * 1 + 800 * 0.25 + 10 * 4) / 1_000_000])
+    expect(held).toBeGreaterThan(1000 * 4 / 1_000_000)
   })
 })
