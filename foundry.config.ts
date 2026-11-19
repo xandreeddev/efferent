@@ -29,7 +29,8 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * modules; each `effect/<module>` barrel (effect/ai was @effect/ai in v3;
  * effect/testing holds the test services) is named by itself, and no layer
  * takes the raw `effect/` or `@effect/` prefix. So the provider packages
- * (`@effect/ai-*`) are the models plugin's alone, Bun the SQLite session
+ * (`@effect/ai-*`) are the models plugin's and, `@effect/ai-anthropic` alone,
+ * the sdk kernel's Anthropic provider's (ADR 0026), Bun the SQLite session
  * log's alone (`bun:sqlite`; the models plugin reaches Bun's fetch and
  * WebSocket as globals), and the test libraries (`bun:test`, `fast-check`,
  * `effect/testing`) the `-tests` layers' alone.
@@ -136,6 +137,9 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-writer",
   "sdk-kernel-node-journal-directory",
   "sdk-kernel-node-journal-sqlite",
+  "sdk-kernel-node-model-spend",
+  "sdk-kernel-node-model-openai-compatible",
+  "sdk-kernel-node-model-anthropic",
   "core/kernel",
 ]
 
@@ -460,7 +464,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
       // evals reaches core only for the ModelSpend ledger its runs share across their trials.
-      ...testLayer("evals", ["evals", "core/kernel"], ["effect", "effect/ai", "node:", "bun:test"]),
+      // The eval tests also reach the kernel's Node entry (`sdk/kernel/node`, a devDependency): one runs a run's budget
+      // over a real model provider of the kernel's (ADR 0026). The package's own code never imports the sdk.
+      ...testLayer("evals", ["evals", "core/kernel", "sdk/kernel/node"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
       { name: "evals", path: src("evals"), canImport: ["core/kernel"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
       // Core's kernel (`packages/core/src/kernel`, the entry `./kernel`) comes
       // before core's other layers: one layer for all its roles, which imports
@@ -512,7 +518,8 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "plugin-knowledge-postgres", path: src("plugin-knowledge-postgres"), canImport: ["core"], externals: ["effect", "postgres"] },
       ...testLayer("plugin-tool-discovery", ["plugin-tool-discovery", "core", "core/internal"], ["effect", "effect/ai", "bun:test"]),
       { name: "plugin-tool-discovery", path: src("plugin-tool-discovery"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
-      // The one package that imports a provider package (`@effect/ai-*`). It
+      // The package that imports the provider packages (`@effect/ai-*`; the sdk kernel's Anthropic provider imports
+      // `@effect/ai-anthropic` too, ADR 0026). It
       // tells Bun by `process.versions` and reaches its fetch and WebSocket as
       // globals, so it imports no `bun` module.
       ...testLayer(
@@ -587,7 +594,7 @@ const config: typeof GateSuiteConfig.Encoded = {
         name: "sdk-kernel-tests",
         path: `packages/sdk/src/kernel/${glob}`,
         canImport: [...SDK_KERNEL_TESTS],
-        externals: ["effect", "effect/ai", "node:", "bun:sqlite", "bun:test"],
+        externals: ["effect", "effect/ai", "effect/http", "node:", "bun:sqlite", "bun:test"],
       })),
       // The kernel's Node entry (`packages/sdk/src/kernel/node`, `./kernel/node`, ADR 0024): the ports that need a
       // runtime's modules, which Node 24 and Bun both provide. One layer per folder: the one-writer lock
@@ -599,7 +606,13 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-node-writer", path: "packages/sdk/src/kernel/node/writer/**", canImport: ["core/kernel"], externals: ["effect", "node:"] },
       { name: "sdk-kernel-node-journal-directory", path: "packages/sdk/src/kernel/node/journal-directory/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:"] },
       { name: "sdk-kernel-node-journal-sqlite", path: "packages/sdk/src/kernel/node/journal-sqlite/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:", "bun:sqlite"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite"], externals: [] },
+      // The model providers (ADR 0026): the spend charge both share (`model-spend/`, as the stores share the lock), and
+      // a folder per provider. The Anthropic one is the only layer outside the models plugin that names a provider
+      // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
+      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },

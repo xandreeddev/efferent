@@ -1,13 +1,14 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
+import { createServer } from "node:http"
 import { mkdtempSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Context, Effect, Layer, Schema, Stream } from "effect"
+import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
+import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
 import { callTool, Embedder, embedderConformance, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, sessions, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
-import { directoryJournal, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { anthropicModel, directoryJournal, isSpendRefusal, openAiCompatibleModel, sqliteJournal } from "@xandreed/sdk/kernel/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -229,7 +230,7 @@ const holderScript = (kind, path) => `
 import { Effect, Layer } from "effect"
 import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import { sessions } from "@xandreed/sdk/kernel"
-import { directoryJournal, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { anthropicModel, directoryJournal, isSpendRefusal, openAiCompatibleModel, sqliteJournal } from "@xandreed/sdk/kernel/node"
 const store = ${kind === "sqlite" ? "sqliteJournal({ path: " + JSON.stringify(path) + " })" : "directoryJournal({ directory: " + JSON.stringify(path) + " })"}
 const say = (value) => Effect.sync(() => { process.stdout.write(JSON.stringify(value) + "\\n") })
 await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -287,6 +288,61 @@ const composed = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
 })).pipe(Effect.timeout("20 seconds")))
 assert.deepEqual(composed.seen, ["noted: built"])
 
+/**
+ * The Node entry's model providers, one streamed call each over a local HTTP server that answers as the provider's
+ * stream does, each charging a ledger: settled at the usage reported, a call over the ledger's cap refused before it
+ * is sent, and a call to a closed port released.
+ */
+const sseOf = (events) => events.map((event) => `${event.type === undefined ? "" : `event: ${event.type}\n`}data: ${JSON.stringify(event)}\n\n`).join("")
+const served = []
+const server = createServer((request, response) => {
+  let body = ""
+  request.on("data", (chunk) => { body += chunk })
+  request.on("end", () => {
+    served.push(request.url)
+    response.writeHead(200, { "content-type": "text/event-stream" })
+    response.end(request.url.startsWith("/v1/chat/completions")
+      ? `${sseOf([{ choices: [{ delta: { content: "Hello" } }] }, { choices: [{ delta: { content: "!" }, finish_reason: "stop" }] }, { choices: [], usage: { prompt_tokens: 10, completion_tokens: 2 } }])}data: [DONE]\n\n`
+      : sseOf([
+        { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 10, output_tokens: 1 } } },
+        { type: "content_block_start", index: 0, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index: 0, delta: { type: "text_delta", text: "Hello!" } },
+        { type: "content_block_stop", index: 0 },
+        { type: "message_delta", delta: { stop_reason: "end_turn", stop_sequence: null }, usage: { output_tokens: 2 } },
+        { type: "message_stop" },
+      ]))
+  })
+})
+await new Promise((resolve) => server.listen(0, "127.0.0.1", resolve))
+const base = `http://127.0.0.1:${server.address().port}`
+const spendOf = (model, caps = {}) => ({ prices: { [model]: { input: 1, output: 5 } }, caps })
+const callOver = (layer) => Effect.runPromise(Effect.gen(function* () {
+  const result = yield* Effect.result(Stream.runCollect(LanguageModel.streamText({ prompt: "Hi" })))
+  const totals = yield* (yield* ModelSpend).totals
+  return result._tag === "Failure"
+    ? { refused: isSpendRefusal(result.failure), totals }
+    : { text: result.success.filter((part) => part.type === "text-delta").map((part) => part.delta).join(""), totals }
+}).pipe(Effect.provide(Layer.provideMerge(layer, modelSpendMemory)), Effect.timeout("20 seconds")))
+const providers = {
+  openAiCompatible: await callOver(openAiCompatibleModel({ model: "m", baseUrl: `${base}/v1`, apiKey: Redacted.make("k"), maxOutputTokens: 100, spend: spendOf("m") })),
+  anthropic: await callOver(anthropicModel({ model: "claude", baseUrl: base, apiKey: Redacted.make("k"), maxOutputTokens: 100, spend: spendOf("claude") })),
+  overCap: await callOver(openAiCompatibleModel({ model: "m", baseUrl: `${base}/v1`, maxOutputTokens: 100, spend: spendOf("m", { total: 0.0001 }) })),
+}
+server.close()
+// A port that was opened and closed: the connection is refused before the request leaves, and the hold is released.
+const closed = createServer()
+await new Promise((resolve) => closed.listen(0, "127.0.0.1", resolve))
+const closedPort = closed.address().port
+await new Promise((resolve) => closed.close(resolve))
+providers.connectionRefused = await callOver(openAiCompatibleModel({ model: "m", baseUrl: `http://127.0.0.1:${closedPort}/v1`, maxOutputTokens: 100, spend: spendOf("m") }))
+assert.deepEqual(providers, {
+  openAiCompatible: { text: "Hello!", totals: { settled: (10 * 1 + 2 * 5) / 1_000_000, reserved: 0 } },
+  anthropic: { text: "Hello!", totals: { settled: (10 * 1 + 2 * 5) / 1_000_000, reserved: 0 } },
+  overCap: { refused: true, totals: { settled: 0, reserved: 0 } },
+  connectionRefused: { refused: false, totals: { settled: 0, reserved: 0 } },
+})
+assert.deepEqual(served, ["/v1/chat/completions", "/v1/messages"])
+
 console.log(`kernel ${JSON.stringify({
   runtime: typeof Bun === "undefined" ? "Node" : "Bun",
   storageKit: true,
@@ -299,5 +355,6 @@ console.log(`kernel ${JSON.stringify({
   durableKits: true,
   crashRecovered: true,
   layersComposed: true,
+  modelProviders: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)

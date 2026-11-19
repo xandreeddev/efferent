@@ -44,6 +44,7 @@ store beside the journal.
 - **The kernel calls no model, so it charges nothing itself.** Until a kernel provider charges the ledger, no
   first-party model call is held in it: an eval run's budget caps what its runnables reserve by hand. The old
   engine's models plugin charges old core's ledger, a separate service under its own key, until that engine goes.
+  (Since 19 November 2026 the Node entry's providers charge it: ADR 0026.)
 
 ## Consequences
 
@@ -51,6 +52,9 @@ store beside the journal.
   load the old engine in the browser.
 - An eval run's `--budget-usd` caps nothing a first-party provider sends until the kernel's model providers charge
   the ledger. The release waits for them.
+  - *Amended 19 November 2026 by
+    [ADR 0026](0026-a-model-provider-charges-the-ledger-it-is-given.md):* the kernel's Node entry has two providers
+    that charge it (`openAiCompatibleModel`, `anthropicModel`), so a run's budget caps what they send.
 - The kit (`modelSpendConformance`) holds every ledger to the contract: reservations held under ids of their own,
   the cap, settlement, release, a repeat, reservations made at once, no cap. A shared ledger (a database, a
   service) passes the same checks.
