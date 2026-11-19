@@ -1,5 +1,5 @@
 import { Match, Option, Result } from "effect"
-import { ETC_ALWAYS, ETC_NETWORK, INNER_HOME, INNER_PATH, INNER_WORK, TOOL_BIN, TOOL_ROOT } from "./sandbox.entity.js"
+import { ETC_ALWAYS, ETC_NETWORK, INNER_ENV, INNER_HOME, INNER_PATH, INNER_WORK, TOOL_BIN, TOOL_ROOT } from "./sandbox.entity.js"
 import type { Bind, HostEntry, HostLayout, Limits, SandboxPlan, ToolBind } from "./sandbox.entity.js"
 
 const bindArgs = (bind: Bind): ReadonlyArray<string> => [bind.writable ? "--bind" : "--ro-bind", bind.host, bind.inner]
@@ -43,11 +43,13 @@ export const bwrapArgv = (layout: HostLayout, plan: SandboxPlan, cwd: string, co
     "--clearenv",
     "--setenv", "PATH", INNER_PATH,
     "--setenv", "HOME", INNER_HOME,
+    ...INNER_ENV.flatMap(([name, value]) => ["--setenv", name, value]),
     "--ro-bind", "/usr", "/usr",
     ...layout.top.flatMap(topArgs),
     ...layout.etc.filter((file) => etc.some((wanted) => wanted === file.path)).flatMap((file) => ["--ro-bind", file.real, file.path]),
     "--proc", "/proc",
     "--dev", "/dev",
+    ...(layout.tmpfsSize ? ["--size", String(limits.tmpBytes)] : []),
     "--tmpfs", "/tmp",
     "--dir", INNER_HOME,
     ...layout.tools.flatMap((tool) => [...tool.binds.flatMap(bindArgs), ...(tool.program === `${TOOL_BIN}/${tool.name}` ? [] : ["--symlink", tool.program, `${TOOL_BIN}/${tool.name}`])]),

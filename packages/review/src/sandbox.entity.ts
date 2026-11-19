@@ -32,6 +32,12 @@ export const TOOL_BIN = `${TOOL_ROOT}/bin`
 export const INNER_PATH = `${INNER_WORK}/node_modules/.bin:${TOOL_BIN}:/usr/local/bin:/usr/bin:/bin`
 
 /**
+ * The variables every sandbox sets besides `PATH` and `HOME`: pnpm runs as the host has it and never fetches the
+ * version a repository's `packageManager` names (offline it cannot, and every pnpm command would fail).
+ */
+export const INNER_ENV: ReadonlyArray<readonly [string, string]> = [["npm_config_manage_package_manager_versions", "false"]]
+
+/**
  * The top-level system folders a toolchain needs, as the host has them: a link (merged `/usr`: `/bin` to `usr/bin`) is
  * made again as a link, a folder is bound read-only, a missing one is left out.
  */
@@ -74,6 +80,8 @@ export type ToolBind = typeof ToolBind.Type
  */
 export const HostLayout = Schema.Struct({
   bwrap: Schema.String,
+  /** Whether this `bwrap` bounds a tmpfs (`--size`, bubblewrap 0.10 and later). */
+  tmpfsSize: Schema.Boolean,
   top: Schema.Array(HostEntry),
   etc: Schema.Array(Schema.Struct({ path: Schema.String, real: Schema.String })),
   tools: Schema.Array(ToolBind),
@@ -92,20 +100,22 @@ export const SandboxPlan = Schema.Struct({
 export type SandboxPlan = typeof SandboxPlan.Type
 
 /**
- * The bounds a command runs under inside the sandbox, set with the shell's `ulimit` before it starts: the largest file
- * it may write, in bytes, and, when given, its address space; no core files. The address space is no memory bound for
+ * The bounds a command runs under inside the sandbox: the size of its `/tmp`, a tmpfs held in memory (`--size`, where
+ * the host's bwrap has it), and, set with the shell's `ulimit` before it starts, the largest file it may write, in
+ * bytes, and, when given, its address space; no core files. The address space is no memory bound for
  * the JavaScript runtimes: bun reserves far more than it uses (its type check dies under 8 GiB), so it is off unless a
  * host sets it; bounding memory needs a cgroup.
  */
 export const Limits = Schema.Struct({
   memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   fileBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  tmpBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type Limits = typeof Limits.Type
 
-/** The defaults: 5 minutes a command, 2 GiB a file and no bound on the address space, 4 MiB of each stream. */
+/** The defaults: 5 minutes a command, 2 GiB a file, 2 GiB of `/tmp`, no bound on the address space, 4 MiB of each stream. */
 export const SANDBOX_DEFAULTS = {
   timeoutMs: 300_000,
-  limits: { fileBytes: 2 * 1024 ** 3 },
+  limits: { fileBytes: 2 * 1024 ** 3, tmpBytes: 2 * 1024 ** 3 },
   outputBytes: 4 * 1024 * 1024,
 } as const

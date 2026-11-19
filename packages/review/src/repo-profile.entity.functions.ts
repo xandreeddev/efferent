@@ -28,7 +28,7 @@ export interface BaseFiles {
 const INSTALL: Readonly<Record<Manager, string>> = {
   bun: "BUN_INSTALL_CACHE_DIR=/cache bun install --frozen-lockfile --ignore-scripts --backend=copyfile",
   npm: "npm ci --ignore-scripts --no-audit --no-fund --cache /cache",
-  pnpm: "npm_config_manage_package_manager_versions=false pnpm install --frozen-lockfile --ignore-scripts --store-dir /cache --package-import-method copy",
+  pnpm: "pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --store-dir /cache --package-import-method copy",
   yarn: "yarn install --frozen-lockfile --ignore-scripts --non-interactive --cache-folder /cache",
 }
 
@@ -38,8 +38,9 @@ const PROGRAM: Readonly<Record<Manager, string>> = { bun: "bun", npm: "node", pn
 /**
  * The manager a repository installs with, from the base's lockfile (the one `packageManager` names when it is there,
  * else the first of `LOCKFILES`), and the command that installs with it. Refused: no lockfile; the manager not on the
- * host; a yarn berry repository (a `.yarnrc.yml`) with no `yarnPath` (corepack is never run); or one whose `yarnPath`
- * or `.yarnrc.yml` the pull request changes (the repository's own yarn runs only as the base has it).
+ * host; a yarn berry repository (a `.yarnrc.yml`) with no `yarnPath` (corepack is never run); or one whose `yarnPath`,
+ * `.yarnrc.yml`, plugins or releases (`.yarn/plugins/`, `.yarn/releases/`) the pull request changes: the
+ * repository's own yarn and the plugins it loads as it installs run only as the base has them.
  */
 export const managerOf = (base: BaseFiles, changedPaths: ReadonlyArray<string>, hostTools: ReadonlyArray<string>): ManagerChoice => {
   const named = Option.flatMap(packageJsonOf(base.packageJson), (decoded) => Option.fromNullishOr(decoded.packageManager?.split("@")[0]))
@@ -50,8 +51,8 @@ export const managerOf = (base: BaseFiles, changedPaths: ReadonlyArray<string>, 
   if (manager === "yarn" && Option.isSome(base.yarnrc)) {
     return Option.match(yarnPathOf(base.yarnrc.value), {
       onNone: () => ({ _tag: "Refused", reason: "the repository uses yarn berry with no yarnPath, which needs corepack, and corepack is not run" }),
-      onSome: (yarnPath): ManagerChoice => changedPaths.includes(yarnPath) || changedPaths.includes(".yarnrc.yml")
-        ? { _tag: "Refused", reason: `the pull request changes the repository's own yarn (${yarnPath} or .yarnrc.yml), so it is not run` }
+      onSome: (yarnPath): ManagerChoice => changedPaths.some((path) => path === yarnPath || path === ".yarnrc.yml" || path.startsWith(".yarn/plugins/") || path.startsWith(".yarn/releases/"))
+        ? { _tag: "Refused", reason: `the pull request changes the repository's own yarn (${yarnPath}, .yarnrc.yml or .yarn/plugins), so it is not run` }
         : !hostTools.includes("node")
           ? { _tag: "Refused", reason: "the repository's own yarn needs node, which the host does not have" }
           : {
@@ -104,13 +105,16 @@ const BUILTINS = ["install", "i", "add", "remove", "exec", "dlx", "run", "why", 
  * Whether a command may run, by its words: one with shell syntax never; the install never (its own phase); a
  * package manager's `run <script>` (and `yarn <script>`, `pnpm <script>`, `npm test`) only for a script of the root
  * `package.json`; a known tool (`tsc`, `npx tsc`, `bunx tsc`, `bun test`, `turbo run <task>`); nothing else. Answers
- * the reason it is dropped, none when it is kept.
+ * the reason it is dropped, none when it is kept. `run` is how the repository's manager runs a script, when it is not
+ * one of those words.
  */
-export const droppedBecause = (command: string, scripts: ReadonlyArray<string>): Option.Option<string> => {
+export const droppedBecause = (command: string, scripts: ReadonlyArray<string>, run = ""): Option.Option<string> => {
   if (SHELL_SYNTAX.test(command)) return Option.some(NOT_ALLOWED.syntax)
   const words = command.trim().split(/\s+/)
   const [first = "", second = "", third = ""] = words
   const script = (name: string) => name.startsWith("-") ? Option.some(NOT_ALLOWED.otherPackage) : scripts.includes(name) ? Option.none() : Option.some(NOT_ALLOWED.noScript)
+  // The manager's own way to run a script (yarn berry's is `node <yarnPath> run`).
+  if (run.length > 0 && command.trim().startsWith(`${run} `)) return script(command.trim().slice(run.length + 1).split(/\s+/)[0] ?? "")
   if (MANAGERS.includes(first) && (INSTALLS.includes(second) || (first === "yarn" && words.length === 1))) return Option.some(NOT_ALLOWED.install)
   if (MANAGERS.includes(first) && (second === "run" || second === "run-script")) return third.length === 0 ? Option.some(NOT_ALLOWED.noScript) : script(third)
   if (first === "npm" && (second === "test" || second === "t")) return script("test")
@@ -120,7 +124,7 @@ export const droppedBecause = (command: string, scripts: ReadonlyArray<string>):
   return Option.some(NOT_ALLOWED.unknown)
 }
 
-const candidateOf = (command: string, from: CommandFrom, scripts: ReadonlyArray<string>): Candidate => Option.match(droppedBecause(command, scripts), {
+const candidateOf = (command: string, from: CommandFrom, scripts: ReadonlyArray<string>, run: string): Candidate => Option.match(droppedBecause(command, scripts, run), {
   onNone: () => ({ command, from, kept: true, reason: "" }),
   onSome: (reason) => ({ command, from, kept: false, reason }),
 })
@@ -147,6 +151,6 @@ export const profileOf = (input: {
   return asked.flatMap(([command, from]) => {
     if (seen.has(command)) return []
     seen.add(command)
-    return [candidateOf(command, from, scripts)]
+    return [candidateOf(command, from, scripts, input.run)]
   })
 }

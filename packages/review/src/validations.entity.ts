@@ -67,6 +67,7 @@ export const UNRUN_BECAUSE = {
   headInstall: "the head did not install",
   baseInstall: "the base did not install",
   passedBefore: "passed on the base before, with this lockfile",
+  knownBefore: "(known from an earlier review)",
   passed: "passed on the base",
   byHand: "asked for by hand",
 } as const

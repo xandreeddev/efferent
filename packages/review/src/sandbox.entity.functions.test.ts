@@ -6,22 +6,23 @@ import { bwrapArgv, innerCwdOf, limitedArgv, toolBindOf } from "./sandbox.entity
 
 const layout: HostLayout = {
   bwrap: "/usr/bin/bwrap",
+  tmpfsSize: true,
   top: [{ _tag: "Link", path: "/bin", target: "usr/bin" }, { _tag: "Folder", path: "/lib64" }],
   etc: [{ path: "/etc/ld.so.cache", real: "/etc/ld.so.cache" }, { path: "/etc/resolv.conf", real: "/run/resolve/stub.conf" }, { path: "/etc/ssl", real: "/etc/ssl" }],
   tools: [{ name: "bun", binds: [{ host: "/home/user/.bun/bin/bun", inner: "/opt/tool/bun/bun", writable: false }], program: "/opt/tool/bun/bun" }],
 }
 
-const limits = { memoryBytes: 8 * 1024 ** 3, fileBytes: 1024 ** 3 }
+const limits = { memoryBytes: 8 * 1024 ** 3, fileBytes: 1024 ** 3, tmpBytes: 1024 ** 2 }
 
 describe("bwrapArgv", () => {
   test("offline: every namespace unshared, an empty environment but PATH and HOME, the work folder the one writable bind, the command an argument", () => {
     expect(bwrapArgv(layout, { workDir: "/cache/clone", network: false, binds: [] }, "/work", "echo 'a'; b", limits)).toEqual([
       "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
-      "--setenv", "PATH", INNER_PATH, "--setenv", "HOME", "/tmp/home",
+      "--setenv", "PATH", INNER_PATH, "--setenv", "HOME", "/tmp/home", "--setenv", "npm_config_manage_package_manager_versions", "false",
       "--ro-bind", "/usr", "/usr",
       "--symlink", "usr/bin", "/bin", "--ro-bind", "/lib64", "/lib64",
       "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache",
-      "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/tmp/home",
+      "--proc", "/proc", "--dev", "/dev", "--size", String(1024 ** 2), "--tmpfs", "/tmp", "--dir", "/tmp/home",
       "--ro-bind", "/home/user/.bun/bin/bun", "/opt/tool/bun/bun", "--symlink", "/opt/tool/bun/bun", "/opt/tool/bin/bun",
       "--bind", "/cache/clone", "/work",
       "--chdir", "/work",
@@ -38,7 +39,8 @@ describe("bwrapArgv", () => {
 
   test("the limits are set by the sandbox's shell, the command passed as $1 and never spliced; the address space only when given", () => {
     expect(limitedArgv("a\"; $(b)", limits)).toEqual(["/bin/sh", "-c", `ulimit -c 0 && ulimit -v ${8 * 1024 * 1024} && ulimit -f ${2 * 1024 * 1024} && exec /bin/sh -c "$1"`, "sh", "a\"; $(b)"])
-    expect(limitedArgv("x", { fileBytes: 1024 })).toEqual(["/bin/sh", "-c", `ulimit -c 0 && ulimit -f 2 && exec /bin/sh -c "$1"`, "sh", "x"])
+    expect(bwrapArgv({ ...layout, tmpfsSize: false }, { workDir: "/c", network: false, binds: [] }, "/work", "x", limits).join(" ")).toContain("--dev /dev --tmpfs /tmp")
+    expect(limitedArgv("x", { fileBytes: 1024, tmpBytes: 1 })).toEqual(["/bin/sh", "-c", `ulimit -c 0 && ulimit -f 2 && exec /bin/sh -c "$1"`, "sh", "x"])
   })
 })
 

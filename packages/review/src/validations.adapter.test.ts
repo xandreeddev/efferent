@@ -70,7 +70,7 @@ const sandboxesOf = (answer: (side: string, command: string) => Ran, delayMs = 0
     tools: ["bun", "node"],
     shell: (plan) => Effect.succeed(Shell.of({
       run: (request) => Effect.gen(function* () {
-        const side = plan.workDir.includes("clone-b") ? "base" : "head"
+        const side = plan.workDir.includes("clone-c") ? "head" : "base"
         asked.push({ side, plan, command: request.command })
         if (delayMs > 0) yield* Effect.sleep(delayMs)
         return answer(side, request.command)
@@ -139,13 +139,27 @@ describe("validate", () => {
     expect(Option.map(run?.install ?? Option.none(), (digest) => digest.source)).toEqual(Option.some({ _tag: "Command", command: RESTORE_SNAPSHOT }))
     expect(readFileSync(join(cache, "logs", "7-abc", "base-2.log"), "utf8")).toBe("1 fail")
 
-    // Again: the passes are known with this lockfile, so only the failure is asked on the base again.
-    const again = sandboxesOf((side, command) => side === "base" && command === "bun test" ? ran(1) : ran(0))
+    // Again, at the same base: every verdict is known, so no clone of the base is made.
+    const again = sandboxesOf(() => ran(0))
     const second = ranOf(await validated(cache, { [BASE]: BASE_FILES, [HEAD]: BASE_FILES }, again, request()))
-    expect(second?.profile.filter((entry) => entry.kept).map((entry) => [entry.command, entry.reason])).toEqual([["bun run typecheck", "passed on the base before, with this lockfile"], ["bun run test", "passed on the base before, with this lockfile"]])
-    expect(again.asked.map((each) => [each.side, each.command])).toEqual([
-      ["base", RESTORE_SNAPSHOT], ["base", "bun test"], ["head", RESTORE_SNAPSHOT], ["head", "bun run typecheck"], ["head", "bun run test"],
+    expect(second?.profile.filter((entry) => entry.from !== "by-hand" && entry.from !== "instructions" || entry.command === "bun test" || entry.command === "bun run typecheck").map((entry) => [entry.command, entry.kept, entry.reason])).toEqual([
+      ["bun run typecheck", true, "passed on the base before, with this lockfile"],
+      ["bun test", false, "on the base it exited with 1 (known from an earlier review)"],
+      ["bun run test", true, "passed on the base before, with this lockfile"],
     ])
+    expect(again.asked.map((each) => [each.side, each.command])).toEqual([["head", RESTORE_SNAPSHOT], ["head", "bun run typecheck"], ["head", "bun run test"]])
+
+    // Main moved, the lockfile did not: a failure is asked again (it may have been a flake); this time it times out.
+    const MOVED = CommitSha.make("d".repeat(40))
+    const moved = sandboxesOf((side, command) => command === "bun test" ? { ...ran(0), ended: { _tag: "TimedOut", afterMs: 60_000 } } : ran(0))
+    await validated(cache, { [MOVED]: BASE_FILES, [HEAD]: BASE_FILES }, moved, request({ base: MOVED }))
+    expect(moved.asked.filter((each) => each.side === "base").map((each) => each.command)).toEqual([RESTORE_SNAPSHOT, "bun test"])
+    // A timeout holds for every base with the lockfile.
+    const LATER = CommitSha.make("e".repeat(40))
+    const later = sandboxesOf(() => ran(0))
+    const fourth = ranOf(await validated(cache, { [LATER]: BASE_FILES, [HEAD]: BASE_FILES }, later, request({ base: LATER })))
+    expect(later.asked.filter((each) => each.side === "base")).toEqual([])
+    expect(fourth?.profile.find((entry) => entry.command === "bun test")?.reason).toBe("on the base it timed out after 60000 ms (known from an earlier review)")
     expect(readdirSync(join(cache, "owner", "project", "node-modules")).length).toBe(1)
   })
 

@@ -66,9 +66,9 @@ const etcOf = (path: string) => Effect.tryPromise(() => realpath(path)).pipe(
 )
 
 /** Run `bwrap` once with `args`, its environment empty, and answer its exit code and stderr. */
-const bwrapOnce = (bwrap: string, args: ReadonlyArray<string>) => Effect.callback<{ readonly code: number; readonly stderr: string }>((resume) => {
-  execFile(bwrap, [...args], { env: {}, timeout: 10_000 }, (error, _stdout, stderr) => {
-    resume(Effect.succeed({ code: error === null ? 0 : typeof error.code === "number" ? error.code : 1, stderr: String(stderr).trim() }))
+const bwrapOnce = (bwrap: string, args: ReadonlyArray<string>) => Effect.callback<{ readonly code: number; readonly stdout: string; readonly stderr: string }>((resume) => {
+  execFile(bwrap, [...args], { env: {}, timeout: 10_000 }, (error, stdout, stderr) => {
+    resume(Effect.succeed({ code: error === null ? 0 : typeof error.code === "number" ? error.code : 1, stdout: String(stdout), stderr: String(stderr).trim() }))
   })
 })
 
@@ -84,7 +84,8 @@ export const bwrapHost = Effect.fn("bwrap.host")(function* (path: string) {
   const top = (yield* Effect.forEach(SYSTEM_TOP, topOf, { concurrency: 1 })).flatMap(Option.toArray)
   const etc = (yield* Effect.forEach([...ETC_ALWAYS, ...ETC_NETWORK], etcOf, { concurrency: 1 })).flatMap(Option.toArray)
   const tools: ReadonlyArray<ToolBind> = (yield* Effect.forEach(TOOLS, (name) => toolOf(name, path), { concurrency: 1 })).flat()
-  const layout: HostLayout = { bwrap: bwrap.value, top, etc, tools }
+  const help = yield* bwrapOnce(bwrap.value, ["--help"])
+  const layout: HostLayout = { bwrap: bwrap.value, tmpfsSize: help.stdout.includes("--size"), top, etc, tools }
   const probe = yield* bwrapOnce(layout.bwrap, probeArgv(layout))
   if (probe.code !== 0) return yield* Effect.fail(new SandboxUnavailable({ reason: "namespaces", message: `bwrap cannot make a sandbox on this host (${probe.stderr || `exit ${probe.code}`}); unprivileged user namespaces must be allowed` }))
   return layout

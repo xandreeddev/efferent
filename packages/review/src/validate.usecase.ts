@@ -20,15 +20,16 @@ const LEAST_MS = 1_000
 
 /** How a command of a clone's run came out: it ran, with its digest and whether it passed, or it did not, with why. */
 type Outcome =
-  | { readonly _tag: "Ran"; readonly command: string; readonly digest: LogDigest; readonly passed: boolean }
+  | { readonly _tag: "Ran"; readonly command: string; readonly digest: LogDigest; readonly passed: boolean; readonly timedOut: boolean }
   | { readonly _tag: "Unrun"; readonly command: string; readonly reason: string }
 
 /**
  * Run a pull request's commands, each phase in a sandbox of its own over a throwaway clone (`Checkout.clone`, made
  * before any sandbox writes to it, and never touched by host git after): the manager chosen from the base's lockfile
  * (`managerOf`); the profile (`profileOf`: the base's definition of done and check scripts with `profile`, and the
- * commands given by hand), each command not yet known to pass with the base's lockfile asked on a clone of the base
- * and kept only when it exits 0 there, the pass kept in the cache; then the head's clone installed and every kept
+ * commands given by hand), each command with no verdict yet asked on a clone of the base and kept only when it exits
+ * 0 there, the verdict kept in the cache (a pass or a timeout for every base with the lockfile, any other failure for
+ * this base alone, so a flaky failure is asked again once main moves); then the head's clone installed and every kept
  * command run on it. Each clone installs first, the network shared and the bot's package cache bound (one of its own,
  * thrown away, for a head that changes the registry's config), with no script of the repository's; or restores a
  * snapshot of the base's `node_modules` kept under the same files; then runs its commands with no network, one after
@@ -50,7 +51,9 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
   const instructions = request.profile ? (yield* Effect.forEach(INSTRUCTION_FILES, (path) => showAt(request.base, path), { concurrency: 1 })).flatMap(Option.toArray) : []
   const candidates = profileOf({ run: choice.run, packageJson, instructions, profile: request.profile, byHand: request.run })
   const lockfile = Option.getOrElse(yield* showAt(request.base, choice.lockfile), () => "")
-  const passKey = (command: string) => ({ repo, lockfile, command })
+  /** A pass or a timeout holds for every base with this lockfile; any other failure for this base alone. */
+  const anyBase = (command: string) => ({ repo, lockfile, command, base: "" })
+  const thisBase = (command: string) => ({ repo, lockfile, command, base: request.base })
 
   const keep = (name: string, command: string, ran: Ran) => Effect.gen(function* () {
     const text = logText(ran)
@@ -101,20 +104,27 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
       const left = yield* timeLeft
       if (left < LEAST_MS) return { _tag: "Unrun", command, reason: UNRUN_BECAUSE.budget } satisfies Outcome
       const ran = yield* shell.run({ command, timeoutMs: left })
-      return { _tag: "Ran", command, digest: yield* keep(`${side}-${index + 1}.log`, command, ran), passed: passed(ran) } satisfies Outcome
+      return { _tag: "Ran", command, digest: yield* keep(`${side}-${index + 1}.log`, command, ran), passed: passed(ran), timedOut: ran.ended._tag === "TimedOut" } satisfies Outcome
     }), { concurrency: 1 })
     return { install: installed.digest, outcomes }
   }))
 
   const fromProfile = (candidate: Candidate) => candidate.kept && candidate.from !== "by-hand"
-  const known = yield* Effect.forEach(candidates, (candidate) => fromProfile(candidate) ? cache.passed(passKey(candidate.command)) : Effect.succeed(false), { concurrency: 1 })
-  const toAsk = candidates.filter((candidate, at) => fromProfile(candidate) && known[at] !== true).map((candidate) => candidate.command)
+  const known = yield* Effect.forEach(candidates, (candidate) => fromProfile(candidate)
+    ? Effect.flatMap(cache.verdict(anyBase(candidate.command)), (found) => Option.isSome(found) ? Effect.succeed(found) : cache.verdict(thisBase(candidate.command)))
+    : Effect.succeed(Option.none()), { concurrency: 1 })
+  const toAsk = candidates.filter((candidate, at) => fromProfile(candidate) && Option.isNone(known[at] ?? Option.none())).map((candidate) => candidate.command)
   const onBase = toAsk.length === 0 ? [] : (yield* inClone(request.base, "base", toAsk)).outcomes
-  yield* Effect.forEach(onBase, (outcome) => outcome._tag === "Ran" && outcome.passed ? cache.pass(passKey(outcome.command)) : Effect.void, { concurrency: 1 })
+  yield* Effect.forEach(onBase, (outcome) => outcome._tag === "Unrun"
+    ? Effect.void
+    : outcome.passed
+      ? cache.remember(anyBase(outcome.command), { kept: true, reason: UNRUN_BECAUSE.passed })
+      : cache.remember(outcome.timedOut ? anyBase(outcome.command) : thisBase(outcome.command), { kept: false, reason: `on the base it ${outcome.digest.ended}` }), { concurrency: 1 })
   const profile = candidates.map((candidate, at): ProfileEntry => {
     if (!candidate.kept) return candidate
     if (candidate.from === "by-hand") return { ...candidate, reason: UNRUN_BECAUSE.byHand }
-    if (known[at] === true) return { ...candidate, reason: UNRUN_BECAUSE.passedBefore }
+    const before = known[at] ?? Option.none()
+    if (Option.isSome(before)) return before.value.kept ? { ...candidate, reason: UNRUN_BECAUSE.passedBefore } : { ...candidate, kept: false, reason: `${before.value.reason} ${UNRUN_BECAUSE.knownBefore}` }
     const outcome = onBase.find((each) => each.command === candidate.command)
     if (outcome === undefined || outcome._tag === "Unrun") return { ...candidate, kept: false, reason: outcome?.reason ?? UNRUN_BECAUSE.budget }
     return outcome.passed ? { ...candidate, reason: UNRUN_BECAUSE.passed } : { ...candidate, kept: false, reason: `on the base it ${outcome.digest.ended}` }

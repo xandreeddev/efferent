@@ -134,9 +134,10 @@ describe("bwrapShell, the isolation probe", () => {
     expect(ran.stdout).toBe(`0\nunlimited\n${4 * 1024 * 1024}\n`)
     if (layout === undefined) return
     const bounded = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-      const shell = yield* bwrapShell({ layout, plan: offline(work("limits")), limits: { memoryBytes: 8 * 1024 ** 3, fileBytes: 1024 ** 3 } })
-      return yield* shell.run({ command: "ulimit -v; ulimit -f" })
+      const shell = yield* bwrapShell({ layout, plan: offline(work("limits")), limits: { memoryBytes: 8 * 1024 ** 3, fileBytes: 1024 ** 3, tmpBytes: 4 * 1024 ** 2 } })
+      return yield* shell.run({ command: "ulimit -v; ulimit -f; head -c 8388608 /dev/zero > /tmp/fill 2>/dev/null; echo tmp-$?" })
     })))
-    expect(bounded.stdout).toBe(`${8 * 1024 * 1024}\n${2 * 1024 * 1024}\n`)
+    // The tmpfs is bounded where the host's bwrap can bound it (--size): an 8 MiB file does not fit in 4 MiB.
+    expect(bounded.stdout).toBe(`${8 * 1024 * 1024}\n${2 * 1024 * 1024}\ntmp-${layout.tmpfsSize ? 1 : 0}\n`)
   })
 })

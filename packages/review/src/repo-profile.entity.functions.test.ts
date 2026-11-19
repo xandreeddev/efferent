@@ -11,11 +11,12 @@ describe("managerOf", () => {
   test.each([
     ["a bun.lock", { lockfiles: ["bun.lock"], packageJson: none, yarnrc: none }, [], tools, { _tag: "Chosen", manager: "bun", lockfile: "bun.lock", install: "BUN_INSTALL_CACHE_DIR=/cache bun install --frozen-lockfile --ignore-scripts --backend=copyfile", run: "bun run" }],
     ["npm's lockfile, npm through node", { lockfiles: ["package-lock.json"], packageJson: none, yarnrc: none }, [], ["node"], { _tag: "Chosen", manager: "npm", lockfile: "package-lock.json", install: "npm ci --ignore-scripts --no-audit --no-fund --cache /cache", run: "npm run" }],
-    ["pnpm named by packageManager over a stray yarn.lock", { lockfiles: ["yarn.lock", "pnpm-lock.yaml"], packageJson: json({ packageManager: "pnpm@9.1.0" }), yarnrc: none }, [], tools, { _tag: "Chosen", manager: "pnpm", lockfile: "pnpm-lock.yaml", install: "npm_config_manage_package_manager_versions=false pnpm install --frozen-lockfile --ignore-scripts --store-dir /cache --package-import-method copy", run: "pnpm run" }],
+    ["pnpm named by packageManager over a stray yarn.lock", { lockfiles: ["yarn.lock", "pnpm-lock.yaml"], packageJson: json({ packageManager: "pnpm@9.1.0" }), yarnrc: none }, [], tools, { _tag: "Chosen", manager: "pnpm", lockfile: "pnpm-lock.yaml", install: "pnpm install --frozen-lockfile --ignore-scripts --ignore-pnpmfile --store-dir /cache --package-import-method copy", run: "pnpm run" }],
     ["yarn v1 with the host's yarn", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: none }, [], tools, { _tag: "Chosen", manager: "yarn", lockfile: "yarn.lock", install: "yarn install --frozen-lockfile --ignore-scripts --non-interactive --cache-folder /cache", run: "yarn run" }],
     ["yarn berry through the base's yarnPath", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("nodeLinker: node-modules\nyarnPath: .yarn/releases/yarn-4.1.0.cjs\n") }, ["src/a.ts"], tools, { _tag: "Chosen", manager: "yarn", lockfile: "yarn.lock", install: "YARN_ENABLE_SCRIPTS=0 YARN_ENABLE_GLOBAL_CACHE=0 YARN_CACHE_FOLDER=/cache node .yarn/releases/yarn-4.1.0.cjs install --immutable --mode=skip-build", run: "node .yarn/releases/yarn-4.1.0.cjs run" }],
-    ["yarn berry whose yarnPath the pull request changes", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("yarnPath: .yarn/releases/yarn-4.1.0.cjs") }, [".yarn/releases/yarn-4.1.0.cjs"], tools, { _tag: "Refused", reason: "the pull request changes the repository's own yarn (.yarn/releases/yarn-4.1.0.cjs or .yarnrc.yml), so it is not run" }],
-    ["yarn berry whose .yarnrc.yml the pull request changes", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("yarnPath: y.cjs") }, [".yarnrc.yml"], tools, { _tag: "Refused", reason: "the pull request changes the repository's own yarn (y.cjs or .yarnrc.yml), so it is not run" }],
+    ["yarn berry whose yarnPath the pull request changes", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("yarnPath: .yarn/releases/yarn-4.1.0.cjs") }, [".yarn/releases/yarn-4.1.0.cjs"], tools, { _tag: "Refused", reason: "the pull request changes the repository's own yarn (.yarn/releases/yarn-4.1.0.cjs, .yarnrc.yml or .yarn/plugins), so it is not run" }],
+    ["yarn berry whose plugins the pull request changes", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("yarnPath: y.cjs") }, [".yarn/plugins/x.cjs"], tools, { _tag: "Refused", reason: "the pull request changes the repository's own yarn (y.cjs, .yarnrc.yml or .yarn/plugins), so it is not run" }],
+    ["yarn berry whose .yarnrc.yml the pull request changes", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("yarnPath: y.cjs") }, [".yarnrc.yml"], tools, { _tag: "Refused", reason: "the pull request changes the repository's own yarn (y.cjs, .yarnrc.yml or .yarn/plugins), so it is not run" }],
     ["yarn berry with no yarnPath", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: Option.some("nodeLinker: pnp\n") }, [], tools, { _tag: "Refused", reason: "the repository uses yarn berry with no yarnPath, which needs corepack, and corepack is not run" }],
     ["yarn v1 with no yarn on the host", { lockfiles: ["yarn.lock"], packageJson: none, yarnrc: none }, [], ["bun", "node"], { _tag: "Refused", reason: "the repository installs with yarn, which the host does not have" }],
     ["no lockfile", { lockfiles: [], packageJson: json({}), yarnrc: none }, [], tools, { _tag: "Refused", reason: "the base has no lockfile (bun.lock, pnpm-lock.yaml, yarn.lock or package-lock.json), so nothing is installed" }],
@@ -86,5 +87,13 @@ describe("profileOf", () => {
       { command: "make all", from: "by-hand", kept: false, reason: NOT_ALLOWED.unknown },
     ])
     expect(profileOf({ run: "bun run", packageJson, instructions, profile: false, byHand: ["bun test"] })).toEqual([{ command: "bun test", from: "by-hand", kept: true, reason: "" }])
+  })
+
+  test("yarn berry's scripts run through the base's yarnPath, and are kept", () => {
+    const run = "node .yarn/releases/yarn-4.1.0.cjs run"
+    expect(profileOf({ run, packageJson: json({ scripts: { lint: "eslint ." } }), instructions: [], profile: true, byHand: [`${run} deploy`] })).toEqual([
+      { command: `${run} lint`, from: "script", kept: true, reason: "" },
+      { command: `${run} deploy`, from: "by-hand", kept: false, reason: NOT_ALLOWED.noScript },
+    ])
   })
 })
