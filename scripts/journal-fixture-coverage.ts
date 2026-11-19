@@ -24,6 +24,15 @@ export const REQUIRED: ReadonlyArray<Required> = [
   named("plugin.knowledge.curated"),
 ]
 
+/**
+ * The recording's summary memory's budget: well under what the turns hold together, so its summary is asked for
+ * whatever a note or a prompt's words add or take (the recorder refuses a margin under `SUMMARY_PRESSURE`), and well
+ * over any one turn with a summary beside it, so the open turn always fits.
+ */
+export const SUMMARY_BUDGET = 150
+/** The least the conversation's messages may hold, as a multiple of `SUMMARY_BUDGET`. */
+export const SUMMARY_PRESSURE = 1.4
+
 /** The kinds of `required` no journal of the recording holds, by name. */
 export const missingRecords = (journals: ReadonlyArray<Journal>, required: ReadonlyArray<Required> = REQUIRED): ReadonlyArray<string> => {
   const events = journals.flatMap((journal) => journal.events)

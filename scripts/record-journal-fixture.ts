@@ -10,7 +10,7 @@ import {
 } from "@xandreed/sdk/kernel"
 import type { ModelScript } from "@xandreed/sdk/kernel"
 import { directoryJournal } from "@xandreed/sdk/kernel/node"
-import { missingRecords, summaryPressure } from "./journal-fixture-coverage.js"
+import { missingRecords, SUMMARY_BUDGET, SUMMARY_PRESSURE, summaryPressure } from "./journal-fixture-coverage.js"
 
 /*
  * Records the journals a kernel host stores, for the journal compatibility
@@ -164,14 +164,6 @@ const messages = [
   "Which shelf was alpha on again? I want to pack it for the trip.",
 ]
 
-/**
- * The summary memory's budget: well under what the turns hold together, so its summary is asked for whatever a note
- * or a prompt's words add or take (the recording refuses a margin under `SUMMARY_PRESSURE`), and well over any one
- * turn with a summary beside it, so the open turn always fits.
- */
-const SUMMARY_BUDGET = 150
-/** The least the conversation's messages may hold, as a multiple of `SUMMARY_BUDGET`. */
-const SUMMARY_PRESSURE = 1.4
 
 const record = (directory: string) => Effect.gen(function* () {
   const minted = yield* Ref.make(0)

@@ -3,7 +3,7 @@ import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
 import { Journal } from "@xandreed/core/kernel"
-import { missingRecords, REQUIRED, summaryPressure } from "./journal-fixture-coverage.js"
+import { missingRecords, REQUIRED, SUMMARY_BUDGET, SUMMARY_PRESSURE, summaryPressure } from "./journal-fixture-coverage.js"
 
 const recorded = await Effect.runPromise(Effect.tryPromise(() => readFile(join(import.meta.dir, "../packages/sdk/fixtures/journal-unreleased.json"), "utf8")).pipe(
   Effect.flatMap(Schema.decodeUnknownEffect(Schema.fromJsonString(Schema.Struct({ sessions: Schema.Array(Journal) })))),
@@ -11,7 +11,7 @@ const recorded = await Effect.runPromise(Effect.tryPromise(() => readFile(join(i
 
 test("the development recording holds every kind of record a fixture must hold, its summary under a wide margin", () => {
   expect(missingRecords(recorded.sessions)).toEqual([])
-  expect(summaryPressure(recorded.sessions, 150)).toBeGreaterThanOrEqual(1.4)
+  expect(summaryPressure(recorded.sessions, SUMMARY_BUDGET)).toBeGreaterThanOrEqual(SUMMARY_PRESSURE)
 })
 
 test("a recording without one kind of record is named for it, each kind on its own", () => {
@@ -30,7 +30,7 @@ test("an approval that is not for good does not stand for one", () => {
 })
 
 test("the pressure is the conversation's messages over the budget, and falls as the budget grows", () => {
-  const pressure = summaryPressure(recorded.sessions, 150)
-  expect(summaryPressure(recorded.sessions, 300)).toBeCloseTo(pressure / 2, 6)
+  const pressure = summaryPressure(recorded.sessions, SUMMARY_BUDGET)
+  expect(summaryPressure(recorded.sessions, 2 * SUMMARY_BUDGET)).toBeCloseTo(pressure / 2, 6)
   expect(summaryPressure([], 150)).toBe(0)
 })
