@@ -142,4 +142,11 @@ describe("recall by meaning over the OpenAI-compatible embedder", () => {
     // Each context asks again: a key fixed meanwhile is used at once.
     expect(unauthorized.sent.length).toBe(4)
   })
+
+  test("a warning is said once for each reason a layer meets: a refused key and a provider that is down, met in turn, give two", async () => {
+    const { fetch } = embeddingsFetch((n) => (n % 2 === 1 ? refused(401, "Invalid API key") : refused(500, "the model is down")))
+    const done = await run(fetch, ["Where does Ana Silva work?", "Who is Ana Silva?"])
+    expect(done.heard.map((one) => one.meaning?.skipped?.endsWith("Invalid API key") ?? false)).toEqual([true, false, true, false])
+    expect(done.warnings.map((warning) => warning.slice(warning.lastIndexOf("(")))).toEqual(["(AiError/AuthenticationError)", "(AiError/InternalProviderError)"])
+  })
 })
