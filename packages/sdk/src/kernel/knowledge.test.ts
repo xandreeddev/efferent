@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Layer, Option, Ref } from "effect"
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Ref } from "effect"
 import type { Prompt } from "effect/ai"
 import { assistantMessage, Core, kernel, readJournal, Sessions, TurnNumber, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
@@ -239,6 +239,34 @@ describe("knowledge kept by a curator", () => {
     // A source that was curated is not curated again.
     expect(Option.isNone(tries.done)).toBe(true)
     expect(tries.states).toEqual(["Curated"])
+  })
+
+  test("a curation waits while another turn holds the knowledge session, and keeps the source once it is free", async () => {
+    const curator = scripted()
+    const outcome = await Effect.runPromise(Effect.gen(function* () {
+      const refused = yield* Deferred.make<void>()
+      // The store's sessions, with every refusal of a busy session said, so the test knows the curation met one.
+      const watched = Layer.effect(Sessions, Effect.map(Sessions, (inner) => Sessions.of({
+        ...inner,
+        turn: (id, body) => inner.turn(id, body).pipe(Effect.tapError((error: unknown) =>
+          Predicate.isTagged(error, "SessionRefused") && Predicate.hasProperty(error, "reason") && error.reason === "SessionBusy" ? Deferred.succeed(refused, undefined) : Effect.void)),
+      })))
+      return yield* Effect.gen(function* () {
+        const all = yield* Sessions
+        const session = yield* knowledgeSession
+        const holding = yield* Deferred.make<void>()
+        const release = yield* Deferred.make<void>()
+        // Another writer of the knowledge session, inside a turn until it is let go.
+        const other = yield* Effect.forkChild(all.turn(session, () => Effect.andThen(Deferred.succeed(holding, undefined), Deferred.await(release))))
+        yield* Deferred.await(holding)
+        const running = yield* Effect.forkChild(curate(session, { said: [{ by: "user", text: "My friend Ana Silva lives in Porto." }], at: MONDAY }, { review: false }))
+        yield* Deferred.await(refused)
+        yield* Deferred.succeed(release, undefined)
+        yield* Fiber.join(other)
+        return yield* Fiber.join(running)
+      }).pipe(Effect.provide(watched))
+    }).pipe(Effect.provide(Layer.provideMerge(curator.layer, store())), Effect.orDie))
+    expect<unknown>(outcome._tag === "Curated" ? [outcome.source.id, outcome.kept.memories.length] : outcome).toEqual(["s1", 2])
   })
 
   test("the knowledge session is made once and found after; reading it when there is none makes none", async () => {

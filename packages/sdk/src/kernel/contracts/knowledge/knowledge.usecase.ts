@@ -1,4 +1,4 @@
-import { Effect, Option, Result } from "effect"
+import { Effect, Option, Predicate, Result, Schedule } from "effect"
 import { currentFormat, Sessions, stored } from "@xandreed/core/kernel"
 import type { InvalidSession, JournalStorageError, SessionHeader, SessionId, StoredEvent } from "@xandreed/core/kernel"
 import { Curator } from "./curator.port.js"
@@ -50,6 +50,20 @@ export const knowledgeJournal: Effect.Effect<ReadonlyArray<StoredEvent>, Journal
   })
 })
 
+/** A refusal of a turn because another turn holds the session (`SessionBusy`). */
+const isBusy = (error: unknown): boolean =>
+  Predicate.isTagged(error, "SessionRefused") && Predicate.hasProperty(error, "reason") && error.reason === "SessionBusy"
+
+/**
+ * A turn of the knowledge session, waited for while another turn holds the session: every writer of it (a curation's
+ * turns, a host's load, a tool's) holds it for a few appends, and a turn's end can still be being announced after its
+ * body returned, so the step waits for it, every 25 ms for up to 10 seconds, rather than failing the curation. A session
+ * still held then (a writer that died inside a turn, until the host recovers it) fails the step as it is. The wait is
+ * interruptible; the turn, once begun, is as the caller made it.
+ */
+const whenFree = <A, E, R>(turn: Effect.Effect<A, E, R>): Effect.Effect<A, E, R> =>
+  Effect.retry(turn, { while: isBusy, times: 400, schedule: Schedule.spaced("25 millis") })
+
 /**
  * One try at a stored source: the curator asked, the reply checked, and what passed stored with the record that the
  * source was curated; or, when a call fails or a reply holds no JSON object, the record that the try failed. The
@@ -73,7 +87,7 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
     )
   }
   const failed = (reason: string) => Effect.as(
-    Effect.uninterruptible(sessions.turn(session, (open) => open.append(stored(curationFailedEvent, { source: source.id, attempt, reason })))),
+    whenFree(Effect.uninterruptible(sessions.turn(session, (open) => open.append(stored(curationFailedEvent, { source: source.id, attempt, reason }))))),
     { _tag: "Failed" as const, source, attempt, calls: calls(), reason },
   )
   // What the curator is shown is read from the knowledge as it stands now, the source stored.
@@ -94,12 +108,12 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
   const stage = staged(read.curation, source, shown)
   // What passed is stored in one turn, over the knowledge as it stands now: it may have moved while the model answered.
   // The turn is not cut short, so its records are never stored without the one that says the source was curated.
-  const kept = yield* Effect.uninterruptible(sessions.turn(session, (open) => Effect.gen(function* () {
+  const kept = yield* whenFree(Effect.uninterruptible(sessions.turn(session, (open) => Effect.gen(function* () {
     const drafts = draftsOf(stage, knowledgeOf(yield* open.journal), source)
     yield* Effect.forEach(drafts, (draft) => open.append(draft), { concurrency: 1, discard: true })
     yield* open.append(stored(curatedEvent, { source: source.id, calls: prompts.length, kept: drafts.length, dropped: stage.dropped.slice(0, DROPPED_SHOWN) }))
     return keptFrom(yield* open.journal, source.id)
-  })))
+  }))))
   const outcome: CurationOutcome = { _tag: "Curated", source, attempt, calls: calls(), shown, malformed: read.malformed, dropped: stage.dropped, kept }
   return outcome
 })
@@ -112,7 +126,8 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
  * checked (`staged`), and what passed is stored in one turn (`draftsOf`) with `plugin.knowledge.curated`. When a call
  * fails (`CurationFailed`) or a reply holds no JSON object, `plugin.knowledge.failed` is stored with the try and the
  * reason, and nothing else: an unreadable review fails the try, since the reply it was asked to correct is what a
- * review exists to catch. The model calls run outside any turn of the knowledge session.
+ * review exists to catch. The model calls run outside any turn of the knowledge session. Each of its turns waits while
+ * another turn holds the session (`SessionBusy`), every 25 ms for up to 10 seconds, and fails as it is after that.
  *
  * It answers what came of it (`CurationOutcome`); a store or a session that fails is its failure. An interruption
  * stores neither record, so the source stays `Pending` and `curateAgain` can take it up; the turns that store the
@@ -122,7 +137,7 @@ const curateStored = (session: SessionId, source: SourceData, attempt: number, o
  */
 export const curate = Effect.fn("knowledge.curate")(function* (session: SessionId, source: NewSource, options: CurateOptions = {}) {
   const sessions = yield* Sessions
-  const made = yield* sessions.turn(session, (open) => Effect.gen(function* () {
+  const made = yield* whenFree(sessions.turn(session, (open) => Effect.gen(function* () {
     // The source's own fields, by name: a host's value may hold more (a `TurnSource`'s text), which is never stored.
     const data: SourceData = {
       id: nextIds(knowledgeOf(yield* open.journal)).source,
@@ -134,7 +149,7 @@ export const curate = Effect.fn("knowledge.curate")(function* (session: SessionI
     }
     yield* open.append(stored(sourceEvent, data))
     return data
-  }))
+  })))
   return yield* curateStored(session, made, 1, options)
 })
 

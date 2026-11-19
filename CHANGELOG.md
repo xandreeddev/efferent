@@ -53,7 +53,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `plugin.knowledge.curated`, or `plugin.knowledge.failed` with the try and
   the reason (`NOT_CURATED` when a reply holds no JSON object). It answers a
   `CurationOutcome`; an interrupted curation leaves its source `Pending`, and
-  `curateAgain(session, id)` takes it up. `knowledgeSession` finds or makes
+  `curateAgain(session, id)` takes it up. Each of its turns waits while
+  another turn holds the knowledge session, every 25 ms for up to 10 seconds. `knowledgeSession` finds or makes
   the knowledge session, `knowledgeJournal` reads it, and `keptFrom(journal,
   source)` reads back what a curation stored. `withKnowledge({ limit?, walk?,
   speaker?, stopWords? })` is a memory wrapper that sends each request what

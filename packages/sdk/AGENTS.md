@@ -412,7 +412,9 @@ it: `./kernel` is a `restricted` subpath.
   failed call or a reply (the review's too) with no JSON object stores
   `plugin.knowledge.failed` (`NOT_CURATED`) and nothing else; an
   interruption stores nothing after the source, which stays `Pending`, and
-  the turns that store the records are uninterruptible; the source's
+  the turns that store the records are uninterruptible, and each turn waits
+  while another holds the session (`SessionBusy`), every 25 ms for up to 10
+  seconds; the source's
   fields are stored by name;
   `curateAgain(session, id)` takes up a source no curation kept, its try
   one more than those that failed; `knowledgeSession` (the first by

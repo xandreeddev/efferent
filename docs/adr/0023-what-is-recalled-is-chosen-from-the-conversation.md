@@ -242,6 +242,12 @@ the triples with links between entities.
 - **The page's curator and its recall are one host's choices.** A host with no review, other stop words, or another
   language's speaker's words gets other counts.
 
+- The curation step's turns wait while another turn holds the knowledge session (`SessionBusy`), every 25 ms for up
+  to 10 seconds, and fail as they are after that. Every writer of that session holds it for a few appends, but a turn's
+  end can still be being announced after its body returned (a load of 2,141 records, heard by a page's listeners), and a
+  curation started then failed on the lesson's page where nothing was wrong. A writer that died inside a turn still
+  fails the step once the wait is over, until the host recovers the session.
+
 ## What would reopen this
 
 - Recall by meaning beside the two lists (a third list, measured as these were): a later cut's.
