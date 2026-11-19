@@ -84,6 +84,7 @@ describe("ghForge", () => {
       permission: "maintain",
       base: { ref: "main", sha: BASE },
       head: { ref: "fix-sum", sha: HEAD },
+      fetchRef: "refs/pull/7/head",
       headRepo: Option.some("owner/project"),
       sameRepo: true,
       files: [{ path: "src/sum.ts", additions: 2, deletions: 1 }],

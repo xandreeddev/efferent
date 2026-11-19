@@ -1,6 +1,6 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
-import { parseUnifiedDiff, renderDiff } from "./diff.entity.functions.js"
+import { parseUnifiedDiff, renderDiff, shownPath } from "./diff.entity.functions.js"
 import type { FileDiff } from "./diff.entity.js"
 
 const DIFF = [
@@ -139,10 +139,42 @@ describe("renderDiff", () => {
       "",
       "File: logo.png (modified, +0 -0, binary, not shown)",
       "",
-      "File: q\"uote.ts (modified, +1 -0)",
+      "File: \"q\\\"uote.ts\" (modified, +1 -0)",
       "@@",
       "1   a",
       "2 + b",
     ].join("\n"))
+  })
+})
+
+describe("shownPath", () => {
+  test.each([
+    ["src/a file's $(x).ts", "src/a file's $(x).ts"],
+    ["x\nFile: SAFE.ts", "\"x\\u000aFile: SAFE.ts\""],
+    ["tab\there", "\"tab\\u0009here\""],
+    ["c1\u0085line", "\"c1\\u0085line\""],
+    ["sep\u2028line", "\"sep\\u2028line\""],
+    ["back\\slash", "\"back\\\\slash\""],
+    ["say \"hi\"", "\"say \\\"hi\\\"\""],
+  ])("%j is shown as %s, a JSON string that reads back to the path when it is quoted", (path, shown) => {
+    expect(shownPath(path)).toBe(shown)
+    if (shown.startsWith("\"")) expect(JSON.parse(shown)).toBe(path)
+  })
+})
+
+describe("headerPath", () => {
+  test("a binary file and a mode change, with no --- and +++ lines, take their path from the header, quoted or not", () => {
+    const files = parsed([
+      "diff --git \"a/pic\\nname.bin\" \"b/pic\\nname.bin\"",
+      "new file mode 100644",
+      "Binary files /dev/null and \"b/pic\\nname.bin\" differ",
+      "diff --git a/two words.sh b/two words.sh",
+      "old mode 100644",
+      "new mode 100755",
+    ].join("\n"))
+    expect(files.map((file) => [file.path, file.change, file.binary, Option.getOrNull(file.modeChange)])).toEqual([
+      ["pic\nname.bin", "added", true, null],
+      ["two words.sh", "modified", false, { from: "100644", to: "100755" }],
+    ])
   })
 })

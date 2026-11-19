@@ -6,7 +6,4 @@ export class UsageError extends Schema.TaggedError<UsageError>()("UsageError", {
 }) {}
 
 /** How to call the reviewer. */
-export const USAGE = [
-  "efferent-review prepare <number> --repo <owner/name> [--run <command>]... [--budget <tokens>] [--workflow <path>]...",
-  "                [--cache <folder>] [--timeout-ms <ms>] [--json]",
-].join("\n")
+export const USAGE = "efferent-review prepare <number> --repo <owner/name> [--budget <tokens>] [--workflow <path>]... [--cache <folder>] [--json]"

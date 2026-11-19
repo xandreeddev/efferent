@@ -11,11 +11,11 @@ const usageOf = async (args: ReadonlyArray<string>) => {
 }
 
 describe("cliLine", () => {
-  test("reads words, valued flags in both spellings, repeated --run whole (never split at commas), and switches", async () => {
-    const line = await Effect.runPromise(cliLine(["prepare", "655", "--repo=owner/project", "--run", "bun test a,b", "--run=bun run typecheck", "--json", "--budget", "100"]))
+  test("reads words, valued flags in both spellings, a repeated --workflow whole (never split at commas), and switches", async () => {
+    const line = await Effect.runPromise(cliLine(["prepare", "655", "--repo=owner/project", "--workflow", ".github/workflows/a,b.yml", "--workflow=.github/workflows/ci.yml", "--json", "--budget", "100"]))
     expect([line.words, [...line.values.entries()], [...line.switches]]).toEqual([
       ["prepare", "655"],
-      [["--repo", ["owner/project"]], ["--run", ["bun test a,b", "bun run typecheck"]], ["--budget", ["100"]]],
+      [["--repo", ["owner/project"]], ["--workflow", [".github/workflows/a,b.yml", ".github/workflows/ci.yml"]], ["--budget", ["100"]]],
       ["--json"],
     ])
   })
@@ -32,6 +32,7 @@ describe("reviewCli", () => {
     [["prepare", "1", "--repo", "a/b", "--repo", "c/d"], "--repo is given more than once"],
     [["prepare", "1", "--repo"], "--repo needs a value"],
     [["prepare", "1", "--repo", "a/b", "--fast"], "--fast is not a flag of efferent-review"],
+    [["prepare", "1", "--repo", "a/b", "--run", "bun test"], "--run is not a flag of efferent-review"],
   ] as const)("%j is a usage error", async (args, message) => {
     expect(await usageOf(args)).toBe(message)
   })

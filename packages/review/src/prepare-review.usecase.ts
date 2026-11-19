@@ -8,7 +8,7 @@ import type { LogDigest } from "./log-digest.entity.js"
 import { digestLog } from "./log-digest.entity.functions.js"
 import type { DroppedFile } from "./packed-diff.entity.js"
 import { packDiff } from "./packed-diff.entity.functions.js"
-import type { FailingRun, PrepareOptions, PreparedReview, Validation } from "./prepare-review.entity.js"
+import type { FailingRun, PrepareOptions, PreparedReview, SkipReason, Validation } from "./prepare-review.entity.js"
 import type { PullNumber, PullRequest, RepoName } from "./pull-request.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import { rulesAlong } from "./repo-rules.entity.functions.js"
@@ -32,14 +32,15 @@ const logFolderOf = (pull: PullRequest): string => `${pull.number}-${pull.head.s
  * from where the head left the base, drop the files no reviewer reads (`fileVerdict`, with `.gitattributes` at the
  * base) and pack the rest under the budget; read the instruction files along the changed paths at the base, a text
  * met twice kept once; list the head's CI runs and digest each failed one's log, the whole log kept; and run the
- * commands asked for in a worktree of the head, only for a head in the base repository whose author may write to it.
+ * commands asked for in a worktree of the head, only for a head in the base repository whose author may write to it
+ * and only through the `Validations` the host provides (a sandbox; with none, nothing runs and no worktree is made).
  */
 export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoName, number: PullNumber, options: PrepareOptions) {
   const forge = yield* Forge
   const checkout = yield* Checkout
   const logs = yield* ReviewLogs
   const pull = yield* forge.pullRequest(repo, number)
-  yield* checkout.fetch(repo, number, pull.base, pull.head.sha)
+  yield* checkout.fetch(repo, pull.base, { sha: pull.head.sha, fetchRef: pull.fetchRef })
   const files = yield* Effect.fromResult(parseUnifiedDiff(yield* checkout.diff(repo, pull.base.sha, pull.head.sha)))
   const attributes = Option.match(yield* checkout.show(repo, pull.base.sha, ".gitattributes"), { onNone: () => [], onSome: attributesOf })
   const verdicts = files.map((file) => fileVerdict(file.path, file, attributes))
@@ -73,17 +74,27 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
     return { run, log: { _tag: "Digested", digest } } satisfies FailingRun
   }), { concurrency: 2 })
 
+  const validations = yield* Effect.serviceOption(Validations)
+  const skipped: Option.Option<SkipReason> = options.run.length === 0
+    ? Option.none()
+    : !pull.sameRepo
+      ? Option.some("fork")
+      : !WRITERS.includes(pull.permission)
+        ? Option.some("permission")
+        : Option.isNone(validations) ? Option.some("no-sandbox") : Option.none()
   const validation: Validation = options.run.length === 0
     ? { _tag: "NotAsked" }
-    : !pull.sameRepo
-      ? { _tag: "Skipped", reason: "fork" }
-      : !WRITERS.includes(pull.permission)
-        ? { _tag: "Skipped", reason: "permission" }
-        : { _tag: "Ran", digests: yield* Effect.scoped(Effect.gen(function* () {
-          const cwd = yield* checkout.worktree(repo, pull.head.sha)
-          const validations = yield* Validations
-          return yield* validations.run({ commands: options.run, cwd, logFolder: folder, changedPaths, limits: options.limits, timeoutMs: options.timeoutMs })
-        })) }
+    : yield* Option.match(skipped, {
+      onSome: (reason) => Effect.succeed<Validation>({ _tag: "Skipped", reason }),
+      onNone: () => Effect.scoped(Effect.gen(function* () {
+        const cwd = yield* checkout.worktree(repo, pull.head.sha)
+        const digests = yield* Option.match(validations, {
+          onNone: () => Effect.succeed([]),
+          onSome: (service) => service.run({ commands: options.run, cwd, logFolder: folder, changedPaths, limits: options.limits, timeoutMs: options.timeoutMs }),
+        })
+        return { _tag: "Ran", digests } satisfies Validation
+      })),
+    })
 
   const prepared: PreparedReview = { pullRequest: pull, verdicts, diff, rules, ci, failing, validation }
   return prepared

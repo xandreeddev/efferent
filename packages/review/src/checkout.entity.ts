@@ -11,3 +11,7 @@ export class CommitMissing extends Schema.TaggedError<CommitMissing>()("CommitMi
   sha: Schema.String,
   message: Schema.String,
 }) {}
+
+/** A transport git may use to reach a repository: `https` for a forge, `ssh`, or `file` for a folder (tests). */
+export const Transport = Schema.Literals(["https", "ssh", "file"])
+export type Transport = typeof Transport.Type

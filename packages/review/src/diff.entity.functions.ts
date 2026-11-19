@@ -36,19 +36,45 @@ const sidePath = (text: string): Option.Option<string> => {
   return Option.some(path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path)
 }
 
-/** The path of a `diff --git a/X b/X` header, when both sides name the same path; a rename's comes from its own lines. */
+/** The length of a C-quoted token at the start of `text` (its quotes included), or 0 when it starts with none. */
+const quotedLength = (text: string): number => {
+  if (!text.startsWith("\"")) return 0
+  for (let at = 1; at < text.length; at++) {
+    if (text[at] === "\\") at += 1
+    else if (text[at] === "\"") return at + 1
+  }
+  return 0
+}
+
+/** A side's path without git's `a/` or `b/`. */
+const sideless = (path: string): string => (path.startsWith("a/") || path.startsWith("b/") ? path.slice(2) : path)
+
+/**
+ * The new side's path of a `diff --git <a> <b>` header, either side C-quoted or not, for a file with no `---` and
+ * `+++` lines to read it from (a binary file, a mode change, a pure rename). Two unquoted sides are told apart as two
+ * equal halves; a rename's names come from its own lines.
+ */
 const headerPath = (line: string): string => {
   const rest = line.slice("diff --git ".length)
+  const first = quotedLength(rest)
+  if (first > 0) {
+    const second = rest.slice(first + 1)
+    return sideless(quotedLength(second) > 0 ? unquoted(second) : second)
+  }
+  const lastQuote = rest.endsWith("\"") ? rest.lastIndexOf(" \"b/") : -1
+  if (lastQuote > 0) return sideless(unquoted(rest.slice(lastQuote + 1)))
   const half = (rest.length - 5) / 2
   if (Number.isInteger(half) && half > 0 && rest.startsWith("a/") && rest.slice(2 + half, 5 + half) === " b/" && rest.slice(2, 2 + half) === rest.slice(5 + half)) return rest.slice(2, 2 + half)
-  const quoted = /^"?a\/(.*?)"? "?b\/(.*?)"?$/.exec(rest)
-  return quoted?.[2] ?? rest
+  const split = rest.indexOf(" b/")
+  return split > 0 ? rest.slice(split + 3) : rest
 }
 
 interface Draft {
   path: string
   oldPath: Option.Option<string>
   change: FileChange
+  oldMode: Option.Option<string>
+  newMode: Option.Option<string>
   binary: boolean
   hunks: Array<Hunk>
 }
@@ -70,6 +96,7 @@ export const parseUnifiedDiff = (text: string): Result.Result<ReadonlyArray<File
       path: draft.path,
       oldPath: draft.oldPath,
       change: draft.change,
+      modeChange: Option.isSome(draft.oldMode) && Option.isSome(draft.newMode) ? Option.some({ from: draft.oldMode.value, to: draft.newMode.value }) : Option.none(),
       binary: draft.binary,
       additions: all.filter((line) => line._tag === "Added").length,
       deletions: all.filter((line) => line._tag === "Removed").length,
@@ -82,13 +109,15 @@ export const parseUnifiedDiff = (text: string): Result.Result<ReadonlyArray<File
       at += 1
       continue
     }
-    const draft: Draft = { path: headerPath(header), oldPath: Option.none(), change: "modified", binary: false, hunks: [] }
+    const draft: Draft = { path: headerPath(header), oldPath: Option.none(), change: "modified", oldMode: Option.none(), newMode: Option.none(), binary: false, hunks: [] }
     let minus: Option.Option<string> = Option.none()
     let plus: Option.Option<string> = Option.none()
     at += 1
     while (at < lines.length && !(lines[at] ?? "").startsWith("diff --git ") && !(lines[at] ?? "").startsWith("@@")) {
       const line = lines[at] ?? ""
-      if (line.startsWith("new file mode")) draft.change = "added"
+      if (line.startsWith("old mode ")) draft.oldMode = Option.some(line.slice("old mode ".length))
+      else if (line.startsWith("new mode ")) draft.newMode = Option.some(line.slice("new mode ".length))
+      else if (line.startsWith("new file mode")) draft.change = "added"
       else if (line.startsWith("deleted file mode")) draft.change = "deleted"
       else if (line.startsWith("rename from ")) {
         draft.oldPath = Option.some(unquoted(line.slice("rename from ".length)))
@@ -152,17 +181,31 @@ const CHANGE_WORDS: Readonly<Record<FileChange, string>> = {
   renamed: "renamed",
 }
 
-/** A file's header line: its path, how it changed (a rename with its old path), and the lines added and removed. */
+const UNSAFE = /[\\"\u0000-\u001f\u007f-\u009f\u2028\u2029]/
+
+/**
+ * A path as the model and a person read it: as it is when it holds only printable characters and no `"` or `\\`;
+ * otherwise in double quotes with `\\` and `"` escaped and each control character (C0, DEL, C1, U+2028, U+2029) as
+ * `\\uXXXX`, a JSON string, so a name cannot forge a line and a shown path maps back to exactly one file.
+ */
+export const shownPath = (path: string): string =>
+  UNSAFE.test(path)
+    ? `"${path.replace(new RegExp(UNSAFE.source, "g"), (char) => (char === "\\" ? "\\\\" : char === "\"" ? "\\\"" : `\\u${char.charCodeAt(0).toString(16).padStart(4, "0")}`))}"`
+    : path
+
+/** A file's header line: its path, how it changed (a rename with its old path, a mode change), and its counts. */
 const fileHeader = (file: FileDiff): string => {
   const how = Option.match(file.oldPath, {
     onNone: () => CHANGE_WORDS[file.change],
-    onSome: (old) => `${CHANGE_WORDS[file.change]} from ${old}`,
+    onSome: (old) => `${CHANGE_WORDS[file.change]} from ${shownPath(old)}`,
   })
-  return `File: ${file.path} (${how}, +${file.additions} -${file.deletions}${file.binary ? ", binary, not shown" : ""})`
+  const mode = Option.match(file.modeChange, { onNone: () => "", onSome: ({ from, to }) => `, mode ${from} to ${to}` })
+  return `File: ${shownPath(file.path)} (${how}${mode}, +${file.additions} -${file.deletions}${file.binary ? ", binary, not shown" : ""})`
 }
 
 /**
- * The diff as the model reads it, deterministic for the same files: per file a header line (`fileHeader`), then each
+ * The diff as the model reads it, deterministic for the same files: per file a header line (`fileHeader`, its paths
+ * through `shownPath`), then each
  * hunk under `@@` and the enclosing function's line git found for it (nothing more when it found none), each line
  * with its number in the new file, then `+` for an added line or a space for one left as it was; a removed line has
  * no number, only `-`. Numbers are right-aligned to the widest in the file, so a finding can cite `path:line`. Git's

@@ -1,5 +1,6 @@
 import { Match, Option } from "effect"
 import type { LogDigest } from "./log-digest.entity.js"
+import { shownPath } from "./diff.entity.functions.js"
 import { droppedLines } from "./packed-diff.entity.functions.js"
 import { SKIPPED_BECAUSE } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
@@ -13,7 +14,7 @@ const SUMMARY_DROPPED_SHOWN = 5
 const digestLines = (name: string, log: LogDigest): ReadonlyArray<string> => [
   `  ${name}: ${log.ended}${Option.match(log.digest.summary, { onNone: () => "", onSome: (summary) => `; ${summary}` })}`,
   `    failures: ${log.digest.failures.length}${log.digest.onChangedPath ? ", some on changed paths" : ""}; log: ${log.logPath}`,
-  ...log.digest.failures.slice(0, 3).map((failure) => `    - ${failure.text.slice(0, 160)}${failure.count > 1 ? ` (seen ${failure.count} times)` : ""}`),
+  ...log.digest.failures.slice(0, 3).map((failure) => `    - ${shownPath(failure.text.slice(0, 160))}${failure.count > 1 ? ` (seen ${failure.count} times)` : ""}`),
 ]
 
 const failingLines = (failing: FailingRun): ReadonlyArray<string> => Match.valueTags(failing.log, {
@@ -31,12 +32,12 @@ export const summaryText = (prepared: PreparedReview): string => {
   const kept = prepared.diff.kept.length
   const ci = prepared.ci.map((run) => `${run.name}: ${Option.getOrElse(run.conclusion, () => run.status)}`)
   return [
-    `Pull request #${pull.number} in ${pull.repo}: ${pull.title}`,
+    `Pull request #${pull.number} in ${pull.repo}: ${shownPath(pull.title)}`,
     `Author: ${pull.author}${pull.authorIsBot ? " (a bot)" : ""}, permission ${pull.permission}; head ${pull.head.ref} at ${short(pull.head.sha)}${pull.sameRepo ? " (same repository)" : " (a fork)"}; base ${pull.base.ref} at ${short(pull.base.sha)}`,
     `Commits: ${pull.commits.length}${pull.commits[0] === undefined ? "" : `, first ${short(pull.commits[0].sha)} at ${pull.commits[0].committedAt}`}`,
     `Diff: ${prepared.verdicts.length} files, ${kept} kept, ${prepared.diff.dropped.length} left out; about ${prepared.diff.tokens} tokens`,
-    ...droppedLines(prepared.diff.dropped, SUMMARY_DROPPED_SHOWN).map((line) => `  left out: ${line.slice(2)}`),
-    `Rules: ${prepared.rules.length === 0 ? "none found" : prepared.rules.map((rule) => rule.path).join(", ")}`,
+    ...droppedLines(prepared.diff.dropped, prepared.verdicts.map((verdict) => verdict.path), SUMMARY_DROPPED_SHOWN).map((line) => `  left out: ${line.slice(2)}`),
+    `Rules: ${prepared.rules.length === 0 ? "none found" : prepared.rules.map((rule) => shownPath(rule.path)).join(", ")}`,
     `CI: ${ci.length === 0 ? "no runs for the head" : ci.join(", ")}`,
     `Failing checks: ${prepared.failing.length === 0 ? "none" : prepared.failing.length}`,
     ...prepared.failing.flatMap(failingLines),

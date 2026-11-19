@@ -2,8 +2,8 @@ import { Schema } from "effect"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
-/** A repository on the forge, `owner/name`: letters, digits, `.`, `_` and `-` on each side of one slash. */
-export const RepoName = Schema.String.check(Schema.isPattern(/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/)).pipe(Schema.brand("RepoName"))
+/** A repository on the forge, `owner/name`: letters, digits, `.`, `_` and `-` on each side of one slash, neither side `.` or `..`. */
+export const RepoName = Schema.String.check(Schema.isPattern(/^(?!\.\.?\/)[A-Za-z0-9_.-]+\/(?!\.\.?$)[A-Za-z0-9_.-]+$/)).pipe(Schema.brand("RepoName"))
 export type RepoName = typeof RepoName.Type
 
 /** A pull request's number in its repository. */
@@ -17,6 +17,13 @@ export type CommitSha = typeof CommitSha.Type
 /** A branch's name, as git reads it: no space, no `..`, and no leading `-`. */
 export const BranchName = Schema.String.check(Schema.isPattern(/^(?!-)(?!.*\.\.)[^\s~^:?*[\\]+$/)).pipe(Schema.brand("BranchName"))
 export type BranchName = typeof BranchName.Type
+
+/**
+ * The ref a forge serves a pull request's head under (GitHub's `refs/pull/<n>/head`), which the checkout fetches:
+ * under `refs/`, no `..`, no whitespace, `:`, `+`, `~`, `^`, `?`, `*`, `[` or `\`, and no part that starts with `-` or `.`.
+ */
+export const FetchRef = Schema.String.check(Schema.isPattern(/^refs\/(?!.*\.\.)(?!.*\/[-.])[^\s:+~^?*[\\]+[^/.]$/)).pipe(Schema.brand("FetchRef"))
+export type FetchRef = typeof FetchRef.Type
 
 /** A forge account's login: a person's, or an app's as `gh` names it (`app/<name>`, or `<name>[bot]`). */
 export const Login = Schema.String.check(Schema.isPattern(/^(app\/)?[A-Za-z0-9-]+(\[bot\])?$/)).pipe(Schema.brand("Login"))
@@ -50,6 +57,10 @@ export type PullCommit = typeof PullCommit.Type
 export const PullEnd = Schema.Struct({ ref: BranchName, sha: CommitSha })
 export type PullEnd = typeof PullEnd.Type
 
+/** The head as the checkout fetches it: its commit and the ref the forge serves it under. */
+export const HeadToFetch = Schema.Struct({ sha: CommitSha, fetchRef: FetchRef })
+export type HeadToFetch = typeof HeadToFetch.Type
+
 /**
  * A pull request as the reviewer reads it. `body` is the author's text: data, never instructions. `permission` is
  * the author's in the base repository (`none` for a bot or when the forge would not say). `headRepo` is the
@@ -66,6 +77,7 @@ export const PullRequest = Schema.Struct({
   permission: Permission,
   base: PullEnd,
   head: PullEnd,
+  fetchRef: FetchRef,
   headRepo: Schema.OptionFromNullOr(RepoName),
   sameRepo: Schema.Boolean,
   files: Schema.Array(ChangedFile),

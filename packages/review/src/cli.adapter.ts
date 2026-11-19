@@ -11,7 +11,6 @@ import { summaryText } from "./prepare-review.entity.functions.js"
 import { prepareReview } from "./prepare-review.usecase.js"
 import { PullNumber, RepoName } from "./pull-request.entity.js"
 import { directoryLogs } from "./review-logs.adapter.js"
-import { processValidations } from "./validations.adapter.js"
 
 /** What the command line reads of its process: the environment, the folder it runs in and the person's home. */
 export interface CliHost {
@@ -20,9 +19,18 @@ export interface CliHost {
   readonly home: string
 }
 
-/** The flags that take a value; `--run` and `--workflow` may be given more than once, the others once. */
-const VALUED = ["--repo", "--run", "--budget", "--workflow", "--cache", "--timeout-ms"]
-const REPEATED = ["--run", "--workflow"]
+/**
+ * What the command line gives `prepareReview`: the forge through `gh`, the clone through `git`, both on the host's
+ * shell, and the logs under the cache root. No `Validations` and no `Shell`: nothing of the pull request's runs.
+ */
+export const reviewLayers = (repo: RepoName, cacheRoot: string, host: CliHost) => {
+  const shell = hostShell({ cwd: host.cwd, env: { ...host.env, GIT_TERMINAL_PROMPT: "0" } })
+  return Layer.mergeAll(ghForge, gitCheckout({ cacheRoot }), directoryLogs(join(cacheRoot, ...repo.split("/"), "reviews"))).pipe(Layer.provide(shell))
+}
+
+/** The flags that take a value; `--workflow` may be given more than once, the others once. */
+const VALUED = ["--repo", "--budget", "--workflow", "--cache"]
+const REPEATED = ["--workflow"]
 const SWITCHES = ["--json"]
 
 /** A parsed command line: the positional words, each valued flag's values in order, and the switches given. */
@@ -34,7 +42,7 @@ interface Line {
 
 const usage = (message: string) => new UsageError({ message: `${message}\n${USAGE}` })
 
-/** Read the arguments: `--flag value` or `--flag=value`; a value is taken whole (a command is never split at commas). */
+/** Read the arguments: `--flag value` or `--flag=value`; a value is taken whole (never split at commas). */
 export const cliLine = (raw: ReadonlyArray<string>): Effect.Effect<Line, UsageError> => Effect.suspend(() => {
   const words: Array<string> = []
   const values = new Map<string, Array<string>>()
@@ -69,8 +77,9 @@ const wholeNumber = (text: string, what: string) => {
 /**
  * The command line: `prepare <number> --repo <owner/name>` reads the pull request, prepares it (`prepareReview`)
  * and prints a short summary, or the whole prepared review as JSON with `--json`. Clones and logs go under `--cache`
- * (`~/.efferent-review` by default; never inside a repository). `gh` and `git` run with the host's environment; the
- * `--run` commands with only `PATH` and a throwaway `HOME`. Answers the exit code: 0 once printed.
+ * (`~/.efferent-review` by default; never inside a repository). `gh` and `git` run with the host's environment. It
+ * runs none of the pull request's commands: it provides no `Validations`, since none that is a sandbox ships yet.
+ * Answers the exit code: 0 once printed.
  */
 export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<string>, host: CliHost) {
   const line = yield* cliLine(raw)
@@ -80,16 +89,13 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const number = yield* decodedAs(PullNumber, Number(numberText), "the pull request's number")
   const options: PrepareOptions = {
     budgetTokens: yield* Option.match(one(line, "--budget"), { onNone: () => Effect.succeed(DEFAULT_BUDGET_TOKENS), onSome: (text) => wholeNumber(text, "--budget") }),
-    run: line.values.get("--run") ?? [],
+    run: [],
     workflows: line.values.get("--workflow") ?? [],
     limits: DIGEST_LIMITS,
-    timeoutMs: yield* Option.match(one(line, "--timeout-ms"), { onNone: () => Effect.succeed(600_000), onSome: (text) => wholeNumber(text, "--timeout-ms") }),
+    timeoutMs: 600_000,
   }
   const cacheRoot = Option.getOrElse(one(line, "--cache"), () => join(host.home, ".efferent-review"))
-  const shell = hostShell({ cwd: host.cwd, env: { ...host.env, GIT_TERMINAL_PROMPT: "0" } })
-  const logs = directoryLogs(join(cacheRoot, ...repo.split("/"), "reviews"))
-  const layers = Layer.mergeAll(ghForge, gitCheckout({ cacheRoot }), logs, processValidations({ path: host.env["PATH"] ?? "/usr/bin:/bin" }).pipe(Layer.provide(logs))).pipe(Layer.provide(shell))
-  const prepared = yield* prepareReview(repo, number, options).pipe(Effect.provide(layers))
+  const prepared = yield* prepareReview(repo, number, options).pipe(Effect.provide(reviewLayers(repo, cacheRoot, host)))
   if (line.switches.has("--json")) {
     const encoded = yield* Schema.encodeEffect(PreparedReview)(prepared).pipe(Effect.orDie)
     yield* Console.log(JSON.stringify(encoded, null, 2))

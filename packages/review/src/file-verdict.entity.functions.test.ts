@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { attributesOf, fileVerdict } from "./file-verdict.entity.functions.js"
+import type { FileStats } from "./file-verdict.entity.js"
 
-const changed = { additions: 3, deletions: 1, binary: false }
+const changed = { change: "modified" as const, additions: 3, deletions: 1, binary: false }
 
 const ATTRIBUTES = attributesOf([
   "# generated code",
@@ -31,7 +32,7 @@ describe("attributesOf", () => {
 })
 
 describe("fileVerdict", () => {
-  const cases: ReadonlyArray<readonly [string, string, { additions: number; deletions: number; binary: boolean }, string]> = [
+  const cases: ReadonlyArray<readonly [string, string, FileStats, string]> = [
     ["a lockfile at the root", "bun.lock", changed, "lockfile"],
     ["a lockfile in a package", "packages/app/yarn.lock", changed, "lockfile"],
     ["Cargo.lock", "crates/x/Cargo.lock", changed, "lockfile"],
@@ -42,13 +43,13 @@ describe("fileVerdict", () => {
     ["an anchored pattern does not match deeper", "docs/api/list.txt", changed, "Kept"],
     ["a folder pattern with **", "dist/app/index.js", changed, "generated"],
     ["a later line unsets an earlier one", "dist/keep.js", changed, "Kept"],
-    ["a vendored folder", "vendor/lib/a.go", changed, "vendored"],
-    ["a vendored folder at depth", "pkg/third_party/z.c", changed, "vendored"],
-    ["a vendored folder .gitattributes unmarks", "third_party/ours/a.c", changed, "Kept"],
-    ["a file .gitattributes marks vendored", "lib/vendored-copy/a.js", changed, "vendored"],
-    ["a binary file", "logo.png", { additions: 0, deletions: 0, binary: true }, "binary"],
-    ["a file that only deletes lines", "src/old.ts", { additions: 0, deletions: 12, binary: false }, "deletion-only"],
-    ["a pure rename, no lines", "src/moved.ts", { additions: 0, deletions: 0, binary: false }, "Kept"],
+    ["a folder named vendor is kept: the pull request chooses its folders", "vendor/lib/a.go", changed, "Kept"],
+    ["so is third_party", "pkg/third_party/z.c", changed, "Kept"],
+    ["a file the base's .gitattributes marks vendored", "lib/vendored-copy/a.js", changed, "vendored"],
+    ["a binary file", "logo.png", { change: "modified", additions: 0, deletions: 0, binary: true }, "binary"],
+    ["a deleted file", "src/old.ts", { change: "deleted", additions: 0, deletions: 12, binary: false }, "deleted"],
+    ["a file that stays and only loses lines (a removed check) is kept", "src/auth.ts", { change: "modified", additions: 0, deletions: 3, binary: false }, "Kept"],
+    ["a pure rename, no lines", "src/moved.ts", { change: "renamed", additions: 0, deletions: 0, binary: false }, "Kept"],
     ["a file that changes lines", "src/app.ts", changed, "Kept"],
   ]
   test.each(cases)("%s", (_, path, stats, expected) => {

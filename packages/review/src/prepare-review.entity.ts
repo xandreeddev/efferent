@@ -23,14 +23,18 @@ export type PrepareOptions = typeof PrepareOptions.Type
 /** The default budget of the diff the model reads, in estimated tokens. */
 export const DEFAULT_BUDGET_TOKENS = 24_000
 
-/** Why the commands asked for were not run: the head is a fork's, or its author may not write to the repository. */
-export const SkipReason = Schema.Literals(["fork", "permission"])
+/**
+ * Why the commands asked for were not run: the head is a fork's, its author may not write to the repository, or the
+ * host gave no `Validations` (none ships: a pull request's commands run only in a sandbox the host provides).
+ */
+export const SkipReason = Schema.Literals(["fork", "permission", "no-sandbox"])
 export type SkipReason = typeof SkipReason.Type
 
 /** The words for each reason. */
 export const SKIPPED_BECAUSE: Readonly<Record<SkipReason, string>> = {
   fork: "the head branch is not in the base repository, so its scripts are not run",
   permission: "the author may not write to the repository, so their scripts are not run",
+  "no-sandbox": "no sandbox to run them in was given, so nothing is run",
 }
 
 /** The commands asked for: none asked, not run with the reason, or run with a digest of each. */

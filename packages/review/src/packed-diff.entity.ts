@@ -24,9 +24,15 @@ export const PackedDiff = Schema.Struct({
 })
 export type PackedDiff = typeof PackedDiff.Type
 
-/** What kind of file a path is, for the order files are packed in: code first, then docs, then config. */
-export const FileKind = Schema.Literals(["code", "docs", "config"])
+/**
+ * What kind of file a path is, for the order files are packed in: a manifest or CI file (`package.json` of any
+ * workspace, a lockfile's manifests, `tsconfig*.json`, `.github/workflows/*`), other config, code, or docs.
+ */
+export const FileKind = Schema.Literals(["manifest", "config", "code", "docs"])
 export type FileKind = typeof FileKind.Type
+
+/** The most lines a config file may change and still be packed with the manifests, before the code. */
+export const SMALL_CONFIG_LINES = 200
 
 /** How many files left out the packed diff names one by one; the rest are counted by reason. */
 export const DROPPED_SHOWN = 30

@@ -34,12 +34,14 @@ export type FileChange = typeof FileChange.Type
 
 /**
  * One file of a diff: its path in the new tree (the old one for a deleted file), the path it had before a rename,
- * how it changed, whether git saw it as binary (then it has no hunks), the lines added and removed, and its hunks.
+ * how it changed, its mode change when it has one, whether git saw it as binary (then it has no hunks), the lines
+ * added and removed, and its hunks. A path is the pull request's text: it may hold any character but `/` and NUL.
  */
 export const FileDiff = Schema.Struct({
   path: Schema.String,
   oldPath: Schema.OptionFromNullOr(Schema.String),
   change: FileChange,
+  modeChange: Schema.OptionFromNullOr(Schema.Struct({ from: Schema.String, to: Schema.String })),
   binary: Schema.Boolean,
   additions: Count,
   deletions: Count,

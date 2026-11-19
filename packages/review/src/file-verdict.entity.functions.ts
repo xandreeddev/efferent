@@ -1,15 +1,12 @@
 import { Option } from "effect"
+import { LOCKFILE_MANIFESTS } from "./file-verdict.entity.js"
 import type { AttributeRule, FileStats, FileVerdict } from "./file-verdict.entity.js"
 
-/** Lockfiles, by name: what a package manager writes, never what a person reviews. */
-export const LOCKFILES: ReadonlySet<string> = new Set([
-  "bun.lock", "bun.lockb", "yarn.lock", "package-lock.json", "npm-shrinkwrap.json", "pnpm-lock.yaml", "deno.lock",
-  "Cargo.lock", "go.sum", "poetry.lock", "Pipfile.lock", "uv.lock", "pdm.lock", "Gemfile.lock", "composer.lock",
-  "mix.lock", "pubspec.lock", "Podfile.lock", "packages.lock.json", "flake.lock", "gradle.lockfile",
-])
+/** A path's last segment. */
+export const nameOf = (path: string): string => path.split("/").at(-1) ?? path
 
-/** Folders whose files are someone else's code, at any depth. */
-export const VENDORED_FOLDERS: ReadonlySet<string> = new Set(["vendor", "vendored", "third_party", "third-party", "node_modules", "bower_components"])
+/** Whether a path is a lockfile (`LOCKFILE_MANIFESTS`), by its name. */
+export const isLockfile = (path: string): boolean => Object.hasOwn(LOCKFILE_MANIFESTS, nameOf(path))
 
 /** A `.gitattributes` pattern as a regular expression over a path from the repository's root, as git matches it. */
 const patternOf = (pattern: string): RegExp => {
@@ -60,19 +57,15 @@ const attributeOf = (path: string, rules: ReadonlyArray<AttributeRule>, pick: (r
   }, Option.none())
 
 /**
- * Whether a changed file goes into the diff the model reads, and why not: a lockfile by its name; a file
- * `.gitattributes` marks `linguist-generated`; one it marks `linguist-vendored`, or in a vendored folder it does not
- * unmark; a binary file; a file that adds no line and removes some. The first that holds is the reason.
+ * Whether a changed file goes into the diff the model reads, and why not: a lockfile by its name; a file the base's
+ * `.gitattributes` marks `linguist-generated` or `linguist-vendored` (a folder's name alone drops nothing); a binary
+ * file; a deleted file. A file that stays but only loses lines is kept. The first that holds is the reason.
  */
 export const fileVerdict = (path: string, stats: FileStats, attributes: ReadonlyArray<AttributeRule>): FileVerdict => {
-  const name = path.split("/").at(-1) ?? path
-  const folders = path.split("/").slice(0, -1)
-  const generated = attributeOf(path, attributes, (rule) => rule.generated)
-  const vendored = attributeOf(path, attributes, (rule) => rule.vendored)
-  if (LOCKFILES.has(name)) return { _tag: "Dropped", path, reason: "lockfile" }
-  if (Option.getOrElse(generated, () => false)) return { _tag: "Dropped", path, reason: "generated" }
-  if (Option.getOrElse(vendored, () => folders.some((folder) => VENDORED_FOLDERS.has(folder)))) return { _tag: "Dropped", path, reason: "vendored" }
+  if (isLockfile(path)) return { _tag: "Dropped", path, reason: "lockfile" }
+  if (Option.getOrElse(attributeOf(path, attributes, (rule) => rule.generated), () => false)) return { _tag: "Dropped", path, reason: "generated" }
+  if (Option.getOrElse(attributeOf(path, attributes, (rule) => rule.vendored), () => false)) return { _tag: "Dropped", path, reason: "vendored" }
   if (stats.binary) return { _tag: "Dropped", path, reason: "binary" }
-  if (stats.additions === 0 && stats.deletions > 0) return { _tag: "Dropped", path, reason: "deletion-only" }
+  if (stats.change === "deleted") return { _tag: "Dropped", path, reason: "deleted" }
   return { _tag: "Kept", path }
 }

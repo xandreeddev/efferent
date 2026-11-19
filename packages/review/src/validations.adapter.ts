@@ -1,11 +1,6 @@
-import { mkdtemp, rm } from "node:fs/promises"
-import { tmpdir } from "node:os"
-import { join } from "node:path"
 import { Effect, Layer, Match, Option } from "effect"
-import { Shell, ShellRefused, ShellUnavailable } from "@xandreed/sdk"
+import { Shell, ShellRefused } from "@xandreed/sdk"
 import type { Ran } from "@xandreed/sdk"
-import { processShell } from "@xandreed/sdk/node"
-import { HOST_OUTPUT_BYTES } from "./host-shell.adapter.js"
 import type { LogDigest } from "./log-digest.entity.js"
 import { digestLog } from "./log-digest.entity.functions.js"
 import { ReviewLogs } from "./review-logs.port.js"
@@ -14,17 +9,14 @@ import { Validations } from "./validations.port.js"
 
 /**
  * A `Shell` that runs only `commands`, each exactly as written, over the one it is given; any other command is
- * refused with `ShellRefused` and not run.
+ * refused with `ShellRefused` and not run. A guard on which commands run, never isolation: what a listed command can
+ * reach is the inner shell's to bound.
  */
-export const allowOnly = (commands: ReadonlyArray<string>) => <E, R>(shell: Layer.Layer<Shell, E, R>): Layer.Layer<Shell, E, R> =>
-  Layer.effect(Shell, Effect.gen(function* () {
-    const inner = yield* Shell
-    return Shell.of({
-      run: (request) => commands.includes(request.command)
-        ? inner.run(request)
-        : Effect.fail(new ShellRefused({ reason: "only the review's own commands run here", message: `declined ${request.command.slice(0, 200)}` })),
-    })
-  })).pipe(Layer.provide(shell))
+export const allowOnly = (commands: ReadonlyArray<string>, inner: Shell["Service"]): Shell["Service"] => Shell.of({
+  run: (request) => commands.includes(request.command)
+    ? inner.run(request)
+    : Effect.fail(new ShellRefused({ reason: "only the review's own commands run here", message: `declined ${request.command.slice(0, 200)}` })),
+})
 
 /** How a command ended, in words, and its exit code when it exited. */
 const endedOf = (ran: Ran): { readonly ended: string; readonly exit: Option.Option<number> } => Match.valueTags(ran.ended, {
@@ -41,44 +33,25 @@ const logText = (ran: Ran): string => [
 ].join("\n")
 
 /**
- * How the validations run: the host's `PATH` (the one variable a command is given besides `HOME`), and, for tests, a
- * smaller output bound.
+ * Validations over the `Shell` the host provides, which MUST be a sandbox: a pull request's commands are the pull
+ * request's code, and a process of the host's user can read the host's environment, credentials and clones whatever
+ * variables it is given. None ships yet, so the command line provides no `Validations` and runs nothing. Each command
+ * runs in the worktree under `allowOnly` the request's commands, with the request's time; its whole log is kept as
+ * `<logFolder>/run-<n>.log`, stdout then stderr, and digested.
  */
-export interface ProcessValidationsOptions {
-  readonly path: string
-  readonly outputBytes?: number
-}
-
-/**
- * Validations through the kernel's `processShell`, under `allowOnly` the request's commands: each in the worktree with
- * exactly `PATH` (the host's) and `HOME` (a folder made for the run and deleted after it), no other variable, so no key
- * of the host's reaches a command of the pull request's; the request's time each; the whole log kept as
- * `<logFolder>/run-<n>.log`.
- */
-export const processValidations = (options: ProcessValidationsOptions): Layer.Layer<Validations, never, ReviewLogs> => Layer.effect(Validations, Effect.gen(function* () {
+export const shellValidations: Layer.Layer<Validations, never, ReviewLogs | Shell> = Layer.effect(Validations, Effect.gen(function* () {
   const logs = yield* ReviewLogs
+  const sandbox = yield* Shell
   const run = Effect.fn("validations.run")(function* (request: ValidationRequest) {
-    const home = yield* Effect.acquireRelease(
-      Effect.tryPromise({
-        try: () => mkdtemp(join(tmpdir(), "efferent-review-home-")),
-        catch: (cause) => new ShellUnavailable({ message: `a home folder for the commands could not be made: ${cause instanceof Error ? cause.message : "no reason given"}` }),
-      }),
-      (folder) => Effect.tryPromise(() => rm(folder, { recursive: true, force: true })).pipe(Effect.ignore({ log: "Warn", message: "the commands' home folder could not be deleted" })),
-    )
-    const shell = allowOnly(request.commands)(processShell({
-      cwd: request.cwd,
-      env: { PATH: options.path, HOME: home },
-      outputBytes: options.outputBytes ?? HOST_OUTPUT_BYTES,
-      timeoutMs: request.timeoutMs,
-    }))
+    const shell = allowOnly(request.commands, sandbox)
     return yield* Effect.forEach(request.commands, (command, index) => Effect.gen(function* () {
-      const ran = yield* (yield* Shell).run({ command })
+      const ran = yield* shell.run({ command, cwd: request.cwd, timeoutMs: request.timeoutMs })
       const text = logText(ran)
       const logPath = yield* logs.keep(`${request.logFolder}/run-${index + 1}.log`, text)
       const { ended, exit } = endedOf(ran)
       const digest: LogDigest = { source: { _tag: "Command", command }, exit, ended, digest: digestLog(text, request.changedPaths, request.limits), logPath }
       return digest
-    }), { concurrency: 1 }).pipe(Effect.provide(shell))
-  }, Effect.scoped)
+    }), { concurrency: 1 })
+  })
   return Validations.of({ run })
 }))

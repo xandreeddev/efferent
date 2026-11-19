@@ -1,11 +1,13 @@
 import { Schema } from "effect"
+import { FileChange } from "./diff.entity.js"
 
 /**
- * Why a file is left out of the diff the model reads: a lockfile, a file `.gitattributes` marks
- * `linguist-generated` or one it or its folder marks vendored, a binary file, a file the change only deletes lines
- * from, or one the token budget had no room for.
+ * Why a file is left out of the diff the model reads: a lockfile, a file `.gitattributes` at the base marks
+ * `linguist-generated` or `linguist-vendored` (a folder's name alone never drops a file: the pull request chooses
+ * it), a binary file, a deleted file, or one the token budget had no room for. A file that stays but only loses lines
+ * is shown: a removed check is a change to review.
  */
-export const DropReason = Schema.Literals(["lockfile", "generated", "vendored", "binary", "deletion-only", "over-budget"])
+export const DropReason = Schema.Literals(["lockfile", "generated", "vendored", "binary", "deleted", "over-budget"])
 export type DropReason = typeof DropReason.Type
 
 /** The words for each reason, as a summary and the model read them. */
@@ -14,7 +16,7 @@ export const DROPPED_BECAUSE: Readonly<Record<DropReason, string>> = {
   generated: "marked generated",
   vendored: "vendored code",
   binary: "a binary file",
-  "deletion-only": "only deletes lines",
+  deleted: "deleted",
   "over-budget": "no room in the token budget",
 }
 
@@ -25,8 +27,9 @@ export const FileVerdict = Schema.Union([
 ])
 export type FileVerdict = typeof FileVerdict.Type
 
-/** What a verdict reads of a file besides its path: the lines it adds and removes, and whether git saw it as binary. */
+/** What a verdict reads of a file besides its path: how it changed, the lines added and removed, and whether it is binary. */
 export const FileStats = Schema.Struct({
+  change: FileChange,
   additions: Schema.Int,
   deletions: Schema.Int,
   binary: Schema.Boolean,
@@ -43,3 +46,30 @@ export const AttributeRule = Schema.Struct({
   vendored: Schema.OptionFromNullOr(Schema.Boolean),
 })
 export type AttributeRule = typeof AttributeRule.Type
+
+/**
+ * Lockfiles, by name, and the manifests whose change a lockfile's change should follow: a lockfile that changed with
+ * none of them changed is worth a reader's eye.
+ */
+export const LOCKFILE_MANIFESTS: Readonly<Record<string, ReadonlyArray<string>>> = {
+  "bun.lock": ["package.json"],
+  "bun.lockb": ["package.json"],
+  "yarn.lock": ["package.json"],
+  "package-lock.json": ["package.json"],
+  "npm-shrinkwrap.json": ["package.json"],
+  "pnpm-lock.yaml": ["package.json", "pnpm-workspace.yaml"],
+  "deno.lock": ["deno.json", "deno.jsonc", "package.json"],
+  "Cargo.lock": ["Cargo.toml"],
+  "go.sum": ["go.mod"],
+  "poetry.lock": ["pyproject.toml"],
+  "uv.lock": ["pyproject.toml"],
+  "pdm.lock": ["pyproject.toml"],
+  "Pipfile.lock": ["Pipfile"],
+  "Gemfile.lock": ["Gemfile", "gems.rb"],
+  "composer.lock": ["composer.json"],
+  "mix.lock": ["mix.exs"],
+  "pubspec.lock": ["pubspec.yaml"],
+  "Podfile.lock": ["Podfile"],
+  "flake.lock": ["flake.nix"],
+  "gradle.lockfile": ["build.gradle", "build.gradle.kts"],
+}

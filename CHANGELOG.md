@@ -36,13 +36,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - A new package, `@xandreed/review`, is the start of a pull request
   reviewer: `efferent-review prepare <number> --repo <owner/name>` reads a
   pull request through `gh`, fetches it into a clone kept outside any
-  repository, drops lockfiles, generated, vendored, binary and
-  deletion-only files from its diff and packs the rest under a token
-  budget with new-side line numbers, reads the repository's instruction
-  files at the base commit, digests the logs of its failed CI runs, and,
-  with `--run`, runs commands in a worktree of the head for a same-repository
-  author with write access, with only `PATH` and a throwaway `HOME`. It asks
-  no model yet. It is private: no release publishes it until its evals pass.
+  repository, leaves lockfiles (each named with whether a manifest changed
+  too), generated or vendored files (by the base's `.gitattributes`),
+  binary and deleted files out of its diff and packs the rest under a token
+  budget, manifests and CI files first, with new-side line numbers, reads the repository's instruction
+  files at the base commit, and digests the logs of its failed CI runs. It
+  runs nothing of the pull request's: its commands run only through a
+  sandboxed shell a host provides, and none ships yet. It asks no model
+  yet. It is private: no release publishes it until its evals pass.
 
 ## 0.23.0 — 2026-11-19
 
