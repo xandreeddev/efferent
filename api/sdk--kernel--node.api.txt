@@ -4,6 +4,8 @@ const DEFAULT_MAX_BYTES
 const DIRECTORY_LAYOUT
 const DIRECTORY_STORE
 const DirectoryMarker
+const EMBEDDER_NAME_LIMIT
+const EMBEDDING_TIMEOUTS
 const ModelPrice
 const OpenRefusal
 const OtlpCompression
@@ -17,6 +19,7 @@ const directoryJournal
 const diskFiles
 const flushTelemetry
 const isSpendRefusal
+const openAiCompatibleEmbedder
 const openAiCompatibleModel
 const otlpTelemetry
 const otlpTelemetryFromEnv
@@ -28,6 +31,8 @@ const sqliteJournal
 interface AnthropicOptions
 interface DirectoryJournalOptions
 interface DiskFilesOptions
+interface EmbedPrefixes
+interface OpenAiCompatibleEmbedderOptions
 interface OpenAiCompatibleOptions
 interface OtlpSpanPolicy
 interface OtlpTelemetryOptions

@@ -143,6 +143,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-model-spend",
   "sdk-kernel-node-model-openai-compatible",
   "sdk-kernel-node-model-anthropic",
+  "sdk-kernel-node-embedder-openai-compatible",
   "sdk-kernel-node-shell-process",
   "sdk-kernel-node-files-disk",
   "sdk-kernel-node-telemetry-otlp",
@@ -618,6 +619,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
+      // An embedder over the OpenAI-compatible `/embeddings` wire (ADR 0032): the contract it implements, and the charge the
+      // model providers share, since its requests charge the ledger as theirs do.
+      { name: "sdk-kernel-node-embedder-openai-compatible", path: "packages/sdk/src/kernel/node/embedder-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       // The workspace's ports (ADR 0028): a shell over `node:child_process`, and files in a folder of the disk. Each imports the contract it implements
       // from `sdk-kernel-contracts` and nothing of another port's folder; it holds no store, so it takes no lock.
       { name: "sdk-kernel-node-shell-process", path: "packages/sdk/src/kernel/node/shell-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
@@ -626,7 +630,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // a layer around the host's program. It imports nothing of the kernel: the spans and metrics it sends are the
       // program's, whoever made them.
       { name: "sdk-kernel-node-telemetry-otlp", path: "packages/sdk/src/kernel/node/telemetry-otlp/**", canImport: [], externals: ["effect", "effect/ai", "effect/http", "effect/observability"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk", "sdk-kernel-node-telemetry-otlp"], externals: [] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-embedder-openai-compatible", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk", "sdk-kernel-node-telemetry-otlp"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },

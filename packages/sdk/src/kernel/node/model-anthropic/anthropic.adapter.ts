@@ -72,7 +72,7 @@ export const anthropicModel = (options: AnthropicOptions): Layer.Layer<LanguageM
       ...(options.baseUrl === undefined ? {} : { apiUrl: options.baseUrl.replace(/\/+$/, "") }),
       transformClient: reaching(options.timeouts ?? {}),
     })
-    const charging: Charging = { spend, options: options.spend, model: options.model, module: ANTHROPIC }
+    const charging: Charging = { spend, options: options.spend, model: options.model, operation: "chat", module: ANTHROPIC }
     const idle = Duration.fromInputUnsafe(options.timeouts?.idle ?? DEFAULT_TIMEOUTS.idle)
     const bound = outputBoundOf(Option.fromNullishOr(options.maxOutputTokens), priceOf(options.spend, options.model))
     // What a request holds: its body's size, and the output cap it is sent with (the bound, which the model's config

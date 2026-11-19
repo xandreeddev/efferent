@@ -88,10 +88,11 @@ metrics carry, are `efferent.*`; OpenTelemetry's own keys (`gen_ai.*`) are kept 
 | `knowledge.curate`, `knowledge.curate_again` | the curation step |
 | `scripted_model.make`, `scripted_shell.make` | the scripted model and shell |
 | `journal_directory.<op>`, `journal_sqlite.<op>`, `disk_files.<op>`, `files_search.find`, `process_shell.run` | the Node entry's ports (unchanged) |
+| `openai_compatible_embedder.embed` | the Node entry's embedder (ADR 0032) |
 
 | Metric | Attribute keys |
 |---|---|
-| `efferent.model.calls`, `efferent.model.tokens`, `efferent.model.cost`, `efferent.tool.calls` | `efferent.model`, `efferent.outcome`, `efferent.token.kind`, `efferent.cost.basis`, `efferent.tool` |
+| `efferent.model.calls`, `efferent.model.tokens`, `efferent.model.cost`, `efferent.tool.calls` | `efferent.model`, `gen_ai.operation.name`, `efferent.outcome`, `efferent.token.kind`, `efferent.cost.basis`, `efferent.tool` |
 
 Span attributes: `efferent.session.id` and `gen_ai.conversation.id` (a session, under the old engine's key and
 OpenTelemetry's, which backends group a conversation's traces by), `efferent.turn`, `efferent.outcome`,
@@ -163,9 +164,9 @@ content off it also withholds a failure's words and a log's text, as above.
 
 | Metric | Where | Attributes |
 |---|---|---|
-| `efferent.model.calls` | the Node entry's charge, as it closes a call's hold | `efferent.model` (the model asked and priced), `efferent.outcome` (`answered`, `failed`, `refused` by the provider, `unsent`, `interrupted`) |
-| `efferent.model.tokens` | the charge, for a call whose provider reported usage | `efferent.model`, `efferent.token.kind` (`input` not read from the cache, `cache_read`, `cache_write`, `output`: apart, as `costOf` prices them) |
-| `efferent.model.cost` | the charge, once the ledger settled a hold | `efferent.model`, `efferent.cost.basis` (`billed`, `usage`, `held`) |
+| `efferent.model.calls` | the Node entry's charge, as it closes a call's hold | `efferent.model` (the model asked and priced), `gen_ai.operation.name` (`chat` for a model's call, `embeddings` for an embedder's, ADR 0032), `efferent.outcome` (`answered`, `failed`, `refused` by the provider, `unsent`, `interrupted`) |
+| `efferent.model.tokens` | the charge, for a call whose provider reported usage | `efferent.model`, `gen_ai.operation.name`, `efferent.token.kind` (`input` not read from the cache, `cache_read`, `cache_write`, `output`: apart, as `costOf` prices them) |
+| `efferent.model.cost` | the charge, once the ledger settled a hold | `efferent.model`, `gen_ai.operation.name`, `efferent.cost.basis` (`billed`, `usage`, `held`) |
 | `efferent.tool.calls` | `callTool` | `efferent.tool` (`unknown` for a name the toolkit has not), `efferent.outcome` (`succeeded`, `failed`) |
 
 - **Calls, tokens and cost are counted in one place**, the charge (`model-spend/`), which sees every call a provider

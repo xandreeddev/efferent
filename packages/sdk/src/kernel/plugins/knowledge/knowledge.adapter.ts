@@ -1,5 +1,6 @@
-import { Array as Arr, Effect, Layer, Option, Result } from "effect"
+import { Array as Arr, Effect, Layer, Option, Predicate, Ref, Result } from "effect"
 import { Sessions } from "@xandreed/core/kernel"
+import type { EmbedFailed, Vector } from "../../contracts/embedder/embedder.entity.js"
 import { Embedder } from "../../contracts/embedder/embedder.port.js"
 import { knowledgeOf } from "../../contracts/knowledge/knowledge.entity.functions.js"
 import {
@@ -51,6 +52,21 @@ export const withKnowledge = (options: KnowledgeOptions = {}) => {
  */
 const EMBED_CHUNK = 32
 
+/** The most distinct reasons one layer warns of an embedder's failure for: past them it goes on, and says no more. */
+const WARNED_REASONS = 32
+
+/**
+ * What an embedder's failure is, for its warning to be said once: its cause's tag and that cause's reason's
+ * (`AiError/AuthenticationError`, `ModelSpendExceeded`), so the same refusal of every request is one reason whatever
+ * its words; else its words.
+ */
+const reasonOf = (failed: EmbedFailed): string => {
+  const cause: unknown = failed.cause
+  const tags = [cause, Predicate.hasProperty(cause, "reason") ? cause.reason : undefined]
+    .flatMap((value) => (Predicate.hasProperty(value, "_tag") && Predicate.isString(value._tag) ? [value._tag] : []))
+  return tags.length > 0 ? tags.join("/") : failed.message
+}
+
 /**
  * A wrapper of `Memory` (ADRs 0005, 0023 and 0025): `withKnowledge`, with a third list, ranked by meaning, fused by
  * rank with the list about a seed and the list the message's words reach. It needs an `Embedder` and a `VectorStore`
@@ -70,7 +86,13 @@ const EMBED_CHUNK = 32
  * list by meaning and the embedder's model; a listener that fails is logged and costs the request nothing. An
  * embedder that fails (`EmbedFailed`, for a passage or the message: a model not loaded yet, a service down or refused
  * by a spend cap) does not fail the context: the list by meaning is skipped for that request, recall runs by the other
- * lists as weighted, and the event says why (`meaning.skipped`). A store that refuses (`VectorsRefused`) fails the
+ * lists as weighted, and the event says why (`meaning.skipped`). So that an embedder that never works (a wrong key, a
+ * model with no price) is seen, the layer logs a warning the first time each reason fails it (by the failure's cause
+ * and that cause's reason, else its words; at most 32 reasons a layer), and nothing more for it after.
+ *
+ * The last message's vector is kept by the layer for the turn it was asked in, while the message is the same: the steps
+ * of one turn, each asking for a context, embed it once; the next turn embeds its own, the same words included. Passages are embedded 32 a call and each call's vectors put as it returns, so a call that
+ * fails leaves those before it stored, and the next request embeds only what is still missing. A store that refuses (`VectorsRefused`) fails the
  * context as it is; a store whose medium fails (`VectorsUnavailable`) is a defect, as its port says. A `floor` leaves
  * out of the list by meaning every text whose cosine is under it. Options that are none are refused here, where they are written, and an embedder's model name that
  * cannot key a vector (more than `MEANING_MODEL_LIMIT` characters) where the layer is built.
@@ -87,8 +109,28 @@ export const withKnowledgeByMeaning = (options: MeaningOptions = {}) => {
       const store = yield* VectorStore
       const model = yield* Result.match(checkedModel(embedder.model), { onFailure: (problem) => Effect.die(new Error(problem)), onSuccess: Effect.succeed })
       const unavailable = { VectorsUnavailable: Effect.die } as const
+      // The last message embedded in a turn, and its vector: the steps of a turn ask with the same message.
+      const lastAsked = yield* Ref.make(Option.none<{ readonly turn: string; readonly text: string; readonly vector: Vector }>())
+      const warned = yield* Ref.make<ReadonlySet<string>>(new Set())
+      /** Warn of an embedder's failure the first time its reason is met, at most `WARNED_REASONS` reasons. */
+      const warnOnce = (failed: EmbedFailed) => Effect.flatMap(Ref.modify(warned, (seen): readonly [boolean, ReadonlySet<string>] => {
+        const reason = reasonOf(failed)
+        return seen.has(reason) || seen.size >= WARNED_REASONS ? [false, seen] : [true, new Set([...seen, reason])]
+      }), (first) => (first
+        ? Effect.logWarning(`recall by meaning is skipped: the embedder ${model} failed, so memories are found by their words alone until it works (${reasonOf(failed)})`)
+        : Effect.void))
+      /** The last message's vector: kept for the steps of one turn while the message is the same, else embedded as a query. */
+      const queryVector = (turn: string, last: string) => Effect.flatMap(Ref.get(lastAsked), (kept) => Option.match(Option.filter(kept, (one) => one.turn === turn && one.text === last), {
+        onSome: (one) => Effect.succeed(one.vector),
+        onNone: () => Effect.flatMap(embedder.embed([last], "query"), (vectors) => {
+          const vector = vectors[0]
+          return vector === undefined
+            ? Effect.die(new Error("the embedder gave no vector for the last message"))
+            : Effect.as(Ref.set(lastAsked, Option.some({ turn, text: last, vector })), vector)
+        }),
+      }))
       /** The texts nearest the last message among those given, `pool` of them: what is missing embedded and put first. */
-      const nearest = Effect.fnUntraced(function* (texts: ReadonlyArray<string>, last: string) {
+      const nearest = Effect.fnUntraced(function* (texts: ReadonlyArray<string>, last: string, turn: string) {
         // Every key is made from a model checked where the layer was built and a text the journal held to its limit.
         const keyed = yield* Effect.orDie(Effect.fromResult(Result.all(texts.map((text) => Result.map(meaningKey(model, text), (key) => ({ text, key }))))))
         const keys = keyed.map(({ key }) => key)
@@ -100,8 +142,7 @@ export const withKnowledgeByMeaning = (options: MeaningOptions = {}) => {
           if (vectors.length !== chunk.length) return yield* Effect.die(new Error(`the embedder gave ${vectors.length} vectors for ${chunk.length} texts`))
           yield* store.put(chunk.map(({ key }, at) => ({ key, vector: vectors[at] ?? [] }))).pipe(Effect.catchTags(unavailable))
         }), { concurrency: 1, discard: true })
-        const asked = (yield* embedder.embed([last], "query"))[0]
-        if (asked === undefined) return yield* Effect.die(new Error("the embedder gave no vector for the last message"))
+        const asked = yield* queryVector(turn, last)
         const found = yield* store.search(asked, { limit: checked.pool, among: keys }).pipe(Effect.catchTags(unavailable))
         return found.flatMap(({ key, score }): ReadonlyArray<FoundText> => Option.toArray(Option.map(Option.fromNullishOr(textOf.get(key)), (text) => ({ text, cosine: score }))))
       })
@@ -114,9 +155,9 @@ export const withKnowledgeByMeaning = (options: MeaningOptions = {}) => {
           // An embedder that fails (a model not loaded, a service down or over its budget) costs the request the list by
           // meaning, and nothing else: recall runs by its other lists, and the event says why.
           const ranked = checked.weights.meaning > 0 && asked.last.trim().length > 0 && texts.length > 0
-            ? yield* nearest(texts, asked.last).pipe(
+            ? yield* nearest(texts, asked.last, `${session.id} ${session.turn}`).pipe(
               Effect.map((found) => ({ found, skipped: Option.none<string>() })),
-              Effect.catchTag("EmbedFailed", (failed) => Effect.succeed({ found: [], skipped: Option.some(failed.message) })),
+              Effect.catchTag("EmbedFailed", (failed) => Effect.as(warnOnce(failed), { found: [], skipped: Option.some(failed.message) })),
             )
             : { found: [], skipped: Option.none<string>() }
           const recall = recallKnowledge(knowledge, asked, checked, Option.some({ model, pool: checked.pool, weights: checked.weights, floor: checked.floor, ...ranked }))

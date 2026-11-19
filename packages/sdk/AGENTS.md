@@ -513,11 +513,15 @@ it: `./kernel` is a `restricted` subpath.
   `withKnowledgeByMeaning({ …, pool?, weights? })`, the same needing
   `Embedder` and `VectorStore` too: with the list by meaning on, a last
   message and something to rank, the keys the store lacks embedded as
-  passages, 32 a call, and put, the last message alone embedded as a query,
+  passages, 32 a call, each call's vectors put as it returns, the last
+  message alone embedded as a query (its vector kept by the layer for the
+  steps of its turn while the message is the same: they embed it once),
   the store searched among the keys of `meaningTexts` for `pool`, and what
   it found given to `recallKnowledge`; with it off nothing embedded;
   `EmbedFailed` skips the list by meaning for that request (recall by the
-  other lists, the reason in the event), `VectorsRefused` fails the context,
+  other lists, the reason in the event, and a warning logged the first time
+  each reason is met: the cause's tag and its reason's, else the words, at
+  most 32 reasons a layer), `VectorsRefused` fails the context,
   `VectorsUnavailable` dies; a model's name longer than `MEANING_MODEL_LIMIT` refused where the
   layer is built), `tool-files` (`ReadFile`, `ListFiles`,
   `WriteFile`, `EditFile`, `fileTools`, `fileHandlers`: they never ask,
@@ -827,7 +831,7 @@ that does). Each folder is a layer of its own, before `sdk-kernel`:
 `sdk-kernel-node-writer` (`writer/`, the one-writer lock the stores share),
 `sdk-kernel-node-model-spend` (`model-spend/`, the charge the model
 providers share), one per port (`journal-directory/`, `journal-sqlite/`,
-`model-openai-compatible/`, `model-anthropic/`, and the workspace's
+`model-openai-compatible/`, `model-anthropic/`, `embedder-openai-compatible/`, and the workspace's
 `files-disk/` and `shell-process/`, which import the contract they implement
 from `sdk-kernel-contracts`), which imports core's kernel
 and the folder it shares and never another port's folder, and
@@ -917,6 +921,45 @@ the package roots.
   `ModelSpendExceeded` in its reason's metadata (`spendRefused`): Effect AI
   makes an `AiError`'s `cause` its reason. `isSpendRefusal` and
   `spendRefusalOf` read it.
+- The remote embedder (ADR 0032): `openAiCompatibleEmbedder`
+  (`embedder-openai-compatible/`, `OpenAiCompatibleEmbedderOptions`,
+  `EmbedPrefixes`, `EMBEDDER_NAME_LIMIT`), a `Layer<Embedder, never,
+  ModelSpend>` over the OpenAI-compatible `/embeddings` wire and `fetch`,
+  importing the embedder contract and the shared charge, never a provider's
+  folder. Texts go in requests of at most `batch` (64), one after another,
+  each after its `prefixes` entry for the `EmbedAs` asked; `dimensions` is
+  sent when given; vectors are read by `index`, checked (count, numbers, one
+  length, the length asked for, none all zeros) and made unit length
+  (`vectorsOf`). `model` is the name vectors are kept under
+  (`embedderNameOf`: the model, ` dimensions=<n>`, ` prefixes=[…]`
+  JSON-quoted; or the host's `name`), 1 to 99 characters with no line
+  break; options that make none die where the layer is built
+  (`optionsProblem`). Each request is `chargedEffect` with an output bound of
+  0 (`chargeOf` takes it as a bound), its usage reported before its vectors
+  are checked; a failure is `EmbedFailed`, its `cause` the ledger's
+  `ModelSpendExceeded` (which `spendRefusalOf` reads from an `EmbedFailed`
+  too) or the `AiError` that says whether another try is worth it. Each
+  `embed` is the span `openai_compatible_embedder.embed` (kind `client`,
+  `gen_ai.operation.name` `embeddings`, the provider, the model, the
+  dimensions asked, the input tokens summed); no text is put on a span.
+  Tests: `embedder-openai-compatible/*.test.ts` (over a fake `fetch` shaped
+  like the wire: the kit with and without prefixes and cut, the request,
+  batches, a later batch refused (the earlier ones settled, none sent
+  after it), the name of each configuration and the options refused, the
+  vectors read and refused, each failure (the response and idle timeouts,
+  a refusal whose body cannot be read among them), the cap and a missing price
+  refusing before anything is sent, settlement at the bill, the usage, the
+  hold and a refusal's release, the span and the counts, and with content
+  off no marker of a text, the key or an echoed refusal exported),
+  `embedders.test.ts` (the region `docs/kernel.md` quotes),
+  `embedder-knowledge.test.ts` (`withKnowledgeByMeaning` over it and
+  `inMemoryVectors` in a host's turn of two steps: the passages embedded once
+  and the message once a turn; a later batch that fails leaving the earlier
+  stored; a cap refusal and a 401 recalling by words, the reason in the
+  event and one warning). Its waits are `EMBEDDING_TIMEOUTS`, five seconds
+  each, unless the host gives its own.
+  `scripts/kernel-consumer.fixture.mjs` runs the kit over a local server
+  and a call the cap refuses, on Node and on Bun.
 - The workspace's ports (ADR 0028), each a layer a host plugs in or leaves
   out: `diskFiles({ root, maxBytes?, ignore? })` (`files-disk/`,
   `DiskFilesOptions`, `DEFAULT_IGNORE`, `DEFAULT_MAX_BYTES`): `Files` over a
@@ -998,7 +1041,8 @@ the package roots.
   metrics are the charge's (`model-spend/`, which may import that contract): as it closes a call's hold it counts
   `efferent.model.calls` (by the model asked and `CallOutcome`, one per attempt sent; nothing held, nothing counted)
   and `efferent.model.tokens` (`tokensOf`, apart as `costOf` prices them), and once `settle` took it
-  `efferent.model.cost` with `efferent.cost.basis` (`metredCostOf`: `billed`, `usage` or `held`), never a 0 for an
+  `efferent.model.cost` with `efferent.cost.basis`; each also by `gen_ai.operation.name` (`CallOperation`: `chat`,
+  or `embeddings` for the embedder's, from `Charging.operation`, which each provider sets) (`metredCostOf`: `billed`, `usage` or `held`), never a 0 for an
   unknown cost; `modelAnswer` counts nothing; none names a session or a turn. The export (`telemetry-otlp/`,
   `sdk-kernel-node-telemetry-otlp`, which imports Effect alone) is the old telemetry plugin's OTLP files moved with
   their tests: `otlpTelemetry`, `otlpTelemetryOver` (the host's `HttpClient`), `otlpTelemetryFromEnv`,
@@ -1027,7 +1071,7 @@ the package roots.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
 - `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `clipTo`, `clippedMarker`, `questionOf`, `OverBudget`, `isOverBudget`, `InvalidBudget`, `pointed` (`PointerOptions`), `resultText`, `ResultPage`, `READ_RESULT`, `READ_RESULT_PAGE`; the tool call's: `CurrentTurn`, `callTool` (`ModelToolCall`, `ToolNeeds`, `OwnTools`), `SentWhole`, `planned`, `retryable`, `AnswerCut`, `attemptEvent` (`AttemptData`), `turnsOf` (`TurnRead`, `StepRead`, `CallRead`, `ResultRead`, `MessageRead`, `ClosedRead`), and the tool `ReadResult` with its handler `readResult`; asking before acting: `Approval`, `approve`, `approveIn`, `grantsOf`, `ApprovalRequest`, `Decision`, `DecidedData`, `decidedEvent`, `APPROVAL_REFUSED` (`ApprovalRefusal`, the type `approve` fails with), `DETAIL_LIMIT`, and the wrapper `autoApprove`; skills: `defineSkill` (`Skill`, `SkillOptions`), `SkillId`, `catalogue`, `loadedOf`, `LoadedSkill`, `LOAD_SKILL`, the tool `LoadSkill`, and `skills(base, ...skills)` (`SkillSet`, `SkillTools`, `Offered`, `OwnSkills`), the one value over a host's tools and skills; the facts': `Fact`, `FactId`, `FactText`, `FACT_LIMIT`, `FACTS_OWNER`, `learnedEvent` (`LearnedData`), `forgottenEvent` (`ForgottenData`), `factsOf`, `relevant`, `factsNote`, `REMEMBER_FACT`, `FORGET_FACT`, `RememberedFact`, `FactsOptions`, and from the plugin the tools `RememberFact` and `ForgetFact`, `factTools`, `factHandlers`, `memorySession`, `rememberedFacts` and `withFacts`; the summary's: `Summarizer`, `SummaryFailed`, `summarizerConformance` (`SummarizerSubject`); what the UI shows: `View`, `TextView`, `ListView`, `TableView`, `CardView`, `ViewId`, `ViewData`, `viewEvent`, `showView`, `ProgressData`, `progressEvent`, `viewsOf` (`Shown`); the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ScriptedAnswer` with its `Calls` answer and its `Fails`, worth another try or not, before anything or after some pieces, `ScriptedCalls`), the model that follows a script, for kits and tests, the inbox: `inbox`, `inboxOf` (`InboxOptions`), and the workspace: `Files`, `FilePath`, `workspacePath`, `Expected`, `FileNotFound`, `FileChanged`, `FilesRefused`, `FilesUnavailable`, `FilePage`, `FileList`, `FileWritten`, `WrittenData`, `writtenEvent`, `FILE_PAGE`, `WRITE_LIMIT`, `LIST_LIMIT`, `PATH_LIMIT`, `READ_FILE`, `LIST_FILES`, `WRITE_FILE`, `EDIT_FILE`, `filesConformance` (`FilesSubject`), `inMemoryFiles`, and the tools `ReadFile`, `ListFiles`, `WriteFile`, `EditFile` with `fileTools` and `fileHandlers`, a shell: `Shell`, `RunRequest`, `Ran`, `RunEnded`, `ShellRefused`, `ShellUnavailable`, `CommandRun`, `RUN_COMMAND`, `COMMAND_TIMEOUT_LIMIT`, `shellConformance` (`ShellSubject`), `scriptedShell` (`ScriptedRun`), and the tool `RunCommand` with `shellTools` and `shellHandlers`, search: `Search`, `SearchQuery`, `SearchMatch`, `Found`, `PatternInvalid`, `PatternProblem`, `SearchUnavailable`, `LINE_SHOWN`, `LINE_BEFORE`, `PATTERN_LIMIT`, `SEARCH_LIMIT`, `SEARCH_FILES`, `searchConformance` (`SearchSubject`), `filesSearch` (`FilesSearchOptions`), and the tool `SearchFiles` with `searchTools` and `searchHandlers`, ranking by meaning: `Embedder`, `EmbedAs`, `EmbedFailed`, `Vector`, `cosine`, `embedderConformance` (`EmbedderSubject`), `recordedEmbedder` (`RecordedOptions`, `RecordedVectors`), `VectorStore`, `VectorKey`, `VectorEntry`, `Scored`, `SearchOptions`, `RefusedBecause`, `VectorsRefused`, `VectorsUnavailable`, `KEY_LIMIT`, `vectorStoreConformance` (`VectorStoreSubject`) and `inMemoryVectors`, knowledge kept by a curator: `Curator`, `CurationJob`, `CurationFailed`, `curatorConformance` (`CuratorSubject`), the ids and texts `SourceId`, `EntityId`, `MemoryId`, `USER_ENTITY`, `USER_NAME`, `USER_ALIASES`, `EntityName`, `EntityKind`, `ENTITY_KINDS`, `ENTITY_NAME_LIMIT`, `MemoryText`, `MemoryKind`, `MemoryDay`, `MEMORY_LIMIT`, `Quote`, `QUOTE_LIMIT`, `SourceText`, `SOURCE_LIMIT`, `SourceContext`, `CONTEXT_LIMIT`, `SaidBy`, `SourcePart`, `SourceCall`, the records `sourceEvent` (`SourceData`), `entityEvent` (`EntityData`), `aliasedEvent` (`AliasedData`), `memoryEvent` (`MemoryData`), `memoryRestatedEvent` (`MemoryRestatedData`), `memoryEndedEvent` (`MemoryEndedData`, `EndedWhy`), `curatedEvent` (`CuratedData`, `Dropped`, `DROPPED_SHOWN`), `curationFailedEvent` (`CurationFailedData`), `KNOWLEDGE_OWNER`, `KNOWLEDGE_VOCABULARY`, `KNOWLEDGE_PROMPT`, `KNOWLEDGE_CHECKS`, the fold `knowledgeOf` (`Knowledge`, `KnownEntity`, `KnownMemory`, `Ended`, `KnownSource`, `SourceState`), `standing`, `endedBy`, `nextIds` (`NextIds`), `folded`, `sourceText`, `turnSource` (`TurnSource`, `TurnSourceOptions`, `TURN_MESSAGE_SHOWN`, `TURN_RESULT_SHOWN`), `shownFor` (`ShownKnowledge`, `ShownLimits`, `SHOWN_LIMITS`), `curationPrompt` (`CurationOptions`), `reviewPrompt`, `curationOf` (`ReadCuration`, `Curation`, `CurationRef`), `staged` (`Staged`, `About`), `draftsOf`, the curation step `curate` and `curateAgain` (`NewSource`, `CurateOptions`, `CurationOutcome`, `CurationCalls`, `NOT_CURATED`), `knowledgeSession`, `knowledgeJournal`, `keptFrom` (`KeptRecords`), recall from the knowledge: `askedOf` (`Asked`), `seedsOf` (`Seed`, `SeedWay`), `keywordScores` (`ScoredMemory`), `recallKnowledge` (`KnowledgeRecall`, `FusedMemory`, `ListPlace`, `WalkedMemory`, `Bridge`, `SentMemory`), `knowledgeNote`, `knowledgeRecalledOf`, `knowledgeRecalledEvent` (`KnowledgeRecalledData`, `RecalledWhy`), `checkedKnowledgeOptions` (`KnowledgeOptions`, `KnowledgeRecallOptions`, `KNOWLEDGE_RECALL`), `KNOWLEDGE_SHOWN`, `ASKED_SHOWN`, `BEFORE_SHOWN`, and the wrapper `withKnowledge`; found by meaning too: `RecallWeights`, `WORDS_WEIGHTS`, `ByMeaning`, `FoundText`, `MeaningPlace`, `meaningTexts`, `meaningKey`, `MEANING_MODEL_LIMIT`, `SKIPPED_SHOWN`, `checkedMeaningOptions` (`MeaningOptions`, `MeaningRecallOptions`, `KNOWLEDGE_BY_MEANING`) and the wrapper `withKnowledgeByMeaning`, and background tasks: `Tasks`, `TaskReports`, `TaskId`, `TaskReport`, `TaskOutcome`, `StartedTask`, `TaskRefused`, `TasksOptions`, `taskReport`, `TASKS_OWNER`, `TASK_LIMIT`, `REPORT_LIMIT`, `DEFAULT_RUNNING`, `START_TASK`, `CANCEL_TASK`, `tasks` (`TaskRun`), and the tools `StartTask`, `CancelTask` with `taskTools` and `taskHandlers`. No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
-- `@xandreed/sdk/kernel/node` (`src/kernel/node/index.ts`): `directoryJournal` (`DirectoryJournalOptions`, `DirectoryMarker`, `DIRECTORY_STORE`, `DIRECTORY_LAYOUT`), `sqliteJournal` (`SqliteJournalOptions`, `SQLITE_SCHEMA`, `SQLITE_APPLICATION_ID`) and `JournalOpenFailed` (`OpenRefusal`); the model providers `openAiCompatibleModel` (`OpenAiCompatibleOptions`) and `anthropicModel` (`AnthropicOptions`), with `ModelPrice`, `SpendOptions`, `Timeouts`, `isSpendRefusal` and `spendRefusalOf`; the workspace's ports `diskFiles` (`DiskFilesOptions`, `DEFAULT_IGNORE`, `DEFAULT_MAX_BYTES`) and `processShell` (`ProcessShellOptions`); the export `otlpTelemetry`, `otlpTelemetryOver`, `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry` (`OtlpTelemetryOptions`, `OtlpSpanPolicy`, `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`); the browser entry adds `recoverTurns` with `Recovery`, `RecoveredTurn` and `UnreadableSession`.
+- `@xandreed/sdk/kernel/node` (`src/kernel/node/index.ts`): `directoryJournal` (`DirectoryJournalOptions`, `DirectoryMarker`, `DIRECTORY_STORE`, `DIRECTORY_LAYOUT`), `sqliteJournal` (`SqliteJournalOptions`, `SQLITE_SCHEMA`, `SQLITE_APPLICATION_ID`) and `JournalOpenFailed` (`OpenRefusal`); the model providers `openAiCompatibleModel` (`OpenAiCompatibleOptions`) and `anthropicModel` (`AnthropicOptions`), with `ModelPrice`, `SpendOptions`, `Timeouts`, `isSpendRefusal` and `spendRefusalOf`; the embedder `openAiCompatibleEmbedder` (`OpenAiCompatibleEmbedderOptions`, `EmbedPrefixes`, `EMBEDDER_NAME_LIMIT`, `EMBEDDING_TIMEOUTS`); the workspace's ports `diskFiles` (`DiskFilesOptions`, `DEFAULT_IGNORE`, `DEFAULT_MAX_BYTES`) and `processShell` (`ProcessShellOptions`); the export `otlpTelemetry`, `otlpTelemetryOver`, `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry` (`OtlpTelemetryOptions`, `OtlpSpanPolicy`, `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`); the browser entry adds `recoverTurns` with `Recovery`, `RecoveredTurn` and `UnreadableSession`.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

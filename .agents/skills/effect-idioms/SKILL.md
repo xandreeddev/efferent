@@ -173,7 +173,7 @@ service method that only returns `Effect.gen(…)` is one of the two below.
 | evals | `eval.run`, `eval.trial`, `eval.grade`, `eval.regrade`, `eval.calibrate`, `eval.calibration.execute`, `eval.calibration.project`, `eval.retrieval.assess`, `eval.semantic.run`, `eval.semantic.llm`, `eval.semantic.jev`, `eval.evaluator` |
 | evals exporters, evals-cli | `eval.export`, `eval.cli` |
 | foundry | `foundry.check`, `foundry.run`, `foundry.attempt`, `foundry.pipeline`, `foundry.gate` |
-| sdk kernel (ADR 0030) | `session.turn`, `session.begin`, `session.end`, `session.recover`, `session.fork`, `session.recover_turns`, `tool.call` (and the event `model.attempt`), `flat_memory.context`, `window_memory.context`, `summary_memory.context`, `inbox.enqueue`, `tasks.start`, `approval.approve`, `approval.approve_in`, `read_result.read`, `knowledge.curate`, `knowledge.curate_again`, `scripted_model.make`, `scripted_shell.make`; the Node entry's `journal_directory.<op>`, `journal_sqlite.<op>`, `disk_files.<op>`, `files_search.find`, `process_shell.run` |
+| sdk kernel (ADR 0030) | `session.turn`, `session.begin`, `session.end`, `session.recover`, `session.fork`, `session.recover_turns`, `tool.call` (and the event `model.attempt`), `flat_memory.context`, `window_memory.context`, `summary_memory.context`, `inbox.enqueue`, `tasks.start`, `approval.approve`, `approval.approve_in`, `read_result.read`, `knowledge.curate`, `knowledge.curate_again`, `scripted_model.make`, `scripted_shell.make`; the Node entry's `journal_directory.<op>`, `journal_sqlite.<op>`, `disk_files.<op>`, `files_search.find`, `process_shell.run`, `openai_compatible_embedder.embed` |
 
 ## 8. Branching
 

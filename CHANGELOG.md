@@ -10,6 +10,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel/node`: `openAiCompatibleEmbedder`, an `Embedder`
+  over the OpenAI-compatible `/embeddings` endpoint of OpenAI, the Vercel AI
+  Gateway or a local server (ADR 0032): texts in batches (`batch`, 64), each
+  after the host's `prefixes` for a question or a kept text, every vector made
+  unit length, `dimensions` sent when given. Its `model`, the name its vectors
+  are kept under, carries the model, the dimensions and the prefixes (or the
+  host's `name`, 1 to `EMBEDDER_NAME_LIMIT` characters). Each request charges
+  the `ModelSpend` ledger through the providers' charge, with an output bound
+  of 0 (an embedding model's price has `output: 0`), and is counted as a model
+  call; each `embed` is the span `openai_compatible_embedder.embed` with the
+  `gen_ai.*` attributes of an embeddings call. A failure is `EmbedFailed`; a
+  refusal of the ledger keeps its `ModelSpendExceeded` as the cause, which
+  `spendRefusalOf` and `isSpendRefusal` now read there too. The charge's
+  metrics (`efferent.model.calls`, `efferent.model.tokens`,
+  `efferent.model.cost`) carry `gen_ai.operation.name`, `chat` for a model's
+  calls and `embeddings` for an embedder's, so the two are told apart. Its waits
+  are five seconds each by default (`EMBEDDING_TIMEOUTS`). Under it,
+  `withKnowledgeByMeaning` keeps the last message's vector for the steps of
+  its turn, so they embed it once, and logs a warning the first
+  time each reason fails its embedder, so one that never works is seen.
 - `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
   calls without writing a span (ADR 0030). `Sessions.turn` is the span
   `session.turn` (the session, the turn's number, how it ended), `callTool` is
