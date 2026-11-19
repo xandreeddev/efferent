@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.23.0 — 2026-11-19
+
 0.23.0 replaces the engine of earlier releases with the kernel: a small core
 (a journal, sessions and events) and every other part a plain Effect layer.
 There is no `Agent.define`, no plugin graph and no loop to configure: a host

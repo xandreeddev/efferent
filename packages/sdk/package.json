@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/sdk",
-  "version": "0.22.0",
+  "version": "0.23.0",
   "engines": { "node": ">=24", "bun": ">=1.3.0" },
   "type": "module",
   "description": "The Efferent kernel's agent parts, each an Effect layer: memory, tools, approvals, skills, facts, knowledge kept by a curator and recalled by words and meaning, background tasks, files, a shell and search; @xandreed/sdk/node adds journals on a disk, model providers and an embedder that charge a ledger, a media folder and OTLP export.",
