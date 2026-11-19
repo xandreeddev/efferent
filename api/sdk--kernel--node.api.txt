@@ -1,4 +1,6 @@
 class JournalOpenFailed
+const DEFAULT_IGNORE
+const DEFAULT_MAX_BYTES
 const DIRECTORY_LAYOUT
 const DIRECTORY_STORE
 const DirectoryMarker
@@ -9,13 +11,17 @@ const SQLITE_SCHEMA
 const SpendOptions
 const anthropicModel
 const directoryJournal
+const diskFiles
 const isSpendRefusal
 const openAiCompatibleModel
+const processShell
 const spendRefusalOf
 const sqliteJournal
 interface AnthropicOptions
 interface DirectoryJournalOptions
+interface DiskFilesOptions
 interface OpenAiCompatibleOptions
+interface ProcessShellOptions
 interface SqliteJournalOptions
 interface Timeouts
 type DirectoryMarker
