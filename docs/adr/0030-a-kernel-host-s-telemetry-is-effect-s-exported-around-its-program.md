@@ -47,7 +47,8 @@ kernel.turn                       Sessions.turn: efferent.session.id, gen_ai.con
   `gen_ai.request.model` and `.max_tokens` before the request is sent, then `gen_ai.response.model`,
   `.finish_reasons`, `gen_ai.usage.input_tokens` (the cache's shares in it), `.output_tokens` and
   `gen_ai.usage.cache_read.input_tokens` / `.cache_write.input_tokens` as the parts arrive, so they are on the span
-  before it ends.
+  before it ends. Only `gen_ai.response.id` is Anthropic's alone: the chat-completions wire gives an id on each chunk,
+  and the answer's parts do not carry it.
 - **A plan's attempts.** Each attempt `planned` runs is a call of the model, so a span of its own. The plan cannot
   reach those spans, so it marks each attempt (`started`, `succeeded`, `failed` with its reason; its number and its
   step) as a span event `kernel.model.attempt` on the span current where it runs, the turn's, beside them. No span is
@@ -71,8 +72,8 @@ kernel.turn                       Sessions.turn: efferent.session.id, gen_ai.con
 
 ### Content is off by default; the export's option turns it on
 
-What was said (a model call's prompt and answer, a tool call's parameters and result) reaches an exported span only
-when the host turns it on: `content: true` on the export's options. Two facts decide the shape:
+What was said (a model call's prompt and answer, a tool call's parameters and result) reaches an exported span's
+attributes only when the host turns it on: `content: true` on the export's options. Two facts decide the shape:
 
 - Effect AI's toolkit puts a call's `parameters` on the span current where it is handled, whatever the host wants
   (`Toolkit.handle` annotates it unconditionally); under `callTool` that span is `kernel.tool.call`. So the switch
@@ -89,6 +90,10 @@ when the host turns it on: `content: true` on the export's options. Two facts de
   the `Flusher` alone; a host's own transformer, provided inside, wins.
 - No variable turns content on, not even OpenTelemetry's capture-content one: what a conversation said leaves the
   process only when the host's code says so.
+- The rule is over attributes. A span's name, its status and the `exception` event a failed span gets from its exit
+  are sent as they are (the policy's own rule), so a span that fails with words quoting what it was given (a tool's
+  own span over a path that is not there, say) sends those words with content off. The kernel's own spans do not fail
+  that way: `callTool` stores a tool's failure as its result and its span ends well.
 
 ### The export is a layer around the program, on the Node entry
 

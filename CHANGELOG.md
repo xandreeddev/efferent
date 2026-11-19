@@ -29,10 +29,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry`
   export the program's traces and metrics over OTLP/HTTP, from options or the
   standard `OTEL_*` variables, with a span policy (`OtlpSpanPolicy`) that drops
-  spans and redacts attributes: the telemetry plugin's export, moved. What was
-  said (a prompt, an answer, a tool call's parameters) is left out unless the
-  host passes `content: true`, which also writes each model call's prompt and
-  answer on its span. LangSmith takes the same export at its OTLP endpoint;
+  spans and redacts attributes: the telemetry plugin's export, ported with its
+  tests. What was said (a prompt, an answer, a tool call's parameters) is left
+  out of the spans' attributes unless the host passes `content: true`, which
+  also writes each model call's prompt and answer on its span; a failed span's
+  error is sent as it is. LangSmith takes the same export at its OTLP endpoint;
   the plugin's LangSmith mapping is not ported.
 
 - Docs site: lesson 18 of the learn track, now "A memory that keeps itself",

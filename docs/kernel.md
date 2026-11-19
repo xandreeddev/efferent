@@ -2680,11 +2680,11 @@ const observed = <A, E, R>(program: Effect.Effect<A, E, R>) => program.pipe(
 )
 ```
 
-What was said stays in the process unless the host turns it on with
-`content: true`: off, the export leaves out a prompt, an answer and a tool
-call's `parameters` (which Effect AI's toolkit puts on the span it is handled
-under) before anything is sent; on, it also writes each model call's prompt
-and answer on its span. A span policy (`spans`) drops spans, their children
+What was said stays out of the spans' attributes unless the host turns it on
+with `content: true`: off, the export leaves out a prompt, an answer and a
+tool call's `parameters` (which Effect AI's toolkit puts on the span it is
+handled under) before anything is sent; on, it also writes each model call's
+prompt and answer on its span. A failed span's error is sent as it is. A span policy (`spans`) drops spans, their children
 kept under the nearest span kept, and redacts or drops attributes as they are
 set. LangSmith takes the same export at its OTLP endpoint; ADR 0030 shows the
 options.

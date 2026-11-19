@@ -232,9 +232,11 @@ describe("a kernel host's turn, exported over OTLP", () => {
     expect(keys.filter((key) => ["efferent.session.id", "gen_ai.conversation.id", "efferent.turn"].includes(key))).toEqual([])
   })
 
-  test("content is off by default: no span sent holds a prompt, an answer or a tool's parameters", async () => {
+  test("content is off by default: no span attribute sent holds a prompt, an answer or a tool's parameters", async () => {
     const run = await exported({}, askAdd)
     expect(contentOf(spansOf(run.posts))).toEqual([])
+    // Nor anywhere in what was posted: not the question, the answer, nor the tool call's parameters.
+    expect(run.posts.filter((post) => ["2 + 3", "It is 5", "\"a\""].some((said) => post.body.includes(said))).map((post) => post.path)).toEqual([])
   })
 
   test("content on: each model call's span holds its prompt and its answer, a tool's result among the next prompt, and the tool call its parameters", async () => {
