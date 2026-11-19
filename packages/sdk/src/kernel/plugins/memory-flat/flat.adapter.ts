@@ -19,7 +19,7 @@ const FLAT_VOCABULARY = vocabularyOf("flat", [], CONVERSATION_VOCABULARY)
 export const flatMemory: Layer.Layer<Memory> = Layer.succeed(
   Memory,
   Memory.of({
-    context: Effect.fn("kernel.flat.context")(function* (session: OpenSession) {
+    context: Effect.fn("flat_memory.context")(function* (session: OpenSession) {
       // Only the conversation's records and its own; a record it cannot read and may not skip is refused.
       const conversation = yield* Effect.fromResult(readJournal(FLAT_VOCABULARY)(yield* session.journal))
       // A tool call goes only with its result: a turn stopped while a tool ran leaves a call nothing answers.

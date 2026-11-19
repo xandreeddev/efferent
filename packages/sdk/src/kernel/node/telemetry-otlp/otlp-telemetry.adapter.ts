@@ -84,7 +84,7 @@ const contentOnSpan: Telemetry.SpanTransformer = ({ prompt, response, span }) =>
  * builds the kernel's stack and runs its turns; it is the `Tracer` and the
  * metrics exporter of everything inside. Spans are batched and posted every
  * `exportInterval`; the metrics registry (every `Metric` the program
- * updated: the kernel's `kernel.model.*` and `kernel.tool.calls`, the
+ * updated: the kernel's `efferent.model.*` and `efferent.tool.calls`, the
  * host's own) is posted whole each interval. Closing the layer posts
  * what is left, waiting up to `shutdownTimeout`; a serverless host flushes
  * before it responds (`flushTelemetry`). A failed export is retried and

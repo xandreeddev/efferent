@@ -56,4 +56,4 @@ export const recoverTurns: Effect.Effect<Recovery, TurnFailure, Sessions> = Effe
     closed: outcomes.flatMap((outcome) => (outcome._tag === "Closed" ? [outcome.turn] : [])),
     unreadable: outcomes.flatMap((outcome) => (outcome._tag === "Unreadable" ? [outcome.session] : [])),
   }
-}).pipe(Effect.withSpan("kernel.session.recover_turns"))
+}).pipe(Effect.withSpan("session.recover_turns"))

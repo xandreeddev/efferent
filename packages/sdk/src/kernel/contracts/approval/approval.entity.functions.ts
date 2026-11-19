@@ -73,7 +73,7 @@ const approveWith: (turn: RunningTurn, request: ApprovalRequest) => Effect.Effec
  *
  * @public
  */
-export const approve: (request: ApprovalRequest) => Effect.Effect<void, ApprovalRefusal, Approval | CurrentTurn> = Effect.fn("kernel.approve")(function* (request) {
+export const approve: (request: ApprovalRequest) => Effect.Effect<void, ApprovalRefusal, Approval | CurrentTurn> = Effect.fn("approval.approve")(function* (request) {
   return yield* approveWith(yield* CurrentTurn, request)
 })
 
@@ -85,6 +85,6 @@ export const approve: (request: ApprovalRequest) => Effect.Effect<void, Approval
  *
  * @public
  */
-export const approveIn: (session: OpenSession, request: ApprovalRequest) => Effect.Effect<void, ApprovalRefusal, Approval> = Effect.fn("kernel.approveIn")(function* (session, request) {
+export const approveIn: (session: OpenSession, request: ApprovalRequest) => Effect.Effect<void, ApprovalRefusal, Approval> = Effect.fn("approval.approve_in")(function* (session, request) {
   return yield* approveWith(runningTurn(session), request)
 })

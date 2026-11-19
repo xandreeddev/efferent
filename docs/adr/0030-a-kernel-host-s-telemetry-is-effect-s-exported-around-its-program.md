@@ -1,12 +1,12 @@
 # ADR 0030: A kernel host's telemetry is Effect's, exported around its program
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (`Sessions.turn` is the span `kernel.turn`, `callTool` the span
-  `kernel.tool.call`; `planned` marks each attempt on the span it runs under; the metrics `kernel.model.calls`,
-  `kernel.model.tokens` and `kernel.tool.calls`), `@xandreed/sdk/kernel/node` (new: `otlpTelemetry`,
+- **Applies to:** `@xandreed/sdk/kernel` (`Sessions.turn` is the span `session.turn`, `callTool` the span
+  `tool.call`; `planned` marks each attempt on the span it runs under; the metrics `efferent.model.calls`,
+  `efferent.model.tokens` and `efferent.tool.calls`), `@xandreed/sdk/kernel/node` (new: `otlpTelemetry`,
   `otlpTelemetryOver`, `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver`, `flushTelemetry`, `OtlpTelemetryOptions`,
   `OtlpSpanPolicy`, `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`; `openAiCompatibleModel` takes `provider`
-  and sets the `gen_ai.*` attributes; the metric `kernel.model.cost`)
+  and sets the `gen_ai.*` attributes; the metric `efferent.model.cost`)
 - **Amends:** ADR 0015 (each attempt of a plan is marked on the span it runs under), ADR 0026 (the OpenAI-compatible
   provider names its calls as Effect AI's Anthropic provider does; the charge counts what it settles)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
@@ -16,8 +16,8 @@
 The old engine and every `plugin-*` package are removed before the next release. `@xandreed/plugin-telemetry` is
 how a host of the old engine sees what its agent did: OTLP/HTTP export of traces and metrics from the standard
 `OTEL_*` variables, a span policy that keeps or drops spans and redacts attributes, usage, token and cost metrics
-per model call, and a LangSmith mapping. The kernel had spans of its own (`kernel.session.begin` and `.end`,
-`kernel.<memory>.context`, `knowledge.curate`, `kernel.session.recover_turns`, the stores' and the workspace ports'),
+per model call, and a LangSmith mapping. The kernel had spans of its own (`session.begin` and `.end`,
+`kernel.<memory>.context`, `knowledge.curate`, `session.recover_turns`, the stores' and the workspace ports'),
 no export, no policy and no metrics. A kernel host must see its turns, model calls and tool calls in an OTLP backend
 (Langfuse, Jaeger, Honeycomb, LangSmith's OTLP endpoint) and decide what of a conversation leaves the process.
 
@@ -26,14 +26,14 @@ no export, no policy and no metrics. A kernel host must see its turns, model cal
 ### The span tree a host gets without writing a span
 
 ```
-kernel.turn                       Sessions.turn: efferent.session.id, gen_ai.conversation.id, efferent.turn, efferent.outcome
-├── kernel.session.begin
+session.turn                       Sessions.turn: efferent.session.id, gen_ai.conversation.id, efferent.turn, efferent.outcome
+├── session.begin
 ├── kernel.<memory>.context       the host's memory, each step
 ├── POST                          Effect's HttpClient: the model's request
 ├── LanguageModel.streamText      Effect AI's span of the call: gen_ai.* set by the provider; one per attempt
-├── kernel.tool.call              callTool: gen_ai.operation.name execute_tool, gen_ai.tool.name, gen_ai.tool.call.id,
+├── tool.call              callTool: gen_ai.operation.name execute_tool, gen_ai.tool.name, gen_ai.tool.call.id,
 │   └── a tool's own spans        efferent.outcome (succeeded or failed)
-└── kernel.session.end
+└── session.end
 ```
 
 - **A model call is Effect AI's span, and the kernel opens none beside it.** `LanguageModel.streamText` (and
@@ -51,7 +51,7 @@ kernel.turn                       Sessions.turn: efferent.session.id, gen_ai.con
   and the answer's parts do not carry it.
 - **A plan's attempts.** Each attempt `planned` runs is a call of the model, so a span of its own. The plan cannot
   reach those spans, so it marks each attempt (`started`, `succeeded`, `failed` with its reason; its number and its
-  step) as a span event `kernel.model.attempt` on the span current where it runs, the turn's, beside them. No span is
+  step) as a span event `model.attempt` on the span current where it runs, the turn's, beside them. No span is
   opened for the plan.
 - **The model's HTTP request is a sibling of its call's span**, under the turn: Effect AI passes the call's span to
   the provider as an option and does not make it the current span of the provider's stream. It is left as Effect makes
@@ -61,8 +61,8 @@ kernel.turn                       Sessions.turn: efferent.session.id, gen_ai.con
   `failed`, `interrupted`). `Sessions.open` opens no span: a turn opened in the current scope cannot be the parent of
   the work that follows it there, which runs under the caller's span. A host that opens its turns with `open` (the
   lessons do) wraps its own `Effect.withSpan` around the scope.
-- **What runs in no turn.** `curate` is `knowledge.curate`: the source stored in a `kernel.turn` under it, the
-  curator's model calls under it (no turn is open then), what passed stored in another `kernel.turn`. It is a trace
+- **What runs in no turn.** `curate` is `knowledge.curate`: the source stored in a `session.turn` under it, the
+  curator's model calls under it (no turn is open then), what passed stored in another `session.turn`. It is a trace
   of its own, or a child of the span current where the host calls it (`telemetry.test.ts` holds both). A turn a
   plugin runs on a fiber of its own (a background task's, the inbox's) is under the span current where that fiber
   was forked, as Effect gives every forked fiber a parent; this cut tests no such tree.
@@ -76,7 +76,7 @@ What was said (a model call's prompt and answer, a tool call's parameters and re
 attributes only when the host turns it on: `content: true` on the export's options. Two facts decide the shape:
 
 - Effect AI's toolkit puts a call's `parameters` on the span current where it is handled, whatever the host wants
-  (`Toolkit.handle` annotates it unconditionally); under `callTool` that span is `kernel.tool.call`. So the switch
+  (`Toolkit.handle` annotates it unconditionally); under `callTool` that span is `tool.call`. So the switch
   must sit where spans leave the process: the export leaves out every attribute of `CONTENT_ATTRIBUTES`
   (`parameters`, `gen_ai.system_instructions`, `gen_ai.input.messages`, `gen_ai.output.messages`,
   `gen_ai.tool.call.arguments`, `gen_ai.tool.call.result`) before the host's policy is asked. A host on another
@@ -85,7 +85,7 @@ attributes only when the host turns it on: `content: true` on the export's optio
   0020 rules out and the kernel's skill does not add.
   With `content` on, the export also provides Effect AI's own `CurrentSpanTransformer`, which runs as each call's
   stream ends, before its span does: it writes the system text, the conversation sent (a tool's result among it,
-  under the call's id, which `kernel.tool.call` carries as `gen_ai.tool.call.id`) and the answer, in OpenTelemetry's
+  under the call's id, which `tool.call` carries as `gen_ai.tool.call.id`) and the answer, in OpenTelemetry's
   message shape. The transformer is not provided with content off, so nothing is serialized. The layer's type names
   the `Flusher` alone; a host's own transformer, provided inside, wins.
 - No variable turns content on, not even OpenTelemetry's capture-content one: what a conversation said leaves the
@@ -122,12 +122,12 @@ about. The export now always runs Effect's OTLP tracer behind it, since the cont
 
 | Metric | Where | Attributes |
 |---|---|---|
-| `kernel.model.calls` | `modelAnswer`, as a call's reading ends | `efferent.model` (the model the stream named, `unknown` when none did), `efferent.outcome` (`answered`, `failed`, `cut`, `interrupted`) |
-| `kernel.model.tokens` | `modelAnswer`, for a call whose provider reported usage | `efferent.model`, `efferent.token.kind` (`input` not read from the cache, `cache_read`, `output`: apart, so they sum to the call's) |
-| `kernel.model.cost` | the Node entry's charge, once the ledger settled a hold | `efferent.model` (the model priced) |
-| `kernel.tool.calls` | `callTool` | `efferent.tool` (`unknown` for a name the toolkit has not), `efferent.outcome` (`succeeded`, `failed`) |
+| `efferent.model.calls` | `modelAnswer`, as a call's reading ends | `efferent.model` (the model the stream named, `unknown` when none did), `efferent.outcome` (`answered`, `failed`, `cut`, `interrupted`) |
+| `efferent.model.tokens` | `modelAnswer`, for a call whose provider reported usage | `efferent.model`, `efferent.token.kind` (`input` not read from the cache, `cache_read`, `output`: apart, so they sum to the call's) |
+| `efferent.model.cost` | the Node entry's charge, once the ledger settled a hold | `efferent.model` (the model priced) |
+| `efferent.tool.calls` | `callTool` | `efferent.tool` (`unknown` for a name the toolkit has not), `efferent.outcome` (`succeeded`, `failed`) |
 
-- **Cost has one source**, the ledger (ADR 0020): `kernel.model.cost` counts what `settle` took, only after it took
+- **Cost has one source**, the ledger (ADR 0020): `efferent.model.cost` counts what `settle` took, only after it took
   it, for a held call or an uncapped model's bill (`metredCostOf`). A call that is released counts nothing, and so
   does an uncapped model's call with no bill, which the ledger settles at 0 for want of a price: never a cost of 0. A
   call through a model with no ledger (`scriptedModel`, a browser's) reports its tokens and no cost.
@@ -149,7 +149,7 @@ otlpTelemetry({
   tracesUrl: "https://api.smith.langchain.com/otel/v1/traces",
   headers: { "x-api-key": key, "Langsmith-Project": "my-agent" },   // and "X-Tenant-Id" for a key of several workspaces
   metrics: false,                                                  // LangSmith takes traces
-  spans: { keep: (span) => span.name !== "POST" && !span.name.startsWith("kernel.session.") },
+  spans: { keep: (span) => !["POST", "session.begin", "session.end"].includes(span.name) },
 })
 ```
 
@@ -168,6 +168,6 @@ would be a second price table beside the ledger, so it is not ported. Live LangS
 ## What would reopen this
 
 - Effect AI making the call's span the current span of a provider's stream, or opening a span for a tool call
-  itself: the HTTP request would move under the call, or `kernel.tool.call` would be a second span.
+  itself: the HTTP request would move under the call, or `tool.call` would be a second span.
 - A host that needs content on for some calls and not others, which a per-attribute policy cannot tell apart.
 - A second source of cost, or a backend that prices runs the host must match.

@@ -412,13 +412,13 @@ const exportedSpans = posts.filter((post) => post.path === "/v1/traces").flatMap
   JSON.parse(post.body).resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans)))
 const exportedMetrics = posts.filter((post) => post.path === "/v1/metrics").flatMap((post) =>
   JSON.parse(post.body).resourceMetrics.flatMap((resource) => resource.scopeMetrics.flatMap((scope) => scope.metrics.map((metric) => metric.name))))
-const turnSpan = exportedSpans.find((span) => span.name === "kernel.turn")
-const toolSpan = exportedSpans.find((span) => span.name === "kernel.tool.call")
+const turnSpan = exportedSpans.find((span) => span.name === "session.turn")
+const toolSpan = exportedSpans.find((span) => span.name === "tool.call")
 assert.equal(exportedTurn, "It is 5.")
 assert.ok(turnSpan !== undefined && toolSpan !== undefined)
 assert.equal(toolSpan.parentSpanId, turnSpan.spanId)
 assert.deepEqual(toolSpan.attributes.filter((entry) => entry.key === "parameters"), [])
-assert.ok(exportedMetrics.includes("kernel.model.calls") && exportedMetrics.includes("kernel.tool.calls"))
+assert.ok(exportedMetrics.includes("efferent.model.calls") && exportedMetrics.includes("efferent.tool.calls"))
 
 console.log(`kernel ${JSON.stringify({
   runtime: typeof Bun === "undefined" ? "Node" : "Bun",

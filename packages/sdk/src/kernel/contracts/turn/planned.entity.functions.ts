@@ -50,13 +50,13 @@ const said = (event: ExecutionPlan.Event<unknown>): Effect.Effect<void> =>
 
 /**
  * Mark one attempt on the span current where the plan runs it (a turn's, or the host's), as a span event
- * `kernel.model.attempt`: each attempt is a span of the model's own (`LanguageModel.streamText`), which the plan cannot
+ * `model.attempt`: each attempt is a span of the model's own (`LanguageModel.streamText`), which the plan cannot
  * reach, so the plan's word on it (its number, its step, how it went) goes beside them. With no span, nothing.
  */
 const marked = (attempt: AttemptData): Effect.Effect<void> =>
   Effect.flatMap(Effect.option(Effect.currentSpan), Option.match({
     onNone: () => Effect.void,
-    onSome: (span) => Effect.map(Clock.currentTimeNanos, (now) => span.event("kernel.model.attempt", now, {
+    onSome: (span) => Effect.map(Clock.currentTimeNanos, (now) => span.event("model.attempt", now, {
       "efferent.attempt": attempt.attempt,
       "efferent.plan.step": attempt.step,
       [OUTCOME_ATTRIBUTE]: attempt.outcome,

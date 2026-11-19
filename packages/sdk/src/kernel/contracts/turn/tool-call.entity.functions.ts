@@ -77,13 +77,13 @@ const handled = <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.WithHa
  * tool annotated `SentWhole` has its result stored as `whole`, a failed one
  * too. It fails only when the result cannot be stored.
  *
- * The call is a span, `kernel.tool.call`, opened with the tool's name and the
+ * The call is a span, `tool.call`, opened with the tool's name and the
  * call's id and closed with whether its result is a failure
  * (`efferent.outcome`); a tool's own spans are under it. The parameters and
  * the result are not put on it: Effect AI's toolkit puts the parameters on
  * the span current where a call is handled, which is this one, and the
  * export drops them unless the host turned content on (ADR 0030). The call
- * is counted (`kernel.tool.calls`, by tool and outcome).
+ * is counted (`efferent.tool.calls`, by tool and outcome).
  *
  * @public
  */
@@ -109,7 +109,7 @@ export const callTool = <Tools extends Record<string, Tool.Any>>(
     )),
     // A result that is not stored answers nothing: the next context would send the call without it.
     Effect.flatMap(({ draft }) => session.append(draft)),
-    Effect.withSpan("kernel.tool.call", {
+    Effect.withSpan("tool.call", {
       attributes: { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": call.name.slice(0, NAME_SHOWN), "gen_ai.tool.call.id": call.id.slice(0, NAME_SHOWN) },
     }),
   )

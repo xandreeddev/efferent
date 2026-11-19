@@ -18,7 +18,7 @@ export type ScriptedRun = Ran | ShellRefused
  *
  * @public
  */
-export const scriptedShell = Effect.fn("kernel.scripted_shell")(function* (script: ReadonlyArray<ScriptedRun>) {
+export const scriptedShell = Effect.fn("scripted_shell.make")(function* (script: ReadonlyArray<ScriptedRun>) {
   const asked = yield* Ref.make<ReadonlyArray<RunRequest>>([])
   const shell: Layer.Layer<Shell> = Layer.succeed(Shell, Shell.of({
     run: (request) => Effect.flatten(Ref.modify(asked, (all): readonly [Effect.Effect<Ran, ShellRefused | ShellUnavailable>, ReadonlyArray<RunRequest>] => {

@@ -174,7 +174,7 @@ describe("a kernel host's turn, exported over OTLP", () => {
     const run = await exported({}, askAdd)
     expect(run.result.reply).toBe("It is 5.")
     const spans = spansOf(run.posts)
-    const [turn] = named(spans, "kernel.turn")
+    const [turn] = named(spans, "session.turn")
     expect(turn).toBeDefined()
     expect(isRoot(turn!)).toBe(true)
     expect(new Set(spans.map((span) => span.traceId)).size).toBe(1)
@@ -187,11 +187,11 @@ describe("a kernel host's turn, exported over OTLP", () => {
     // Under the turn, in the order they started: its begin, each step's memory, model call and the model's HTTP
     // request (Effect AI's stream span is not the request's parent), the tool call between the two steps, its end.
     expect(childrenOf(spans, turn!)).toEqual([
-      "kernel.session.begin",
-      "kernel.flat.context", "POST", "LanguageModel.streamText",
-      "kernel.tool.call",
-      "kernel.flat.context", "POST", "LanguageModel.streamText",
-      "kernel.session.end",
+      "session.begin",
+      "flat_memory.context", "POST", "LanguageModel.streamText",
+      "tool.call",
+      "flat_memory.context", "POST", "LanguageModel.streamText",
+      "session.end",
     ])
     const [asked, answered] = named(spans, "LanguageModel.streamText").map((span) => attributesOf(span.attributes))
     expect(asked).toMatchObject({
@@ -205,7 +205,7 @@ describe("a kernel host's turn, exported over OTLP", () => {
       "gen_ai.usage.cache_read.input_tokens": 40,
     })
     expect(answered).toMatchObject({ "gen_ai.usage.input_tokens": 150, "gen_ai.usage.output_tokens": 5 })
-    const [tool] = named(spans, "kernel.tool.call")
+    const [tool] = named(spans, "tool.call")
     expect(attributesOf(tool!.attributes)).toMatchObject({
       "gen_ai.operation.name": "execute_tool",
       "gen_ai.tool.name": "add",
@@ -217,17 +217,17 @@ describe("a kernel host's turn, exported over OTLP", () => {
   test("the metrics: model calls by model and outcome, tokens by kind, the cost the ledger settled, tool calls by tool; none names a session or a turn", async () => {
     const run = await exported({}, askAdd)
     const metrics = metricsOf(run.posts)
-    expect(metrics["kernel.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.outcome": "answered" }, value: 2 }])
+    expect(metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.outcome": "answered" }, value: 2 }])
     // 100 then 150 read, 40 of the first from the cache; 10 then 5 written.
-    expect(metrics["kernel.model.tokens"]).toEqual([
+    expect(metrics["efferent.model.tokens"]).toEqual([
       { attributes: { "efferent.model": MODEL, "efferent.token.kind": "input" }, value: 60 + 150 },
       { attributes: { "efferent.model": MODEL, "efferent.token.kind": "cache_read" }, value: 40 },
       { attributes: { "efferent.model": MODEL, "efferent.token.kind": "output" }, value: 15 },
     ])
     // The cost is what the ledger settled, and nothing else: the two calls at the model's price.
     expect(run.result.totals.settled).toBeCloseTo((60 * 1 + 40 * 0.5 + 10 * 4 + 150 * 1 + 5 * 4) / 1_000_000, 12)
-    expect(metrics["kernel.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL }, value: run.result.totals.settled }])
-    expect(metrics["kernel.tool.calls"]).toEqual([{ attributes: { "efferent.tool": "add", "efferent.outcome": "succeeded" }, value: 1 }])
+    expect(metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL }, value: run.result.totals.settled }])
+    expect(metrics["efferent.tool.calls"]).toEqual([{ attributes: { "efferent.tool": "add", "efferent.outcome": "succeeded" }, value: 1 }])
     const keys = Object.values(metrics).flatMap((points) => points.flatMap((point) => Object.keys(point.attributes)))
     expect(keys.filter((key) => ["efferent.session.id", "gen_ai.conversation.id", "efferent.turn"].includes(key))).toEqual([])
   })
@@ -255,7 +255,7 @@ describe("a kernel host's turn, exported over OTLP", () => {
     ])
     expect(JSON.parse(String(second!["gen_ai.output.messages"]))).toEqual([{ role: "assistant", parts: [{ type: "text", content: "It is 5." }], finish_reason: "stop" }])
     // Effect AI's toolkit put the parameters on the tool call's span; with content off, the export left them out.
-    const [tool] = named(spans, "kernel.tool.call")
+    const [tool] = named(spans, "tool.call")
     expect(tool!.attributes.map((entry) => entry.key)).toContain("parameters")
   })
 
@@ -263,18 +263,18 @@ describe("a kernel host's turn, exported over OTLP", () => {
     const run = await exported({
       content: true,
       spans: {
-        keep: (span) => !span.name.startsWith("kernel.session.") && span.name !== "kernel.flat.context",
+        keep: (span) => !["session.begin", "session.end", "flat_memory.context"].includes(span.name),
         attribute: (_span, key, value) => key === "gen_ai.input.messages" || key === "gen_ai.conversation.id" ? Option.none()
           : key === "efferent.session.id" ? Option.some("redacted") : Option.some(value),
       },
     }, askAdd)
     const spans = spansOf(run.posts)
-    const [turn] = named(spans, "kernel.turn")
-    expect(childrenOf(spans, turn!)).toEqual(["POST", "LanguageModel.streamText", "kernel.tool.call", "POST", "LanguageModel.streamText"])
+    const [turn] = named(spans, "session.turn")
+    expect(childrenOf(spans, turn!)).toEqual(["POST", "LanguageModel.streamText", "tool.call", "POST", "LanguageModel.streamText"])
     expect(attributesOf(turn!.attributes)).toEqual({ "efferent.session.id": "redacted", "efferent.turn": 1, "efferent.outcome": "completed" })
     expect(contentOf(spans)).toEqual([
       "LanguageModel.streamText gen_ai.system_instructions", "LanguageModel.streamText gen_ai.output.messages",
-      "kernel.tool.call parameters",
+      "tool.call parameters",
       "LanguageModel.streamText gen_ai.system_instructions", "LanguageModel.streamText gen_ai.output.messages",
     ])
   })
@@ -355,8 +355,8 @@ describe("a curation, which runs in no turn", () => {
     expect(isRoot(root!)).toBe(true)
     expect(new Set(alone.map((span) => span.traceId)).size).toBe(1)
     // The source stored in a turn, the curator asked outside any turn (extract, then review), what passed stored in another.
-    expect(childrenOf(alone, root!).filter((name) => name === "kernel.turn" || name === "LanguageModel.streamText"))
-      .toEqual(["kernel.turn", "LanguageModel.streamText", "LanguageModel.streamText", "kernel.turn"])
+    expect(childrenOf(alone, root!).filter((name) => name === "session.turn" || name === "LanguageModel.streamText"))
+      .toEqual(["session.turn", "LanguageModel.streamText", "LanguageModel.streamText", "session.turn"])
 
     const hosted = await curated(keep.pipe(Effect.withSpan("host.after_turn")))
     const [host] = named(hosted, "host.after_turn")
@@ -382,7 +382,7 @@ describe("a host's program, observed as docs/kernel.md shows it", () => {
     expect(new Set(sent.posts.map((post) => post.path))).toEqual(new Set(["/v1/traces", "/v1/metrics"]))
     const resource = (JSON.parse(sent.posts.find((post) => post.path === "/v1/traces")!.body) as { readonly resourceSpans: ReadonlyArray<{ readonly resource: { readonly attributes: ReadonlyArray<KeyValue> } }> }).resourceSpans[0]!.resource
     expect(attributesOf(resource.attributes)["service.name"]).toBe("my-agent")
-    expect(named(spansOf(sent.posts), "kernel.turn").length).toBe(1)
+    expect(named(spansOf(sent.posts), "session.turn").length).toBe(1)
     expect(contentOf(spansOf(sent.posts))).toEqual([])
 
     const silent = await run(() => ({}))

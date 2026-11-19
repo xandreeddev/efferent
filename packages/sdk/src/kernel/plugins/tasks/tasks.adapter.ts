@@ -66,7 +66,7 @@ export const tasks = <E, R>(run: TaskRun<E, R>, options: TasksOptions = {}): Lay
       )
 
     return Tasks.of({
-      start: Effect.fn("kernel.tasks.start")((parent: SessionId, text: string) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+      start: Effect.fn("tasks.start")((parent: SessionId, text: string) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
         // The slot and the id are taken in one step, so two starts at once never pass the limit together.
         const task = yield* Effect.flatMap(Ref.modify(state, (held): readonly [Option.Option<TaskId>, Running] => {
           if (held.tasks.size >= limit) return [Option.none(), held]

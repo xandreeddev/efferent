@@ -937,16 +937,16 @@ the package roots.
   files, search and shell kits over `diskFiles` and `processShell` on Node
   and on Bun.
   Run: `bun test packages/sdk/src/kernel/node`.
-- Telemetry (ADR 0030). The kernel's spans and metrics are Effect's own: `Sessions.turn` is `kernel.turn`
+- Telemetry (ADR 0030). The kernel's spans and metrics are Effect's own: `Sessions.turn` is `session.turn`
   (`efferent.session.id` and `gen_ai.conversation.id` as it opens, `efferent.turn` once it opened,
-  `efferent.outcome` at its end; `Sessions.open` opens none), `callTool` is `kernel.tool.call` (`gen_ai.operation.name`
+  `efferent.outcome` at its end; `Sessions.open` opens none), `callTool` is `tool.call` (`gen_ai.operation.name`
   `execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `efferent.outcome`), and a model call is Effect AI's
   own `LanguageModel.<method>` span, which `modelAnswer` never doubles; `planned` marks each attempt as the span
-  event `kernel.model.attempt` on the span it runs under. Both providers set the same `gen_ai.*` keys on the call's
+  event `model.attempt` on the span it runs under. Both providers set the same `gen_ai.*` keys on the call's
   span (`openAiCompatibleModel` by hand, before the request and as each part arrives, `provider` naming
-  `gen_ai.provider.name`). The metrics (`contracts/turn/telemetry.entity.ts`): `kernel.model.calls` and
-  `kernel.model.tokens` (kinds `input`, `cache_read`, `output`, apart) counted by `modelAnswer`, `kernel.tool.calls`
-  by `callTool`, and `kernel.model.cost` by the charge once `settle` took a held call's cost or an uncapped call's
+  `gen_ai.provider.name`). The metrics (`contracts/turn/telemetry.entity.ts`): `efferent.model.calls` and
+  `efferent.model.tokens` (kinds `input`, `cache_read`, `output`, apart) counted by `modelAnswer`, `efferent.tool.calls`
+  by `callTool`, and `efferent.model.cost` by the charge once `settle` took a held call's cost or an uncapped call's
   bill (`metredCostOf`), never a 0 for an unknown cost; none names a session or a turn. The export
   (`telemetry-otlp/`, `sdk-kernel-node-telemetry-otlp`, which imports Effect alone) is the old telemetry plugin's
   OTLP files moved with their tests: `otlpTelemetry`, `otlpTelemetryOver` (the host's `HttpClient`),

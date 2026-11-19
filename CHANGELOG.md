@@ -12,19 +12,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 - `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
   calls without writing a span (ADR 0030). `Sessions.turn` is the span
-  `kernel.turn` (the session, the turn's number, how it ended), `callTool` is
-  `kernel.tool.call` (the tool, the call's id, whether its result is a
+  `session.turn` (the session, the turn's number, how it ended), `callTool` is
+  `tool.call` (the tool, the call's id, whether its result is a
   failure), and a model call keeps Effect AI's own `LanguageModel.streamText`
   span; `planned` marks each attempt on the span it runs under
-  (`kernel.model.attempt`). `modelAnswer` counts `kernel.model.calls` by model
-  and outcome and `kernel.model.tokens` by kind, `callTool` counts
-  `kernel.tool.calls` by tool and outcome; no metric names a session or a turn.
+  (`model.attempt`). `modelAnswer` counts `efferent.model.calls` by model
+  and outcome and `efferent.model.tokens` by kind, `callTool` counts
+  `efferent.tool.calls` by tool and outcome; no metric names a session or a turn.
 - `@xandreed/sdk/kernel/node`: `openAiCompatibleModel` gives each call's span
   the `gen_ai.*` attributes the Anthropic provider sets (the provider, the
   model asked and the one that answered, the output cap, why it stopped, the
   usage with the cache's shares), its new `provider` option naming
   `gen_ai.provider.name` (`openai` by default). The spend charge counts
-  `kernel.model.cost`, what the ledger settled each call at, and nothing for a
+  `efferent.model.cost`, what the ledger settled each call at, and nothing for a
   call whose cost is not known. `otlpTelemetry`, `otlpTelemetryOver`,
   `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry`
   export the program's traces and metrics over OTLP/HTTP, from options or the

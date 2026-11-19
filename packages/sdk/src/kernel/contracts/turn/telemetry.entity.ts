@@ -35,7 +35,7 @@ export type TokenKind = "input" | "cache_read" | "output"
  * The model calls `modelAnswer` read, by the model that answered (`efferent.model`) and how the call ended
  * (`efferent.outcome`, an `AnswerOutcome`). A call a plan tried again counts once, as the answer it made.
  */
-export const modelCalls = Metric.counter("kernel.model.calls", {
+export const modelCalls = Metric.counter("efferent.model.calls", {
   description: "model calls modelAnswer read, by the model that answered and how the call ended",
   incremental: true,
 })
@@ -44,13 +44,13 @@ export const modelCalls = Metric.counter("kernel.model.calls", {
  * The tokens a model reported for the calls `modelAnswer` read, by model and kind (`efferent.token.kind`): the input
  * not read from the cache, the cache's reads, the output. A call whose provider reported no usage adds none.
  */
-export const modelTokens = Metric.counter("kernel.model.tokens", {
+export const modelTokens = Metric.counter("efferent.model.tokens", {
   description: "tokens the model reported for each call modelAnswer read, by model and kind",
   incremental: true,
 })
 
 /** The calls `callTool` ran, by tool (`efferent.tool`) and whether their stored result is a failure (`efferent.outcome`). */
-export const toolCalls = Metric.counter("kernel.tool.calls", {
+export const toolCalls = Metric.counter("efferent.tool.calls", {
   description: "tool calls callTool ran, by tool and whether the stored result is a failure",
   incremental: true,
 })

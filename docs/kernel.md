@@ -1064,7 +1064,7 @@ is the program's. The flat memory, quoted from its source:
 export const flatMemory: Layer.Layer<Memory> = Layer.succeed(
   Memory,
   Memory.of({
-    context: Effect.fn("kernel.flat.context")(function* (session: OpenSession) {
+    context: Effect.fn("flat_memory.context")(function* (session: OpenSession) {
       // Only the conversation's records and its own; a record it cannot read and may not skip is refused.
       const conversation = yield* Effect.fromResult(readJournal(FLAT_VOCABULARY)(yield* session.journal))
       // A tool call goes only with its result: a turn stopped while a tool ran leaves a call nothing answers.
@@ -1094,7 +1094,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
 
     return Memory.of({
       // Nothing is kept between turns: each context is built from the journal as it stands.
-      context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
+      context: Effect.fn("window_memory.context")(function* (session: OpenSession) {
         const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
         const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget, sent))   // whole turns, oldest dropped first
         if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
@@ -1147,7 +1147,7 @@ turn would not fit, it fails so without asking for one.
 
 ```ts
 return Memory.of({
-  context: Effect.fn("kernel.summary.context")(function* (session: OpenSession) {
+  context: Effect.fn("summary_memory.context")(function* (session: OpenSession) {
     const first = yield* planned(session)
     const fitted = yield* Match.valueTags(first, {
       Fits: (fits) => Effect.succeed(fits),
@@ -2470,11 +2470,11 @@ on Bun; a test gives its own with `FetchHttpClient.Fetch`.
 The kernel's work is traced with Effect's own spans and counted with its own
 metrics, so a host writes no span to see it
 ([ADR 0030](adr/0030-a-kernel-host-s-telemetry-is-effect-s-exported-around-its-program.md)).
-`Sessions.turn` is the span `kernel.turn` (the session, the turn's number, how
+`Sessions.turn` is the span `session.turn` (the session, the turn's number, how
 it ended); a model call is Effect AI's own span, `LanguageModel.streamText`,
 with the `gen_ai.*` attributes OpenTelemetry names (the provider, the model,
 the usage), one per attempt of a plan, which marks each attempt on the span
-it runs under; `callTool` is `kernel.tool.call` (the tool, the call's id,
+it runs under; `callTool` is `tool.call` (the tool, the call's id,
 whether its result is a failure), a tool's own spans under it. `modelAnswer`
 counts each call by model and outcome with its tokens by kind, `callTool`
 each call by tool and outcome, and the Node entry's providers count what the

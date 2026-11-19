@@ -49,8 +49,8 @@ const nothing: Answered = { text: "", toolCalls: [], usage: Option.none(), model
  * reaches the session its call is for. A stream that reports an error fails
  * with `ModelAnswerFailed` and stores nothing. The stream is the host's: it
  * calls the model with its own prompt, tools and options. Each call is
- * counted (`kernel.model.calls`, by the model that answered and how it
- * ended) with the tokens its provider reported (`kernel.model.tokens`); the
+ * counted (`efferent.model.calls`, by the model that answered and how it
+ * ended) with the tokens its provider reported (`efferent.model.tokens`); the
  * call's span is the model's own (`LanguageModel.streamText`), and none is
  * added here.
  *

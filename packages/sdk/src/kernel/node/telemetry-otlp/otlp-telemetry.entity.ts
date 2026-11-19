@@ -138,7 +138,7 @@ export const DEFAULT_SERVICE_NAME = "efferent"
 
 /**
  * The span attributes that hold what was said, which the export leaves out unless `content` is on: Effect AI's
- * toolkit's `parameters` (a tool call's, on the span current where the call is handled: `kernel.tool.call`), and
+ * toolkit's `parameters` (a tool call's, on the span current where the call is handled: `tool.call`), and
  * OpenTelemetry's generative AI content attributes, a prompt, an answer, a tool's arguments and result.
  */
 export const CONTENT_ATTRIBUTES: ReadonlyArray<string> = [

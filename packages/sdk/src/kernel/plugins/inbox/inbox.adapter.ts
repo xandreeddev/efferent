@@ -110,7 +110,7 @@ const makeInbox = <R>(turn: InboxTurn<R>, options: InboxOptions) => Layer.effect
   const announceQueued = (session: SessionId, ticket: Ticket) => core.publish(inboxQueued(session, ticket), { listenerFailures: "report" })
 
   return Inbox.of({
-    enqueue: Effect.fn("kernel.inbox.enqueue")(function* (session: SessionId, message: string) {
+    enqueue: Effect.fn("inbox.enqueue")(function* (session: SessionId, message: string) {
       const answer = yield* Deferred.make<string, InboxTurnFailure | InboxClosed>()
       const announced = yield* Deferred.make<void>()
       // One uninterruptible step, which waits for nothing: the queueing, the announcement and the worker it planned are

@@ -267,7 +267,7 @@ describe("the two behaviours of Effect's plan that planned relies on", () => {
 })
 
 describe("planned: what a tracer sees", () => {
-  test("each attempt is the model's own span, and the plan marks each on the span current where it runs (kernel.model.attempt)", async () => {
+  test("each attempt is the model's own span, and the plan marks each on the span current where it runs (model.attempt)", async () => {
     const spans: Array<Tracer.NativeSpan> = []
     const tracer = Tracer.make({ span: (options) => {
       const span = new Tracer.NativeSpan(options)
@@ -282,10 +282,10 @@ describe("planned: what a tracer sees", () => {
     const step = spans.find((span) => span.name === "host.step")
     expect(spans.filter((span) => span.name === "LanguageModel.streamText").map((span) => Option.map(span.parent, (parent) => parent.spanId))).toEqual([Option.some(step!.spanId), Option.some(step!.spanId)])
     expect(step!.events.map(([name, , attributes]) => [name, attributes])).toEqual([
-      ["kernel.model.attempt", { "efferent.attempt": 1, "efferent.plan.step": 0, "efferent.outcome": "started" }],
-      ["kernel.model.attempt", { "efferent.attempt": 1, "efferent.plan.step": 0, "efferent.outcome": "failed", "efferent.reason": "primary.streamText: Internal provider error: busy" }],
-      ["kernel.model.attempt", { "efferent.attempt": 2, "efferent.plan.step": 0, "efferent.outcome": "started" }],
-      ["kernel.model.attempt", { "efferent.attempt": 2, "efferent.plan.step": 0, "efferent.outcome": "succeeded" }],
+      ["model.attempt", { "efferent.attempt": 1, "efferent.plan.step": 0, "efferent.outcome": "started" }],
+      ["model.attempt", { "efferent.attempt": 1, "efferent.plan.step": 0, "efferent.outcome": "failed", "efferent.reason": "primary.streamText: Internal provider error: busy" }],
+      ["model.attempt", { "efferent.attempt": 2, "efferent.plan.step": 0, "efferent.outcome": "started" }],
+      ["model.attempt", { "efferent.attempt": 2, "efferent.plan.step": 0, "efferent.outcome": "succeeded" }],
     ])
   })
 })

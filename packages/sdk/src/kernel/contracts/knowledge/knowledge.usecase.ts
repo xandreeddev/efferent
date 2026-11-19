@@ -160,7 +160,7 @@ export const curate = Effect.fn("knowledge.curate")(function* (session: SessionI
  *
  * @public
  */
-export const curateAgain = Effect.fn("knowledge.curateAgain")(function* (session: SessionId, source: SourceId, options: CurateOptions = {}) {
+export const curateAgain = Effect.fn("knowledge.curate_again")(function* (session: SessionId, source: SourceId, options: CurateOptions = {}) {
   const sessions = yield* Sessions
   const known = knowledgeOf((yield* sessions.read(session)).events).sources.find((one) => one.source.id === source)
   const attempt = Option.flatMap(Option.fromNullishOr(known), (one) => SourceState.match(one.state, {
