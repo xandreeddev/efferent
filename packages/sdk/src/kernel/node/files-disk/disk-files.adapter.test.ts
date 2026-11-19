@@ -217,6 +217,27 @@ describe("diskFiles", () => {
     })
   })
 
+  test.skipIf(process.getuid?.() === 0)("a file the system does not let the workspace read or write is declined in words", async () => {
+    const out = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const root = yield* fresh
+      yield* Effect.promise(async () => {
+        await writeFile(join(root, "locked.txt"), "x")
+        await chmod(join(root, "locked.txt"), 0o000)
+      })
+      const files = yield* filesIn(root)
+      const result = {
+        read: yield* failureOf(files.read(at("locked.txt"))),
+        write: yield* failureOf(files.write(at("locked.txt"), "y", { _tag: "Holds", text: "x" })),
+      }
+      yield* Effect.promise(() => chmod(join(root, "locked.txt"), 0o600))
+      return result
+    })))
+    expect(out).toEqual({
+      read: { tag: "FilesRefused", reason: "the system does not let it be read" },
+      write: { tag: "FileChanged" },
+    })
+  })
+
   test("two writes that expect the same text, made at once by two layers of one process over one root: one writes, one fails FileChanged", async () => {
     const out = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const root = yield* fresh
