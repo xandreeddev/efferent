@@ -125,8 +125,8 @@ release previews use the maintainer-owned PR handoff below.
   of the current `JOURNAL_FORMAT` with this release's definitions through a
   directory journal, and checks that a journal of any other format is
   refused and left byte for byte: there is no migration or compatibility
-  decoding. The engine of earlier releases kept its own journals (0.13.0 to
-  0.22.0): they stay at their tags, and no code replays them. Record one per
+  decoding. The engine of earlier releases kept its own journals, from 0.13.0
+  to its last release: they stay at their tags, and no code replays them. Record one per
   release with
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
   existing release fixture. During development, record
@@ -320,7 +320,7 @@ The final CI audit checks all 7 names for the release version, source commit
 and archive integrity metadata, and reports whether provenance is present.
 The 18 packages of the old engine (`@xandreed/runtime`,
 `@xandreed/process-host` and the `@xandreed/plugin-*` packages) stay on npm
-at 0.22.0 as they are: the audit does not expect them at a new version, and
+at their last version as they are: the audit does not expect them at a new version, and
 they are never deprecated, unpublished or published again (ADR 0036).
 To repeat it from a checkout of the release source:
 
