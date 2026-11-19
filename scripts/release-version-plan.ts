@@ -5,7 +5,7 @@ import ts from "typescript"
 export const releaseDirectories = ["core", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-langsmith"] as const
 export const releaseNames: ReadonlyArray<string> = releaseDirectories.map((name) => `@xandreed/${name}`)
 /** The workspace packages Changesets ignores: they are versioned and published by nothing here. */
-const ignoredNames: ReadonlyArray<string> = ["@xandreed/foundry", "@xandreed/website"]
+const ignoredNames: ReadonlyArray<string> = ["@xandreed/foundry", "@xandreed/review", "@xandreed/website"]
 const stableVersion = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 export const isReleaseVersion = (value: string): boolean => stableVersion.test(value) && value.split(".").every((part) => Number.isSafeInteger(Number(part)))
 const order = (left: string, right: string) => left < right ? -1 : left > right ? 1 : 0

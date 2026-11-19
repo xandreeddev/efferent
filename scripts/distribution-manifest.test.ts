@@ -33,7 +33,7 @@ describe("distributionDependencies", () => {
       .map(([dependency, range]) => `${name} -> ${dependency}@${range}`))
     expect(pinned).toEqual([])
     expect(built.filter(({ dependencies }) => PEERS.some((peer) => peer in dependencies)).map(({ name }) => name)).toEqual([])
-    expect(built.filter(({ peerDependencies }) => "@xandreed/core" in peerDependencies).map(({ name }) => name).sort()).toEqual(["@xandreed/evals", "@xandreed/sdk", "@xandreed/website"])
+    expect(built.filter(({ peerDependencies }) => "@xandreed/core" in peerDependencies).map(({ name }) => name).sort()).toEqual(["@xandreed/evals", "@xandreed/review", "@xandreed/sdk", "@xandreed/website"])
   })
 })
 

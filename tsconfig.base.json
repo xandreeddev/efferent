@@ -40,6 +40,9 @@
       "@xandreed/website": [
         "packages/website/src/index.ts"
       ],
+      "@xandreed/review": [
+        "packages/review/src/index.ts"
+      ],
       "@xandreed/sdk": [
         "packages/sdk/src/index.ts"
       ],

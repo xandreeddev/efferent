@@ -31,6 +31,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 - `sdk` → core (`src`): the workflow contracts (memory, tools and their turn, approvals, skills, facts, knowledge, tasks, the inbox, files, shell, search, ranking by meaning, a store of bytes for the model) with their kits, and the stock plugins, each a plain Effect layer; `src/node`, the ports that need a runtime's modules (the durable journals, the model providers and a remote embedder that charge the ledger, a media folder, a disk workspace and a process shell, OTLP export). There is no loop: the host's program is the loop (`docs/kernel.md`).
 - The kernel is each package's `src` and root entry: `@xandreed/core`, `@xandreed/sdk` and the sdk's Node entry `@xandreed/sdk/node` (ADR 0036).
 - `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core's kernel for the `ModelSpend` ledger a run shares across its trials, nothing else.
+- `review` → sdk (and its Node entry): `efferent-review`, a pull request reviewer on Node 24 that prepares a pull request's diff, rules and CI for a review (`packages/review/AGENTS.md`). Private until its evals pass: out of the build's `names`, `CURATED_ENTRIES` and the Changesets group.
 - `foundry` runs the gates (development tooling); `website` is the docs site and the learn track. Neither is published.
 
 The `boundaries` layers in `foundry.config.ts` enforce the direction; inside
@@ -147,8 +148,8 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 - A plugin is a plain Effect `Layer` in a `.adapter.ts` file, its type
   saying what it needs; it builds only its own services. The host composes
   plugins with `Layer.provideMerge` or provides them to its program: there
-  is no plugin graph and no `main.ts` but the `evals-cli` and `foundry`
-  command lines. Foreign promises go through `Effect.tryPromise`; foreign
+  is no plugin graph and no `main.ts` but the `evals-cli`, `review` and
+  `foundry` command lines. Foreign promises go through `Effect.tryPromise`; foreign
   errors map to the port's error in one function.
 - Tool failures are data: a tool declares `failureMode: "return"`, and
   `callTool` stores a failure or a defect as a failed result.

@@ -1,0 +1,168 @@
+import { afterAll, describe, expect, test } from "bun:test"
+import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { join } from "node:path"
+import { Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect"
+import { gitCheckout } from "./checkout-git.adapter.js"
+import type { Transport } from "./checkout.entity.js"
+import { gitArgv } from "./checkout.entity.functions.js"
+import { Checkout } from "./checkout.port.js"
+import { parseUnifiedDiff, renderDiff } from "./diff.entity.functions.js"
+import { attributesOf, fileVerdict } from "./file-verdict.entity.functions.js"
+import { AWKWARD_NAME, BIG_LINES, FORGED_NAME, gitFixture, MAGIC_FOLDERS } from "./git-fixture.testing.js"
+import { hostShell } from "./host-shell.adapter.js"
+import { BranchName, CommitSha, FetchRef, RepoName } from "./pull-request.entity.js"
+
+const fixture = gitFixture()
+afterAll(() => fixture.cleanup())
+
+const repo = RepoName.make("owner/project")
+const base = { ref: BranchName.make("main"), sha: CommitSha.make(fixture.left) }
+const head = { sha: CommitSha.make(fixture.head), fetchRef: FetchRef.make("refs/pull/1/head") }
+
+/** A cache root of its own for each test, so no test leans on another's clone. */
+const freshCache = () => mkdtempSync(join(fixture.root, "cache-"))
+
+const checkoutLayer = (cacheRoot: string, transports: ReadonlyArray<Transport> = ["file"]) =>
+  gitCheckout({ cacheRoot, remoteUrl: () => fixture.remote, transports }).pipe(Layer.provide(hostShell({ cwd: fixture.root, env: fixture.env })))
+
+const run = <A, E>(use: (checkout: Checkout["Service"]) => Effect.Effect<A, E>, cacheRoot = freshCache(), transports?: ReadonlyArray<Transport>) =>
+  Effect.runPromiseExit(Effect.gen(function* () {
+    return yield* use(yield* Checkout)
+  }).pipe(Effect.provide(checkoutLayer(cacheRoot, transports))))
+
+/** Fetch first, then `use`, in one fresh cache. */
+const fetched = <A, E>(use: (checkout: Checkout["Service"]) => Effect.Effect<A, E>, cacheRoot = freshCache()) =>
+  run((checkout) => Effect.andThen(checkout.fetch(repo, base, head), use(checkout)), cacheRoot)
+
+const value = <A, E>(exit: Exit.Exit<A, E>): A => Exit.match(exit, { onSuccess: (a) => a, onFailure: (cause) => Effect.runSync(Effect.die(cause)) })
+const failureTag = <A, E>(exit: Exit.Exit<A, E>) => {
+  const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined
+  return reason?._tag === "Fail" && typeof reason.error === "object" && reason.error !== null && "_tag" in reason.error ? reason.error._tag : "no failure"
+}
+
+describe("gitArgv", () => {
+  test("no hooks, no monitor, only the transports given, literal paths, then -C and the command", () => {
+    expect(gitArgv(["https"], "/cache/o/r/mirror.git", ["ls-tree", "-z", "HEAD", "--", ":!x"])).toEqual([
+      "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+      "--literal-pathspecs", "-C", "/cache/o/r/mirror.git", "ls-tree", "-z", "HEAD", "--", ":!x",
+    ])
+    expect(gitArgv(["file"], null, ["clone"])).toEqual([
+      "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "--literal-pathspecs", "clone",
+    ])
+  })
+})
+
+describe("gitCheckout", () => {
+  test("clones, fetches the head by the forge's ref, and reads the diff from where the head left the base, whole past 8 KiB", async () => {
+    const cacheRoot = freshCache()
+    const text = value(await fetched((checkout) => checkout.diff(repo, base.sha, head.sha), cacheRoot))
+    expect(text.length).toBeGreaterThan(8192)
+    const files = Result.getOrThrow(parseUnifiedDiff(text))
+    expect(files.map((file) => [file.path, file.change, file.additions, file.deletions])).toEqual([
+      [`${MAGIC_FOLDERS[1]}/b.ts`, "modified", 1, 1],
+      [`${MAGIC_FOLDERS[0]}/a.ts`, "modified", 1, 1],
+      ["bun.lock", "added", 1, 0],
+      ["docs/gone.md", "deleted", 0, 1],
+      ["docs/old.md", "modified", 0, 2],
+      ["gen/out.ts", "added", 1, 0],
+      [FORGED_NAME, "added", 0, 0],
+      ["src/AGENTS.md", "modified", 1, 1],
+      [AWKWARD_NAME, "added", 1, 0],
+      ["src/big.ts", "added", BIG_LINES, 0],
+      ["src/run.sh", "modified", 0, 0],
+      ["src/sum.ts", "modified", 1, 1],
+    ])
+    // The base's later commit (README.md) is not in a diff from where the head left the base.
+    expect(files.some((file) => file.path === "README.md")).toBe(false)
+    expect(existsSync(join(cacheRoot, "owner", "project", "mirror.git", "HEAD"))).toBe(true)
+  })
+
+  test("a binary file whose name forges a header, and a mode change, read from git's own output and rendered escaped", async () => {
+    const files = Result.getOrThrow(parseUnifiedDiff(value(await fetched((checkout) => checkout.diff(repo, base.sha, head.sha)))))
+    const forged = files.filter((file) => file.path === FORGED_NAME || file.path === "src/run.sh")
+    expect(renderDiff(forged)).toBe([
+      "File: \"pic\\u000aFile: SAFE.ts (added, +1 -0).bin\" (added, +0 -0, binary, not shown)",
+      "",
+      "File: src/run.sh (modified, mode 100644 to 100755, +0 -0)",
+    ].join("\n"))
+  })
+
+  test("with .gitattributes at the base, the verdicts drop the lockfile, the generated, the binary and the deleted files, and keep one that only loses lines", async () => {
+    const [text, attributes] = value(await fetched((checkout) => Effect.all([checkout.diff(repo, base.sha, head.sha), checkout.show(repo, base.sha, ".gitattributes")], { concurrency: 1 })))
+    const rules = attributesOf(Option.getOrElse(attributes, () => ""))
+    const verdicts = Result.getOrThrow(parseUnifiedDiff(text)).map((file) => fileVerdict(file.path, file, rules))
+    expect(verdicts.flatMap((verdict) => (verdict._tag === "Dropped" ? [[verdict.path, verdict.reason]] : []))).toEqual([
+      ["bun.lock", "lockfile"],
+      ["docs/gone.md", "deleted"],
+      ["gen/out.ts", "generated"],
+      [FORGED_NAME, "binary"],
+    ])
+  })
+
+  test("show reads a file at a commit, its path literal: the base's rules, not the head's; none for a link, a missing file or a folder", async () => {
+    const shown = value(await fetched((checkout) => Effect.forEach(
+      [
+        [base.sha, "src/AGENTS.md"], [head.sha, "src/AGENTS.md"], [base.sha, "CLAUDE.md"], [base.sha, "REVIEW.md"], [base.sha, "src"],
+        [head.sha, AWKWARD_NAME], [base.sha, `${MAGIC_FOLDERS[0]}/AGENTS.md`], [base.sha, `${MAGIC_FOLDERS[1]}/AGENTS.md`],
+      ] as const,
+      ([at, path]) => checkout.show(repo, at, path),
+      { concurrency: 1 },
+    )))
+    expect(shown).toEqual([
+      Option.some("Source rules at the base.\n"),
+      Option.some("Source rules the pull request rewrote.\n"),
+      Option.none(),
+      Option.none(),
+      Option.none(),
+      Option.some("export const awkward = true\n"),
+      Option.some("Odd rules.\n"),
+      Option.none(),
+    ])
+  })
+
+  test("a worktree holds the head while its scope is open and is gone after, whether the scope succeeds, fails or is interrupted", async () => {
+    const cacheRoot = freshCache()
+    const seen = value(await fetched((checkout) => Effect.scoped(Effect.map(checkout.worktree(repo, head.sha), (path) => ({ path, sum: readFileSync(join(path, "src/sum.ts"), "utf8") }))), cacheRoot))
+    expect(seen.sum).toContain("total += value * 1")
+    expect(existsSync(seen.path)).toBe(false)
+
+    let failedIn = ""
+    const failed = await run((checkout) => Effect.scoped(Effect.flatMap(checkout.worktree(repo, head.sha), (path) => {
+      failedIn = path
+      return Effect.fail("the review failed")
+    })), cacheRoot)
+    expect([Exit.isFailure(failed), failedIn.length > 0, existsSync(failedIn)]).toEqual([true, true, false])
+
+    const interrupted = value(await run((checkout) => Effect.gen(function* () {
+      const made = yield* Deferred.make<string>()
+      const fiber = yield* Effect.forkChild(Effect.scoped(Effect.flatMap(checkout.worktree(repo, head.sha), (path) => Effect.andThen(Deferred.succeed(made, path), Effect.never))))
+      const path = yield* Deferred.await(made)
+      const there = existsSync(path)
+      yield* Fiber.interrupt(fiber)
+      return { path, there }
+    }), cacheRoot))
+    expect([interrupted.there, existsSync(interrupted.path)]).toEqual([true, false])
+  })
+
+  test("fetching again reuses the clone", async () => {
+    const cacheRoot = freshCache()
+    expect(Exit.isSuccess(await fetched(() => Effect.void, cacheRoot))).toBe(true)
+    expect(Exit.isSuccess(await fetched(() => Effect.void, cacheRoot))).toBe(true)
+  })
+
+  test("a commit the remote does not have is CommitMissing", async () => {
+    const exit = await run((checkout) => checkout.fetch(repo, base, { ...head, sha: CommitSha.make("0".repeat(40)) }))
+    expect(failureTag(exit)).toBe("CommitMissing")
+  })
+
+  test("a transport not allowed is refused by git: a folder remote with only https allowed does not clone", async () => {
+    const exit = await run((checkout) => checkout.fetch(repo, base, head), freshCache(), ["https"])
+    expect(failureTag(exit)).toBe("CommandFailed")
+  })
+
+  test("a cache root inside a git repository, or not absolute, is refused", async () => {
+    for (const root of [join(fixture.remote, "cache"), "relative/cache"]) {
+      expect(failureTag(await run((checkout) => checkout.diff(repo, base.sha, head.sha), root))).toBe("CacheRootRefused")
+    }
+  })
+})

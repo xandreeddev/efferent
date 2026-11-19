@@ -41,6 +41,7 @@ const CHECKED = [
   "packages/evals-langfuse/src/**",
   "packages/evals-langsmith/src/**",
   "packages/sdk/src/**",
+  "packages/review/src/**",
   // The factory judges itself by the same profile (the dogfood).
   "packages/foundry/src/**",
 ]
@@ -199,7 +200,9 @@ const privateText: NonNullable<typeof GateSuiteConfig.Encoded["privateText"]> = 
  * base tsconfig's `paths` and its root entry in CURATED_ENTRIES. The
  * registration gate fails on every package one of them misses, naming the
  * list. The docs site is not a TypeScript package of the framework, and
- * foundry is development tooling: never built or published.
+ * foundry is development tooling: never built or published. The reviewer
+ * (`packages/review`) is gated but not yet built or published, so it is
+ * out of `names` and CURATED_ENTRIES, as it is out of the Changesets group.
  */
 const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> = {
   roots: ["packages"],
@@ -215,7 +218,8 @@ const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> 
       file: "scripts/build-packages.ts",
       name: "names",
       entry: "{dir}",
-      exclude: ["packages/foundry"],
+      // The reviewer is not published yet: it joins the release group once its evals pass.
+      exclude: ["packages/foundry", "packages/review"],
       hint: 'add "{dir}" to `names` in scripts/build-packages.ts; an unlisted package is never built, verified or published',
     },
     {
@@ -223,7 +227,7 @@ const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> 
       file: "foundry.config.ts",
       name: "CURATED_ENTRIES",
       entry: "{path}/src/index.ts",
-      exclude: ["packages/foundry"],
+      exclude: ["packages/foundry", "packages/review"],
       hint: 'add "{path}/src/index.ts", and each subpath entry of its package.json `exports`, to CURATED_ENTRIES in foundry.config.ts: each export is then imported by another package, a script or a doc code block, or tagged @public',
     },
     { source: "json-keys", file: "tsconfig.base.json", keys: ["compilerOptions", "paths"], entry: "{name}" },
@@ -315,6 +319,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       // no runtime module. A package that imports `@xandreed/core` names `core-kernel`; the layer keeps its name.
       { name: "core-kernel-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-kernel"], externals: ["effect", "bun:test"] },
       { name: "core-kernel", path: "packages/core/src/**", canImport: [], externals: ["effect"] },
+      // The reviewer: a command line over the kernel's shell (`@xandreed/sdk/node`'s `processShell`) and Node's modules.
+      ...testLayer("review", ["review", "sdk-kernel", "sdk-kernel/node", "core-kernel"], ["effect", "node:", "bun:test"]),
+      { name: "review", path: src("review"), canImport: ["sdk-kernel", "sdk-kernel/node"], externals: ["effect", "node:"] },
       ...testLayer("foundry", ["foundry"], ["effect", "effect/testing", "typescript", "node:", "bun:test"]),
       { name: "foundry", path: src("foundry"), canImport: [], externals: ["effect", "typescript", "node:"] },
       // The sdk's kernel (`packages/sdk/src`, the package's root entry; its

@@ -1,0 +1,19 @@
+{
+  "name": "@xandreed/review",
+  "version": "0.0.0",
+  "private": true,
+  "engines": { "node": ">=24", "bun": ">=1.3.0" },
+  "type": "module",
+  "description": "efferent-review, a pull request reviewer: it fetches a pull request, its diff, the repository's rules and its CI, and prepares them for a review (Node 24).",
+  "main": "./src/index.ts",
+  "exports": {
+    ".": "./src/index.ts"
+  },
+  "bin": { "efferent-review": "./bin/efferent-review.mjs" },
+  "dependencies": {
+    "@xandreed/core": "workspace:*",
+    "@xandreed/sdk": "workspace:*",
+    "effect": "4.0.7",
+    "tsx": "4.23.13"
+  }
+}
