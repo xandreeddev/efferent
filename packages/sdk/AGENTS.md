@@ -514,8 +514,8 @@ it: `./kernel` is a `restricted` subpath.
   `Embedder` and `VectorStore` too: with the list by meaning on, a last
   message and something to rank, the keys the store lacks embedded as
   passages, 32 a call, each call's vectors put as it returns, the last
-  message alone embedded as a query (its vector kept by the layer while the
-  message is the same: a turn's steps embed it once),
+  message alone embedded as a query (its vector kept by the layer for the
+  steps of its turn while the message is the same: they embed it once),
   the store searched among the keys of `meaningTexts` for `pool`, and what
   it found given to `recallKnowledge`; with it off nothing embedded;
   `EmbedFailed` skips the list by meaning for that request (recall by the

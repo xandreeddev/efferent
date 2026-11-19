@@ -100,14 +100,14 @@ const run = (fetch: ReturnType<typeof embeddingsFetch>["fetch"], questions: Read
 const refused = (status: number, message: string) => new Response(JSON.stringify({ error: { message } }), { status, headers: { "content-type": "application/json" } })
 
 describe("recall by meaning over the OpenAI-compatible embedder", () => {
-  test("a turn of two steps embeds the passages once and the last message once; the next turn embeds its own message alone", async () => {
+  test("a turn of two steps embeds the passages once and the last message once; the next turn embeds its own message, the same words included", async () => {
     const { fetch, sent } = embeddingsFetch()
-    const done = await run(fetch, ["Where does Ana Silva work?", "Who is Ana Silva?"])
+    const done = await run(fetch, ["Where does Ana Silva work?", "Where does Ana Silva work?"])
     expect(done.replies).toEqual(["Done.", "Done."])
     expect(sent).toEqual([
       // The first turn's first step: the forty passages, 32 and 8 a call, then the message.
       { as: "passage", count: 32 }, { as: "passage", count: 8 }, { as: "query", count: 1 },
-      // Its second step asks with the same message: nothing is embedded. The next turn's message is new.
+      // Its second step asks with the same message: nothing is embedded. The next turn's message is its own.
       { as: "query", count: 1 },
     ])
     expect(done.heard.map((one) => one.meaning?.skipped ?? null)).toEqual([null, null, null, null])
