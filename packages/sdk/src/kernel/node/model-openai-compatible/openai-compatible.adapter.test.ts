@@ -2,7 +2,7 @@
 // 2026-11-16 (DeepSeek V4.1 Flash on Baseten): reasoning deltas, a call's arguments in pieces, two calls by index,
 // the usage and the billed cost in the last chunk. No network.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream } from "effect"
+import { Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream, Tracer } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
@@ -252,3 +252,66 @@ const callWith = async (spend: SpendOptions, more: Partial<OpenAiCompatibleOptio
   const { fetch, sent } = fakeFetch(stream(words))
   return { run: await over(fetch, options(spend, more, bounded), streamed), sent }
 }
+
+/** A tracer that keeps every span it opens, as Effect's own native spans. */
+const recording = () => {
+  const spans: Array<Tracer.Span> = []
+  const tracer = Tracer.make({ span: (options) => {
+    const span = new Tracer.NativeSpan(options)
+    spans.push(span)
+    return span
+  } })
+  return { spans, tracer }
+}
+const callSpans = (spans: ReadonlyArray<Tracer.Span>) => spans.filter((span) => span.name === "LanguageModel.streamText")
+
+describe("the OpenAI-compatible provider's span", () => {
+  test("is the call's own span (Effect AI's), given the gen_ai attributes Anthropic's provider sets, and ended with the stream: whole, cut and interrupted", async () => {
+    const asked = { "gen_ai.provider.name": "openai", "gen_ai.operation.name": "chat", "gen_ai.request.model": MODEL, "gen_ai.request.max_tokens": 1000 }
+
+    const whole = recording()
+    await over(fakeFetch(stream(words)).fetch, options(priced), streamed.pipe(Effect.withTracer(whole.tracer)))
+    const [answered] = callSpans(whole.spans)
+    expect(answered?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(answered!.attributes)).toMatchObject({
+      ...asked,
+      "gen_ai.response.model": MODEL,
+      "gen_ai.response.finish_reasons": ["stop"],
+      "gen_ai.usage.input_tokens": 411,
+      "gen_ai.usage.output_tokens": 81,
+      "gen_ai.usage.cache_read.input_tokens": 256,
+    })
+
+    const cut = recording()
+    const early = await over(fakeFetch(stream(sse([delta({ content: "12 × 3" })], false))).fetch, options(priced), streamed.pipe(Effect.withTracer(cut.tracer)))
+    expect(failureOf(early.outcome)).toEqual(["NetworkError", true])
+    const [lost] = callSpans(cut.spans)
+    expect(lost?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(lost!.attributes)).toMatchObject(asked)
+    expect(lost!.attributes.has("gen_ai.usage.input_tokens")).toBe(false)
+
+    const stopped = recording()
+    const started = Effect.runSync(Deferred.make<void>())
+    const hanging = (_: Sent, signal: AbortSignal) => new Response(new ReadableStream({
+      start: (controller) => {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delta({ content: "12" }))}\n\n`))
+        Effect.runSync(Deferred.succeed(started, undefined))
+        signal.addEventListener("abort", () => controller.error(new Error("aborted")))
+      },
+    }), { status: 200 })
+    await over(fakeFetch(hanging).fetch, options(priced), Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(streamed)
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
+    }).pipe(Effect.withTracer(stopped.tracer)))
+    const [interrupted] = callSpans(stopped.spans)
+    expect(interrupted?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(interrupted!.attributes)).toMatchObject(asked)
+  })
+
+  test("names the provider it is told: Gemini's endpoint as gcp.gemini", async () => {
+    const { spans, tracer } = recording()
+    await over(fakeFetch(stream(words)).fetch, options(priced, { provider: "gcp.gemini" }), streamed.pipe(Effect.withTracer(tracer)))
+    expect(callSpans(spans).map((span) => span.attributes.get("gen_ai.provider.name"))).toEqual(["gcp.gemini"])
+  })
+})

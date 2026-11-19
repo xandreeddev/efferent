@@ -1,6 +1,6 @@
 import { Config, Duration, Effect, Option, Schema } from "effect"
-import { DEFAULT_SERVICE_NAME, OtlpCompression, OtlpProtocol } from "./otlp-telemetry.entity.js"
-import type { OtlpExport, OtlpSignal, OtlpSignalExport, OtlpTelemetryOptions, OtlpTemporality } from "./otlp-telemetry.entity.js"
+import { CONTENT_ATTRIBUTES, DEFAULT_SERVICE_NAME, OtlpCompression, OtlpProtocol } from "./otlp-telemetry.entity.js"
+import type { OtlpExport, OtlpSignal, OtlpSignalExport, OtlpSpanPolicy, OtlpTelemetryOptions, OtlpTemporality } from "./otlp-telemetry.entity.js"
 
 /**
  * A signal's URL under a collector's base URL: its path plus `/v1/traces`
@@ -178,3 +178,17 @@ export const otlpExportFromEnv = Effect.fnUntraced(function* (defaults: OtlpTele
     shutdownTimeout: Option.fromNullishOr(defaults.shutdownTimeout),
   }
 })
+
+/**
+ * The policy the traces export runs: the host's, behind the content rule. With `content` off, an attribute that
+ * holds what was said (`CONTENT_ATTRIBUTES`) is left out before the host's `attribute` is asked; anything else, and
+ * everything with `content` on, is the host's to keep, change or leave out. `keep` is the host's.
+ */
+export const exportPolicyOf = (spans: Option.Option<OtlpSpanPolicy>, content: boolean): OtlpSpanPolicy => {
+  const keep = Option.flatMap(spans, (policy) => Option.fromNullishOr(policy.keep))
+  const attribute = Option.getOrElse(Option.flatMap(spans, (policy) => Option.fromNullishOr(policy.attribute)), () => (_span: unknown, _key: string, value: unknown) => Option.some(value))
+  return {
+    ...Option.match(keep, { onNone: () => ({}), onSome: (hook) => ({ keep: hook }) }),
+    attribute: (span, key, value) => (!content && CONTENT_ATTRIBUTES.includes(key) ? Option.none() : attribute(span, key, value)),
+  }
+}

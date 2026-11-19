@@ -1,10 +1,12 @@
 import { Context, Effect, Option, Predicate, Stream } from "effect"
 import type { Tool, Toolkit } from "effect/ai"
 import { toolResult } from "@xandreed/core/kernel"
-import type { JournalStorageError, ListenerFailed, OpenSession, SessionRefused, StoredEvent } from "@xandreed/core/kernel"
+import type { JournalStorageError, ListenerFailed, OpenSession, SessionRefused, StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { CurrentTurn } from "./current-turn.port.js"
 import { runningTurn } from "./running-turn.entity.functions.js"
 import { SentWhole } from "./sent-whole.port.js"
+import { OUTCOME_ATTRIBUTE } from "./telemetry.entity.js"
+import { countTool } from "./telemetry.entity.functions.js"
 
 /**
  * A tool call as the model made it: its id, the tool's name and its parameters. Neither the name nor the
@@ -75,6 +77,14 @@ const handled = <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.WithHa
  * tool annotated `SentWhole` has its result stored as `whole`, a failed one
  * too. It fails only when the result cannot be stored.
  *
+ * The call is a span, `kernel.tool.call`, opened with the tool's name and the
+ * call's id and closed with whether its result is a failure
+ * (`efferent.outcome`); a tool's own spans are under it. The parameters and
+ * the result are not put on it: Effect AI's toolkit puts the parameters on
+ * the span current where a call is handled, which is this one, and the
+ * export drops them unless the host turned content on (ADR 0030). The call
+ * is counted (`kernel.tool.calls`, by tool and outcome).
+ *
  * @public
  */
 export const callTool = <Tools extends Record<string, Tool.Any>>(
@@ -83,16 +93,33 @@ export const callTool = <Tools extends Record<string, Tool.Any>>(
   session: OpenSession,
 ): Effect.Effect<StoredEvent, JournalStorageError | ListenerFailed | SessionRefused, ToolNeeds<Tools>> => {
   const options = { whole: sentWhole(toolkit.tools, call.name) }
+  const ran = (result: unknown, failed: boolean): Ran => ({ draft: toolResult(call, result, failed, options), failed })
   return handled<Tools>(toolkit, call).pipe(
     Effect.flatMap(Stream.runLast),
     Effect.map(Option.match({
-      onNone: () => toolResult(call, null, false, options),
-      onSome: (last) => toolResult(call, last.encodedResult, last.isFailure, options),
+      onNone: () => ran(null, false),
+      onSome: (last) => ran(last.encodedResult, last.isFailure),
     })),
-    Effect.catch((error) => Effect.succeed(toolResult(call, failureText(error), true, options))),
-    Effect.catchDefect((defect) => Effect.succeed(toolResult(call, failureText(defect), true, options))),
+    Effect.catch((error) => Effect.succeed(ran(failureText(error), true))),
+    Effect.catchDefect((defect) => Effect.succeed(ran(failureText(defect), true))),
     Effect.provideService(CurrentTurn, runningTurn(session)),
+    Effect.tap(({ failed }) => Effect.andThen(
+      Effect.annotateCurrentSpan(OUTCOME_ATTRIBUTE, failed ? "failed" : "succeeded"),
+      countTool(Object.hasOwn(toolkit.tools, call.name) ? Option.some(call.name) : Option.none(), failed),
+    )),
     // A result that is not stored answers nothing: the next context would send the call without it.
-    Effect.flatMap((result) => session.append(result)),
+    Effect.flatMap(({ draft }) => session.append(draft)),
+    Effect.withSpan("kernel.tool.call", {
+      attributes: { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": call.name.slice(0, NAME_SHOWN), "gen_ai.tool.call.id": call.id.slice(0, NAME_SHOWN) },
+    }),
   )
 }
+
+/** A call's result as it is stored, and whether it is a failure. */
+interface Ran {
+  readonly draft: StoredDraft
+  readonly failed: boolean
+}
+
+/** The most of a name the model wrote that a span carries: a tool's name or a call's id is short, unless the model went wrong. */
+const NAME_SHOWN = 200

@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test"
-import { Cause, Deferred, Effect, ExecutionPlan, Exit, Fiber, Layer, Logger, Option, Predicate, Schedule, Stream } from "effect"
+import { Cause, Deferred, Effect, ExecutionPlan, Exit, Fiber, Layer, Logger, Option, Predicate, Schedule, Stream, Tracer } from "effect"
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import type { Response } from "effect/ai"
 import { Core, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
@@ -263,5 +263,29 @@ describe("the two behaviours of Effect's plan that planned relies on", () => {
     const plan = ExecutionPlan.make({ provide: primary.layer, attempts: 3, schedule: quick })
     await read(ask.pipe(Stream.withExecutionPlan(plan, { preventFallbackOnPartialStream: true }), Stream.tap((part) => Effect.sync(() => { if (part.type === "text-delta") seen.push(part.delta) }))))
     expect(seen.join("")).toBe("Half Half Half ")
+  })
+})
+
+describe("planned: what a tracer sees", () => {
+  test("each attempt is the model's own span, and the plan marks each on the span current where it runs (kernel.model.attempt)", async () => {
+    const spans: Array<Tracer.NativeSpan> = []
+    const tracer = Tracer.make({ span: (options) => {
+      const span = new Tracer.NativeSpan(options)
+      spans.push(span)
+      return span
+    } })
+    const primary = modelOf("primary", [{ fails: "retryable", after: "nothing" }, { answer: "Hello." }])
+    await Effect.runPromise(Stream.runCollect(planned(ExecutionPlan.make({ provide: primary.layer, attempts: 2, schedule: quick, while: retryable }))(ask)).pipe(
+      Effect.withSpan("host.step"),
+      Effect.withTracer(tracer),
+    ))
+    const step = spans.find((span) => span.name === "host.step")
+    expect(spans.filter((span) => span.name === "LanguageModel.streamText").map((span) => Option.map(span.parent, (parent) => parent.spanId))).toEqual([Option.some(step!.spanId), Option.some(step!.spanId)])
+    expect(step!.events.map(([name, , attributes]) => [name, attributes])).toEqual([
+      ["kernel.model.attempt", { "efferent.attempt": 1, "efferent.plan.step": 0, "efferent.outcome": "started" }],
+      ["kernel.model.attempt", { "efferent.attempt": 1, "efferent.plan.step": 0, "efferent.outcome": "failed", "efferent.reason": "primary.streamText: Internal provider error: busy" }],
+      ["kernel.model.attempt", { "efferent.attempt": 2, "efferent.plan.step": 0, "efferent.outcome": "started" }],
+      ["kernel.model.attempt", { "efferent.attempt": 2, "efferent.plan.step": 0, "efferent.outcome": "succeeded" }],
+    ])
   })
 })

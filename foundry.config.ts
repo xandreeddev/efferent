@@ -627,7 +627,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       // The export of a host's traces and metrics over OTLP/HTTP (ADR 0030): Effect's own exporters behind a span policy,
       // a layer around the host's program. It imports nothing of the kernel: the spans and metrics it sends are the
       // program's, whoever made them.
-      { name: "sdk-kernel-node-telemetry-otlp", path: "packages/sdk/src/kernel/node/telemetry-otlp/**", canImport: [], externals: ["effect", "effect/http", "effect/observability"] },
+      { name: "sdk-kernel-node-telemetry-otlp", path: "packages/sdk/src/kernel/node/telemetry-otlp/**", canImport: [], externals: ["effect", "effect/ai", "effect/http", "effect/observability"] },
       { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk", "sdk-kernel-node-telemetry-otlp"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },

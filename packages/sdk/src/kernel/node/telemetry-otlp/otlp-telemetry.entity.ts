@@ -52,6 +52,15 @@ export type OtlpSignal = "traces" | "metrics"
  * - `metricsTemporality`: `"cumulative"` by default.
  * - `spans`: what of each span the traces export sends (`OtlpSpanPolicy`);
  *   every span, whole, by default.
+ * - `content`: whether what was said is sent (ADR 0030): a model call's
+ *   prompt and answer, and a tool call's parameters. Off by default: the
+ *   attributes that hold it (`CONTENT_ATTRIBUTES`) are left out of every
+ *   span before the host's `spans` policy is asked. On, the export also
+ *   gives each model call's span its prompt (`gen_ai.system_instructions`,
+ *   `gen_ai.input.messages`, a tool's result among them) and its answer
+ *   (`gen_ai.output.messages`), through Effect AI's `CurrentSpanTransformer`.
+ *   No variable turns it on: what a conversation said leaves the process
+ *   only when the host's code says so.
  *
  * @public
  */
@@ -73,6 +82,7 @@ export interface OtlpTelemetryOptions {
   readonly shutdownTimeout?: Duration.Input
   readonly metricsTemporality?: OtlpTemporality
   readonly spans?: OtlpSpanPolicy
+  readonly content?: boolean
 }
 
 /**
@@ -125,3 +135,17 @@ export interface OtlpExport {
 
 /** The service name a resource gets when nothing names one. */
 export const DEFAULT_SERVICE_NAME = "efferent"
+
+/**
+ * The span attributes that hold what was said, which the export leaves out unless `content` is on: Effect AI's
+ * toolkit's `parameters` (a tool call's, on the span current where the call is handled: `kernel.tool.call`), and
+ * OpenTelemetry's generative AI content attributes, a prompt, an answer, a tool's arguments and result.
+ */
+export const CONTENT_ATTRIBUTES: ReadonlyArray<string> = [
+  "parameters",
+  "gen_ai.system_instructions",
+  "gen_ai.input.messages",
+  "gen_ai.output.messages",
+  "gen_ai.tool.call.arguments",
+  "gen_ai.tool.call.result",
+]

@@ -1,10 +1,11 @@
-import { Cause, Effect, Match, Option, Predicate, Result, Stream } from "effect"
+import { Cause, Clock, Effect, Match, Option, Predicate, Result, Stream } from "effect"
 import type { ExecutionPlan } from "effect"
 import { AiError } from "effect/ai"
 import { CurrentTurn } from "./current-turn.port.js"
 import { ModelAnswerFailed } from "./model-answer.entity.js"
 import { AnswerCut, attemptEvent } from "./planned.entity.js"
 import type { AttemptData } from "./planned.entity.js"
+import { OUTCOME_ATTRIBUTE } from "./telemetry.entity.js"
 
 /**
  * Whether a model call that failed with `error` is worth making again: an `AiError` whose reason says so (a rate
@@ -42,9 +43,25 @@ const attemptOf = (event: ExecutionPlan.Event<unknown>): AttemptData => Match.va
  * and never fails the call.
  */
 const said = (event: ExecutionPlan.Event<unknown>): Effect.Effect<void> =>
-  Effect.flatMap(Effect.serviceOption(CurrentTurn), (turn) => Option.match(turn, {
+  Effect.andThen(marked(attemptOf(event)), Effect.flatMap(Effect.serviceOption(CurrentTurn), (turn) => Option.match(turn, {
     onNone: () => Effect.void,
     onSome: (open) => open.publish(attemptEvent, attemptOf(event)).pipe(Effect.ignoreCause({ log: "Warn", message: "a model attempt could not be said" })),
+  })))
+
+/**
+ * Mark one attempt on the span current where the plan runs it (a turn's, or the host's), as a span event
+ * `kernel.model.attempt`: each attempt is a span of the model's own (`LanguageModel.streamText`), which the plan cannot
+ * reach, so the plan's word on it (its number, its step, how it went) goes beside them. With no span, nothing.
+ */
+const marked = (attempt: AttemptData): Effect.Effect<void> =>
+  Effect.flatMap(Effect.option(Effect.currentSpan), Option.match({
+    onNone: () => Effect.void,
+    onSome: (span) => Effect.map(Clock.currentTimeNanos, (now) => span.event("kernel.model.attempt", now, {
+      "efferent.attempt": attempt.attempt,
+      "efferent.plan.step": attempt.step,
+      [OUTCOME_ATTRIBUTE]: attempt.outcome,
+      ...(attempt.reason === undefined ? {} : { "efferent.reason": attempt.reason }),
+    })),
   }))
 
 /**

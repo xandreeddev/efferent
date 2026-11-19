@@ -26,6 +26,7 @@ import {
   turnStarted,
 } from "@xandreed/core/kernel"
 import type { AnnouncedEvent, LiveDefinition, OpenSession, JournalStorageError, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { CONVERSATION_ATTRIBUTE, OUTCOME_ATTRIBUTE, SESSION_ATTRIBUTE, TURN_ATTRIBUTE } from "../../contracts/turn/telemetry.entity.js"
 
 /**
  * How the session plugin is set up.
@@ -299,10 +300,12 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
       Effect.acquireRelease(begin(id), (open, exit) => Effect.orDie(end(open, exit))),   // Free → TurnOpen, or refused; the end stores core.session.turn.ended with the scope's outcome
       announceStart,
     ),
+    // The turn is a span, `kernel.turn`, around its begin, its body and its end: the session it is of, its number once it
+    // opened, and how it ended. A body's work (its memory, its model calls, its tools) is under it.
     turn: (id, body) => Effect.acquireUseRelease(
       begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
-      (open) => Effect.flatMap(announceStart(open), body),           // announced inside the turn, so a listener that fails it still closes it
-      (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
-    ),
+      (open) => Effect.andThen(Effect.annotateCurrentSpan(TURN_ATTRIBUTE, open.turn.turn), Effect.flatMap(announceStart(open), body)),   // announced inside the turn, so a listener that fails it still closes it
+      (open, exit) => Effect.andThen(Effect.annotateCurrentSpan(OUTCOME_ATTRIBUTE, outcomeOf(exit)._tag.toLowerCase()), end(open, exit)),   // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
+    ).pipe(Effect.withSpan("kernel.turn", { attributes: { [SESSION_ATTRIBUTE]: id, [CONVERSATION_ATTRIBUTE]: id } })),
   })
 }))

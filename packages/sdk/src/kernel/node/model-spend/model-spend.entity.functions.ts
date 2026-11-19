@@ -63,6 +63,16 @@ export const settlementOf = (charge: Charge, reported: Option.Option<Reported>, 
     onNone: () => (reach === "Sent" ? Option.some(heldBy(charge)) : Option.none()),
   })
 
+/**
+ * What a settled call cost, as the cost metric counts it: what the ledger settled a held call at, or what the provider
+ * billed an uncapped model's call; none for a call that is released, or an uncapped model's call with no bill, which
+ * the ledger settles at 0 for want of a price, not because it was free.
+ */
+export const metredCostOf = (charge: Charge, reported: Option.Option<Reported>, reach: Reach): Option.Option<number> =>
+  charge._tag === "Held"
+    ? settlementOf(charge, reported, reach)
+    : Option.flatMap(reported, (usage) => Option.fromNullishOr(usage.billed))
+
 /** The statuses a refusal before any generation is answered with: a 4xx, but 408, a request that outlived its wait. */
 export const isRefusalStatus = (status: number): boolean => status >= 400 && status < 500 && status !== 408
 

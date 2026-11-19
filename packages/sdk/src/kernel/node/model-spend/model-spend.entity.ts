@@ -1,4 +1,4 @@
-import { Duration, Schema } from "effect"
+import { Duration, Metric, Schema } from "effect"
 import { ModelSpendExceeded, SpendAmount, SpendCaps } from "@xandreed/core/kernel"
 
 const PerMillion = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
@@ -93,3 +93,16 @@ export interface Timeouts {
 
 /** The waits a provider gives up after when its options name none: a minute for the headers, two between pieces. */
 export const DEFAULT_TIMEOUTS = { response: Duration.minutes(1), idle: Duration.minutes(2) } as const
+
+/**
+ * What the ledger settled each model call at, in USD, by the model the call was priced as (`efferent.model`, the key
+ * the kernel's model metrics share; ADR 0030). The ledger is the one source of a call's cost (ADR 0020): a call that
+ * is released, and one whose cost is not known (an uncapped model's, unpriced, with no bill), adds nothing, never 0.
+ */
+export const modelCost = Metric.counter("kernel.model.cost", {
+  description: "what the spend ledger settled each model call at, in USD, by the model priced",
+  incremental: true,
+})
+
+/** The attribute `kernel.model.cost` names the model under. */
+export const COST_MODEL_ATTRIBUTE = "efferent.model"

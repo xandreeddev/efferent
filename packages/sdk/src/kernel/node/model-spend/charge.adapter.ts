@@ -1,12 +1,12 @@
-import { Duration, Effect, Exit, Match, Option, Ref, Scope, Stream } from "effect"
+import { Duration, Effect, Exit, Match, Metric, Option, Ref, Scope, Stream } from "effect"
 import type { AiError } from "effect/ai"
 import { HttpClient, HttpClientError } from "effect/http"
 import type { HttpClientRequest } from "effect/http"
 import type { ModelSpend, ModelSpendExceeded, ModelSpendUnavailable } from "@xandreed/core/kernel"
 import { CallReach } from "./call-reach.port.js"
-import { DEFAULT_TIMEOUTS } from "./model-spend.entity.js"
+import { COST_MODEL_ATTRIBUTE, DEFAULT_TIMEOUTS, modelCost } from "./model-spend.entity.js"
 import type { Charge, Reach, Reported, SpendOptions, Timeouts } from "./model-spend.entity.js"
-import { heldBy, isRefusalStatus, ledgerUnavailable, neverConnected, settlementOf, spendRefused } from "./model-spend.entity.functions.js"
+import { heldBy, isRefusalStatus, ledgerUnavailable, metredCostOf, neverConnected, settlementOf, spendRefused } from "./model-spend.entity.functions.js"
 
 /** What charges a provider's calls: the ledger in its context, the host's spend options, and names for its failures. */
 export interface Charging {
@@ -45,7 +45,11 @@ export const holdIn = Effect.fnUntraced(function* (charging: Charging, method: s
     charging.spend.reserve({ amount: heldBy(charge), caps: charging.options.caps ?? {} }).pipe(Effect.mapError(refusedBy(charging, method))),
     (hold) => Effect.all([Ref.get(reported), Ref.get(reach)], { concurrency: 1 }).pipe(
       Effect.flatMap(([usage, at]) => Option.match(settlementOf(charge, usage, at), {
-        onSome: (cost) => charging.spend.settle(hold, cost),
+        // Counted once the ledger took it: the ledger is the one source of what a call cost.
+        onSome: (cost) => Effect.andThen(charging.spend.settle(hold, cost), Option.match(metredCostOf(charge, usage, at), {
+          onNone: () => Effect.void,
+          onSome: (metred) => Metric.update(Metric.withAttributes(modelCost, { [COST_MODEL_ATTRIBUTE]: charging.model }), metred),
+        })),
         onNone: () => charging.spend.release(hold),
       })),
       Effect.ignore({ log: "Warn", message: "a model call's spend hold could not be closed in the ledger" }),

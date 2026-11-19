@@ -1,7 +1,9 @@
 import { describe, expect, test } from "bun:test"
 import { ConfigProvider, Duration, Effect, Exit, Option } from "effect"
-import type { OtlpExport, OtlpTelemetryOptions } from "./otlp-telemetry.entity.js"
-import { otlpExportFromEnv, otlpExportOf, signalUrl } from "./otlp-telemetry.entity.functions.js"
+import type { Tracer } from "effect"
+import { CONTENT_ATTRIBUTES } from "./otlp-telemetry.entity.js"
+import type { OtlpExport, OtlpSpanPolicy, OtlpTelemetryOptions } from "./otlp-telemetry.entity.js"
+import { exportPolicyOf, otlpExportFromEnv, otlpExportOf, signalUrl } from "./otlp-telemetry.entity.functions.js"
 
 const fromEnv = (env: Record<string, string>, defaults: OtlpTelemetryOptions = {}): OtlpExport =>
   Effect.runSync(otlpExportFromEnv(defaults).pipe(Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env }))))
@@ -128,5 +130,43 @@ describe("otlpExportFromEnv", () => {
     })
     expect(urls(own)).toEqual(["http://traces:4318/v1/traces", null])
     expect(Option.map(own.traces, (signal) => signal.protocol)).toEqual(Option.some("http/json"))
+  })
+})
+
+describe("otlpExportFromEnv, as a table", () => {
+  test("where each signal goes, for each environment a host may run in", () => {
+    const rows: ReadonlyArray<readonly [string, Record<string, string>, OtlpTelemetryOptions, ReadonlyArray<string | null>]> = [
+      ["nothing set", {}, {}, [null, null]],
+      ["a shared endpoint", { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, {}, ["http://collector:4318/v1/traces", "http://collector:4318/v1/metrics"]],
+      ["a traces endpoint alone", { OTEL_EXPORTER_OTLP_TRACES_ENDPOINT: "http://traces:4318/v1/traces" }, {}, ["http://traces:4318/v1/traces", null]],
+      ["the signal's own over the shared one", { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318", OTEL_EXPORTER_OTLP_METRICS_ENDPOINT: "http://metrics:9000/push" }, {}, ["http://collector:4318/v1/traces", "http://metrics:9000/push"]],
+      ["metrics turned off", { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318", OTEL_METRICS_EXPORTER: "none" }, {}, ["http://collector:4318/v1/traces", null]],
+      ["the SDK disabled", { OTEL_SDK_DISABLED: "true", OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, {}, [null, null]],
+      ["the defaults' URL, the environment silent", {}, { baseUrl: "http://default:4318" }, ["http://default:4318/v1/traces", "http://default:4318/v1/metrics"]],
+      ["the environment over the defaults", { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, { baseUrl: "http://default:4318" }, ["http://collector:4318/v1/traces", "http://collector:4318/v1/metrics"]],
+      ["the defaults' signal off, the environment silent on it", { OTEL_EXPORTER_OTLP_ENDPOINT: "http://collector:4318" }, { metrics: false }, ["http://collector:4318/v1/traces", null]],
+    ]
+    expect(rows.map(([name, env, defaults]) => [name, urls(fromEnv(env, defaults))])).toEqual(rows.map(([name, , , expected]) => [name, [...expected]]))
+  })
+})
+
+describe("exportPolicyOf: the content rule before the host's policy", () => {
+  const span = {} as Tracer.Span
+  const sent = (policy: OtlpSpanPolicy, key: string, value: unknown) => Option.getOrNull(policy.attribute!(span, key, value))
+  test("with content off, what was said is left out before the host is asked; anything else is the host's", () => {
+    const asked: Array<string> = []
+    const policy = exportPolicyOf(Option.some({ attribute: (_span, key, value) => { asked.push(key); return key === "secret" ? Option.none() : Option.some(value) } }), false)
+    expect(CONTENT_ATTRIBUTES.map((key) => sent(policy, key, "said"))).toEqual(CONTENT_ATTRIBUTES.map(() => null))
+    expect([sent(policy, "secret", 1), sent(policy, "gen_ai.usage.input_tokens", 12)]).toEqual([null, 12])
+    expect(asked).toEqual(["secret", "gen_ai.usage.input_tokens"])
+  })
+
+  test("with content on, every attribute is the host's to keep, change or leave out; with no policy, kept as it is", () => {
+    const redacting = exportPolicyOf(Option.some({ attribute: (_span, key, value) => Option.some(key === "gen_ai.input.messages" ? "redacted" : value) }), true)
+    expect([sent(redacting, "gen_ai.input.messages", "[...]"), sent(redacting, "parameters", { a: 1 })]).toEqual(["redacted", { a: 1 }])
+    const open = exportPolicyOf(Option.none(), true)
+    expect([sent(open, "gen_ai.output.messages", "[...]"), open.keep]).toEqual(["[...]", undefined])
+    const keep = (candidate: Tracer.Span) => candidate.name !== "dropped"
+    expect(exportPolicyOf(Option.some({ keep }), false).keep).toBe(keep)
   })
 })

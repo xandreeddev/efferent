@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
 import { AiError } from "effect/ai"
 import { ModelSpendExceeded } from "@xandreed/core/kernel"
-import { chargeOf, costOf, isRefusalStatus, isSpendRefusal, neverConnected, settlementOf, spendRefusalOf, spendRefused, unchargeable, worstCaseOf } from "./model-spend.entity.functions.js"
+import { chargeOf, costOf, isRefusalStatus, isSpendRefusal, metredCostOf, neverConnected, settlementOf, spendRefusalOf, spendRefused, unchargeable, worstCaseOf } from "./model-spend.entity.functions.js"
 import type { Charge, Reported } from "./model-spend.entity.js"
 
 const price = { input: 2, output: 10, cacheRead: 0.5, cacheWrite: 4, maxOutput: 1000 }
@@ -57,6 +57,27 @@ describe("how a hold is closed, as a table", () => {
       ["uncapped, billed", "settle 0.0007"],
       ["uncapped, usage alone", "settle 0"],
       ["uncapped, cut", "settle 0"],
+    ])
+  })
+
+  test("what the cost metric counts: what a held call settled at, or an uncapped call's bill; never the 0 an unpriced call settles at", () => {
+    const rows = [
+      ["reported usage", metredCostOf(held, Option.some(used(1_000, 100)), "Sent")],
+      ["the provider's bill", metredCostOf(held, Option.some(used(1_000, 100, 0, 0, 0.0005)), "Sent")],
+      ["sent, nothing reported", metredCostOf(held, Option.none(), "Sent")],
+      ["never left", metredCostOf(held, Option.none(), "Unsent")],
+      ["uncapped, billed", metredCostOf({ _tag: "Unheld" }, Option.some(used(1, 1, 0, 0, 0.0007)), "Sent")],
+      ["uncapped, usage alone", metredCostOf({ _tag: "Unheld" }, Option.some(used(1, 1)), "Sent")],
+      ["uncapped, cut", metredCostOf({ _tag: "Unheld" }, Option.none(), "Sent")],
+    ] as const
+    expect(rows.map(([name, cost]) => [name, Option.getOrElse(Option.map(cost, (amount) => `count ${amount}`), () => "nothing")])).toEqual([
+      ["reported usage", `count ${(1_000 * 2 + 100 * 10) / 1_000_000}`],
+      ["the provider's bill", "count 0.0005"],
+      ["sent, nothing reported", "count 0.03"],
+      ["never left", "nothing"],
+      ["uncapped, billed", "count 0.0007"],
+      ["uncapped, usage alone", "nothing"],
+      ["uncapped, cut", "nothing"],
     ])
   })
 
