@@ -189,7 +189,10 @@ still verify complete coverage of each row; a citation alone proves none.
 ## Definition of done
 
 `.github/workflows/ci.yml`, in order; tests run with `HTTP_PROXY` and
-`HTTPS_PROXY` unset.
+`HTTPS_PROXY` unset. Before the tests, CI runs `sudo sh scripts/ci-bubblewrap.sh`
+(bubblewrap and unprivileged user namespaces for the reviewer's isolation
+probe, which fails rather than skips in CI); on a workstation the probe needs
+`bwrap` and user namespaces, or skips. Never run the script there.
 
 ```bash
 bun install --frozen-lockfile

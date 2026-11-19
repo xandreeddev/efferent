@@ -49,15 +49,8 @@ jobs:
       - run: bun run foundry demo
 
       # The reviewer's isolation probe (packages/review) runs bubblewrap for real, and fails
-      # rather than skips when CI is set. Ubuntu 24.04's AppArmor restricts unprivileged user
-      # namespaces, so the runner allows them first.
-      - run: |
-          sudo apt-get update -q
-          sudo apt-get install -y -q bubblewrap
-          if [ -e /proc/sys/kernel/apparmor_restrict_unprivileged_userns ]; then
-            sudo sysctl -w kernel.apparmor_restrict_unprivileged_userns=0
-          fi
-          bwrap --unshare-all --ro-bind / / true
+      # rather than skips when CI is set: install it and allow unprivileged user namespaces.
+      - run: sudo sh scripts/ci-bubblewrap.sh
 
       # Eval suites are key-gated and skip cleanly in CI; unit tests run.
       - run: bun test
