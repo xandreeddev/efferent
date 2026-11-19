@@ -370,8 +370,11 @@ console.log(reply)
   `sessionsConformance`, `journalStorageConformance` and the others) hold a
   host's own part to its contract.
 
-The guide, `docs/kernel.md`, is the reference, and the learn track builds
-such a program one part at a time.
+The guide,
+[`docs/kernel.md`](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md),
+is the reference, and the
+[learn track](https://xandreeddev.github.io/efferent/learn/) builds such a
+program one part at a time.
 
 ### Repository
 

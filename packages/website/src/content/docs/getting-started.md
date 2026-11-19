@@ -3,8 +3,6 @@ title: Getting started
 description: Install the Efferent kernel and write a first agent in Node, its loop your own program.
 ---
 
-# Getting started
-
 Efferent is an Effect-native agent framework for Node 24 and Bun. A small
 kernel holds what every agent has (a journal, sessions and events), and every
 other part is a plain Effect layer you can replace. There is no loop to

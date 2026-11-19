@@ -1015,7 +1015,10 @@ the package roots.
   before anything is sent, an answer asked for whole, and a kernel host's
   turn with `modelAnswer` and `callTool`), and `models.test.ts` (the region
   `docs/kernel.md` quotes: the gateway's model under a ledger capped at
-  five cents). `scripts/kernel-consumer.fixture.mjs` runs one call of each
+  five cents) and `first-program.test.ts` (the first program the README,
+  getting started and the pending release notes quote, run twice over one
+  folder on a fake `fetch`, the second run going on with the first's
+  conversation; its copies pinned). `scripts/kernel-consumer.fixture.mjs` runs one call of each
   over a local HTTP server, one the cap refuses and one to a closed port,
   released, on Node and on Bun. The workspace's: `files-disk/*.test.ts` (the
   files kit, the search kit over it, and each disk case: links out of the

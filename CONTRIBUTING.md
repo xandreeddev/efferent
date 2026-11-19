@@ -101,8 +101,9 @@ release previews use the maintainer-owned PR handoff below.
   Their `@xandreed/*` imports in code blocks are compiled against the packed
   packages (`verify:packages`); generated pages are never edited by hand.
 - `bun run docs:generate` (`scripts/sync-guides.ts`) writes the guides'
-  snippets and their website pages; CI fails on any difference from what is
-  committed.
+  snippets and their website pages (`docs/kernel.md` is `/docs/guide/`) and
+  the index of `docs/adr/` (`/docs/decisions/`); CI fails on any difference
+  from what is committed.
 - What each published entry exports is recorded in `api/`: one file per
   entry, `api/<package>.api.txt` for a package's root and
   `api/<package>--<subpath>.api.txt` for each other entry (every `/` of the

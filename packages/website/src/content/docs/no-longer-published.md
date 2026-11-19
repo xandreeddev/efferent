@@ -3,8 +3,6 @@ title: Packages that are no longer published
 description: The eighteen packages of the engine before 0.23.0, their last version, and what a host writes instead of each.
 ---
 
-# Packages that are no longer published
-
 Up to 0.22.0, Efferent was an engine: `Agent.define` composed `@xandreed/plugin-*`
 packages through a plugin graph (`@xandreed/runtime`) and ran a turn engine of
 its own. From 0.23.0 the kernel replaces it: a host composes plain Effect layers
