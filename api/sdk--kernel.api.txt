@@ -14,6 +14,10 @@ class Inbox
 class InboxClosed
 class InboxRefused
 class InvalidBudget
+class MediaDamaged
+class MediaRefused
+class MediaStore
+class MediaUnavailable
 class Memory
 class ModelAnswerFailed
 class OverBudget
@@ -100,7 +104,10 @@ const ListView
 const LoadSkill
 const LoadedSkill
 const MEANING_MODEL_LIMIT
+const MEDIA_LIMIT
 const MEMORY_LIMIT
+const MediaHash
+const MediaRefusedBecause
 const MemoryData
 const MemoryDay
 const MemoryEndedData
@@ -195,6 +202,7 @@ const attemptEvent
 const autoApprove
 const callTool
 const catalogue
+const checkedBytes
 const checkedKnowledgeOptions
 const checkedMeaningOptions
 const clipTo
@@ -230,6 +238,7 @@ const framed
 const grantsOf
 const hostNote
 const inMemoryFiles
+const inMemoryMedia
 const inMemoryVectors
 const inProcessJournal
 const inbox
@@ -248,6 +257,8 @@ const learnedEvent
 const loadedOf
 const meaningKey
 const meaningTexts
+const mediaHashOf
+const mediaStoreConformance
 const memoryConformance
 const memoryEndedEvent
 const memoryEvent
@@ -328,6 +339,7 @@ interface FilesSearchOptions
 interface FilesSubject
 interface FoundText
 interface FusedMemory
+interface InMemoryMediaOptions
 interface InboxOptions
 interface KeptRecords
 interface KeyValueStore
@@ -342,6 +354,7 @@ interface ListPlace
 interface MeaningOptions
 interface MeaningPlace
 interface MeaningRecallOptions
+interface MediaStoreSubject
 interface MemorySubject
 interface MemoryWrapperSubject
 interface MessageRead
@@ -417,6 +430,8 @@ type InboxTurnFailure
 type KnowledgeRecalledData
 type LearnedData
 type LoadedSkill
+type MediaHash
+type MediaRefusedBecause
 type MemoryData
 type MemoryDay
 type MemoryEndedData
