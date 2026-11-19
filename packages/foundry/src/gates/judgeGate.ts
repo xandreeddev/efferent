@@ -13,9 +13,9 @@ export interface JudgeVerdict {
 const JUDGE_REJECTED = RuleId.make("judge/needs-work")
 
 /**
- * A rank-4 gate from any judging function — the seam the runtime's
- * independent Opus `Verifier` plugs into (the adapter lives with the
- * runtime; foundry never imports it). Judges run LAST (`kindRank` 4): only
+ * A rank-4 gate from any judging function — the seam an independent
+ * verifier plugs into (its adapter lives with the app that runs it;
+ * foundry never imports it). Judges run LAST (`kindRank` 4): only
  * code that already survived every deterministic rank spends judge tokens.
  * `deterministic: false` is carried on the gate — a judge verdict is an
  * opinion, and the report says so.

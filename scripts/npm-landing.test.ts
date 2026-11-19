@@ -27,7 +27,7 @@ const git: LandingCommand = async (command) => command[1] === "rev-parse" ? repl
 
 test("the landing manifest has documentation metadata and no executable or dependency surface", () => {
   const manifest = landingManifest({ root: "unused", sha, version })
-  expect(manifest).toEqual({ name: "efferent", version, description: "Reserved Efferent framework name and documentation. Install the maintained @xandreed/* packages.", license: "MIT", gitHead: sha, repository: { type: "git", url: "git+https://github.com/xandreeddev/efferent.git" }, homepage: "https://xandreeddev.github.io/efferent/", files: ["README.md", "LICENSE"] })
+  expect(manifest).toEqual({ name: "efferent", version, description: "Documentation of the Efferent agent framework, a kernel on Effect for Node and Bun: install @xandreed/core and @xandreed/sdk.", keywords: ["efferent", "agent", "ai", "llm", "effect", "framework"], license: "MIT", gitHead: sha, repository: { type: "git", url: "git+https://github.com/xandreeddev/efferent.git" }, homepage: "https://xandreeddev.github.io/efferent/", files: ["README.md", "LICENSE"] })
   expect(["dependencies", "peerDependencies", "bin", "scripts", "main", "exports"].some((key) => Object.hasOwn(manifest, key))).toBe(false)
 })
 

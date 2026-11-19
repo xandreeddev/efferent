@@ -84,8 +84,8 @@ export const killImplementorGroups = (): void => {
 }
 
 /**
- * A real agent behind the same port — `claude -p` in the workspace (the
- * precedent set by the runtime's `Verifier`). Skeleton-minimal: no receipt
+ * A real agent behind the same port — `claude -p` in the workspace.
+ * Skeleton-minimal: no receipt
  * introspection (the snapshot + gates judge the result, not the agent's
  * self-report). The implementor leads a process group of its own; when the
  * attempt ends (an exit, its deadline or an interruption) the group gets

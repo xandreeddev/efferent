@@ -3,6 +3,8 @@
   "version": "0.22.0",
   "engines": { "node": ">=24" },
   "type": "module",
+  "description": "Evaluations for agents and model functions on Effect: tasks, trials, graders, gates and suites, run under one spend ledger and kept as local reports.",
+  "keywords": ["efferent", "effect", "evals", "evaluation", "llm", "agent", "grader"],
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts",

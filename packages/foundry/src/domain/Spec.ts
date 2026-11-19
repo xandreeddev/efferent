@@ -5,8 +5,7 @@ export class ForgeLimits extends Schema.Class<ForgeLimits>("ForgeLimits")({
   maxAttempts: Schema.Int.pipe(Schema.check(Schema.isBetween({ minimum: 1, maximum: 10 }))),
   /**
    * Wall-clock budget, checked at attempt boundaries (a soft deadline — the
-   * first attempt always completes, mirroring the runtime's step-cap
-   * philosophy of never interrupting mid-work).
+   * first attempt always completes: work is never interrupted midway).
    */
   budgetMillis: Schema.Number.check(Schema.isGreaterThan(0)),
 }) {}

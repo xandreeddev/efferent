@@ -30,7 +30,15 @@ export interface DocGroup {
 export const docsNav: DocGroup[] = [
   {
     group: "Start here",
-    items: [{ slug: "getting-started", label: "Getting started" }],
+    items: [
+      { slug: "getting-started", label: "Getting started" },
+      { slug: "guide", label: "The guide" },
+      { slug: "decisions", label: "The decisions" },
+    ],
+  },
+  {
+    group: "Upgrading",
+    items: [{ slug: "no-longer-published", label: "Packages no longer published" }],
   },
   {
     group: "Concepts",

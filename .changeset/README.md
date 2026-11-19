@@ -7,7 +7,7 @@ changing one versions all of them together. Foundry and the website are not
 released packages.
 
 `bun run release:version` consumes pending notes through Changesets and prepares
-the release PR: package and plugin versions, the central changelog, published
+the release PR: package versions, the central changelog, published
 version markers, compatibility fixtures, generated documentation, and workspace
 lock versions. It never publishes, tags, commits, or opens a pull request.
 

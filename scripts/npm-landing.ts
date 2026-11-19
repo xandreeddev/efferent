@@ -51,11 +51,12 @@ export const landingReadme = (readme: string, sha: string, version: string): str
     } else prose.push(line)
   }
   pieces.push(rewrite(prose.join("")))
-  return `**The \`efferent\` npm name is reserved for the Efferent framework.**\n\nThis package contains documentation only. Install the maintained framework through its scoped packages:\n\n\`\`\`sh\nnpm install effect @xandreed/core @xandreed/sdk\n\`\`\`\n\nThe historical \`efferent\` CLI is no longer shipped by this package. The framework README below comes from version ${version}, source [${sha.slice(0, 11)}](https://github.com/xandreeddev/efferent/tree/${sha}). See the [current project README](https://github.com/xandreeddev/efferent/blob/main/README.md) for ongoing changes.\n\n---\n\n${pieces.join("")}`
+  return `**The \`efferent\` npm name is reserved for the Efferent framework.**\n\nThis package holds documentation only: the framework is its scoped packages, a kernel on Effect for Node 24 and Bun.\n\n\`\`\`sh\nnpm install effect @xandreed/core @xandreed/sdk\n\`\`\`\n\nThe README below is the framework's at version ${version}, source [${sha.slice(0, 11)}](https://github.com/xandreeddev/efferent/tree/${sha}); the [current project README](https://github.com/xandreeddev/efferent/blob/main/README.md) follows what changed since.\n\n---\n\n${pieces.join("")}`
 }
 export const landingManifest = ({ sha, version }: LandingSource) => ({
   name: "efferent", version,
-  description: "Reserved Efferent framework name and documentation. Install the maintained @xandreed/* packages.",
+  description: "Documentation of the Efferent agent framework, a kernel on Effect for Node and Bun: install @xandreed/core and @xandreed/sdk.",
+  keywords: ["efferent", "agent", "ai", "llm", "effect", "framework"],
   license: "MIT", gitHead: sha,
   repository: { type: "git", url: "git+https://github.com/xandreeddev/efferent.git" },
   homepage: "https://xandreeddev.github.io/efferent/", files: ["README.md", "LICENSE"],

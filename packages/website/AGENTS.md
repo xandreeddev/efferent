@@ -1,9 +1,12 @@
 # @xandreed/website
 
 The docs site (Astro), not published. The pages under `src/content/docs`
-are written by hand (getting started, which points to `docs/kernel.md`, the
-guide; the eval packages' and foundry's pages), and a guide `bun run
-docs:generate` mirrors there is never edited by hand; the learn track,
+are written by hand (getting started, whose first program
+`packages/sdk/src/node/first-program.test.ts` runs and pins; the packages
+that are no longer published; the eval packages' and foundry's pages), but
+two that `bun run docs:generate` writes and that are never edited by hand:
+`guide.md`, mirrored from `docs/kernel.md`, and `decisions.md`, the index of
+`docs/adr/`; the learn track,
 `/learn`, is written by hand too: interactive lessons that run a learner's agent
 in the browser on the kernel. Check it with `bun run --cwd packages/website
 check` (tsc over the learn code, the build, the link check) and
