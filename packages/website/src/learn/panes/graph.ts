@@ -148,7 +148,8 @@ const rowsOf = (rows: ReadonlyArray<RecallRow>): ReadonlyArray<HTMLElement> => {
 /** The recall's steps, in words. */
 const stepsOf = (view: RecallView): ReadonlyArray<HTMLElement> => [
   el("li", {}, el("strong", {}, "1. The seeds: what your message named"), el("ul", { class: "grp-named" }, ...view.seeds.map((line) => el("li", {}, line)))),
-  el("li", {}, el("strong", {}, "2. Memories about the seeds, and those your words reach, fused"),
+  el("li", {}, el("strong", {}, `2. ${view.lists}`),
+    ...Option.toArray(Option.map(view.byMeaning, (line) => el("p", { class: "grp-more", "data-grp-meaning": "" }, line))),
     ...(view.ranked.length === 0 ? [el("p", {}, "None.")] : rowsOf(view.ranked))),
   el("li", {}, el("strong", {}, "3. The walk by subject"),
     ...(view.bridges.length === 0 ? [el("p", {}, "It started from nothing: the best memories about the seeds brought in no entity your message did not name.")]

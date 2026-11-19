@@ -6,10 +6,11 @@ import { Option } from "effect"
 import type { Duration, Effect, Layer, Result } from "effect"
 import type { LanguageModel } from "effect/ai"
 import type { Core, JournalStorage, SessionId, Sessions, TurnNumber } from "@xandreed/core/kernel"
-import type { Approval, Curator, Files, KeyValueStore, Memory, Summarizer, TaskReports } from "@xandreed/sdk/kernel"
+import type { Approval, Curator, Embedder, Files, KeyValueStore, Memory, Summarizer, TaskReports, VectorStore } from "@xandreed/sdk/kernel"
 import type { Chat } from "./page-chat.ts"
 import type { EvalsView } from "./lessons/evals/board.ts"
 import type { GradersView } from "./lessons/grade-the-grader/board.ts"
+import type { EmbedderService } from "./models/meaning.ts"
 import type { LoadedModel } from "./models/types.ts"
 import type { KitResult } from "./runtime.ts"
 
@@ -161,6 +162,14 @@ export interface PageParts {
    * context, an experiment) and a reload starts them over. None for every other lesson.
    */
   readonly files: Option.Option<Layer.Layer<Files>>
+  /**
+   * The page's parts of recall by meaning (lesson 20), for a lesson that declares them (`Lesson.meaning`), each built
+   * once per runtime and given as a value, so Rebuild, every control and every experiment keep them: the embedder,
+   * which answers with the one "Load the embedder" loaded and fails with `EmbedFailed` in the page's words before it
+   * is (so recall runs by words alone), and the store of vectors; `loaded` says whether the embedder is loaded now.
+   * None for every other lesson.
+   */
+  readonly meaning: Option.Option<{ readonly embedder: Layer.Layer<Embedder>; readonly vectors: Layer.Layer<VectorStore>; readonly loaded: () => boolean }>
 }
 
 /**
@@ -261,6 +270,22 @@ export interface Lesson {
      * stored, in words, or why it stored nothing. The runtime provides its own base `Sessions`.
      */
     readonly load: Effect.Effect<string, string, Sessions>
+  }
+  /**
+   * The lesson's recall by meaning (lesson 20): a `data-embedder` button ("Load the embedder") and, with the world
+   * `graph` loads, the vectors made ahead for it. The runtime builds the store of vectors once, and gives the program an
+   * embedder that answers with the one loaded (`PageParts.meaning`).
+   */
+  readonly meaning?: {
+    /** The name the embedder's vectors are kept under: the shipped ones were made under it. */
+    readonly model: string
+    /** The embedder, loaded: the page's runs in a worker; a test's gives recorded vectors. Its progress in words. */
+    readonly embedder: (onProgress: (text: string) => void) => Promise<EmbedderService>
+    /**
+     * The vectors made ahead for the world's memories, put in the page's store when Load the world is pressed, before
+     * the world: what was put, in words, or why nothing was. The runtime provides its store.
+     */
+    readonly ship: Effect.Effect<string, string, VectorStore>
   }
   /** The kits the page's `data-kit` buttons run ("Run the kit", lesson 12's "Run checks"), by `data-kit` id. */
   readonly kits?: Readonly<Record<string, LessonKit>>

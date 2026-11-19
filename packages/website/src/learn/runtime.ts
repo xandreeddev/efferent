@@ -32,13 +32,15 @@ import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
 import { Core, dataOf, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
 import {
-  Approval, curatedEvent, curationFailedEvent, Curator, CurrentTurn, Files, inMemoryFiles, inProcessJournal, knowledgeSession, Memory, sessions, sourceEvent, Summarizer, TaskReports,
+  Approval, curatedEvent, curationFailedEvent, Curator, CurrentTurn, Embedder, EmbedFailed, Files, inMemoryFiles, inMemoryVectors, inProcessJournal, knowledgeSession, Memory, sessions, sourceEvent,
+  Summarizer, TaskReports, VectorStore,
 } from "@xandreed/sdk/kernel"
 import type { Decision, KeyValueStore, TaskReport } from "@xandreed/sdk/kernel"
 import { CHAT_OWNER, chatsOf } from "./chats.ts"
 import type { ChatEntry } from "./chats.ts"
 import { buildFailure, textOf } from "./evaluate.ts"
 import type { Lesson, MadeFailure, PageParts, Sources } from "./lesson.ts"
+import type { EmbedderService } from "./models/meaning.ts"
 import { loadEcho } from "./models/mock.ts"
 import type { LoadedModel } from "./models/types.ts"
 import { Chat } from "./page-chat.ts"
@@ -110,6 +112,15 @@ export const TURN_RUNNING = "a turn is running in the chat. Run this when it has
 export const CURATING = "the curator is keeping the last turn. Run this when it is done."
 
 /**
+ * What the page's embedder fails with while it is not loaded (lesson 20): the kernel's recall by meaning skips its list
+ * by meaning for the request, runs by words alone, and says these words in its event (`meaning.skipped`).
+ */
+export const EMBEDDER_NOT_LOADED = "The embedder is not loaded: press Load the embedder to turn your messages into numbers."
+
+/** What `loadEmbedder` says once the embedder is loaded. */
+export const EMBEDDER_LOADED = "The embedder is loaded: each message is now turned into numbers here, in the page, one text at a time."
+
+/**
  * A message as the page shows it: who it is from, its text, and the key that matches it to the record it came
  * from (a tool call and a result have no text of their own to match by: they match by the call's id).
  */
@@ -164,6 +175,12 @@ export type Trace =
    * where its curator's calls are. Its source stays pending, for the next program's turn to take up.
    */
   | { readonly _tag: "CurationCut"; readonly session: string; readonly turn: number; readonly source: string }
+  /**
+   * The page's embedder made vectors (lesson 20): how many texts, as messages (`query`) or as memories (`passage`).
+   * Said by the embedder the program was given, as each call ends, so it falls inside the context being built: the
+   * kernel's event says what was found, and only this says what was turned into numbers for it.
+   */
+  | { readonly _tag: "Embedded"; readonly as: "query" | "passage"; readonly count: number }
   /** The program took messages off the chat's queue: the next one, or every one that waited. A report taken says nothing. */
   | { readonly _tag: "Taken"; readonly count: number }
   /** A background task's report was put in the chat's queue, behind what came before it (lesson 17): it waits for a turn of its own. */
@@ -373,6 +390,11 @@ export class LessonRuntime {
   /** The page's workspace (lesson 16), built once with the runtime: none for a lesson that declares none. */
   private files: Option.Option<Context.Service.Shape<typeof Files>> = Option.none()
 
+  /** The page's store of vectors (lesson 20), built once with the runtime: none for a lesson that declares no meaning. */
+  private vectors: Option.Option<Context.Service.Shape<typeof VectorStore>> = Option.none()
+  /** The embedder its button loaded (lesson 20): none until it is pressed. */
+  private embedderNow: Option.Option<EmbedderService> = Option.none()
+
   private constructor(
     private readonly lesson: Lesson,
     private readonly root: Scope.Closeable,
@@ -402,6 +424,7 @@ export class LessonRuntime {
       const session = await Effect.runPromise(Context.get(base, Sessions).create({ owner: OWNER }))
       const runtime = new LessonRuntime(lesson, root, base, queue, session, memoryStore(), memoryStore())
       await runtime.openWorkspace()
+      await runtime.openVectors()
       await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
       return runtime
     }
@@ -425,6 +448,7 @@ export class LessonRuntime {
     const runtime = new LessonRuntime(lesson, root, base, queue, NO_CONVERSATION, prefixed(options.storage ?? memoryStore(), prefix), prefixed(options.tab ?? memoryStore(), prefix))
     made = Option.some(runtime)
     await runtime.openWorkspace()
+    await runtime.openVectors()
     await Effect.runPromise(runtime.listen().pipe(Effect.provideService(Scope.Scope, root)))
     return runtime
   }
@@ -435,6 +459,34 @@ export class LessonRuntime {
     if (seed === undefined) return
     const built = await Effect.runPromise(Layer.buildWithScope(inMemoryFiles(seed), this.root))
     this.files = Option.some(Context.get(built, Files))
+  }
+
+  /** The lesson's store of vectors (lesson 20), in memory, built once in the root scope: it lasts as long as the runtime. */
+  private async openVectors(): Promise<void> {
+    if (this.lesson.meaning === undefined) return
+    const built = await Effect.runPromise(Layer.buildWithScope(inMemoryVectors(), this.root))
+    this.vectors = Option.some(Context.get(built, VectorStore))
+  }
+
+  /** Whether "Load the embedder" has loaded it (lesson 20). */
+  get embedderLoaded(): boolean {
+    return Option.isSome(this.embedderNow)
+  }
+
+  /**
+   * Load the lesson's embedder (lesson 20), once: the page's model in its worker, or a test's recorded vectors. Its
+   * progress is said as it goes; a second press finds it loaded. It gives what happened, in words. Nothing is rebuilt:
+   * the program's embedder answers with this one from its next call.
+   */
+  async loadEmbedder(onProgress: (text: string) => void = () => {}): Promise<Result.Result<string, string>> {
+    const meaning = this.lesson.meaning
+    if (meaning === undefined) return Result.fail("this lesson has no embedder to load.")
+    if (Option.isSome(this.embedderNow)) return Result.succeed(EMBEDDER_LOADED)
+    const loaded = await meaning.embedder(onProgress).then(Result.succeed, (error: unknown) => Result.fail(error instanceof Error ? error.message : String(error)))
+    if (Result.isFailure(loaded)) return Result.fail(`the embedder did not load: ${loaded.failure}`)
+    if (loaded.success.model !== meaning.model) return Result.fail(`the embedder loaded is ${loaded.success.model}, and the world's vectors were made by ${meaning.model}.`)
+    this.embedderNow = Option.some(loaded.success)
+    return Result.succeed(EMBEDDER_LOADED)
   }
 
   /**
@@ -739,6 +791,19 @@ export class LessonRuntime {
       chosen: this.chosenChat,
       // The page's workspace, the same one on every build: what the program is given, and what the pane shows.
       files: Option.map(this.files, (files) => Layer.succeed(Files, files)),
+      // Lesson 20: the store of vectors, the same one on every build, and an embedder that answers with the one its
+      // button loaded and fails in the page's words before it is, so recall runs by words alone until then.
+      meaning: Option.flatMap(Option.fromNullishOr(this.lesson.meaning), ({ model: named }) => Option.map(this.vectors, (store) => ({
+        embedder: Layer.succeed(Embedder, Embedder.of({
+          model: named,
+          embed: (texts, as) => Effect.suspend(() => Option.match(this.embedderNow, {
+            onNone: () => Effect.fail(new EmbedFailed({ message: EMBEDDER_NOT_LOADED })),
+            onSome: (loaded) => Effect.tap(loaded.embed(texts, as), () => emit({ _tag: "Embedded", as, count: texts.length })),
+          })),
+        })),
+        vectors: Layer.succeed(VectorStore, store),
+        loaded: () => Option.isSome(this.embedderNow),
+      }))),
       // The learner's `resume` names the conversation; its journal is read before the chat is handed over, so the
       // page draws what is stored before the program takes a message.
       chatWith: (resume) => Layer.effect(Chat, Effect.gen(function* () {
@@ -967,9 +1032,16 @@ export class LessonRuntime {
     if (graph === undefined) return Result.fail("this lesson has no world to load.")
     const refused = this.notAlone()
     if (Option.isSome(refused)) return Result.fail(refused.value)
+    // Lesson 20: the vectors made ahead for the world go in the page's store first, so the first request after the world
+    // embeds only its message; then the world, and what each stored.
+    const meaning = this.lesson.meaning
+    const load = meaning === undefined ? graph.load : Option.match(this.vectors, {
+      onNone: () => Effect.fail("this page has no store of vectors."),
+      onSome: (store) => Effect.flatMap(meaning.ship.pipe(Effect.provideService(VectorStore, store)), (put) => Effect.map(graph.load, (stored) => `${stored} ${put}`)),
+    })
     this.kitAlone = true
     try {
-      const ran = await Effect.runPromise(Effect.exit(graph.load.pipe(Effect.provideService(Sessions, Context.get(this.base, Sessions)))))
+      const ran = await Effect.runPromise(Effect.exit(load.pipe(Effect.provideService(Sessions, Context.get(this.base, Sessions)))))
       return Exit.isSuccess(ran) ? Result.succeed(ran.value) : Result.fail(Option.match(Cause.findErrorOption(ran.cause), { onNone: () => buildFailure(ran.cause), onSome: (words) => words }))
     } finally {
       this.kitAlone = false
