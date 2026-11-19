@@ -84,7 +84,7 @@ export type {
   SentMemory, WalkedMemory,
 } from "./contracts/knowledge/knowledge-recall.entity.js"
 export {
-  ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_BY_MEANING, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, KnowledgeRecalledData, knowledgeRecalledEvent, MEANING_MODEL_LIMIT, RecalledWhy, SeedWay, WORDS_WEIGHTS,
+  ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_BY_MEANING, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, KnowledgeRecalledData, knowledgeRecalledEvent, MEANING_MODEL_LIMIT, RecalledWhy, SeedWay, SKIPPED_SHOWN, WORDS_WEIGHTS,
 } from "./contracts/knowledge/knowledge-recall.entity.js"
 export {
   askedOf, checkedKnowledgeOptions, checkedMeaningOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, meaningKey, meaningTexts, recallKnowledge, seedsOf,

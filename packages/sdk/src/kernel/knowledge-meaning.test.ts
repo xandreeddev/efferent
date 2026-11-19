@@ -6,7 +6,7 @@ import { Core, kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
 import {
   cosine, EmbedFailed, Embedder, flatMemory, inMemoryVectors, inProcessJournal, knowledgeRecalledEvent, knowledgeSession, meaningKey, Memory, memoryWrapperConformance, recordedEmbedder, sessions,
-  VectorStore, withKnowledge, withKnowledgeByMeaning,
+  VectorStore, VectorsUnavailable, withKnowledge, withKnowledgeByMeaning,
 } from "./index.js"
 import type { EmbedAs, KnowledgeRecalledData, MeaningOptions, VectorEntry } from "./index.js"
 import { ended, entity, memory, noon, parts, source } from "./contracts/knowledge/knowledge.testing.js"
@@ -141,7 +141,7 @@ describe("recall by meaning", () => {
     expect(parrot?.meaning?.cosine).toBeCloseTo(recorded("Who keeps a bird?", "Ana Silva has parrot Pip."), 12)
     expect(parrot?.meaning?.cosine).toBeCloseTo(0.7811, 4)
     expect(heard[0]?.seeds).toEqual([])
-    expect<unknown>([heard[0]?.weights, heard[0]?.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, { model: "Xenova/e5-small-v2", pool: 50 }])
+    expect<unknown>([heard[0]?.weights, heard[0]?.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, { model: "Xenova/e5-small-v2", pool: 50, floor: null, skipped: null }])
   })
 
   test("with the list by meaning off, the same question is lesson 18's: nothing is named, no word meets, and nothing is sent", async () => {
@@ -173,6 +173,13 @@ describe("recall by meaning", () => {
       "Carla Mendes runs a bakery in Porto. (said on 2026-11-12)",
       "  before that: Carla Mendes teaches piano. (said on 2026-11-10, until 2026-11-12)",
     ])
+  })
+
+  test("a floor leaves out what is less alike than it: the parrot (0.7811) is sent over 0.78, and nothing over 0.79", async () => {
+    const over = (floor: number) => askKept("Who keeps a bird?", { limit: 3, walk: 0, ...english, floor })
+    expect<unknown>((await over(0.78)).heard[0]?.sent).toEqual(["m3"])
+    const none = await over(0.79)
+    expect<unknown>([none.context, none.heard[0]?.meaning?.floor]).toEqual([["Who keeps a bird?"], 0.79])
   })
 
   test("the list ranks every message, a greeting too: with no floor on the cosine, the nearest memories are sent", async () => {
@@ -258,13 +265,36 @@ describe("vectors are an index of the journal", () => {
   })
 })
 
-describe("what fails, fails the context", () => {
-  test("an embedder that fails fails the context as it is: a request is never sent as though nothing were known", async () => {
+describe("when the embedder or the store fails", () => {
+  test("an embedder that fails costs the request the list by meaning alone: recall runs by its other lists, and the event says why", async () => {
+    // The recording holds no vector for this message: the embedder fails, as a model not loaded or a service down does.
+    const run = (memory: Layer.Layer<Memory, never, Sessions | Embedder | VectorStore>, embedding: Layer.Layer<Embedder>) => {
+      const listen = hearing()
+      return Effect.runPromise(Effect.gen(function* () {
+        yield* keep(KEPT)
+        return { context: yield* ask("Where does Ana Silva work now?"), heard: listen.heard }
+      }).pipe(Effect.provide(Layer.mergeAll(memory, listen.layer).pipe(Layer.provideMerge(Layer.mergeAll(store(), embedding, inMemoryVectors())))), Effect.orDie))
+    }
+    const query = await run(memory3, embedder)
+    const words = await run(withKnowledge({ limit: 3, walk: 0, ...english })(flatMemory), embedder)
+    expect(query.context).toEqual(words.context)
+    expect(query.context[1]?.includes("Ana Silva works at Acme. (said on 2026-11-10)")).toBe(true)
+    expect(query.heard[0]?.meaning).toEqual({ model: "Xenova/e5-small-v2", pool: 50, floor: null, skipped: `No query vector is recorded for "Where does Ana Silva work now?".` })
+    expect(query.heard[0]?.memories.every((one) => one.meaning === null)).toBe(true)
+    // An embedder that fails for the passages too: the same.
+    const down = Layer.succeed(Embedder, Embedder.of({ model: "down", embed: () => Effect.fail(new EmbedFailed({ message: "The embedder is not loaded." })) }))
+    const passages = await run(memory3, down)
+    expect(passages.context).toEqual(words.context)
+    expect(passages.heard[0]?.meaning?.skipped).toBe("The embedder is not loaded.")
+  })
+
+  test("a store whose medium fails is a defect of the request, as its port says", async () => {
+    const broken = Layer.effect(VectorStore, Effect.map(VectorStore, (below) => VectorStore.of({ ...below, has: () => Effect.fail(new VectorsUnavailable({ message: "The disk is gone." })) }))).pipe(Layer.provide(inMemoryVectors()))
     const exit = await Effect.runPromise(Effect.exit(Effect.gen(function* () {
       yield* keep(KEPT)
-      return yield* ask("Is anyone here?")
-    }).pipe(Effect.provide(memory3.pipe(Layer.provideMerge(Layer.mergeAll(store(), embedder, inMemoryVectors())))))))
-    expect(Exit.isFailure(exit) ? Option.map(Cause.findErrorOption(exit.cause), (error) => [error._tag, error.message]) : exit).toEqual(Option.some(["EmbedFailed", `No query vector is recorded for "Is anyone here?".`]))
+      return yield* ask("Who keeps a bird?")
+    }).pipe(Effect.provide(memory3.pipe(Layer.provideMerge(Layer.mergeAll(store(), embedder, broken)))))))
+    expect(Exit.isFailure(exit) && Cause.hasDies(exit.cause) && Option.isNone(Cause.findErrorOption(exit.cause))).toBe(true)
   })
 
   test("a store that refuses fails the context as it is: vectors of another length than the store's", async () => {

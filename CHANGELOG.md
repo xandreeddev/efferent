@@ -17,8 +17,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `Embedder` and a `VectorStore` beside `Sessions`. Its options are
   `withKnowledge`'s, `pool` (how many texts the list ranks, 50) and
   `weights` (`{ seed, words, meaning }`, 1, 0.5 and 1.5 unless given, a
-  weight of 0 turning a list off: with meaning off nothing is embedded),
-  refused in words where written. Vectors are an index of the journal,
+  weight of 0 turning a list off: with meaning off nothing is embedded) and
+  an optional `floor` on the cosine (none by default), refused in words
+  where written. An embedder that fails skips the list by meaning for that
+  request, recall going on by the other two, and the event says why. Vectors are an index of the journal,
   keyed by the embedder's model and the memory's text (`meaningKey`), what
   the store lacks embedded 32 a call before the search. `recallKnowledge`
   takes what a store found (`ByMeaning`) and stays pure;
@@ -28,7 +30,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   189 (e5-small-v2) and 194 (Gemini) of 224 questions against 178 by words
   alone, and "Who keeps a bird?" now reaches "Ana Silva has parrot Pip.".
   New: `RecallWeights`, `WORDS_WEIGHTS`, `ByMeaning`, `FoundText`,
-  `MeaningPlace`, `meaningTexts`, `meaningKey`, `MEANING_MODEL_LIMIT`,
+  `MeaningPlace`, `meaningTexts`, `meaningKey`, `MEANING_MODEL_LIMIT`, `SKIPPED_SHOWN`,
   `checkedMeaningOptions`, `MeaningOptions`, `MeaningRecallOptions`,
   `KNOWLEDGE_BY_MEANING`.
 

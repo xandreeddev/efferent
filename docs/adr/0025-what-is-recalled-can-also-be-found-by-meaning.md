@@ -72,11 +72,11 @@ list about a seed. A probe made while this cut was planned put the parrot at fus
 weights; this code gives 15, 4 and 2: the probe placed the list by meaning one place lower (`w / (11 + p)`) and ranked
 standing memories only.
 
-- **1.5 is the only weight of the three best or tied-best on both embedders, set by set**: on e5 it ties 1 in every
-  set (189); on Gemini it is one above 1 (194 against 193, one question asked after an unrelated turn), and at least as
-  high in every set. On e5 alone, 1 and 1.5 tie and both pass the acceptance rows (the two e5 ones), so the rule to
-  prefer the lower weight on a tie would give 1: the choice of 1.5 rests on that one Gemini question. 1.5 is also the
-  only one of the three that sends the parrot in the two Gemini rows, which were not acceptance rows.
+- **1.5 is the only weight of the three that passes every acceptance row on both embedders.** At 1 the bird question
+  straight after the Orchid question is not sent on Gemini (fused place 10); at 0.5 it is not sent after the Orchid
+  question on either embedder. Among the weights that pass, 1.5 is also best or tied-best set by set on both: on e5
+  it ties 1 in every set (189), on Gemini it is at least as high as 1 in every set (194 against 193). So no lower
+  weight was left to prefer on a tie.
 - **Above the grid**, run after the choice from the same caches: 2 found 190 on e5 (one more after an unrelated turn)
   and 194 on Gemini, no set lower than at 1.5; 3 found 191 and 194, but one follow-up fewer on e5. The weight was
   chosen among 0.5, 1 and 1.5, as planned, and is left there; a later measurement may move it to 2.
@@ -118,15 +118,39 @@ standing memories only.
   `withKnowledge`), and each memory's place and cosine in the list by meaning, with the memory that took the place
   when one it replaced did (`via`), as for the other two lists. A live event, never stored: no journal changes.
 - **The note does not change**: what the model reads is `knowledgeNote` of what is sent, whichever lists sent it.
-- **Failures in words.** An embedder that fails (`EmbedFailed`) and a store that refuses (`VectorsRefused`) fail the
-  context as they are; a store whose medium fails (`VectorsUnavailable`) is a defect, as its port says.
+- **An embedder that fails costs the list by meaning, not the request.** An `EmbedFailed` for a passage or for the
+  message (a model in a page not loaded yet, a service down or refused by a spend cap) skips the list by meaning for
+  that request: recall runs by the other lists as weighted, and `plugin.knowledge.recalled` says why in
+  `meaning.skipped` (the failure's words, at most `SKIPPED_SHOWN`, 300, characters). A host's every turn does not fail
+  with its embedder, and a page answers by words until its embedder is loaded, its options unchanged. A store that
+  refuses (`VectorsRefused`) still fails the context as it is: a store that refuses is a host's mistake, not a medium
+  that may come back; a store whose medium fails (`VectorsUnavailable`) is a defect, as its port says.
+- **An optional floor, none by default.** `floor` (0 to 1) leaves out of the list by meaning every text whose cosine
+  is under it. There is no default, because a floor is a number of one embedder's and on e5 no floor works (below).
+  Top and eighth cosines over the lesson world's 557 standing memories, from the cached vectors:
+
+  | message | e5 top | e5 8th | Gemini top | Gemini 8th |
+  |---|---|---|---|---|
+  | Who keeps a bird? | 0.785 | 0.761 | 0.654 | 0.587 |
+  | Where does Ana Silva work now? | 0.849 | 0.789 | 0.855 | 0.774 |
+  | Thanks! | 0.767 | 0.758 | 0.532 | 0.522 |
+  | Hello | 0.768 | 0.754 | 0.560 | 0.549 |
+  | What is the capital of France? | 0.784 | 0.769 | 0.604 | 0.558 |
+  | Write me a haiku about rain. | 0.772 | 0.758 | 0.546 | 0.510 |
+  | What time is it? | 0.769 | 0.759 | 0.534 | 0.509 |
+  | Can you help me fix this bug in my code? | 0.780 | 0.763 | 0.560 | 0.543 |
+
+  On e5 the messages that have no answer in the memory reach 0.767 to 0.784 at the top, as high as the bird question
+  (0.785): any floor that keeps the parrot keeps them. On Gemini they reach 0.532 to 0.604 against the bird's 0.654: a
+  floor near 0.62 would separate these, narrowly, on these eight messages. A host that measures its own embedder may
+  set one.
 
 ## Rejected
 
 - **Weights 0.5 and 1.** Lower on both embedders (0.5) or on Gemini (1), and neither sends the parrot after the
   Orchid question on Gemini (0.5 not on e5 either).
-- **A floor on the cosine.** Not measured here; the fusion by rank needs none, and any floor is a number of one
-  embedder's.
+- **A default floor.** See "Decision": it does not carry between embedders, and on e5 none separates a greeting from
+  the bird question.
 - **The last message with the turn before as the query.** Not measured in this cut: the earlier spike measured the
   last message alone, and the turn before already seeds a follow-up through the list about a seed.
 - **Changing `withKnowledge`.** A host without an embedder keeps ADR 0023's recall and type; the third list is a
@@ -138,7 +162,7 @@ standing memories only.
 
 - **Every message that is not blank is sent memories.** The list by meaning ranks something for any text, so a
   greeting is sent the `limit` memories nearest it, where `withKnowledge` sent none. A host that wants less lowers
-  `limit`, or the list's weight.
+  `limit` or the list's weight, or sets a floor its embedder's cosines support (none on e5).
 - **Each request asks the store for every key** of what can be ranked, and embeds the message: one query, and
   passages only for what is new. The first request over a knowledge embeds all of it: at ADR 0021's measured 17.4 ms a
   text in batches of 32, about ten seconds for the lesson world's 557 memories in a page, unless the vectors are

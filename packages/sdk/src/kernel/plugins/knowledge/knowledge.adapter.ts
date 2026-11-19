@@ -68,9 +68,11 @@ const EMBED_CHUNK = 32
  *
  * What it did is said live for every request, `plugin.knowledge.recalled`, with each memory's place and cosine in the
  * list by meaning and the embedder's model; a listener that fails is logged and costs the request nothing. An
- * embedder that fails (`EmbedFailed`) and a store that refuses (`VectorsRefused`) fail the context as they are: a
- * request is never sent as though nothing were known. A store whose medium fails (`VectorsUnavailable`) is a defect,
- * as its port says. Options that are none are refused here, where they are written, and an embedder's model name that
+ * embedder that fails (`EmbedFailed`, for a passage or the message: a model not loaded yet, a service down or refused
+ * by a spend cap) does not fail the context: the list by meaning is skipped for that request, recall runs by the other
+ * lists as weighted, and the event says why (`meaning.skipped`). A store that refuses (`VectorsRefused`) fails the
+ * context as it is; a store whose medium fails (`VectorsUnavailable`) is a defect, as its port says. A `floor` leaves
+ * out of the list by meaning every text whose cosine is under it. Options that are none are refused here, where they are written, and an embedder's model name that
  * cannot key a vector (more than `MEANING_MODEL_LIMIT` characters) where the layer is built.
  *
  * @public
@@ -109,8 +111,15 @@ export const withKnowledgeByMeaning = (options: MeaningOptions = {}) => {
           const knowledge = knowledgeOf(yield* Effect.provideService(knowledgeJournal, Sessions, sessions))
           const asked = askedOf(yield* session.journal)
           const texts = meaningTexts(knowledge)
-          const found = checked.weights.meaning > 0 && asked.last.trim().length > 0 && texts.length > 0 ? yield* nearest(texts, asked.last) : []
-          const recall = recallKnowledge(knowledge, asked, checked, Option.some({ model, pool: checked.pool, weights: checked.weights, found }))
+          // An embedder that fails (a model not loaded, a service down or over its budget) costs the request the list by
+          // meaning, and nothing else: recall runs by its other lists, and the event says why.
+          const ranked = checked.weights.meaning > 0 && asked.last.trim().length > 0 && texts.length > 0
+            ? yield* nearest(texts, asked.last).pipe(
+              Effect.map((found) => ({ found, skipped: Option.none<string>() })),
+              Effect.catchTag("EmbedFailed", (failed) => Effect.succeed({ found: [], skipped: Option.some(failed.message) })),
+            )
+            : { found: [], skipped: Option.none<string>() }
+          const recall = recallKnowledge(knowledge, asked, checked, Option.some({ model, pool: checked.pool, weights: checked.weights, floor: checked.floor, ...ranked }))
           const note = recall.sent.length === 0 ? Option.none<string>() : Option.some(knowledgeNote(recall.sent))
           yield* session.publish(knowledgeRecalledEvent, knowledgeRecalledOf(recall, checked, note))
             .pipe(Effect.ignoreCause({ log: "Warn", message: "what recall from the knowledge did could not be said" }))

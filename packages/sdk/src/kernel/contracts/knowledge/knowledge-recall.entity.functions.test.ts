@@ -8,7 +8,7 @@ import type { Knowledge } from "./knowledge.entity.js"
 import {
   askedOf, checkedKnowledgeOptions, checkedMeaningOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, meaningTexts, recallKnowledge, seedsOf,
 } from "./knowledge-recall.entity.functions.js"
-import { BEFORE_SHOWN, KNOWLEDGE_BY_MEANING, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
+import { BEFORE_SHOWN, KNOWLEDGE_BY_MEANING, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, SKIPPED_SHOWN } from "./knowledge-recall.entity.js"
 import type { Asked, ByMeaning, FoundText, KnowledgeRecallOptions, RecallWeights } from "./knowledge-recall.entity.js"
 import { aliased, ended, entity, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
 
@@ -278,7 +278,8 @@ describe("the options", () => {
 
 describe("the list by meaning", () => {
   /** What an embedder found, with the weights given: the default ones of `withKnowledgeByMeaning` unless others are. */
-  const byMeaning = (found: ReadonlyArray<FoundText>, weights: RecallWeights = KNOWLEDGE_BY_MEANING.weights): Option.Option<ByMeaning> => Option.some({ model: "e5", pool: 50, weights, found })
+  const byMeaning = (found: ReadonlyArray<FoundText>, weights: RecallWeights = KNOWLEDGE_BY_MEANING.weights, floor: Option.Option<number> = Option.none()): Option.Option<ByMeaning> =>
+    Option.some({ model: "e5", pool: 50, weights, floor, skipped: Option.none(), found })
   const fused = (recall: ReturnType<typeof recallKnowledge>) => recall.ranked.map((one) => [one.memory.id, Option.getOrNull(Option.map(one.meaning, (at) => `${at.place} by ${at.by.id} at ${at.cosine}`)), one.fused])
 
   test("meaningTexts: the texts of the memories that stand and of those ended as changed into one that stands, each once; one that was wrong is none", () => {
@@ -294,7 +295,7 @@ describe("the list by meaning", () => {
     ]))
     expect<unknown>(fused(recall)).toEqual([["m5", "1 by m1 at 0.9", 1.5 / 10], ["m3", "2 by m3 at 0.8", 1.5 / 11], ["m6", "3 by m6 at 0.6", 1.5 / 12]])
     expect<unknown>(recall.sent.map((one) => [one.memory.id, one.before.map((old) => old.id)])).toEqual([["m5", ["m1"]], ["m3", []], ["m6", []]])
-    expect<unknown>([recall.weights, recall.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, Option.some({ model: "e5", pool: 50 })])
+    expect<unknown>([recall.weights, recall.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, Option.some({ model: "e5", pool: 50, floor: Option.none(), skipped: Option.none() })])
   })
 
   test("a text found is every memory that holds it, in the order kept", () => {
@@ -326,16 +327,34 @@ describe("the list by meaning", () => {
   test("the event says the model, the pool and the weights, and each memory's place and cosine in the list by meaning, with what took it", () => {
     const recall = recallKnowledge(knowledge, asked("Hello there."), { ...ENGLISH, limit: 1, walk: 0 }, byMeaning([{ text: "Ana Silva works at Acme.", cosine: 0.9 }, { text: "Acme is in Lisbon.", cosine: 0.8 }]))
     const said = knowledgeRecalledOf(recall, { ...ENGLISH, limit: 1, walk: 0 }, Option.none())
-    expect<unknown>([said.weights, said.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, { model: "e5", pool: 50 }])
+    expect<unknown>([said.weights, said.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, { model: "e5", pool: 50, floor: null, skipped: null }])
     expect<unknown>(said.memories.map((one) => [one.id, one.seed, one.words, one.meaning, one.sent, one.why])).toEqual([
       ["m5", null, null, { place: 1, cosine: 0.9, via: "m1" }, true, "ranked"],
       ["m2", null, null, { place: 2, cosine: 0.8, via: null }, false, "past-limit"],
     ])
   })
 
-  test("checkedMeaningOptions: withKnowledge's, a pool of 50 and the weights 1, 0.5 and 1.5 by default; a weight left out keeps its default", () => {
-    expect(checkedMeaningOptions({})).toEqual(Result.succeed({ limit: 8, walk: 3, speaker: [], stopWords: [], pool: 50, weights: { seed: 1, words: 0.5, meaning: 1.5 } }))
-    expect(checkedMeaningOptions({ pool: 100, weights: { words: 0 } })).toEqual(Result.succeed({ limit: 8, walk: 3, speaker: [], stopWords: [], pool: 100, weights: { seed: 1, words: 0, meaning: 1.5 } }))
+  test("a floor leaves out of the list every text whose cosine is under it; one at the floor stays", () => {
+    const found = [{ text: "Ana Silva works at Acme.", cosine: 0.8 }, { text: "Bruno Reis lives in Porto.", cosine: 0.75 }, { text: "Globex is in Lisbon.", cosine: 0.7 }]
+    expect<unknown>(fused(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning(found, KNOWLEDGE_BY_MEANING.weights, Option.some(0.75)))).map(([id]) => id)).toEqual(["m5", "m3"])
+    expect(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning(found, KNOWLEDGE_BY_MEANING.weights, Option.some(0.9))).ranked).toEqual([])
+    const said = knowledgeRecalledOf(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning(found, KNOWLEDGE_BY_MEANING.weights, Option.some(0.75))), ENGLISH, Option.none())
+    expect(said.meaning).toEqual({ model: "e5", pool: 50, floor: 0.75, skipped: null })
+  })
+
+  test("a list skipped for an embedder's failure: its words in the event, cut at SKIPPED_SHOWN characters", () => {
+    const skipped = (why: string) => knowledgeRecalledOf(recallKnowledge(knowledge, asked("Who works?"), ENGLISH, Option.some({ model: "e5", pool: 50, weights: KNOWLEDGE_BY_MEANING.weights, floor: Option.none(), skipped: Option.some(why), found: [] })), ENGLISH, Option.none())
+    expect<unknown>(skipped("The embedder is not loaded.").meaning).toEqual({ model: "e5", pool: 50, floor: null, skipped: "The embedder is not loaded." })
+    const long = skipped("x".repeat(400)).meaning?.skipped ?? ""
+    expect(SKIPPED_SHOWN).toBe(300)
+    expect(long.length).toBeLessThanOrEqual(SKIPPED_SHOWN)
+    expect(long.endsWith("characters clipped]")).toBe(true)
+  })
+
+  test("checkedMeaningOptions: withKnowledge's, a pool of 50, the weights 1, 0.5 and 1.5 and no floor by default; a weight left out keeps its default", () => {
+    expect(checkedMeaningOptions({ floor: 0.6 })).toEqual(Result.succeed({ ...KNOWLEDGE_BY_MEANING, floor: Option.some(0.6) }))
+    expect(checkedMeaningOptions({})).toEqual(Result.succeed({ limit: 8, walk: 3, speaker: [], stopWords: [], pool: 50, weights: { seed: 1, words: 0.5, meaning: 1.5 }, floor: Option.none() }))
+    expect(checkedMeaningOptions({ pool: 100, weights: { words: 0 } })).toEqual(Result.succeed({ limit: 8, walk: 3, speaker: [], stopWords: [], pool: 100, weights: { seed: 1, words: 0, meaning: 1.5 }, floor: Option.none() }))
   })
 
   test.each<[string, Parameters<typeof checkedMeaningOptions>[0], string]>([
@@ -347,6 +366,8 @@ describe("the list by meaning", () => {
     ["a weight over 10", { weights: { words: 11 } }, "withKnowledgeByMeaning's weights.words is a number from 0 to 10, 0 turning its list off. It was given 11"],
     ["a weight that is no number", { weights: { meaning: Number.NaN } }, "withKnowledgeByMeaning's weights.meaning is a number from 0 to 10, 0 turning its list off. It was given NaN"],
     ["every list off", { weights: { seed: 0, words: 0, meaning: 0 } }, "withKnowledgeByMeaning's weights turn every list off: give one of seed, words and meaning a weight above 0"],
+    ["a floor below 0", { floor: -0.1 }, "withKnowledgeByMeaning's floor is a number from 0 to 1: the least cosine a memory needs to be in the list by meaning. It was given -0.1"],
+    ["a floor over 1", { floor: 1.5 }, "withKnowledgeByMeaning's floor is a number from 0 to 1: the least cosine a memory needs to be in the list by meaning. It was given 1.5"],
   ])("%s is refused in words", (_, options, refusal) => {
     expect(checkedMeaningOptions(options)).toEqual(Result.fail(refusal))
   })

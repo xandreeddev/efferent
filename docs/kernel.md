@@ -1687,9 +1687,13 @@ expect<unknown>([parrot?.seed, parrot?.words, parrot?.meaning?.place, parrot?.me
 `plugin.knowledge.recalled` says the embedder's model, the pool and the
 weights, and each memory's place and cosine in the list by meaning, with
 the memory that took the place when one it replaced did. An embedder that
-fails (`EmbedFailed`) and a store that refuses (`VectorsRefused`) fail the
-context as they are. There is no floor on the cosine: every message that is
-not blank, a greeting too, is sent the memories nearest it. On the sets of
+fails (`EmbedFailed`: not loaded yet, a service down) costs the request the
+list by meaning alone: recall runs by the other two, and the event says why
+(`meaning.skipped`); a store that refuses (`VectorsRefused`) fails the
+context. There is no floor on the cosine unless a host sets one (`floor`, 0
+to 1): every message that is not blank, a greeting too, is sent the
+memories nearest it. On e5-small-v2 no floor tells a greeting from a real
+question (ADR 0025 has the cosines), so none is set by default. On the sets of
 the section above, with questions that hold an identifier and questions
 about what a curator kept, the third list found 189 (e5-small-v2) and 194
 (Gemini's embedder) of 224 questions against 178 by words alone, losing

@@ -1,5 +1,4 @@
-import { Schema } from "effect"
-import type { Option } from "effect"
+import { Option, Schema } from "effect"
 import { liveEvent } from "@xandreed/core/kernel"
 import { EntityId, MemoryId } from "./knowledge.entity.js"
 import type { KnownMemory } from "./knowledge.entity.js"
@@ -68,13 +67,16 @@ export const WORDS_WEIGHTS: RecallWeights = { seed: 1, words: 0.5, meaning: 0 }
  * - `pool`: how many texts the list by meaning ranks, the nearest to the last message, a whole number from 1 to 100
  *   (50);
  * - `weights`: the weight of each list in the fusion (`RecallWeights`), each a number from 0 to 10, 0 turning a list
- *   off, at least one above 0; a weight left out keeps its default (seed 1, words 0.5, meaning 1.5).
+ *   off, at least one above 0; a weight left out keeps its default (seed 1, words 0.5, meaning 1.5);
+ * - `floor`: the least cosine a text needs to be in the list by meaning, a number from 0 to 1 (none: every text the
+ *   search finds is in it). A floor is a number of one embedder's: no default carries between two (ADR 0025).
  *
  * @public
  */
 export interface MeaningOptions extends KnowledgeOptions {
   readonly pool?: number
   readonly weights?: Partial<RecallWeights>
+  readonly floor?: number
 }
 
 /**
@@ -85,15 +87,25 @@ export interface MeaningOptions extends KnowledgeOptions {
 export interface MeaningRecallOptions extends KnowledgeRecallOptions {
   readonly pool: number
   readonly weights: RecallWeights
+  readonly floor: Option.Option<number>
 }
 
 /**
- * The options `withKnowledgeByMeaning` runs with when it is given none: those of `withKnowledge`, a pool of 50, and
- * the weights 1 for the list about a seed, 0.5 for the words' and 1.5 for the list by meaning (measured in ADR 0025).
+ * The options `withKnowledgeByMeaning` runs with when it is given none: those of `withKnowledge`, a pool of 50, the
+ * weights 1 for the list about a seed, 0.5 for the words' and 1.5 for the list by meaning (measured in ADR 0025), and
+ * no floor.
  *
  * @public
  */
-export const KNOWLEDGE_BY_MEANING: MeaningRecallOptions = { ...KNOWLEDGE_RECALL, pool: 50, weights: { seed: 1, words: 0.5, meaning: 1.5 } }
+export const KNOWLEDGE_BY_MEANING: MeaningRecallOptions = { ...KNOWLEDGE_RECALL, pool: 50, weights: { seed: 1, words: 0.5, meaning: 1.5 }, floor: Option.none() }
+
+/**
+ * The most characters of an embedder's failure that `plugin.knowledge.recalled` repeats when the list by meaning was
+ * skipped for it.
+ *
+ * @public
+ */
+export const SKIPPED_SHOWN = 300
 
 /**
  * The most characters of an embedder's model name that keys a memory's vector (ADR 0025): a key is the model, a line
@@ -115,8 +127,10 @@ export interface FoundText {
 }
 
 /**
- * What recall by meaning brings to `recallKnowledge` (ADR 0025): the embedder's model, the pool and the weights it ran
- * with, and the texts found, nearest first (none when the list was off, nothing was asked, or nothing could be found).
+ * What recall by meaning brings to `recallKnowledge` (ADR 0025): the embedder's model, the pool, the weights and the
+ * floor it ran with, why the list was skipped when the embedder failed (`skipped`, its words), and the texts found,
+ * nearest first (none when the list was off or skipped, nothing was asked, or nothing could be found). A text under
+ * the floor is left out of the list by `recallKnowledge`.
  *
  * @public
  */
@@ -124,6 +138,8 @@ export interface ByMeaning {
   readonly model: string
   readonly pool: number
   readonly weights: RecallWeights
+  readonly floor: Option.Option<number>
+  readonly skipped: Option.Option<string>
   readonly found: ReadonlyArray<FoundText>
 }
 
@@ -253,7 +269,7 @@ export interface SentMemory {
 export interface KnowledgeRecall {
   readonly asked: Asked
   readonly weights: RecallWeights
-  readonly meaning: Option.Option<{ readonly model: string; readonly pool: number }>
+  readonly meaning: Option.Option<{ readonly model: string; readonly pool: number; readonly floor: Option.Option<number>; readonly skipped: Option.Option<string> }>
   readonly seeds: ReadonlyArray<Seed>
   readonly ranked: ReadonlyArray<FusedMemory>
   readonly bridges: ReadonlyArray<Bridge>
@@ -298,8 +314,9 @@ export type RecalledWhy = typeof RecalledWhy.Type
 /**
  * The data of `plugin.knowledge.recalled`: what `withKnowledge` or `withKnowledgeByMeaning` did for one request (ADRs
  * 0023 and 0025). What was asked (each text at most `ASKED_SHOWN` characters, what was cut counted); the options it
- * ran with, the weights of the lists among them; the embedder's model and the pool, when it ranked by meaning (else
- * `null`); the seeds, each with how it
+ * ran with, the weights of the lists among them; the embedder's model, the pool and the floor (`null` for none), when
+ * it ranked by meaning (else `null`), and, when the embedder failed and the list by meaning was skipped, why (its
+ * words, at most `SKIPPED_SHOWN` characters; else `null`); the seeds, each with how it
  * was named; the entities the walk by subject started from, each with the memory that brought it in; the memories it
  * could send, those sent first in the order sent, then the rest of the fused list, then the rest of what the walk
  * found (at most `KNOWLEDGE_SHOWN`, the rest counted in `more`), each with its place in the list about a seed and the
@@ -318,7 +335,7 @@ export const KnowledgeRecalledData = Schema.Struct({
   limit: Schema.Number,
   walk: Schema.Number,
   weights: Schema.Struct({ seed: Schema.Number, words: Schema.Number, meaning: Schema.Number }),
-  meaning: Schema.NullOr(Schema.Struct({ model: Schema.String, pool: Schema.Number })),
+  meaning: Schema.NullOr(Schema.Struct({ model: Schema.String, pool: Schema.Number, floor: Schema.NullOr(Schema.Number), skipped: Schema.NullOr(Schema.String) })),
   seeds: Schema.Array(Schema.Struct({ id: EntityId, name: Schema.String, by: SeedWay, word: Schema.String })),
   bridges: Schema.Array(Schema.Struct({ id: EntityId, name: Schema.String, from: MemoryId })),
   memories: Schema.Array(Schema.Struct({
