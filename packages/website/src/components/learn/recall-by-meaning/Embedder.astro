@@ -1,0 +1,10 @@
+---
+// "Load the embedder" loads e5-small-v2 in a worker of its own (see learn/playground.ts, `data-embedder`, and
+// learn/models/meaning.ts): how far the download is, then that it is loaded and how long it took, is said under the
+// button.
+---
+
+<div class="learn-world">
+  <button class="btn btn-primary" type="button" data-embedder>Load the embedder</button>
+  <p class="learn-note" data-embedder-result aria-live="polite" hidden></p>
+</div>

@@ -11,6 +11,7 @@ import { gradeTheGrader } from "./grade-the-grader/lesson.ts"
 import { keepTheConversation } from "./keep-the-conversation/lesson.ts"
 import { modelFailures } from "./model-failures/lesson.ts"
 import { pointers } from "./pointers/lesson.ts"
+import { recallByMeaning } from "./recall-by-meaning/lesson.ts"
 import { remember } from "./remember/lesson.ts"
 import { render } from "./render/lesson.ts"
 import { skillsLesson } from "./skills/lesson.ts"
@@ -21,7 +22,7 @@ import { workspace } from "./workspace/lesson.ts"
 import { yourOwnPlugin } from "./your-own-plugin/lesson.ts"
 import { yourFirstAgent } from "./your-first-agent/lesson.ts"
 
-const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render, keepTheConversation, pointers, approvals, skillsLesson, remember, testYourAgent, evalsLesson, modelFailures, branches, workspace, backgroundTasks, connectedMemory, gradeTheGrader]
+const lessons: ReadonlyArray<Lesson> = [yourFirstAgent, tools, yourOwnPlugin, subAgents, compaction, render, keepTheConversation, pointers, approvals, skillsLesson, remember, testYourAgent, evalsLesson, modelFailures, branches, workspace, backgroundTasks, connectedMemory, gradeTheGrader, recallByMeaning]
 
 /** Every lesson's slug, in the order of the track. */
 export const lessonSlugs: ReadonlyArray<string> = lessons.map((lesson) => lesson.slug)

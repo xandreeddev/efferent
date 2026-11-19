@@ -487,6 +487,51 @@ check` (tsc over the learn code, the build, the link check) and
     bad one in its words.
   - `runtime.journal(session)` reads any session's journal, the
     conversation's by default (lesson 18's tests read the knowledge session's).
+- **Lesson 20's recall by meaning** (`Lesson.meaning`, ADR 0025): lesson 18's
+  program, Graph tab and world, with memory.ts wrapping the flat memory with
+  `withKnowledgeByMeaning` (`evaluateKnowledge` in lesson 18's `lesson.ts`
+  runs both lessons' files; lesson 20 differs in the names memory.ts and
+  agent.ts are handed). The page gives the embedder and the store.
+  - `PageParts.meaning`: the store of vectors (`inMemoryVectors`, built once
+    per runtime in its root scope, `openVectors`) and an `Embedder` that
+    answers with the one "Load the embedder" loaded (`runtime.loadEmbedder`,
+    `Lesson.meaning.embedder`) and fails with `EmbedFailed`
+    (`EMBEDDER_NOT_LOADED`) before it is, so the kernel skips its list by
+    meaning and recall runs by words alone; never a failed turn. Loading it
+    rebuilds nothing. Each call it answers is traced as `Embedded { as,
+    count }`, which the tests count. agent.ts provides both after memory.ts's
+    memory; its typed module takes `embedder` and `vectors` as parameters of
+    `run`, and a `type-level:` test drops each in turn.
+  - The page's embedder (`models/meaning.ts`, `models/meaning-worker.ts`):
+    e5-small-v2 at a pinned revision, q8, on WebAssembly (`device: "wasm"`)
+    in a worker of its own, each text embedded alone in a call of its own,
+    so a batch gives the same vectors; the download is said under the button
+    and kept by the browser (IndexedDB where the Cache API is missing).
+  - The world's vectors are shipped (`vectors.ts`, about 310 KB, imported with
+    their codec only when Load the world is pressed, `ship.ts`; the embedder's
+    module, `models/meaning.ts`, only when its button is; the model's name and
+    revision are `model.ts`, so every page carries neither): each of the 557 memory texts as the page's
+    own worker embedded it in Chrome, kept as 8-bit numbers and a scale
+    (`shipped.ts`), put under `meaningKey(model, text)` before the world's
+    records (`Lesson.meaning.ship`, run first by `runtime.loadWorld`), so a
+    request embeds its message alone. The tests answer from the same vectors
+    (`testing.ts`: the shipped passages decoded, and the lesson's messages
+    recorded by the same worker, `recorded-queries.ts`), so every cosine a
+    test pins is one the page shows; a text recorded for neither fails, and
+    a test that claims something of the list by meaning asserts it was not
+    skipped.
+  - The status line: lesson 20's chat adds `WORDS_ALONE` to a curation's line
+    while the embedder is not loaded, after lesson 18's `BY_RULE`.
+  - The Graph tab's recall panel (`recallViewOf`) adds each memory's place
+    and cosine by meaning, "for what replaced it" where an ended memory took
+    the place; the options line names the pool, the weights, a floor and the
+    model, and step 2 says why nothing was ranked by meaning (the embedder's
+    words) or that its weight turned it off, all only where the event has a
+    list by meaning, so lesson 18's panel is unchanged.
+  - Controls: lesson 18's `limit` and `walk`, `pool`, and the meaning list's
+    weight, one number of the `weights` line (`config-edit.ts`, lesson 18's
+    helpers given the wrapper's name). Experiments: `meaning-off`,
+    `words-off`, `floor` (0.77).
 - **Background tasks** (lesson 17, ADR 0018): a helper works on a task in
   a session of its own while the chat goes on, and its report comes back
   into the chat's one queue.
@@ -921,6 +966,14 @@ check` (tsc over the learn code, the build, the link check) and
     know: Ana Silva works at Globex. Before that: Ana Silva works at Acme.
     Globex has office in Porto. Globex is in Madrid."); the note is read
     past as the facts' is (`isAdded`).
+  - Lesson 20's rule, in `echoStep`, just before lesson 18's note rule: one
+    message that only greets or thanks ("Thanks!", "Hello", "Hi, are you
+    there?"), sent with the kernel's note of memories, is answered as one
+    (`greetingReply`: "You're welcome." or a hello), never from the note:
+    recall by meaning sends a note to any message, eight memories for
+    "Thanks!". Without a note it is answered as before. A test fails without
+    the rule: "Hi, are you there?" would be answered from the note's first
+    memory.
   - Lesson 13's rule, in `echoReply`, after every other rule but the
     last: one message that says what something is and then asks about it
     under the same name ("The meeting is on Tuesday. When is the

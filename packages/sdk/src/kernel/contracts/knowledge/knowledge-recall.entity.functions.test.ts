@@ -5,9 +5,11 @@ import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { estimateTokens } from "../memory/memory.entity.functions.js"
 import { knowledgeOf } from "./knowledge.entity.functions.js"
 import type { Knowledge } from "./knowledge.entity.js"
-import { askedOf, checkedKnowledgeOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, recallKnowledge, seedsOf } from "./knowledge-recall.entity.functions.js"
-import { BEFORE_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN } from "./knowledge-recall.entity.js"
-import type { Asked, KnowledgeRecallOptions } from "./knowledge-recall.entity.js"
+import {
+  askedOf, checkedKnowledgeOptions, checkedMeaningOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, meaningTexts, recallKnowledge, seedsOf,
+} from "./knowledge-recall.entity.functions.js"
+import { BEFORE_SHOWN, KNOWLEDGE_BY_MEANING, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, SKIPPED_SHOWN } from "./knowledge-recall.entity.js"
+import type { Asked, ByMeaning, FoundText, KnowledgeRecallOptions, RecallWeights } from "./knowledge-recall.entity.js"
 import { aliased, ended, entity, journalOf, memory, noon, parts, restated, source } from "./knowledge.testing.js"
 
 /*
@@ -220,15 +222,18 @@ describe("what recall says it did", () => {
       before: { user: "Hi.", answer: "Hello." },
       limit: 1,
       walk: 3,
+      // Recall by words: the list by meaning has no weight, and no model.
+      weights: { seed: 1, words: 0.5, meaning: 0 },
+      meaning: null,
       seeds: [{ id: "n3", name: "Acme", by: "name", word: "Acme" }, { id: "n4", name: "Lisbon", by: "name", word: "Lisbon" }],
       bridges: [{ id: "n5", name: "Globex", from: "m6" }, { id: "n2", name: "Ana Silva", from: "m5" }],
       memories: [
-        { id: "m2", text: "Acme is in Lisbon.", about: ["n3", "n4"], seed: { place: 1, seeds: ["n3", "n4"], via: null }, words: { place: 1, score: recall.ranked[0]?.score ?? -1, terms: ["acme", "lisbon"], via: null }, walk: null, fused: 1 / 10 + 0.5 / 10, sent: true, why: "ranked", before: [] },
-        { id: "m6", text: "Globex is in Lisbon.", about: ["n5", "n4"], seed: { place: 2, seeds: ["n4"], via: null }, words: { place: 2, score: recall.ranked[1]?.score ?? -1, terms: ["lisbon"], via: null }, walk: { place: 1, from: "n5" }, fused: 1.5 / 11, sent: true, why: "walked", before: [] },
+        { id: "m2", text: "Acme is in Lisbon.", about: ["n3", "n4"], seed: { place: 1, seeds: ["n3", "n4"], via: null }, words: { place: 1, score: recall.ranked[0]?.score ?? -1, terms: ["acme", "lisbon"], via: null }, meaning: null, walk: null, fused: 1 / 10 + 0.5 / 10, sent: true, why: "ranked", before: [] },
+        { id: "m6", text: "Globex is in Lisbon.", about: ["n5", "n4"], seed: { place: 2, seeds: ["n4"], via: null }, words: { place: 2, score: recall.ranked[1]?.score ?? -1, terms: ["lisbon"], via: null }, meaning: null, walk: { place: 1, from: "n5" }, fused: 1.5 / 11, sent: true, why: "walked", before: [] },
         // Its places were taken by the memory it replaced, whose seeds, score and words they show.
         {
           id: "m5", text: "Ana Silva works at Globex.", about: ["n2", "n5"], seed: { place: 3, seeds: ["n3"], via: "m1" },
-          words: { place: 3, score: Option.getOrThrow(recall.ranked[2]?.words ?? Option.none()).by.score, terms: ["acme"], via: "m1" }, walk: { place: 2, from: "n2" }, fused: 1.5 / 12, sent: true, why: "walked", before: ["m1"],
+          words: { place: 3, score: Option.getOrThrow(recall.ranked[2]?.words ?? Option.none()).by.score, terms: ["acme"], via: "m1" }, meaning: null, walk: { place: 2, from: "n2" }, fused: 1.5 / 12, sent: true, why: "walked", before: ["m1"],
         },
       ],
       more: 0,
@@ -268,5 +273,102 @@ describe("the options", () => {
     ["a stop word with no letter", { stopWords: ["?"] }, `withKnowledge's stopWords is a list of words, each one word such as "the": the words the keyword ranking passes over`],
   ])("%s is refused in words", (_, options, refusal) => {
     expect(checkedKnowledgeOptions(options)).toEqual(Result.fail(refusal))
+  })
+})
+
+describe("the list by meaning", () => {
+  /** What an embedder found, with the weights given: the default ones of `withKnowledgeByMeaning` unless others are. */
+  const byMeaning = (found: ReadonlyArray<FoundText>, weights: RecallWeights = KNOWLEDGE_BY_MEANING.weights, floor: Option.Option<number> = Option.none()): Option.Option<ByMeaning> =>
+    Option.some({ model: "e5", pool: 50, weights, floor, skipped: Option.none(), found })
+  const fused = (recall: ReturnType<typeof recallKnowledge>) => recall.ranked.map((one) => [one.memory.id, Option.getOrNull(Option.map(one.meaning, (at) => `${at.place} by ${at.by.id} at ${at.cosine}`)), one.fused])
+
+  test("meaningTexts: the texts of the memories that stand and of those ended as changed into one that stands, each once; one that was wrong is none", () => {
+    expect(meaningTexts(knowledge)).toEqual(["Ana Silva works at Acme.", "Acme is in Lisbon.", "Bruno Reis lives in Porto.", "The user lives in Porto.", "Ana Silva works at Globex.", "Globex is in Lisbon."])
+  })
+
+  test("the texts found, nearest first, are a list fused by its weight; an ended memory found takes its place for what replaced it, and a text no candidate holds is passed over", () => {
+    const recall = recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning([
+      { text: "Ana Silva works at Acme.", cosine: 0.9 },
+      { text: "Ana Silva likes tea.", cosine: 0.85 },
+      { text: "Bruno Reis lives in Porto.", cosine: 0.8 },
+      { text: "Globex is in Lisbon.", cosine: 0.6 },
+    ]))
+    expect<unknown>(fused(recall)).toEqual([["m5", "1 by m1 at 0.9", 1.5 / 10], ["m3", "2 by m3 at 0.8", 1.5 / 11], ["m6", "3 by m6 at 0.6", 1.5 / 12]])
+    expect<unknown>(recall.sent.map((one) => [one.memory.id, one.before.map((old) => old.id)])).toEqual([["m5", ["m1"]], ["m3", []], ["m6", []]])
+    expect<unknown>([recall.weights, recall.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, Option.some({ model: "e5", pool: 50, floor: Option.none(), skipped: Option.none() })])
+  })
+
+  test("a text found is every memory that holds it, in the order kept", () => {
+    const twins = knowledgeOf(journalOf(source("s1"), entity("n2", "Ana"), entity("n3", "Bruno"), memory("m1", "Has a parrot.", ["n2"]), memory("m2", "Has a parrot.", ["n3"]), memory("m3", "Plays chess.", ["n3"])))
+    expect<unknown>(fused(recallKnowledge(twins, asked("Who keeps a bird?"), ENGLISH, byMeaning([{ text: "Has a parrot.", cosine: 0.7 }])))).toEqual([["m1", "1 by m1 at 0.7", 1.5 / 10], ["m2", "2 by m2 at 0.7", 1.5 / 11]])
+  })
+
+  test("the three lists fused: a memory in each adds each list's weight at its place", () => {
+    const recall = recallKnowledge(knowledge, asked("Is Acme in Lisbon?"), ENGLISH, byMeaning([{ text: "Globex is in Lisbon.", cosine: 0.9 }, { text: "Acme is in Lisbon.", cosine: 0.8 }]))
+    expect<unknown>(fused(recall)).toEqual([
+      ["m2", "2 by m2 at 0.8", 1 / 10 + 0.5 / 10 + 1.5 / 11],
+      ["m6", "1 by m6 at 0.9", 1 / 11 + 0.5 / 11 + 1.5 / 10],
+      ["m5", null, 1 / 12 + 0.5 / 12],
+    ])
+  })
+
+  test("a weight of 0 turns its list off: no place in it and nothing added; the walk by subject still starts from the memories about a seed", () => {
+    const question = asked("In what city does Ana Silva work?")
+    const words = recallKnowledge(knowledge, question, ENGLISH, byMeaning([], { seed: 0, words: 0.5, meaning: 1 }))
+    expect<unknown>(words.ranked.map((one) => [one.memory.id, Option.isSome(one.seed), Option.isSome(one.words)])).toEqual([["m5", false, true]])
+    expect<unknown>(words.bridges.map((bridge) => bridge.id)).toEqual(["n5"])
+    expect<unknown>(words.sent.map((one) => [one.memory.id, one.why])).toEqual([["m5", "ranked"], ["m6", "walked"]])
+    // The words' list off: "Who works?" names nobody, so only its words reached Ana Silva's work.
+    expect(recallKnowledge(knowledge, asked("Who works?"), ENGLISH, byMeaning([], { seed: 1, words: 0, meaning: 1 })).ranked).toEqual([])
+    // The list by meaning off: what was found is not placed.
+    expect(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning([{ text: "Acme is in Lisbon.", cosine: 0.9 }], { seed: 1, words: 0.5, meaning: 0 })).ranked).toEqual([])
+  })
+
+  test("the event says the model, the pool and the weights, and each memory's place and cosine in the list by meaning, with what took it", () => {
+    const recall = recallKnowledge(knowledge, asked("Hello there."), { ...ENGLISH, limit: 1, walk: 0 }, byMeaning([{ text: "Ana Silva works at Acme.", cosine: 0.9 }, { text: "Acme is in Lisbon.", cosine: 0.8 }]))
+    const said = knowledgeRecalledOf(recall, { ...ENGLISH, limit: 1, walk: 0 }, Option.none())
+    expect<unknown>([said.weights, said.meaning]).toEqual([{ seed: 1, words: 0.5, meaning: 1.5 }, { model: "e5", pool: 50, floor: null, skipped: null }])
+    expect<unknown>(said.memories.map((one) => [one.id, one.seed, one.words, one.meaning, one.sent, one.why])).toEqual([
+      ["m5", null, null, { place: 1, cosine: 0.9, via: "m1" }, true, "ranked"],
+      ["m2", null, null, { place: 2, cosine: 0.8, via: null }, false, "past-limit"],
+    ])
+  })
+
+  test("a floor leaves out of the list every text whose cosine is under it; one at the floor stays", () => {
+    const found = [{ text: "Ana Silva works at Acme.", cosine: 0.8 }, { text: "Bruno Reis lives in Porto.", cosine: 0.75 }, { text: "Globex is in Lisbon.", cosine: 0.7 }]
+    expect<unknown>(fused(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning(found, KNOWLEDGE_BY_MEANING.weights, Option.some(0.75)))).map(([id]) => id)).toEqual(["m5", "m3"])
+    expect(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning(found, KNOWLEDGE_BY_MEANING.weights, Option.some(0.9))).ranked).toEqual([])
+    const said = knowledgeRecalledOf(recallKnowledge(knowledge, asked("Hello there."), ENGLISH, byMeaning(found, KNOWLEDGE_BY_MEANING.weights, Option.some(0.75))), ENGLISH, Option.none())
+    expect(said.meaning).toEqual({ model: "e5", pool: 50, floor: 0.75, skipped: null })
+  })
+
+  test("a list skipped for an embedder's failure: its words in the event, cut at SKIPPED_SHOWN characters", () => {
+    const skipped = (why: string) => knowledgeRecalledOf(recallKnowledge(knowledge, asked("Who works?"), ENGLISH, Option.some({ model: "e5", pool: 50, weights: KNOWLEDGE_BY_MEANING.weights, floor: Option.none(), skipped: Option.some(why), found: [] })), ENGLISH, Option.none())
+    expect<unknown>(skipped("The embedder is not loaded.").meaning).toEqual({ model: "e5", pool: 50, floor: null, skipped: "The embedder is not loaded." })
+    const long = skipped("x".repeat(400)).meaning?.skipped ?? ""
+    expect(SKIPPED_SHOWN).toBe(300)
+    expect(long.length).toBeLessThanOrEqual(SKIPPED_SHOWN)
+    expect(long.endsWith("characters clipped]")).toBe(true)
+  })
+
+  test("checkedMeaningOptions: withKnowledge's, a pool of 50, the weights 1, 0.5 and 1.5 and no floor by default; a weight left out keeps its default", () => {
+    expect(checkedMeaningOptions({ floor: 0.6 })).toEqual(Result.succeed({ ...KNOWLEDGE_BY_MEANING, floor: Option.some(0.6) }))
+    expect(checkedMeaningOptions({})).toEqual(Result.succeed({ limit: 8, walk: 3, speaker: [], stopWords: [], pool: 50, weights: { seed: 1, words: 0.5, meaning: 1.5 }, floor: Option.none() }))
+    expect(checkedMeaningOptions({ pool: 100, weights: { words: 0 } })).toEqual(Result.succeed({ limit: 8, walk: 3, speaker: [], stopWords: [], pool: 100, weights: { seed: 1, words: 0, meaning: 1.5 }, floor: Option.none() }))
+  })
+
+  test.each<[string, Parameters<typeof checkedMeaningOptions>[0], string]>([
+    ["a limit of 0", { limit: 0 }, "withKnowledgeByMeaning's limit is a whole number from 1 to 50: the places for the memories ranked first. It was given 0"],
+    ["a pool of 0", { pool: 0 }, "withKnowledgeByMeaning's pool is a whole number from 1 to 100: how many texts the list by meaning ranks. It was given 0"],
+    ["a pool of 101", { pool: 101 }, "withKnowledgeByMeaning's pool is a whole number from 1 to 100: how many texts the list by meaning ranks. It was given 101"],
+    ["a pool of 2.5", { pool: 2.5 }, "withKnowledgeByMeaning's pool is a whole number from 1 to 100: how many texts the list by meaning ranks. It was given 2.5"],
+    ["a weight below 0", { weights: { seed: -0.5 } }, "withKnowledgeByMeaning's weights.seed is a number from 0 to 10, 0 turning its list off. It was given -0.5"],
+    ["a weight over 10", { weights: { words: 11 } }, "withKnowledgeByMeaning's weights.words is a number from 0 to 10, 0 turning its list off. It was given 11"],
+    ["a weight that is no number", { weights: { meaning: Number.NaN } }, "withKnowledgeByMeaning's weights.meaning is a number from 0 to 10, 0 turning its list off. It was given NaN"],
+    ["every list off", { weights: { seed: 0, words: 0, meaning: 0 } }, "withKnowledgeByMeaning's weights turn every list off: give one of seed, words and meaning a weight above 0"],
+    ["a floor below 0", { floor: -0.1 }, "withKnowledgeByMeaning's floor is a number from 0 to 1: the least cosine a memory needs to be in the list by meaning. It was given -0.1"],
+    ["a floor over 1", { floor: 1.5 }, "withKnowledgeByMeaning's floor is a number from 0 to 1: the least cosine a memory needs to be in the list by meaning. It was given 1.5"],
+  ])("%s is refused in words", (_, options, refusal) => {
+    expect(checkedMeaningOptions(options)).toEqual(Result.fail(refusal))
   })
 })
