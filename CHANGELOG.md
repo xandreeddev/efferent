@@ -658,8 +658,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - `recoverTurns` (`@xandreed/sdk/kernel`): the host's recovery step once it
     holds a store, closing every turn left open as `Abandoned`, in every
     session of the store. A process killed inside a turn no longer leaves
-    its session busy after a restart. It gives a `Recovery`: `closed`, the
-    turns it closed, and `unreadable`, the sessions it passed over because
+    its session busy after a restart. It gives a `Recovery`, `{ closed,
+    unreadable }`: `closed`, the turns it closed, and `unreadable`, the
+    sessions it passed over because
     the store could not read them (a damaged line), each with the store's
     words; the sessions after one are recovered all the same.
 - `@xandreed/sdk/kernel/node`: model providers that charge the kernel's
@@ -708,7 +709,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     a command started is gone after a timeout, the command's return, an
     interruption and the shell's close. `scriptedShell(script)` answers a
     script for tests. `processShell({ cwd, env?, shell?, outputBytes?,
-    timeoutMs? })` (`@xandreed/sdk/kernel/node`) runs `/bin/sh -c` with
+    timeoutMs? })` (`@xandreed/sdk/kernel/node`) runs `/bin/sh -c`,
+    keeping the last 8 KiB of each stream by default, with
     exactly the variables of `env` (none by default; it never reads the
     host process's environment) and stops a command's whole process group,
     on Node 24 and on Bun. The tool `runCommand` (`RunCommand`,
@@ -716,9 +718,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - The `Search` contract (`@xandreed/sdk/kernel`): `find({ pattern, regex?,
     folder?, glob?, limit })` gives the lines that hold a text or match a
     JavaScript regular expression, by path then line, with `more` and the
-    files it could not read counted; a pattern that repeats a repeating
-    group (`(a+)+`) is refused; its kit is `searchConformance`.
-    `filesSearch` implements it over any `Files`, in a page as on a disk;
+    files it could not read counted; a pattern that repeats a group holding
+    a choice or a repetition (`(a|aa)+`, `(a+)+`) is refused; its kit is
+    `searchConformance`. `filesSearch(options?)` implements it over any
+    `Files`, in a page as on a disk; a regular expression the check misses
+    can still hold the process, so `filesSearch({ regex: false })` keeps a
+    search to text as written;
     the tool `searchFiles` (`SearchFiles`, `searchTools`, `searchHandlers`)
     gives at most 50 matches.
 

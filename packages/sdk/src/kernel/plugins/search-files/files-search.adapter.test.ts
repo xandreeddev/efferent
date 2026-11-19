@@ -11,7 +11,7 @@ const searchOver = (files: Readonly<Record<string, string>>, change: (inner: Fil
     const changed = { ...inner, ...change(inner) }
     return Files.of({ ...changed, read: (path: FilePath) => Effect.andThen(Ref.update(reads, (all) => [...all, path]), changed.read(path)) })
   })).pipe(Layer.provide(inMemoryFiles(files)))
-  const search = yield* Effect.provide(Search, filesSearch.pipe(Layer.provide(workspace)))
+  const search = yield* Effect.provide(Search, filesSearch().pipe(Layer.provide(workspace)))
   return { find: (query: SearchQuery) => search.find(query), reads: Ref.get(reads) }
 })
 

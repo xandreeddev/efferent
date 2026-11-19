@@ -52,8 +52,11 @@ const failureOf = (path: FilePath, doing: "read" | "written") => (cause: unknown
           : new FilesUnavailable({ message: `${path} could not be ${doing}: ${messageOf(cause)}` }),
   })
 
-/** Write a new file whole, flushed, with `mode` (the file it replaces keeps its own); a name taken fails `EEXIST`. */
-const writeSynced = (file: string, bytes: Uint8Array, mode: number | undefined) => call(() => open(file, "wx", mode).then((handle) => handle.writeFile(bytes).then(() => handle.sync()).then(
+/**
+ * Write a new file whole, flushed; given the `mode` of the file it replaces, set it on the handle, since the mode
+ * `open` is given is masked by the process's umask. A name taken fails `EEXIST`.
+ */
+const writeSynced = (file: string, bytes: Uint8Array, mode: number | undefined) => call(() => open(file, "wx").then((handle) => handle.writeFile(bytes).then(() => mode === undefined ? undefined : handle.chmod(mode)).then(() => handle.sync()).then(
   () => handle.close(),
   (error: unknown) => handle.close().then(() => Promise.reject(error), () => Promise.reject(error)),
 )))

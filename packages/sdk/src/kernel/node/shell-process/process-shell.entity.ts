@@ -8,7 +8,9 @@
  *   with no `PATH`, `sh` looks commands up on its own default path. A host that wants its own `PATH`, `HOME` or
  *   `LANG` passes them here.
  * - `shell`: the absolute path of a POSIX `sh`, `/bin/sh` by default.
- * - `outputBytes`: how many of the last bytes of each of stdout and stderr a run keeps, 32,768 by default.
+ * - `outputBytes`: how many of the last bytes of each of stdout and stderr a run keeps, 8,192 by default: a result of
+ *   `runCommand` is stored and, under a memory that sends every result, sent in every later prompt, so two streams at
+ *   the default put at most 16 KiB there per call.
  * - `timeoutMs`: how long a command runs when its request names no time, 120,000 by default.
  *
  * @public
@@ -22,7 +24,7 @@ export interface ProcessShellOptions {
 }
 
 /** The defaults of `ProcessShellOptions`. */
-export const PROCESS_SHELL_DEFAULTS = { shell: "/bin/sh", outputBytes: 32_768, timeoutMs: 120_000 } as const
+export const PROCESS_SHELL_DEFAULTS = { shell: "/bin/sh", outputBytes: 8_192, timeoutMs: 120_000 } as const
 
 /** How long a run waits, after the command's processes are stopped, for its output pipes to close. */
 export const CLOSE_GRACE_MS = 2_000

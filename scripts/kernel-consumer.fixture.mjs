@@ -65,7 +65,7 @@ const workspaceKits = {
         mkdirSync(dirname(join(root, path)), { recursive: true })
         writeFileSync(join(root, path), text)
       }
-      return built(Search, filesSearch, diskFiles({ root }))
+      return built(Search, filesSearch(), diskFiles({ root }))
     }),
   }),
   processShell: shellConformance({ open: built(Shell, processShell({ cwd: shellFolder, env: shellEnv, outputBytes: 1000 }), Layer.empty), folder: shellFolder, env: shellEnv, outputBytes: 1000 }),

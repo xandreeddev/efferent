@@ -4,10 +4,11 @@ import { Tool } from "effect/ai"
 import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { Message } from "@xandreed/core/kernel"
 import { callTool, filesSearch, inMemoryFiles, inProcessJournal, sessions } from "../../index.js"
+import type { FilesSearchOptions } from "../../index.js"
 import { SearchFiles, searchHandlers, searchTools } from "./search-tool.adapter.js"
 
 /** One turn that makes each call in order over a workspace in memory: what each call stored. */
-const calls = (made: ReadonlyArray<unknown>, files: Readonly<Record<string, string>>) =>
+const calls = (made: ReadonlyArray<unknown>, files: Readonly<Record<string, string>>, options: FilesSearchOptions = {}) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const all = yield* Sessions
     const session = yield* all.open(yield* all.create({ owner: "test" }))
@@ -16,7 +17,7 @@ const calls = (made: ReadonlyArray<unknown>, files: Readonly<Record<string, stri
     return yield* Effect.forEach(made, (params, index) =>
       Effect.map(callTool(toolkit, { id: `c${index}`, name: "searchFiles", params }, session), (record) => resultOf(record.message)), { concurrency: 1 })
   }).pipe(Effect.provide(Layer.mergeAll(searchHandlers, sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))).pipe(
-    Layer.provideMerge(filesSearch), Layer.provideMerge(inMemoryFiles(files)),
+    Layer.provideMerge(filesSearch(options)), Layer.provideMerge(inMemoryFiles(files)),
   )))))
 
 const resultOf = (message: Message | undefined) => (message?._tag === "ToolResult" ? [message.result, message.isFailure] : message)
@@ -71,9 +72,17 @@ describe("searchFiles", () => {
       ["The pattern \"one\\ntwo\" holds a line break, and a search matches one line at a time: search for one line of it.", true],
       ["The pattern is 1001 characters long, and a search takes at most 1000: search for a shorter part of it.", true],
       ["The pattern \"(unclosed\" is not a JavaScript regular expression. Fix it, or call searchFiles with regex left out to find the text as it is written.", true],
-      ["The pattern \"(\\\\w+\\\\s?)*$\" repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines: write it without the nested repetition.", true],
+      ["The pattern \"(\\\\w+\\\\s?)*$\" repeats a group that holds a choice or a repetition (as in (a|b)+ or (a+)+), which can take exponential time on some lines: write it without repeating such a group, or search for a plainer part of it.", true],
       ["The glob is 1001 characters long, and a search takes at most 1000: give a shorter one, such as *.ts or src/**.", true],
       ["The path \"../up\" is not a path in the workspace. Give a path relative to the workspace, with / between folders and no \"..\", such as notes/todo.md.", true],
+    ])
+  })
+
+  test("a search its host keeps to text as it is written refuses a regular expression in fixed words, and finds text", async () => {
+    const stored = await calls([{ pattern: "a.c", regex: true }, { pattern: "a.c" }], { "a.txt": "a.c\nabc\n" }, { regex: false })
+    expect(stored).toEqual([
+      ["This workspace's search finds text as it is written, not regular expressions: call searchFiles again with regex left out.", true],
+      [{ matches: [{ path: "a.txt", line: 1, column: 1, text: "a.c" }], more: false, skipped: 0 }, false],
     ])
   })
 })

@@ -60,7 +60,11 @@ export const processShell = (options: ProcessShellOptions): Layer.Layer<Shell> =
   if (!isAbsolute(shell)) return yield* Effect.die(new Error(`processShell: shell must be an absolute path, not ${JSON.stringify(shell)}`))
   if (!Number.isInteger(outputBytes) || outputBytes < 1) return yield* Effect.die(new Error(`processShell: outputBytes must be a whole number of at least 1, not ${outputBytes}`))
   if (!Number.isInteger(defaultTimeout) || defaultTimeout < 1) return yield* Effect.die(new Error(`processShell: timeoutMs must be a whole number of at least 1, not ${defaultTimeout}`))
-  /** The commands running in this layer's scope, each stopped with its group when the scope closes. */
+  /**
+   * The commands whose shell has not yet been seen to exit, each stopped with its group when the scope closes. A run
+   * leaves the set as soon as its group is stopped after the exit, so no later kill names a group id the system may
+   * since have given to another process.
+   */
   const running = new Set<ChildProcess>()
   yield* Effect.addFinalizer(() => Effect.sync(() => running.forEach(killGroup)))
 
@@ -77,6 +81,7 @@ export const processShell = (options: ProcessShellOptions): Layer.Layer<Shell> =
     const closed = yield* Deferred.make<void>()
     const out: Held = { chunks: [], dropped: 0 }
     const err: Held = { chunks: [], dropped: 0 }
+    let stopped = false
     const keep = (held: Held) => (chunk: Uint8Array) => {
       const kept = keptOf([...held.chunks, chunk], outputBytes)
       held.chunks = kept.chunks
@@ -100,8 +105,12 @@ export const processShell = (options: ProcessShellOptions): Layer.Layer<Shell> =
         const inTime = yield* Effect.timeoutOption(Deferred.await(exited), timeoutMs)
         if (Option.isNone(inTime)) killGroup(child)
         const exit = Option.isSome(inTime) ? inTime.value : yield* Deferred.await(exited)
-        // What the command left running in the background goes with it.
+        // What the command left running in the background goes with it, at once: the shell was reaped as its exit was
+        // heard, and its id is not given to another process before this kill in any but a system whose ids wrap around
+        // within the moment between the two. After it, nothing names the group again.
         killGroup(child)
+        running.delete(child)
+        stopped = true
         const drained = yield* Effect.timeoutOption(Deferred.await(closed), CLOSE_GRACE_MS)
         if (Option.isNone(drained)) {
           child.stdout?.destroy()
@@ -121,7 +130,8 @@ export const processShell = (options: ProcessShellOptions): Layer.Layer<Shell> =
         return ran
       }),
       (child) => Effect.sync(() => {
-        killGroup(child)
+        // Interrupted, or failed, before the exit was heard: the shell's group is still this run's.
+        if (!stopped) killGroup(child)
         running.delete(child)
         child.stdout?.destroy()
         child.stderr?.destroy()

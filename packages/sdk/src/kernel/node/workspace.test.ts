@@ -26,7 +26,7 @@ import { scratch } from "./testing.js"
 const tools = Toolkit.merge(fileTools, searchTools, shellTools)
 
 const workspace = (folder: string) => Layer.mergeAll(fileHandlers, searchHandlers, shellHandlers).pipe(
-  Layer.provideMerge(filesSearch),
+  Layer.provideMerge(filesSearch()),
   Layer.provideMerge(diskFiles({ root: folder })),
   Layer.provideMerge(processShell({ cwd: folder, env: { PATH: "/usr/bin:/bin" } })),
 )

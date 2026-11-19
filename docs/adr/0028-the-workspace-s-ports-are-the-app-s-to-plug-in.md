@@ -70,10 +70,12 @@ It passes `filesConformance`, and every case the kit in memory never meets is de
 
 - **The contract:** `run({ command, cwd?, timeoutMs? })` runs `sh -c <command>` and gives `Ran`: the end of stdout
   and of stderr, the bytes cut before each (`stdoutCut`, `stderrCut`), and how it ended (`Exited` with its code,
-  `TimedOut`, `Killed` by a signal the shell did not send). A non-zero exit, a timeout and a signal are results;
+  `TimedOut`, `Killed` by a signal: one the shell did not send, or its own when its scope closed under the run). A
+  non-zero exit, a timeout and a signal are results;
   `ShellUnavailable` is a command that could not run at all (a defect of the tool's call), `ShellRefused` a host's
-  rule. Output keeps its **end**, at most `outputBytes` (32 KiB) of each stream, never half a character: the end says
-  how a command ended. Its kit, `shellConformance`, has ten checks; `scriptedShell(script)` answers a script, so the
+  rule. Output keeps its **end**, at most `outputBytes` (8 KiB) of each stream, never half a character: the end says
+  how a command ended. 8 KiB, not more, because a result of `runCommand` is stored and a memory that sends every
+  result (`flatMemory`) sends it in every later prompt: at most 16 KiB a call at the default. Its kit, `shellConformance`, has ten checks; `scriptedShell(script)` answers a script, so the
   tool's tests spawn nothing.
 - **Environment:** a command gets exactly the variables of the adapter's `env`, empty by default. The adapter never
   reads `process.env`, so no gate exemption is needed (`ENVIRONMENT_EDGES` is unchanged) and a tool that never asks
@@ -108,8 +110,10 @@ It passes `filesConformance`, and every case the kit in memory never meets is de
   ordered by path in code-unit order, then line, which the kit pins; at most `limit`, with `more`; `skipped`, the
   files that could not be read as text. A pattern is found as it is written, or with `regex` as a JavaScript regular
   expression with no flags; one that is empty, holds a line break, is over 1,000 characters, does not compile, or
-  repeats without bound a group that itself repeats without bound (`(a+)+`, `NestedRepeat`) fails with
-  `PatternInvalid`, which the tool words without the engine's own words (they differ between runtimes). A
+  repeats (`*`, `+`, `{n,}`, `{n,m}` past 1) a group that holds a choice or a quantifier (`(a|aa)+`, `(a+)+`,
+  `(\w+\s?)*`, `(\d+\.){3}`: `RepeatedGroup`) fails with `PatternInvalid`, which the tool words without the
+  engine's own words (they differ between runtimes). A host may keep its search to text as written:
+  `filesSearch({ regex: false })` refuses every regular expression (`RegexOff`), in fixed words the model reads. A
   glob with no `/` keeps files by name, one with a `/` by path; `*` and `?` stay within a name, `**` crosses folders.
   Its kit, `searchConformance`, has nine checks.
 - **One adapter, pure, over `Files`:** `filesSearch` lists the folder, keeps what the glob keeps, and reads each
@@ -121,12 +125,13 @@ It passes `filesConformance`, and every case the kit in memory never meets is de
 - **No ripgrep adapter.** Ripgrep's regular expressions are Rust's, not JavaScript's: the same pattern would match
   otherwise depending on the adapter a host plugged in, and the model reads one description. The search keeps one
   syntax, the engine's the model is told of.
-- **A regular expression has no time bound.** It runs on the process's own engine; a pattern that backtracks
-  without end over a long line holds the search and the process. The old engine had two guards, and this cut keeps
-  one: it refused nested repetition, the usual exponential form, as this search does (`NestedRepeat`, ported as an
-  idea and written again), and it ran other regular expressions in a worker it could stop, which a pure adapter has
-  not. Overlapping alternatives (`(a|a)*`) still pass. The bound on a file (`maxBytes`) bounds the input, not the
-  time. Nor does it cut a line before matching, as the old engine did to bound a line's time: a match past the cut
+- **A regular expression the check misses can hold the whole process.** It runs on the process's own JavaScript
+  engine, which nothing can interrupt once it matches: no timeout, no interruption of the fiber and no Stop reaches
+  it, and the process answers nothing else until it ends. The check refuses the forms whose matches split many ways
+  (a repeated group holding a choice or a quantifier), which are the exponential ones; it does not catch every slow
+  pattern (`a*a*a*$` is polynomial, and slow enough on a long line). The old engine ran regular expressions in a
+  worker it could stop; a pure adapter has none. A host that cannot afford a miss turns regular expressions off with
+  `filesSearch({ regex: false })`. The bound on a file (`maxBytes`) bounds the input, not the time. Nor does it cut a line before matching, as the old engine did to bound a line's time: a match past the cut
   would not be found, and the search says it found every line it did not skip.
 - **No cap per file.** The old engine took at most a quarter of its limit from one file of a folder's search, so one
   file could not fill the answer. This search keeps the contract's order and lets `more` mean one thing (there were
@@ -151,14 +156,25 @@ storage contract's and unchanged. ADR 0024's consequence carries a dated note.
 - A host that reads `recoverTurns` as an array changes to `.closed`.
 - A command can do anything the host process can. The kernel's only defence is that the tool is not given by
   default and never runs on its own.
+- The kill after the shell exits names its group id at once, in the same moment the exit is heard; only a system
+  whose process ids wrap around within that moment could have given the id to another group, which the kill would
+  then reach. Nothing names the group after it: the run leaves the scope's list, and its release does not kill again.
+- A host killed while a command runs (`SIGKILL`, a crash) leaves the command running: its group is its own session,
+  nothing holds its timeout any more, and nothing stops it.
+- A temporary file a crash leaves in a folder of `diskFiles` stays there: none is swept, since another process may be
+  writing one. A listing never shows it.
+- A `runCommand` result can put up to twice `outputBytes` into every later prompt under a memory that sends every
+  result (16 KiB at the default of 8 KiB a stream); `pointed` and the window memory shorten what they send, and a host
+  that raises `outputBytes` raises this with it.
+- A host that leaves regular expressions on accepts that a pattern the check misses can hold its process.
 
 ## Left open
 
 - **Media:** a store of images and other bytes for the model, in its own cut.
 - **Compare and set across processes:** a lock or a version the file system keeps, when two processes write one
   workspace.
-- **A search with a time bound:** a worker the Node entry runs it in, when a pattern that never ends is a risk an app
-  takes.
+- **A search with a time bound:** a worker the Node entry runs it in, so a host can keep regular expressions and still
+  stop one.
 - **Streaming a command's output** to the turn while it runs (`plugin.render`'s progress), and stdin.
 
 ## What would reopen this

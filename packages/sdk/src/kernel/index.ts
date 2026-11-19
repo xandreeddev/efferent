@@ -55,6 +55,7 @@ export { Found, LINE_BEFORE, LINE_SHOWN, PATTERN_LIMIT, PatternInvalid, PatternP
 export { searchConformance } from "./contracts/search/search.conformance.js"
 export type { SearchSubject } from "./contracts/search/search.conformance.js"
 export { filesSearch } from "./plugins/search-files/files-search.adapter.js"
+export type { FilesSearchOptions } from "./plugins/search-files/files-search.entity.js"
 export { SearchFiles, searchHandlers, searchTools } from "./plugins/tool-search/search-tool.adapter.js"
 export { Embedder } from "./contracts/embedder/embedder.port.js"
 export { EmbedAs, EmbedFailed, Vector } from "./contracts/embedder/embedder.entity.js"

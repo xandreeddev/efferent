@@ -707,7 +707,7 @@ describe("the files kit", () => {
 describe("the search kit", () => {
   type SearchShape = Context.Service.Shape<typeof Search>
   /** The search over a workspace in memory holding `files`. */
-  const over = (files: Readonly<Record<string, string>>) => built(Search, filesSearch, inMemoryFiles(files))
+  const over = (files: Readonly<Record<string, string>>) => built(Search, filesSearch(), inMemoryFiles(files))
   /** The search with its `find` replaced, given the one it replaces. */
   const careless = (change: (inner: SearchShape) => SearchShape["find"]): SearchSubject => ({
     open: (files) => Effect.map(over(files), (inner) => Search.of({ find: change(inner) })),

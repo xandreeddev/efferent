@@ -73,12 +73,13 @@ const checks: ReadonlyArray<readonly [string, string, Readonly<Record<string, st
     // A match near the end of a long line: the line's last characters.
     yield* finds("line", search, { pattern: "tail", limit: 10 }, [`c.txt:1:401:${tailed.slice(204)}`], { full: true })
   })],
-  ["refused", "an empty pattern, one with a line break, a regular expression that does not compile and one that repeats a repeating group fail with PatternInvalid", { "a.txt": "x" }, (search) => Effect.gen(function* () {
+  ["refused", "an empty pattern, one with a line break, a regular expression that does not compile and one that repeats a group holding a choice or a repetition fail with PatternInvalid", { "a.txt": "x" }, (search) => Effect.gen(function* () {
     const invalid = (reason: string) => (error: { readonly _tag: string; readonly reason?: string }) => error._tag === "PatternInvalid" && error.reason === reason
     yield* refuses("refused", "an empty pattern", search.find({ pattern: "", limit: 10 }), invalid("Empty"))
     yield* refuses("refused", "a pattern with a line break", search.find({ pattern: "a\nb", limit: 10 }), invalid("LineBreak"))
     yield* refuses("refused", "a regular expression that does not compile", search.find({ pattern: "(", regex: true, limit: 10 }), invalid("NotRegex"))
-    yield* refuses("refused", "a regular expression that repeats a repeating group", search.find({ pattern: "(a+)+$", regex: true, limit: 10 }), invalid("NestedRepeat"))
+    yield* refuses("refused", "a regular expression that repeats a repeating group", search.find({ pattern: "(a+)+$", regex: true, limit: 10 }), invalid("RepeatedGroup"))
+    yield* refuses("refused", "a regular expression that repeats a choice", search.find({ pattern: "(a|aa)+$", regex: true, limit: 10 }), invalid("RepeatedGroup"))
   })],
   ["none", "a pattern no line holds finds nothing, and no more", { "a.txt": "x\ny\n" }, (search) =>
     finds("none", search, { pattern: "z", limit: 10 }, [])],

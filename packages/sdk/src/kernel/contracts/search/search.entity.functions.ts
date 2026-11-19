@@ -21,8 +21,8 @@ export const finderOf = (query: Pick<SearchQuery, "pattern" | "regex">): Result.
   if (query.regex !== true) return Result.succeed((line) => line.indexOf(pattern))
   return Result.flatMap(
     Result.try({ try: () => new RegExp(pattern), catch: (cause) => refused("pattern", "NotRegex", pattern, cause instanceof Error ? cause.message : "it does not compile") }),
-    (compiled): Result.Result<Finder, PatternInvalid> => nestsRepetition(pattern)
-      ? Result.fail(refused("pattern", "NestedRepeat", pattern, "the pattern repeats a group that itself repeats, which can take exponential time on some lines"))
+    (compiled): Result.Result<Finder, PatternInvalid> => repeatsChoice(pattern)
+      ? Result.fail(refused("pattern", "RepeatedGroup", pattern, "the pattern repeats a group that holds a choice or a repetition, which can take exponential time on some lines"))
       : Result.succeed((line) => compiled.exec(line)?.index ?? -1),
   )
 }
@@ -30,29 +30,46 @@ export const finderOf = (query: Pick<SearchQuery, "pattern" | "regex">): Result.
 /** A regular expression's source as tokens: an escape, a class, a group's opening (with `?:`, a look-around or a name), `)`, a quantifier, or one character. */
 const TOKENS = /\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]|\((?:\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>))?|\)|\{\d+(?:,\d*)?\}\??|[*+?]\??|[\s\S]/g
 
+/** Whether a quantifier lets what it follows repeat: `*`, `+`, `{n,}`, and `{n}` or `{n,m}` past 1 (lazy or not); never `?`. */
+const repeats = (token: string): boolean => {
+  if (token.startsWith("*") || token.startsWith("+")) return true
+  const bound = /^\{(\d+)(,(\d*))?\}/.exec(token)
+  if (bound === null) return false
+  const most = bound[2] === undefined ? Number(bound[1]) : bound[3] === "" ? Infinity : Number(bound[3])
+  return most > 1
+}
+const isQuantifier = (token: string): boolean => /^(?:[*+?]|\{\d+(?:,\d*)?\})\??$/.test(token)
+
 /**
- * Whether a regular expression repeats without bound (`*`, `+`, `{n,}`) a group that itself holds a repetition without
- * bound: `(a+)+`, `(?:\w+\s?)*`, `((ab)*)+`. A group repeated a bounded number of times (`(\d+\.){3}`) is not
- * counted. Not every slow pattern is caught (overlapping alternatives, `(a|a)*`, are not).
+ * Whether a regular expression repeats (`*`, `+`, `{n,}`, `{n,m}` past 1) a group that holds a choice (`|`) or a
+ * quantifier of any kind: `(a+)+`, `(a|aa)+`, `(a|a)*`, `(\w+\s?)*`, `(x+x+)+`, `((ab)+)+`, `(\d+\.){3}`. Those
+ * are the forms whose matches can be split many ways, which a backtracking engine may try one by one, for time
+ * exponential in a line's length. A group with neither, repeated (`(ab)+`), a choice not repeated (`foo|bar`) and a
+ * quantifier outside any repeated group (`\d+-\d+`, `a{2,4}`) pass. Not every slow pattern is caught: `a*a*a*$` takes
+ * time polynomial in the line, and a host that cannot afford a miss turns regular expressions off (`filesSearch({
+ * regex: false })`).
  */
-export const nestsRepetition = (source: string): boolean => {
-  // For each open group, outermost first, whether it holds a repetition without bound so far.
+export const repeatsChoice = (source: string): boolean => {
+  // For each open group, outermost first, whether it holds a choice or a quantifier so far.
   const open: Array<boolean> = [false]
-  let closedRepeating = false
+  let closedHolds = false
   for (const token of source.match(TOKENS) ?? []) {
     if (token.startsWith("(")) {
       open.push(false)
-      closedRepeating = false
+      closedHolds = false
     } else if (token === ")") {
       const inner = open.pop() ?? false
       if (open.length === 0) open.push(false)
-      open[open.length - 1] = (open[open.length - 1] ?? false) || inner
-      closedRepeating = inner
-    } else if (/^(?:[*+]|\{\d+,\})\??$/.test(token)) {
-      if (closedRepeating) return true
+      closedHolds = inner
+    } else if (token === "|") {
       open[open.length - 1] = true
+      closedHolds = false
+    } else if (isQuantifier(token)) {
+      if (closedHolds && repeats(token)) return true
+      open[open.length - 1] = true
+      closedHolds = false
     } else {
-      closedRepeating = false
+      closedHolds = false
     }
   }
   return false
@@ -117,7 +134,8 @@ const PATTERN_WORDS: Record<PatternProblem, (pattern: string) => string> = {
   LineBreak: (pattern) => `The pattern ${shown(pattern, 80)} holds a line break, and a search matches one line at a time: search for one line of it.`,
   TooLong: (pattern) => `The pattern is ${pattern.length} characters long, and a search takes at most ${PATTERN_LIMIT}: search for a shorter part of it.`,
   NotRegex: (pattern) => `The pattern ${shown(pattern, 80)} is not a JavaScript regular expression. Fix it, or call ${SEARCH_FILES} with regex left out to find the text as it is written.`,
-  NestedRepeat: (pattern) => `The pattern ${shown(pattern, 80)} repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines: write it without the nested repetition.`,
+  RepeatedGroup: (pattern) => `The pattern ${shown(pattern, 80)} repeats a group that holds a choice or a repetition (as in (a|b)+ or (a+)+), which can take exponential time on some lines: write it without repeating such a group, or search for a plainer part of it.`,
+  RegexOff: () => `This workspace's search finds text as it is written, not regular expressions: call ${SEARCH_FILES} again with regex left out.`,
 }
 
 /** What `searchFiles` answers for a pattern or a glob it cannot use. */

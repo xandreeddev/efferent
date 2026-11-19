@@ -45,12 +45,13 @@ export type Found = typeof Found.Type
 /**
  * Why a pattern or a glob cannot be used: it is empty (`Empty`), holds a line break (`LineBreak`; a search matches one
  * line at a time), is longer than `PATTERN_LIMIT` (`TooLong`), is no regular expression the engine compiles
- * (`NotRegex`), or repeats without bound a group that itself repeats without bound (`NestedRepeat`: `(a+)+`, the usual
- * form that backtracks for exponential time; refused because a search runs with no time bound).
+ * (`NotRegex`), repeats a group that holds a choice or a quantifier (`RepeatedGroup`: `(a|aa)+`, `(a+)+`, the forms
+ * that can backtrack for exponential time; refused because the engine cannot be stopped once it runs), or is a regular
+ * expression asked of a search its host keeps to text as it is written (`RegexOff`).
  *
  * @public
  */
-export const PatternProblem = Schema.Literals(["Empty", "LineBreak", "TooLong", "NotRegex", "NestedRepeat"])
+export const PatternProblem = Schema.Literals(["Empty", "LineBreak", "TooLong", "NotRegex", "RepeatedGroup", "RegexOff"])
 export type PatternProblem = typeof PatternProblem.Type
 
 /**

@@ -2173,7 +2173,7 @@ import { diskFiles, processShell } from "@xandreed/sdk/kernel/node"
 const tools = Toolkit.merge(fileTools, searchTools, shellTools)
 
 const workspace = (folder: string) => Layer.mergeAll(fileHandlers, searchHandlers, shellHandlers).pipe(
-  Layer.provideMerge(filesSearch),
+  Layer.provideMerge(filesSearch()),
   Layer.provideMerge(diskFiles({ root: folder })),
   Layer.provideMerge(processShell({ cwd: folder, env: { PATH: "/usr/bin:/bin" } })),
 )
@@ -2202,7 +2202,11 @@ const workspace = (folder: string) => Layer.mergeAll(fileHandlers, searchHandler
   lines, and counts the files it could not read as text. It reads through
   `Files`, so it searches a page's workspace as it does a folder; there is
   no ripgrep adapter, whose regular expressions are not JavaScript's. A
-  pattern has no time bound.
+  regular expression that repeats a group holding a choice or a repetition
+  (`(a|aa)+`, `(a+)+`) is refused; one the check misses can still hold the
+  process, since nothing can stop the engine, so a host that cannot afford
+  that gives `filesSearch({ regex: false })`, and the model is told in
+  fixed words to search for text as it is written.
 
 Permission is the app's here too. A `Shell` of its own declines by a rule:
 

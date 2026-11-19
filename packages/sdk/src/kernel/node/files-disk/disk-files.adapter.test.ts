@@ -50,7 +50,7 @@ describe("diskFiles", () => {
           await writeFile(join(root, path), text)
         })
       }
-      return yield* Effect.map(Effect.orDie(Layer.build(filesSearch.pipe(Layer.provide(diskFiles({ root }))))), (services) => Context.get(services, Search))
+      return yield* Effect.map(Effect.orDie(Layer.build(filesSearch().pipe(Layer.provide(diskFiles({ root }))))), (services) => Context.get(services, Search))
     }),
   })) {
     test(`the search over it passes the search kit's ${check.id} check`, async () => {
@@ -126,7 +126,7 @@ describe("diskFiles", () => {
         await writeFile(join(root, "small.txt"), "x")
       })
       const files = yield* filesIn(root, { maxBytes: 100 })
-      const search = Context.get(yield* Layer.build(filesSearch.pipe(Layer.provide(diskFiles({ root, maxBytes: 100 })))), Search)
+      const search = Context.get(yield* Layer.build(filesSearch().pipe(Layer.provide(diskFiles({ root, maxBytes: 100 })))), Search)
       return {
         read: yield* failureOf(files.read(at("big.txt"))),
         write: yield* failureOf(files.write(at("other.txt"), "é".repeat(51))),
@@ -236,6 +236,21 @@ describe("diskFiles", () => {
       read: { tag: "FilesRefused", reason: "the system does not let it be read" },
       write: { tag: "FileChanged" },
     })
+  })
+
+  test("a file overwritten under a umask that would mask its mode keeps the mode it had", async () => {
+    const before = process.umask(0o022)
+    const out = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const root = yield* fresh
+      yield* Effect.promise(async () => {
+        await writeFile(join(root, "shared.txt"), "one")
+        await chmod(join(root, "shared.txt"), 0o664)
+      })
+      const files = yield* filesIn(root)
+      yield* files.write(at("shared.txt"), "two")
+      return ((yield* Effect.promise(() => stat(join(root, "shared.txt")))).mode & 0o777).toString(8)
+    }))).finally(() => { process.umask(before) })
+    expect(out).toBe("664")
   })
 
   test("two writes that expect the same text, made at once by two layers of one process over one root: one writes, one fails FileChanged", async () => {
