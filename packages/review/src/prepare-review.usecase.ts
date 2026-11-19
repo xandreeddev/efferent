@@ -41,11 +41,13 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
     First: () => forge.firstHead(repo, pull),
     Sha: ({ sha }) => Effect.succeed({ sha, source: "sha" as const }),
   })
-  const at: ReviewedAt = chosen.sha === pull.head.sha
+  // The head is reviewed against the pull request's base; any other commit (the first head too, even when it is the
+  // head) against where its history meets that base, after fetching it by its sha when the head's ref no longer
+  // reaches it (a force-push).
+  const at: ReviewedAt = options.at._tag === "Head"
     ? { sha: chosen.sha, source: chosen.source, base: pull.base.sha }
     : yield* Effect.gen(function* () {
-      // A commit the head's ref no longer reaches (a force-push) is fetched by its sha.
-      yield* checkout.fetch(repo, pull.base, { sha: chosen.sha, fetchRef: pull.fetchRef })
+      if (chosen.sha !== pull.head.sha) yield* checkout.fetch(repo, pull.base, { sha: chosen.sha, fetchRef: pull.fetchRef })
       return { sha: chosen.sha, source: chosen.source, base: yield* checkout.mergeBase(repo, pull.base.sha, chosen.sha) }
     })
   const files = yield* Effect.fromResult(parseUnifiedDiff(yield* checkout.diff(repo, at.base, at.sha)))

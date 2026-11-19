@@ -1,5 +1,6 @@
 import { Array as Arr, Match, Option, Order, Result } from "effect"
 import { clipTo } from "@xandreed/sdk"
+import { GREP_TIMEOUT_MS } from "./checkout.entity.js"
 import type { GrepHit, TreeEntry } from "./checkout.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
@@ -169,6 +170,18 @@ export const diffPage = (files: ReadonlyArray<FileDiff>, path: string, page: num
   const next = page < pages ? `Call ${READ_DIFF} with page ${page + 1} for the rest.` : "This is the end of this file's diff."
   return Result.succeed([`The diff of ${shown}, page ${page} of ${pages}:`, ...lines.slice((page - 1) * DIFF_PAGE, page * DIFF_PAGE), next].join("\n"))
 }
+
+/** A regular expression git cannot read, in fixed words (git's own may name a host path). */
+export const REGEX_REFUSED = "git cannot read the pattern as an extended regular expression: check its brackets and escapes, or leave regex out to search for the text as it is."
+
+/** A search stopped at its time limit. */
+export const SEARCH_TOO_LONG = `The search took longer than ${GREP_TIMEOUT_MS / 1000} seconds: narrow it with path or a longer pattern.`
+
+/** A search whose output was longer than the host keeps. */
+export const SEARCH_TOO_BIG = "The search found more than can be read: narrow it with path or a longer pattern."
+
+/** A git command of a tool's that failed otherwise: fixed words, since git's own may name a host path. */
+export const GIT_FAILED = "git could not read the commit under review for this call: try it again, or go on without it."
 
 /** What `reportFinding` answers: the finding's number in its pass. */
 export const recordedText = (number: number): string => `recorded finding ${number}`

@@ -7,6 +7,8 @@ import { kernel, Sessions, userMessage } from "@xandreed/core"
 import { callTool, inProcessJournal, sessions } from "@xandreed/sdk"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import { Checkout } from "./checkout.port.js"
+import type { CheckoutError } from "./checkout.port.js"
+import { CommandFailed, OutputCut } from "./host-command.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { parseUnifiedDiff } from "./diff.entity.functions.js"
 import { PassNumber } from "./finding.entity.js"
@@ -229,7 +231,7 @@ describe("searchCode over the tracked files at the head", () => {
     expect([lines.length, lines[0], lines[1], lines[51]]).toEqual([52, "403 lines hold \"value\"; the first 50:", "src/big.ts:1: export const value0 = 0 // a line long enough", "353 more matches: narrow with path."])
     expect(magic).toEqual(["1 line holds \"export\" in :(glob)odd:\n:(glob)odd/a.ts:1: export const a = 2", false])
     expect(String(regex?.[0]).split("\n")[0]).toBe("10 lines hold \"value[0-9]+ = 39[0-9]\" in src/big.ts:")
-    expect([String(bad?.[0]).startsWith("git cannot read the pattern as a regular expression: "), bad?.[1]]).toEqual([true, true])
+    expect(bad).toEqual(["git cannot read the pattern as an extended regular expression: check its brackets and escapes, or leave regex out to search for the text as it is.", true])
     expect(out).toEqual(["../up is not a path in the repository: give one relative to its root, such as src/index.ts, with no .. part and no leading /.", true])
   })
 })
@@ -265,6 +267,43 @@ describe("reportFinding", () => {
     expect<unknown>(findings).toEqual([
       { ...report, pass: 1, number: 1 },
       { ...report, line: 2, endLine: 4, kind: "rule", severity: "medium", pass: 1, number: 2 },
+    ])
+  })
+})
+
+describe("a git command of a tool's that fails", () => {
+  /** A checkout whose every read fails as `failure` says, and whose clone path its failures name. */
+  const failing = (failure: CheckoutError) => Layer.succeed(Checkout, Checkout.of({
+    fetch: () => Effect.fail(failure), diff: () => Effect.fail(failure), show: () => Effect.fail(failure), worktree: () => Effect.fail(failure),
+    entry: () => Effect.fail(failure), blob: () => Effect.fail(failure), files: () => Effect.fail(failure), grep: () => Effect.fail(failure),
+    mergeBase: () => Effect.fail(failure),
+  }))
+  const storedOver = (checkout: Layer.Layer<Checkout>, made: ReadonlyArray<readonly [string, unknown]>) =>
+    Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const all = yield* Sessions
+      const session = yield* all.open(yield* all.create({ owner: "test" }))
+      yield* session.append(userMessage("review"))
+      const toolkit = yield* reviewTools
+      return yield* Effect.forEach(made, ([name, params], index) =>
+        Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
+    }).pipe(Effect.provide(Layer.mergeAll(
+      reviewToolHandlers({ repo, at: head, files: [], pass: PassNumber.make(1) }),
+      sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
+    ).pipe(Layer.provideMerge(Layer.mergeAll(checkout, findingsInMemory)))))))
+
+  test("answers in fixed words that name no host path: a search too long or too big says how to narrow it", async () => {
+    const command = "git -C /home/user/.efferent-review/owner/project/mirror.git grep"
+    const timedOut = await storedOver(failing(new CommandFailed({ reason: "timed-out", command, message: "stopped after 30000 ms" })), [["searchCode", { pattern: "x" }]])
+    const cut = await storedOver(failing(new OutputCut({ command, cut: 10, message: "git wrote more than the shell keeps" })), [["searchCode", { pattern: "x" }]])
+    const exited = await storedOver(failing(new CommandFailed({ reason: "exited", command, message: "exited with 128: fatal: /home/user/.efferent-review/owner/project/mirror.git is broken" })), [
+      ["searchCode", { pattern: "x" }], ["readLines", { path: "src/sum.ts" }], ["listFiles", { glob: "*" }],
+    ])
+    expect([...timedOut, ...cut, ...exited]).toEqual([
+      ["The search took longer than 30 seconds: narrow it with path or a longer pattern.", true],
+      ["The search found more than can be read: narrow it with path or a longer pattern.", true],
+      ["git could not read the commit under review for this call: try it again, or go on without it.", true],
+      ["git could not read the commit under review for this call: try it again, or go on without it.", true],
+      ["git could not read the commit under review for this call: try it again, or go on without it.", true],
     ])
   })
 })

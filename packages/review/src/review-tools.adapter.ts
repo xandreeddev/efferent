@@ -6,7 +6,11 @@ import { CLAIM_LIMIT, EVIDENCE_LIMIT, FindingKind, LineNumber, Severity } from "
 import { Findings } from "./findings.port.js"
 import type { Reviewed } from "./review-tools.entity.js"
 import { DIFF_PAGE, GLOB_LIMIT, LIST_FILES, LIST_LIMIT, PATTERN_LIMIT, READ_DIFF, READ_LINES, READ_LINES_LIMIT, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
-import { diffPage, globRefusal, linesPage, listText, NOT_READ_BECAUSE, patternRefusal, recordedText, searchText, treePath } from "./review-tools.entity.functions.js"
+import { diffPage, GIT_FAILED, globRefusal, linesPage, listText, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, treePath } from "./review-tools.entity.functions.js"
+import type { CheckoutError } from "./checkout.port.js"
+
+/** A git command of a tool's that failed: logged whole for the host, and answered in fixed words, never git's. */
+const gitFailed = (error: CheckoutError) => Effect.logWarning("a review tool's git command failed", error).pipe(Effect.andThen(Effect.fail(GIT_FAILED)))
 
 const PATH = "A file's path from the repository's root, with / between folders, such as src/index.ts."
 
@@ -82,8 +86,9 @@ export const reviewTools = Toolkit.make(ReadLines, SearchCode, ListFiles, ReadDi
 /**
  * What the tools do, over the clone's objects at the commit under review (`Checkout`; never a folder on disk) and the
  * review's `Findings`. A path that leaves the repository, a folder, a link, a submodule, a binary or missing file, a
- * page past the end, a pattern git refuses: each a failed result in words that name what to do. A git command that
- * fails is a defect of the call, which `callTool` stores as its failed result.
+ * page past the end, a pattern git refuses, a search too long or too big: each a failed result in words that name
+ * what to do. A git command that fails otherwise is logged whole and answered in fixed words (`GIT_FAILED`), never
+ * git's own, which may name a host path.
  */
 export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Effect.gen(function* () {
   const checkout = yield* Checkout
@@ -92,10 +97,10 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
   return reviewTools.of({
     readLines: Effect.fn("review_tools.read_lines")(function* ({ path, from, count }) {
       const tracked = yield* Effect.fromResult(treePath(path))
-      const entry = yield* checkout.entry(repo, at, tracked).pipe(Effect.orDie)
+      const entry = yield* checkout.entry(repo, at, tracked).pipe(Effect.catch(gitFailed))
       const shown = shownPath(tracked)
       return yield* Match.valueTags(entry, {
-        File: ({ blob }) => Effect.flatMap(Effect.orDie(checkout.blob(repo, blob)), (text) => Effect.fromResult(linesPage(tracked, text, from ?? 1, count ?? READ_LINES_LIMIT))),
+        File: ({ blob }) => Effect.flatMap(Effect.catch(checkout.blob(repo, blob), gitFailed), (text) => Effect.fromResult(linesPage(tracked, text, from ?? 1, count ?? READ_LINES_LIMIT))),
         Link: () => Effect.fail(NOT_READ_BECAUSE.Link(shown)),
         Submodule: () => Effect.fail(NOT_READ_BECAUSE.Submodule(shown)),
         Folder: () => Effect.fail(NOT_READ_BECAUSE.Folder(shown)),
@@ -106,14 +111,18 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
       yield* Effect.fromResult(patternRefusal(pattern))
       const within = path === undefined ? Option.none<string>() : Option.some(yield* Effect.fromResult(treePath(path)))
       const hits = yield* checkout.grep(repo, at, { pattern, regex: regex ?? false, path: within }).pipe(
-        Effect.catchTag("PatternRefused", (refused) => Effect.fail(`git cannot read the pattern as a regular expression: ${refused.message}`)),
-        Effect.catchTags({ CommandFailed: (error) => Effect.die(error), OutputCut: (error) => Effect.die(error), CommitMissing: (error) => Effect.die(error) }),
+        Effect.catchTags({
+          PatternRefused: () => Effect.fail(REGEX_REFUSED),
+          OutputCut: () => Effect.fail(SEARCH_TOO_BIG),
+          CommandFailed: (error) => (error.reason === "timed-out" ? Effect.fail(SEARCH_TOO_LONG) : gitFailed(error)),
+          CommitMissing: gitFailed,
+        }),
       )
       return searchText(pattern, Option.getOrNull(within), hits)
     }),
     listFiles: Effect.fn("review_tools.list_files")(function* ({ glob }) {
       yield* Effect.fromResult(globRefusal(glob))
-      return listText(glob, yield* checkout.files(repo, at).pipe(Effect.orDie))
+      return listText(glob, yield* checkout.files(repo, at).pipe(Effect.catch(gitFailed)))
     }),
     readDiff: ({ path, page }) => Effect.fromResult(diffPage(reviewed.files, path, page ?? 1)),
     reportFinding: (report) => Effect.map(findings.record(reviewed.pass, report), recordedText),

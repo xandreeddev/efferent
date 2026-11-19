@@ -48,7 +48,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   request with one pass of a model (DeepSeek V4.1 Flash through the Vercel
   AI Gateway by default, its key read from `VERCEL_API_KEY`), the host's own
   loop on the kernel: a session in a directory journal per pass, flat
-  memory, a step cap (16) and a spend cap (`--max-cost`, $0.15 by default).
+  memory, a step cap (16) and a spend cap (`--max-cost`, $0.20 by default, each call's worst case held
+  at 1 byte a token).
   The model reads with `readLines`, `searchCode`, `listFiles` and `readDiff`,
   each bounded and paging itself, over the clone's objects at the reviewed
   commit (a link, a submodule, a folder, a binary file or a path out of the

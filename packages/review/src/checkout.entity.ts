@@ -54,3 +54,6 @@ export type GrepHit = typeof GrepHit.Type
 export class PatternRefused extends Schema.TaggedError<PatternRefused>()("PatternRefused", {
   message: Schema.String,
 }) {}
+
+/** How long a search of a commit's files may run before it is stopped, in milliseconds. */
+export const GREP_TIMEOUT_MS = 30_000

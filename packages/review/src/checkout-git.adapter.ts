@@ -3,7 +3,7 @@ import { existsSync } from "node:fs"
 import { mkdir, rm } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
-import { CacheRootRefused, CommitMissing, PatternRefused } from "./checkout.entity.js"
+import { CacheRootRefused, CommitMissing, GREP_TIMEOUT_MS, PatternRefused } from "./checkout.entity.js"
 import type { BlobSha, GrepRequest, Transport, TreeEntry } from "./checkout.entity.js"
 import { entryOf, gitArgv, grepHitsOf, LS_ENTRY, REGULAR } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
@@ -28,9 +28,6 @@ export interface GitCheckoutOptions {
   /** The transports git may use, `https` alone by default (`gitArgv`). */
   readonly transports?: ReadonlyArray<Transport>
 }
-
-/** How long a search of a commit's files may run before it is stopped, in milliseconds. */
-export const GREP_TIMEOUT_MS = 30_000
 
 /** The folder at or above `path` that holds a `.git`, if any. */
 const repositoryAbove = (path: string): Option.Option<string> => {
@@ -132,7 +129,8 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
   const grep = Effect.fn("checkout.grep")(function* (repo: RepoName, at: CommitSha, request: GrepRequest) {
     // The pattern always follows -e and the paths --, so a pattern that starts with - is a pattern, never an option.
     const args = git(repo, "grep", "-z", "-n", "-I", "--no-color", "--no-textconv", request.regex ? "-E" : "-F", "-e", request.pattern, at, "--", ...Option.toArray(request.path))
-    const whole = yield* runWhole(args, { exits: [0, 1, 128], timeoutMs: GREP_TIMEOUT_MS })
+    // 128 is git's refusal of a regular expression only when one was asked for; else it is a failure like any other.
+    const whole = yield* runWhole(args, { exits: request.regex ? [0, 1, 128] : [0, 1], timeoutMs: GREP_TIMEOUT_MS })
     if (whole.code === 128) return yield* Effect.fail(new PatternRefused({ message: clipTo(plainText(whole.stderr.trim()), 300) }))
     return grepHitsOf(whole.stdout, at)
   }, provided)

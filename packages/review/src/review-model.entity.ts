@@ -22,9 +22,8 @@ export type ReviewModel = typeof ReviewModel.Type
 
 /**
  * The default model: DeepSeek V4.1 Flash through the Vercel AI Gateway, asked of Baseten first, 2,048 tokens of output
- * a call. A request's worst case is held at 2 bytes a token: a review's request is mostly code and English, which
- * DeepSeek's tokenizer reads at 3 or more bytes a token, and at 1 byte a token the hold of each late step (a ~140 KB
- * request, ~$0.045) alone would take a normal review of a 24,000-token diff past its cap.
+ * a call. A request's worst case is held at 1 byte a token, the ledger's bound for any tokenizer: the request is the
+ * pull request's text, so no smaller count is safe.
  */
 export const DEFAULT_REVIEW_MODEL: ReviewModel = {
   model: "deepseek/deepseek-v4.1-flash-1017",
@@ -32,15 +31,16 @@ export const DEFAULT_REVIEW_MODEL: ReviewModel = {
   keyVariable: "VERCEL_API_KEY",
   price: { input: 0.3, output: 1.2, cacheRead: 0.007 },
   maxOutputTokens: 2_048,
-  bytesPerToken: 2,
+  bytesPerToken: 1,
   extra: { providerOptions: { gateway: { order: ["baseten"] } } },
   provider: "vercel.ai_gateway",
 }
 
 /**
- * The most a review may spend by default, in USD, the ledger's total cap. Measured on the packs of #645, #650, #653 and
- * #658 at their first heads (130 to 139 KB a request): each call holds about $0.023 at 2 bytes a token; a pass of 16
- * steps, every one with its full 2,048 tokens of output, settles about $0.06 (one cold call, the rest read from the
- * cache) and holds about $0.04 for its last, longer request, so $0.10 would refuse a long review near its end.
+ * The most a review may spend by default, in USD, the ledger's total cap. Measured on the packs of #645, #647, #650
+ * and #658 at their first heads: a first request of 130 to 139 KB holds about $0.044 at 1 byte a token, and a request
+ * grows with every result read; the longest live pass (#647, 16 steps) settled $0.040 and its last request (about
+ * 300 KB) held about $0.093, so one normal review needs about $0.13, and a cap of $0.10 or $0.15 would refuse it near
+ * its end.
  */
-export const DEFAULT_MAX_COST = 0.15
+export const DEFAULT_MAX_COST = 0.2

@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import type { Transport } from "./checkout.entity.js"
-import { gitArgv } from "./checkout.entity.functions.js"
+import { entryOf, gitArgv, grepHitsOf } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff, renderDiff } from "./diff.entity.functions.js"
 import { attributesOf, fileVerdict } from "./file-verdict.entity.functions.js"
@@ -49,6 +49,22 @@ describe("gitArgv", () => {
     expect(gitArgv(["file"], null, ["clone"])).toEqual([
       "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "--literal-pathspecs", "clone",
     ])
+  })
+})
+
+describe("the tree's entries and a search's lines, as git prints them", () => {
+  test("entryOf: a regular file by its blob, a link, a submodule, a folder; any other mode is no file", () => {
+    const blob = "a".repeat(40)
+    expect<unknown>([entryOf("100644", "blob", blob), entryOf("100755", "blob", blob), entryOf("120000", "blob", blob), entryOf("160000", "commit", blob), entryOf("040000", "tree", blob), entryOf("100664", "blob", blob), entryOf("100644", "blob", "not-a-sha")]).toEqual([
+      { _tag: "File", blob }, { _tag: "File", blob }, { _tag: "Link" }, { _tag: "Submodule" }, { _tag: "Folder" }, { _tag: "Missing" }, { _tag: "Missing" },
+    ])
+  })
+
+  test("grepHitsOf: commit:path NUL line NUL text, a path with a line feed or a colon read whole, a line number that is none passed over", () => {
+    const at = "c".repeat(40)
+    const output = `${at}:src/a.ts\u00003\u0000  const a = 1\n${at}:odd\nname:x.ts\u000012\u0000b: c\n${at}:src/b.ts\u0000zero\u0000skip\n`
+    expect(grepHitsOf(output, at)).toEqual([{ path: "src/a.ts", line: 3, text: "  const a = 1" }, { path: "odd\nname:x.ts", line: 12, text: "b: c" }])
+    expect(grepHitsOf("", at)).toEqual([])
   })
 })
 
