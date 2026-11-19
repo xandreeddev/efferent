@@ -21,8 +21,9 @@ see a file by its suffix, so the suffix decides which rules apply.
   entity's rule (`packages/evals/src/usecases/`). Both export functions,
   under the other bans of a functions file. A use case's input and output
   types are entities, in a `.entity.ts`.
-- Example pair: `core/src/domain/bash.entity.ts` (options, results,
-  `BashError`) and `bash.entity.functions.ts` (`collectBashResult`).
+- Example pair: `sdk/src/kernel/contracts/shell/shell.entity.ts` (`Ran`,
+  `RunEnded`, `ShellRefused`) and `shell.entity.functions.ts`
+  (`commandRunOf`).
 - Never write an `interface X` beside `const X = Schema.…`: derive the type
   (`effect/no-parallel-interface`). New domain code never goes in a file
   without a role suffix: the architecture rules would not see it.
@@ -33,60 +34,55 @@ see a file by its suffix, so the suffix decides which rules apply.
   configs, results, events. Values are plain object literals. Most of the
   repo's data is this.
 - `Schema.Class` when the value is a named domain concept built in many
-  places with `new` and checked as a whole: `UserMessage`, `ModelSelection`,
-  `UtilityCompletion`. Its constructor runs the schema's checks.
+  places with `new` and checked as a whole; its constructor runs the
+  schema's checks. The kernel has none: its data is plain structs.
 - Errors: `class XError extends Schema.TaggedError<XError>()("XError", { reason, message })`.
 - No methods on classes: behaviour lives in the functions file.
 
 ## 3. Tagged unions, not flags
 
 - A value that is one of several shapes is a `Schema.Union` of
-  `Schema.TaggedStruct`s: `BashEvent = Schema.Union([BashChunk, BashExit])`,
-  `CompactionAction` in `core/src/memory/memory-log.entity.ts`. Each variant
-  carries only its own fields.
+  `Schema.TaggedStruct`s: `RunEnded` (`Exited`, `TimedOut`, `Killed`) in
+  `contracts/shell/shell.entity.ts`, `View` in
+  `contracts/render/render.entity.ts`. Each variant carries only its own
+  fields.
 - Not a struct with `isX: boolean` and fields that are meaningful only when
   it is true; not optional fields that must appear together.
-- A closed set of words is `Schema.Literals([...])` (`BashTermination`).
+- A closed set of words is `Schema.Literals([...])` (`EndedWhy`).
 - Declare a vocabulary once and import it; never copy its words into
-  another schema or a TS type. The turn's words (origin, outcome, end
-  reason, failure, ending, step status) are in
-  `core/src/domain/turn-vocabulary.entity.ts`. A subset is
-  `.pick([...])` (`TaskOutcome`), a superset spreads `.literals`
-  (`TaskStatus`), and a union's tags come from
-  `.pipe(Schema.toTaggedUnion("_tag"))`: `discriminants` in order
-  (`TURN_EVENT_NAMES`), `isAnyOf([...])` as a guard.
+  another schema or a TS type. A subset is `.pick([...])`, a superset
+  spreads `.literals`, and a union's tags come from
+  `.pipe(Schema.toTaggedUnion("_tag"))` (`View`, `Decision`):
+  `discriminants` in order, `isAnyOf([...])` as a guard.
 - Branch over a union with `Match.valueTags` (skill `effect-idioms`), or,
   for one with `toTaggedUnion`, its own `X.match(value, { … })`, every tag
-  named (`LogBody.match`: a tag a function ignores gets its case, `() => []`),
-  or `X.matchOrElse` where the default is deliberate (`draftOfTurnEvent`).
+  named (`View.match`: a tag a function ignores gets its case, `() => []`),
+  or `X.matchOrElse` where the default is deliberate.
 
 ## 4. Invariants live in the schema
 
 - Put the rule on the field: `Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 20 }))`,
   `Schema.Trimmed.check(Schema.isNonEmpty())`, `Schema.isPattern(…)`.
 - A rule across fields goes on the struct:
-  `.check(Schema.makeFilter((value) => … ? true : "what is wrong"))`, as
-  `UserMessage` requires text or an attachment.
+  `.check(Schema.makeFilter((value) => … ? true : "what is wrong"))`.
 - Then decoding is the only validation: functions take the decoded type and
   do not re-check it.
 
 ## 5. Branded ids
 
 - An id is a brand at its definition:
-  `export const EntryId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("EntryId"))`
-  (also `ConversationId` with `Schema.isUUID()`, `ToolCallId`, `ProviderId`).
+  `export const SessionId = Schema.Trimmed.check(Schema.isNonEmpty()).pipe(Schema.brand("SessionId"))`
+  (also `ToolCallId`, and `FactId` with its pattern `f<n>`).
 - A field named `id` or `<x>Id` is a branded schema, never a bare
   `Schema.String`, a `.check(…)` chain or a local const without a brand.
   `effect/branded-id-fields` checks it through `optionalKey`,
   `OptionFromNullOr`, `Array` and the other wrappers, in every package's
   entity files; follow it everywhere.
-- Mint a value with `EntryId.make(…)` where it is created; decode it where it
+- Mint a value with `SessionId.make(…)` where it is created; decode it where it
   arrives.
 - A brand adds no runtime check. Branding a field that is already stored
-  adds none either, so old records still decode (`RunId` is
-  `Schema.String.pipe(Schema.brand("RunId"))`); an input keeps its checks
-  under the same brand as its stored form (`InboxItemId` is trimmed and
-  non-empty, `inbox.queued` stores it unchecked).
+  adds none either, so old records still decode; an input keeps its checks
+  under the same brand as its stored form.
 
 ## 6. Absence on the wire
 
@@ -94,8 +90,8 @@ JSON has no `undefined`, and stored payloads outlive the code that wrote them.
 
 | Encoding | Type | On the wire | Use for |
 |---|---|---|---|
-| `Schema.OptionFromNullOr(X)` | `Option<X>` | key always present, `null` when absent | results and events (`BashResult.exitCode`, `TurnEndedData.failure`) |
-| `Schema.optionalKey(X)` | key may be missing | key omitted | inputs and options (`BashOptions`), and stored keys written only when given (`TurnStartedData.meta`) |
+| `Schema.OptionFromNullOr(X)` | `Option<X>` | key always present, `null` when absent | results and events whose readers need the key |
+| `Schema.optionalKey(X)` | key may be missing | key omitted | inputs and options (`RunRequest.cwd`), and stored keys written only when given (`CommandRun.exitCode`, a source's `context`) |
 | `Schema.OptionFromOptionalKey(X)` | `Option<X>` | key omitted | when the type should be `Option` but the key must stay optional |
 
 - Prefer `Schema.optionalKey` to `Schema.optional`, which also admits an
@@ -125,8 +121,9 @@ not as loose `Ref`s and flags whose combinations nobody wrote down.
   semaphore may order work (an admission), never guard the phase.
 - Plumbing that is no rule (`Deferred`s, queues, waiters) stays in the
   adapter beside the phase.
-- Reference: plugin-sessions `src/turn-writer.entity.ts`, its
-  `.entity.functions.ts` and their table test.
+- Reference: the inbox's `InboxState` (`plugins/inbox/inbox.entity.ts`),
+  its `.entity.functions.ts` and their table test; the session's phase
+  (`Free`, `TurnOpen`) in core's kernel.
 
 ## Checklist
 

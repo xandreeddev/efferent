@@ -1,7 +1,7 @@
 # Foundry — the factory loop + gate pipeline
 
 > Historical design record. Some APIs, package names and gates below have been
-> retired. Current contracts are [framework.md](framework.md), the root
+> retired. Current contracts are [kernel.md](kernel.md), the root
 > [AGENTS.md](../AGENTS.md) and package instructions.
 
 

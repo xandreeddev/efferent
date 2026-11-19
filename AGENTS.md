@@ -1,11 +1,11 @@
 # Efferent — composable agent framework on Effect 4.0.7, for Node and Bun
 
-Rules for changing this repository. Contract: `README.md`, `docs/framework.md`.
+Rules for changing this repository. Contract: `README.md`, `docs/kernel.md`.
 Human process: `CONTRIBUTING.md`. A package's own rules:
 `packages/<name>/AGENTS.md`. `CLAUDE.md` links here. Skills, in
 `.agents/skills/<name>/SKILL.md` (linked from `.claude/skills`):
-`commit-style`, `add-plugin`, `add-port`, `write-model-text`, `effect-idioms`,
-`domain-entity`, `change-event`, `journey-test`, `release`, `trusted-publishing`,
+`commit-style`, `add-port`, `write-model-text`, `effect-idioms`,
+`domain-entity`, `change-event`, `release`, `trusted-publishing`,
 `kernel-architecture`, `add-lesson`. Architecture decisions: `docs/adr/`.
 
 ## Task map
@@ -13,14 +13,13 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 | Task | Read first |
 |---|---|
 | Write a commit, or a squash-merged PR's title and body | skill `commit-style` |
-| Add a package or a plugin | skill `add-plugin` |
+| Add a package | `foundry.config.ts` (the registration lists `quality/package-registered` names) |
 | Add or change a port, an adapter or a conformance kit | skill `add-port`, `packages/core/AGENTS.md` |
 | Add or change text the model reads | skill `write-model-text` |
 | Write Effect code, or tsc rejects an Effect 3 name | skill `effect-idioms` |
 | Add or change an entity or a stored field | skill `domain-entity` |
 | Add or change an event, a journal kind or a stored payload | skill `change-event` |
-| Test a plugin end to end through `Agent.define` | skill `journey-test` |
-| Bump the version, publish or tag (only on explicit sign-off) | skill `release` |
+| Bump the version, publish or tag (only on explicit sign-off) | skill `release`, `docs/adr/0036-the-old-engine-goes-and-the-kernel-takes-the-package-roots.md` |
 | Activate or verify npm trusted publishing, or resume a partial publication | skill `trusted-publishing`, skill `release` |
 | Add or change a lesson of the learn track (`/learn`) | skill `add-lesson`, `packages/website/AGENTS.md` |
 | Change a gate rule, a layer or the registration lists | `foundry.config.ts`, `packages/foundry/AGENTS.md` |
@@ -28,29 +27,25 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 
 ## Architecture
 
-- `core`: shared schemas, ports, conformance kits and protocol helpers.
-- `runtime` → core: the plugin dependency graph and scoped plugin activation.
-- `sdk` → runtime, core: `Agent.define` and `Agent.turn`, the composable agent over sessions, and the turn engine they run on (`TurnLive` and the turn's lifecycle), with the `ToolRegistry` kit that runs turns over it (`@xandreed/sdk/conformance`); it re-exports by name the core names a host writes beside `Agent` (the rest stay `@xandreed/core`'s).
-- `process-host` → core: bounded stdio binding and process lifecycle on Node and Bun; the host supplies its TurnRunner, model and services.
-- `plugin-*` → core: independently configurable capabilities, the agent loop included.
-- `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core's kernel (`@xandreed/core/kernel`) for the `ModelSpend` ledger a run shares across its trials, nothing else.
-- `foundry` runs the gates (development tooling); `website` is the docs site. Neither is published.
+- `core` (`src/kernel`): the kernel's core: ids, messages, the event envelope, the conversation's records, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (events), and the `ModelSpend` ledger. Effect alone; no loop, no memory, no IO.
+- `sdk` → core (`src/kernel`): the workflow contracts (memory, tools and their turn, approvals, skills, facts, knowledge, tasks, the inbox, files, shell, search, ranking by meaning, a store of bytes for the model) with their kits, and the stock plugins, each a plain Effect layer; `src/kernel/node`, the ports that need a runtime's modules (the durable journals, the model providers and a remote embedder that charge the ledger, a media folder, a disk workspace and a process shell, OTLP export). There is no loop: the host's program is the loop (`docs/kernel.md`).
+- Until the kernel's folders become the packages' `src`, each package's root entry is its kernel's index, beside `./kernel` (and the sdk's `./kernel/node`) (ADR 0036).
+- `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core's kernel for the `ModelSpend` ledger a run shares across its trials, nothing else.
+- `foundry` runs the gates (development tooling); `website` is the docs site and the learn track. Neither is published.
 
 The `boundaries` layers in `foundry.config.ts` enforce the direction; inside
-core, layers by role do (`packages/core/AGENTS.md`). Each package's test
+the sdk's kernel, a layer per contract folder, plugin folder and Node port
+does (`packages/sdk/AGENTS.md`). Each package's test
 code (as the build leaves it out: `*.test.ts`, `*.bench.ts`, `testing.ts`,
 `*.testing.ts`, `testing.port.ts`, `testing/`) is its `<name>-tests` layer,
 before its own, which may also import the package and, where its tests
 need it, more. A layer's `externals` name exactly the third-party modules
 its files import: the test libraries (`bun:test`, `fast-check`,
-`effect/testing`) only in `-tests` layers, the provider packages
-(`@effect/ai-*`) only in `plugin-models` and the sdk kernel's Anthropic
-provider (`@effect/ai-anthropic`, ADR 0026), Bun only in
-`plugin-session-sqlite` (`bun:sqlite`) and the sdk kernel's SQLite journal,
-which imports it only when built on Bun (ADR 0024). Everything but
-`plugin-session-sqlite` also loads on Node 24. Session data
-defaults to `.efferent/runtime`: never delete old local data to reset it.
-Build output goes under `.artifacts`.
+`effect/testing`) only in `-tests` layers, a provider package
+(`@effect/ai-anthropic`) only in the sdk kernel's Anthropic provider (ADR
+0026), Bun (`bun:sqlite`) only in the sdk kernel's SQLite journal, which
+imports it only when built on Bun (ADR 0024). Every package loads on Node 24
+and Bun. Build output goes under `.artifacts`.
 
 ## Gate rules
 
@@ -66,9 +61,9 @@ with findings enters one package at a time, through a list in
 `foundry.config.ts` of the packages it runs in: to add a package, fix its
 findings and add its line, never the baseline; once the list names every
 package, the rule takes `CHECKED` and the list is deleted. An `allow` list
-(`ROLELESS_FILES`, `NULLABLE_EDGES`, `RECORD_CAST_EDGES`, `UNKNOWN_JSON_EDGES`, `UNKNOWN_REQUIREMENT_EDGES`)
-or a `boundary` (`ERASURE_BOUNDARY`) only shrinks: an entry that excuses
-nothing fails.
+(`ROLELESS_FILES`) or a rule's `boundary` only shrinks: an entry that
+excuses nothing fails, and a list that names nothing more is deleted with
+its `allow`.
 
 | Rule | Bans | Fix |
 |---|---|---|
@@ -76,29 +71,29 @@ nothing fails.
 | `effect/no-nullable-return` | an exported function returning `A \| undefined` or `A \| null` | `Option<A>` (`Option.fromNullishOr` at the edge) |
 | `effect/match-over-tag-switch` | a `switch`, an else-if ladder, an if-return ladder (adjacent `if (x._tag === …) return …`) or a ternary chain on `_tag`, `.type`, `.role` or `.mode` | `Match.valueTags(x, { … })`, `Match.value(x).pipe(Match.tag(…), Match.exhaustive)`, `Match.discriminators("type")`, `Option.match`, `Result.match`, `Exit.match`; `Match.orElse` for a deliberate default |
 | `effect/no-as-any` | `as any`, `as unknown as T` | decode with Schema, or fix the type |
-| `effect/no-as-never` | `as never` outside the `ERASURE_BOUNDARY` files; `as never as T` everywhere, those files included | fix the type; a file added to `ERASURE_BOUNDARY` states its reason in the PR |
-| `effect/no-unknown-requirements` | an `Effect`, `Stream` or `Layer` type with `unknown` as its requirements (`UNKNOWN_REQUIREMENT_EDGES` aside) | name the services in R (`never` for none) or keep R a type parameter; services a config picks at run time are declared by key and checked where they are provided |
+| `effect/no-as-never` | `as never`, `as never as T` | fix the type; a file where type erasure is the design goes in a `boundary` of the rule's entry, with its reason in the PR |
+| `effect/no-unknown-requirements` | an `Effect`, `Stream` or `Layer` type with `unknown` as its requirements | name the services in R (`never` for none) or keep R a type parameter |
 | `effect/no-parallel-interface` | an interface shadowing a same-named schema | `type X = typeof X.Type` |
 | `effect/no-json-parse` | `JSON.parse` | decode with `Schema.fromJsonString(S)` (`decodeUnknownEffect`, `decodeUnknownResult`, `decodeUnknownOption`); `S` is `Schema.Json` when the shape is open |
 | `effect/no-sync-codec` | `decodeSync`, `decodeUnknownSync`, `encodeSync`, `encodeUnknownSync` | the Effect, Result or Option codec, its failure handled |
-| `effect/no-unknown-json` | `Schema.Record(Schema.String, Schema.Unknown)`, `Schema.fromJsonString(Schema.Unknown)`, but as the argument of a `Schema.encode*` call (`UNKNOWN_JSON_EDGES` aside) | decode the shape that is read; `Schema.Json` or `Schema.JsonObject` for JSON that stays open |
-| `effect/no-record-cast` | `as Record<string, unknown>`, `as Record<string, any>`, `as { … }` (`RECORD_CAST_EDGES` aside) | decode with a Schema, narrow with `Predicate.hasProperty`, or fix the type at its source |
-| `effect/no-provider-namespace` | in core and the agent loop (`PROVIDER_NEUTRAL`): an `anthropic`, `openai`, `google` or `router` key, written, typed, destructured or read | carry provider metadata and options opaque (`ProviderOptions`); core's own fields go under `ENGINE_KEY` (`stampResponseModel`, `responseModelOf`); code for one provider lives in the models plugin, or in a provider's folder of the kernel's Node entry (ADR 0026) |
+| `effect/no-unknown-json` | `Schema.Record(Schema.String, Schema.Unknown)`, `Schema.fromJsonString(Schema.Unknown)`, but as the argument of a `Schema.encode*` call | decode the shape that is read; `Schema.Json` or `Schema.JsonObject` for JSON that stays open |
+| `effect/no-record-cast` | `as Record<string, unknown>`, `as Record<string, any>`, `as { … }` | decode with a Schema, narrow with `Predicate.hasProperty`, or fix the type at its source |
+| `effect/no-provider-namespace` | in core (`PROVIDER_NEUTRAL`): an `anthropic`, `openai`, `google` or `router` key, written, typed, destructured or read | carry provider metadata and options opaque; code for one provider lives in a provider's folder of the kernel's Node entry (ADR 0026) |
 | `effect/no-cause-pretty-data` | `Cause.pretty` anywhere but an `Effect.log*` argument | log the cause; data keeps `Cause.prettyErrors` messages or `reasonOf` |
 | `effect/no-effect-promise` | `Effect.promise` | `Effect.tryPromise` with a typed error, logged or handled |
 | `effect/no-promise-all` | `Promise.all`, `Promise.allSettled` | `Effect.forEach` or `Effect.all` with a stated `concurrency` |
 | `effect/callback-buffer-size` | `Stream.callback` without a `bufferSize` | pass `{ bufferSize }` |
 | `effect/bounded-pubsub` | `PubSub.unbounded`, or `bounded`, `sliding` or `dropping` with an infinite capacity | a finite capacity: `PubSub.sliding(n)` (a wake-up signal: `sliding(1)`, which never loses the last), `bounded(n)` or `dropping(n)` |
-| `effect/no-process-env` | `process.env` outside a `main.ts` and the bash adapter (`ENVIRONMENT_EDGES`) | `Config.String`, `Config.Redacted`, `Config.option`: the ConfigProvider supplies it |
-| `effect/no-ambient-time-random` | `Date.now`, `new Date()` without arguments; `Math.random`, `randomUUID` outside `*.adapter.ts` files | `Clock.currentTimeMillis`, in adapters too; `Random` (core's `randomUuid` for ids) |
+| `effect/no-process-env` | `process.env` outside a `main.ts` (`ENVIRONMENT_EDGES`) | `Config.String`, `Config.Redacted`, `Config.option`: the ConfigProvider supplies it |
+| `effect/no-ambient-time-random` | `Date.now`, `new Date()` without arguments; `Math.random`, `randomUUID` outside `*.adapter.ts` files | `Clock.currentTimeMillis`, in adapters too; `Random` |
 | `effect/no-locale-compare` | `.localeCompare` | `Order.String` |
 | `effect/require-sort-comparator` | `.sort()` or `.toSorted()` without a comparator | `Arr.sort(xs, Order.String)`, or a comparator |
-| `effect/no-instanceof-tagged-error` | `instanceof` a tagged class (`instanceof Error` is fine) | `Effect.catchTag`, `Predicate.isTagged`, `isHarnessError`, `isTurnError`; not `Schema.is` of the class, which checks the class too |
+| `effect/no-instanceof-tagged-error` | `instanceof` a tagged class (`instanceof Error` is fine) | `Effect.catchTag`, `Predicate.isTagged`; not `Schema.is` of the class, which checks the class too |
 | `effect/no-silent-ignore` | a bare `Effect.ignore` or `Effect.ignoreCause`, `Effect.catch(() => Effect.void)`, `Effect.catchCause(() => Effect.void)`, `Effect.orElseSucceed`, unless an `Effect.tapError`/`tapCause` that logs comes first in the pipe | `Effect.ignore({ log: "Warn", message: "…" })` (`"Debug"` for an expected miss), a logging tap before it, or `Effect.catchTag` for the one expected failure |
 | `effect/no-option-unwrap` | `Option.getOrNull`, `Option.getOrUndefined` outside `*.adapter.ts` files and kits | `Option.match`, `Option.getOrElse` with a real default, an optional field spread from `Option.match`; unwrap in the adapter that writes the wire |
-| `effect/no-stringified-cause` | `String(e)`, `${e}` or `"…" + e` of a failure inside a tagged error's fields | keep the failure as a value (a `cause` field: `harnessError(code, message, cause)`) and say what failed; text from `reasonOf(cause)` |
-| `effect/no-error-code-compare` | `x.code === "<literal>"` outside the file that declares the error and its `.functions.ts` (kits may compare) | a guard the owning module exports (`isStoreBusy`, `isUnavailable`), `harnessCodeOf(e)` for the framework's code of any failure, or a tagged error matched with `Effect.catchTag` |
-| `effect/no-code-property-guard` | `Predicate.hasProperty(x, "code")` (either form), `"code" in x` | `errorCodeOf(e)` for a Node or SQLite code (`Option.contains(errorCodeOf(e), "ENOENT")`; evals packages take evals' copy), `harnessCodeOf(e)` for the framework's codes, `Effect.catchTag` for a tagged error |
+| `effect/no-stringified-cause` | `String(e)`, `${e}` or `"…" + e` of a failure inside a tagged error's fields | keep the failure as a value (a `cause` field) and say what failed |
+| `effect/no-error-code-compare` | `x.code === "<literal>"` outside the file that declares the error and its `.functions.ts` (kits may compare) | a guard the owning module exports, or a tagged error matched with `Effect.catchTag` |
+| `effect/no-code-property-guard` | `Predicate.hasProperty(x, "code")` (either form), `"code" in x` | `errorCodeOf(e)` for a Node or SQLite code (`Option.contains(errorCodeOf(e), "ENOENT")`: the kernel's Node entry and evals each keep one), `Effect.catchTag` for a tagged error |
 | `effect/prefer-effect-fn` | an exported function or a service method that only returns `Effect.gen(…)` | `Effect.fn("area.op")(function* (…) { … })`; `Effect.fnUntraced` for a hot helper |
 | `effect/require-concurrency-option` | `Effect.forEach` or `Effect.all` over more than one effect without `concurrency` | state it: `1` when order, a shared resource or the first failure matters; a number or a config value for independent I/O |
 | `effect/branded-id-fields` | in every package's `*.entity.ts` files (and core's `src/spec`): an unbranded id field (`id`, `<x>Id`), also through `.check(…)`, a wrapper (`optionalKey`, `OptionFromNullOr`, `Array`, `withDecodingDefaultKey`, …) or a const of the same file | a brand at the id's definition; reuse it wherever that id is held |
@@ -113,7 +108,7 @@ nothing fails.
 | `architecture/role-suffix-required` | a file under `packages/*/src` (foundry aside) whose name has none of the roles below and is not on the frozen `ROLELESS_FILES` | name it for its role; a renamed or split file leaves the list in the same change |
 | `boundaries/illegal-import` | an import into a layer that `canImport` does not list, relative or by package name (`@xandreed/<pkg>[/<sub>]` reaches the layer of the package's entry); a subpath the package's `exports` lacks (a `-tests` layer may reach a `testing` module); a `restricted` subpath not granted as `<layer>/<sub>`, to the layer of the package's own entry too; a relative import that leaves its package | invert the dependency or move the code; import what the package exports |
 | `boundaries/illegal-external` | a bare import (an import clause, or `import("…")`: dynamic or a type) that names no workspace package, missing from the layer's `externals`, where `effect` admits Effect's core modules only and each barrel (`effect/ai`, `effect/http`, `effect/testing`…) is listed by name; an external a layer lists that none of its files imports (the list only shrinks) | depend downward, or name the barrel; a test library goes in the package's `-tests` layer; widening `externals` is a reviewed change; remove an entry nothing imports |
-| `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says (skill `add-plugin`) |
+| `quality/package-registered` | a package missing from a list the gates or the build read | add it where the message says |
 | `quality/baseline-empty` | any fingerprint in `.foundry/baseline.json` | fix the finding; never `--update-baseline --allow-grow` |
 | `quality/no-private-text` | in any file git tracks: a home path (`/home/<name>/`, `/Users/<name>/`, `C:\Users\<name>\`) but a placeholder one, or a term of the git-ignored local denylist `.foundry/private-terms.txt` | a relative path or a placeholder home (`/home/user/`); remove the term |
 
@@ -136,52 +131,47 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.usecase.ts` | the main flow of a use case | as `x.entity.functions.ts` |
 | `x.usecase.functions.ts` | the flow's supporting logic that is no entity's rule | as `x.entity.functions.ts` |
 | `x.port.ts`, `ports/*` | `Context.Service` contracts | base |
-| `x.adapter.ts` | `<Thing>Live` Layers, `definePlugin`, IO | base except `no-option-unwrap`; `no-ambient-time-random` flags the wall clock only |
+| `x.adapter.ts` | a plugin's Layers, IO | base except `no-option-unwrap`; `no-ambient-time-random` flags the wall clock only |
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap`, `no-error-code-compare` and `no-provider-namespace` |
 | `index.ts`, `main.ts` | the public surface, as explicit named exports; a command line's entry | base (`main.ts` may read `process.env`) |
 | `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never`, `no-unknown-requirements` and the rules from `no-json-parse` to `require-concurrency-option` but `no-instanceof-tagged-error` |
-| any other name (`loop.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
+| any other name (`stats.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
 
 ## Ports, adapters and composition
 
 - Ports are `Context.Service` classes in a `.port.ts` file or a `ports/`
-  folder: shared ones in `packages/core/src/ports`, a package's own in its
-  `src/ports`.
+  folder: core's kernel's in `packages/core/src/kernel`, a workflow
+  contract's in its folder of `packages/sdk/src/kernel/contracts`.
   Methods return `Effect` or `Stream`; expected failures are
   `Schema.TaggedError`s, absence is `Option`.
-- Adapters are `<Thing>Live` Layers in `.adapter.ts` files: in-memory ones in
-  core, IO ones in plugins. Foreign promises go through `Effect.tryPromise`;
-  foreign errors map to the port's error in one function.
-- A plugin (`definePlugin`, usually `plugin.adapter.ts`) builds only its own
-  services. Agents are composed by `Agent.define` or a host's `stackPlugins`;
-  the only `main.ts` files are the `evals-cli` and `foundry` command lines.
-- Tool failures are data: the shared `Failure` struct, `failureMode: "return"`.
+- A plugin is a plain Effect `Layer` in a `.adapter.ts` file, its type
+  saying what it needs; it builds only its own services. The host composes
+  plugins with `Layer.provideMerge` or provides them to its program: there
+  is no plugin graph and no `main.ts` but the `evals-cli` and `foundry`
+  command lines. Foreign promises go through `Effect.tryPromise`; foreign
+  errors map to the port's error in one function.
+- Tool failures are data: a tool declares `failureMode: "return"`, and
+  `callTool` stores a failure or a defect as a failed result.
 - Errors are told apart by tag and fields (`Effect.catchTag`,
-  `isHarnessError`, `isTurnError`, `harnessCodeOf`), never `instanceof` or
-  `Schema.is` of the class. A wrapped failure stays a value in a `cause`
-  field; `reasonOf` turns a cause into text (`messagesOf` for the model:
-  no code or tag); no stack reaches a report or
-  the model.
+  `Predicate.isTagged`), never `instanceof` or `Schema.is` of the class. A
+  wrapped failure stays a value in a `cause` field; no stack reaches a
+  report or the model.
 
 Naming (skill `effect-idioms` §7 has the span policy and names):
 
 - Service methods and exported effectful functions at a service boundary are
-  `Effect.fn("area.op")`, named like the spans `agent.turn` and `engine.run`;
-  hot internal helpers use `Effect.fnUntraced`.
-- Service and reference keys are `@xandreed/<package>/<Name>`. A key is
-  public (`provides`, config `bindings`, the plugin reference): never rename
-  one, the older `efferent/<Name>` keys included.
-- A plugin is `export const <thing>Plugin = definePlugin(...)`, exported by
-  name from `src/index.ts`, with the id `@xandreed/<package>` (then also the
-  default export) or `@xandreed/<package>/<part>`.
+  `Effect.fn("area.op")`, named like the spans `session.turn` and
+  `tool.call`; hot internal helpers use `Effect.fnUntraced`.
+- Service keys are `@xandreed/core/kernel/<Name>` and
+  `@xandreed/sdk/kernel/<Name>`. A key is public: never rename one, a port
+  that moved included (`Memory` is still `@xandreed/core/kernel/Memory`).
 
 ## Model-facing text
 
-Text the model reads is a contract and part of cached prompt prefixes: frame
-it with core's `src/turn/model-text.ts` (`hostNote`, `framed`, `clipTo`), or,
-in the kernel, which never imports core's root, with the memory contract's
-`hostNote`, `framed` and `clipTo` from `@xandreed/sdk/kernel`; pin
-it exactly, and follow skill `write-model-text` and `packages/core/AGENTS.md`.
+Text the model reads is a contract and part of cached prompt prefixes: in
+the kernel, frame it with the memory contract's `hostNote`, `framed` and
+`clipTo` from `@xandreed/sdk/kernel`; pin it exactly, and follow skill
+`write-model-text`.
 Each package's `AGENTS.md` inventories its model-facing text and cites the
 tests that pin each row by title (`path.test.ts#<part of a test's title>`).
 The tests run actual rendered-text or golden comparisons.
@@ -209,8 +199,6 @@ bun run verify:packages
 bun run docs:generate
 test -z "$(git status --porcelain -- docs packages/website/src/content/docs)"
 bun run --cwd packages/website check
-# then the models plugin's proxy tests again, on Bun 1.3.6:
-bun test packages/plugin-models/src/llm/openAiCodexWebSocket.test.ts packages/plugin-models/src/plugin.adapter.test.ts packages/plugin-models/src/transport/models-transport.adapter.test.ts
 ```
 
 These checks are key-free, so they do not show that real provider calls work.

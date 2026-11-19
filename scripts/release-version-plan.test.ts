@@ -1,10 +1,8 @@
 import { describe, expect, test } from "bun:test"
 import { readFile } from "node:fs/promises"
-import { fileURLToPath } from "node:url"
 import { Result } from "effect"
-import { isTestCode } from "./build-check.js"
 import {
-  changelogVersionText, isReleaseVersion, lockVersionText, pluginVersionText, publishedVersionText,
+  changelogVersionText, isReleaseVersion, lockVersionText, publishedVersionText,
   readSourceManifest, releaseDirectories, releaseNames, releaseVersionPlan, sharedReleaseVersion, validateReleaseConfiguration, versionOutputs,
 } from "./release-version-plan.js"
 
@@ -32,9 +30,10 @@ describe("shared release version plans", () => {
     expect(["0.16.0", "1.0.0"].every(isReleaseVersion)).toBe(true)
     expect(["01.16.0", "0.16.0\nversion=oops", "0.16.0-beta.1", "0.16", "9007199254740992.0.0"].some(isReleaseVersion)).toBe(false)
   })
-  test("the actual 24 source manifests decode and share the current version", async () => {
+  test("the actual 6 source manifests decode and share the current version", async () => {
     const manifests = await Promise.all(releaseDirectories.map(async (directory) => success(readSourceManifest(await readFile(new URL(`../packages/${directory}/package.json`, import.meta.url), "utf8")))))
-    expect(manifests).toHaveLength(24)
+    expect(manifests).toHaveLength(6)
+    expect(releaseNames).toEqual(["@xandreed/core", "@xandreed/sdk", "@xandreed/evals", "@xandreed/evals-cli", "@xandreed/evals-langfuse", "@xandreed/evals-langsmith"])
     expect(success(sharedReleaseVersion(manifests))).toBe(manifests[0]!.version)
   })
 
@@ -70,38 +69,11 @@ describe("shared release version plans", () => {
     expect(Result.isFailure(releaseVersionPlan(JSON.stringify({ ...plan, releases: [...plan.releases.slice(1), { name: releaseNames[0], type: "none", oldVersion: previous, newVersion: previous }] }), previous))).toBe(true)
     expect(success(releaseVersionPlan(JSON.stringify({ changesets: [], releases: [dependent] }), previous))).toEqual({ hasChanges: false, version: previous, summaries: [] })
   })
-  test("plugin updates leave prompt, protocol and unrelated literal versions untouched", () => {
-    const source = 'const prompt = {version: "1"}; const example = "0.16.0"; const one = definePlugin({id: "one", version: "0.16.0"}); const two = definePlugin({version: "0.16.0"});'
-    const updated = success(pluginVersionText(source, previous, next))
-    expect(updated).toContain('prompt = {version: "1"}')
-    expect(updated).toContain('example = "0.16.0"')
-    expect(updated.match(/version: "0.17.0"/g)).toHaveLength(2)
-    expect(Result.isFailure(pluginVersionText('definePlugin({version: "0.1.0"})', previous, next))).toBe(true)
-    expect(Result.isFailure(pluginVersionText("definePlugin({version: selected})", previous, next))).toBe(true)
-    expect(success(pluginVersionText('definePlugin({id:"@xandreed/sdk/host-contributions",version:"1"})', previous, next))).toContain('version:"1"')
-    expect(Result.isFailure(pluginVersionText('definePlugin({id:"@xandreed/plugin-example",version:"1"})', previous, next))).toBe(true)
-  })
-  test("all current production plugin definitions can be synchronized without editing their files", async () => {
-    const root = fileURLToPath(new URL("../", import.meta.url))
-    const current = JSON.parse(await readFile(new URL("../packages/core/package.json", import.meta.url), "utf8")).version
-    const changed: string[] = []
-    for (const directory of releaseDirectories) {
-      const cwd = `${root}packages/${directory}`
-      for (const file of new Bun.Glob("src/**/*.{ts,tsx}").scanSync({ cwd, onlyFiles: true })) {
-        if (isTestCode(file)) continue
-        const original = await readFile(`${cwd}/${file}`, "utf8")
-        const result = pluginVersionText(original, current, "999.0.0")
-        expect(Result.isSuccess(result)).toBe(true)
-        if (Result.isSuccess(result) && result.success !== original) changed.push(file)
-      }
-    }
-    expect(changed.length).toBeGreaterThan(10)
-  })
   test("lock updates preserve JSONC, external resolutions, and non-distribution workspaces", () => {
     const workspaces = releaseDirectories.map((directory) => `"packages/${directory}": {"name":"@xandreed/${directory}","version":"${previous}"},`).join("\n")
     const source = `{ "lockfileVersion": 1, "workspaces": { ${workspaces} "packages/foundry": {"name":"@xandreed/foundry","version":"0.0.0"}, }, "packages": {"external": ["external@0.16.0", "sha"]}, }`
     const updated = success(lockVersionText(source, previous, next))
-    expect(updated.match(/"version":"0.17.0"/g)).toHaveLength(24)
+    expect(updated.match(/"version":"0.17.0"/g)).toHaveLength(6)
     expect(updated).toContain('"version":"0.0.0"')
     expect(updated).toContain('"external@0.16.0"')
     expect(updated).toEndWith("}, }")
@@ -123,11 +95,9 @@ describe("shared release version plans", () => {
     expect(versionOutputs({ hasChanges: false, version: previous })).toBe("has_changes=false\nversion=0.16.0\n")
     expect(() => versionOutputs({ hasChanges: true, version: "0.17.0\nforged=true" })).toThrow()
   })
-  test("updates current release examples in contributor, roadmap and package instructions", () => {
+  test("updates current release examples in the contributor guide", () => {
     const examples = {
       "CONTRIBUTING.md": 'The shared version (`0.16.0`); tag v0.16.0. Earlier 0.3.0 stays frozen.',
-      "docs/roadmap.md": 'Workspace manifests share version `0.16.0`.',
-      ".agents/skills/add-plugin/SKILL.md": 'definePlugin({ version: "0.16.0" }); protocol version: "1".',
     }
     for (const [name, source] of Object.entries(examples)) {
       const result = success(publishedVersionText(name, source, previous, next))

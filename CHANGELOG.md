@@ -766,7 +766,75 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   compares names and quotes with (lower case, accent marks off, every
   script's letters and digits kept), is exported.
 
+### Removed
+
+- The engine of earlier releases is gone, and the kernel is the way to build
+  an agent (ADR 0036). `@xandreed/runtime`, `@xandreed/process-host` and
+  every `@xandreed/plugin-*` package are no longer published: they stay on
+  npm at 0.22.0 as they are, never deprecated or published again. Of
+  `@xandreed/core` and `@xandreed/sdk` only the kernels are left: core's
+  root entry, `./conformance` and `./internal` (the old entities, ports,
+  kits, References and the turn's bus) and the sdk's `Agent.define`,
+  `Agent.turn`, the turn engine (`TurnLive` and its lifecycle),
+  `agentTaskExecutor`, `agentInboxRunner` and `./conformance` are removed.
+  Each package's root entry, `@xandreed/core` and `@xandreed/sdk`, now names
+  its kernel's index, the same module as `./kernel`; `./kernel` and
+  `./kernel/node` stay until the kernel moves to the package roots. What a
+  host writes instead of each package:
+
+  | Removed | Instead |
+  | --- | --- |
+  | `@xandreed/runtime` | nothing: plugins are Effect layers, composed with `Layer.provideMerge` |
+  | `@xandreed/process-host` | none yet |
+  | `@xandreed/plugin-agent-loop` | the host's own loop over `modelAnswer` and `callTool`, `planned` for retries and fallbacks |
+  | `@xandreed/plugin-memory-window` | `windowMemory` |
+  | `@xandreed/plugin-memory-summary` | `summaryMemory` over a `Summarizer` |
+  | `@xandreed/plugin-memory-digest` | none yet; a long result is sent as a pointer (`pointed`, `ReadResult`) |
+  | `@xandreed/plugin-memory` | `curate` with `withKnowledge`; `withFacts` with `factTools`; for the host's `EmbeddingModel`, an `Embedder`: `openAiCompatibleEmbedder` on `@xandreed/sdk/kernel/node` |
+  | `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` (`openAiCompatibleEmbedder` for its `EmbeddingModel`) and a `VectorStore`; retrieval of a document's passages: none yet |
+  | `@xandreed/plugin-knowledge-postgres` | none yet |
+  | `@xandreed/plugin-tool-discovery` | `defineSkill`, `skills(base, ...skills)` and `loadSkill` |
+  | `@xandreed/plugin-models` | `openAiCompatibleModel` and `anthropicModel` on `@xandreed/sdk/kernel/node`; the router, the credential and settings stores and the subscription sign-ins: none yet |
+  | `@xandreed/plugin-session-files` | `directoryJournal`; `directoryMedia` for its `MediaStoreDirectoryLive` |
+  | `@xandreed/plugin-session-sqlite` | `sqliteJournal` |
+  | `@xandreed/plugin-sessions` | `sessions()` over a journal, `recoverTurns`, and `inbox` |
+  | `@xandreed/plugin-tasks` | `tasks(run)` with `startTask` and `cancelTask` |
+  | `@xandreed/plugin-render` | view records (`showView`, `viewsOf`) and `progressEvent`; the feed's SSE and WebSocket transports: none yet |
+  | `@xandreed/plugin-workspace` | `diskFiles`, `processShell`, `filesSearch` and their tools; image resizing and a skills directory: none yet |
+  | `@xandreed/plugin-telemetry` | the kernel's spans and metrics, exported with `otlpTelemetry` and `otlpTelemetryFromEnv` |
+  | core's `MediaStore`, `MediaStoreMemoryLive` and their kit | the sdk kernel's `MediaStore`, `inMemoryMedia` and `mediaStoreConformance`; media in a message or a tool's result: none yet |
+
+  A local embedder in a Node or Bun process has none yet:
+  `openAiCompatibleEmbedder` also reaches a local server that speaks the
+  OpenAI-compatible wire, and `recordedEmbedder` serves kits and tests.
+
 ### Repository
+
+- The release line is the six packages left: core, the sdk and the four
+  eval packages (`names` in `scripts/build-packages.ts`, the Changesets
+  group, `releaseDirectories`), with the `efferent` landing package; the
+  final registry audit checks those seven names and no longer expects the
+  eighteen retired ones. The release's journal fixture is a kernel host's
+  journals, recorded over `directoryJournal` by
+  `scripts/record-journal-fixture.ts` (five turns with a tool call, a fact,
+  an approval for good and a summary, each curated into knowledge; it
+  refuses to write a recording that misses any of those kinds of record,
+  naming them, or whose turns hold under 1.4 times the summary memory's
+  budget), and
+  `packages/sdk/src/kernel/node/journal-compat.test.ts` replays every
+  fixture of `JOURNAL_FORMAT` through a directory journal and refuses one of
+  another format without changing it. The old engine's journals
+  (`journal-0.13.0.json` to `journal-0.22.0.json`), `STORED_FORMAT`'s record,
+  the plugin and event references and the goldens leave the tree with the
+  code that read them; `release:version` no longer rewrites plugin versions.
+  `verify:packages` runs the kernel's packed consumer, the evaluation
+  consumer, the documentation's imports and every entry on Node and Bun. CI
+  drops the Postgres service and the models plugin's Bun 1.3.6 run. The gates
+  read core's and the sdk's root at their kernel's index; the allow lists
+  and the boundary that excused only deleted files are deleted. The docs
+  site keeps getting started, which points to `docs/kernel.md`, and the
+  eval and foundry pages; the old engine's guides and pages, and the Plugins
+  navigation, go.
 
 - Docs site, lesson 5: the summarizer's request ends "Reply with the
   summary only, in at most 40 words." in place of asking, in its first

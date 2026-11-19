@@ -1,5 +1,10 @@
 # Repository audit resolution
 
+> The packages this record cites (the old engine: the runtime, the process
+> host and the `plugin-*` packages, and core's and the sdk's code outside
+> their kernels) were removed (ADR 0036): its links to their files lead
+> nowhere in the current tree; read them at the revision it records.
+
 The [original audit](repository-audit.md) records revision
 `b682e58e9cecf492d19ecead8f95b96ca25c0c29`. This matrix records the resulting
 changes and the tests that exercise them. All 52 indexed findings are addressed;

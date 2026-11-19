@@ -1,7 +1,0 @@
-const MemoryDigestConfig
-const MemoryDigestLive
-const UTILITY_DIGESTER
-const default
-const memoryDigestDefaults
-const memoryDigestPlugin
-type MemoryDigestConfig

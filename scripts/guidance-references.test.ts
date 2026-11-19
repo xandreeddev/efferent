@@ -22,7 +22,7 @@ const guidance = async (): Promise<ReadonlyArray<string>> => [
   ...await markdownUnder("packages/website/src/content/docs"),
   ...await markdownUnder("packages/foundry/examples"),
   ...(await readdir(join(root, "packages"))).map((name) => join("packages", name, "AGENTS.md")),
-  "AGENTS.md", "README.md", "CONTRIBUTING.md", "docs/framework.md",
+  "AGENTS.md", "README.md", "CONTRIBUTING.md", "docs/kernel.md",
 ]
 
 const readIfThere = (path: string) => readFile(join(root, path), "utf8").catch(() => "")

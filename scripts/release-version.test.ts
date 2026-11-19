@@ -22,13 +22,10 @@ const fixture = async (use: (root: string, env: NodeJS.ProcessEnv) => Promise<vo
     await put("packages/website/src/content/docs/getting-started.md", `This guide follows version \`${previous}\`.\n`)
     await put("packages/website/src/pages/index.astro", `<p>${previous} on npm</p>\n`)
     await put("CONTRIBUTING.md", `Release version \`${previous}\`; tag v${previous}.\n`)
-    await put("docs/roadmap.md", `Workspace manifests share version \`${previous}\`.\n`)
-    await put(".agents/skills/add-plugin/SKILL.md", `definePlugin({version: "${previous}"}); protocol version: "1".\n`)
     await put("CHANGELOG.md", "# Changelog\n\n## Unreleased\n\n### Fixed\n\n- Keep existing release prose.\n\n## 0.16.0 — 2026-11-03\n\nAn old release.\n")
     for (const directory of releaseDirectories) {
-      await put(`packages/${directory}/package.json`, JSON.stringify({ name: `@xandreed/${directory}`, ...(directory === "core" ? { private: true } : directory === "runtime" ? { private: false } : {}), version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }))
-      await put(`packages/${directory}/src/plugin.adapter.ts`, `const protocol = { version: "1" }; export const plugin = definePlugin({ version: "${previous}" });\n`)
-      await put(`packages/${directory}/src/plugin.adapter.test.ts`, `const historical = "${previous}";\n`)
+      await put(`packages/${directory}/package.json`, JSON.stringify({ name: `@xandreed/${directory}`, ...(directory === "core" ? { private: true } : directory === "evals" ? { private: false } : {}), version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }))
+      await put(`packages/${directory}/src/index.ts`, `export const protocol = { version: "1" }; export const example = "${previous}";\n`)
     }
     for (const directory of ["foundry", "website"]) await put(`packages/${directory}/package.json`, ignoredManifest(directory))
     const workspaces = Object.fromEntries([["", { name: "release-fixture" }], ...releaseDirectories.map((directory) => [`packages/${directory}`, { name: `@xandreed/${directory}`, version: previous, ...(directory === "core" ? {} : { dependencies: { "@xandreed/core": "workspace:*" } }) }] as const), ...["foundry", "website"].map((directory) => [`packages/${directory}`, { name: `@xandreed/${directory}`, version: "0.0.0", ...siteDependencies(directory) }] as const)])
@@ -38,7 +35,7 @@ const fixture = async (use: (root: string, env: NodeJS.ProcessEnv) => Promise<vo
     for (const [script, directory, prefix] of [["record-journal-fixture", "sdk", "journal"], ["record-run-fixture", "evals", "run"]]) {
       await put(`scripts/${script}.ts`, `import {writeFile} from "node:fs/promises"; const {version} = await Bun.file("packages/core/package.json").json(); await writeFile(\`packages/${directory}/fixtures/${prefix}-\${version}.json\`, JSON.stringify({version}), {flag:"wx"});`)
     }
-    await put("scripts/docs.ts", 'import {mkdir,writeFile} from "node:fs/promises"; await mkdir("docs",{recursive:true}); const {version}=await Bun.file("packages/core/package.json").json(); await writeFile("docs/plugin-reference.json",JSON.stringify({version}));')
+    await put("scripts/docs.ts", 'import {mkdir,writeFile} from "node:fs/promises"; await mkdir("docs",{recursive:true}); const {version}=await Bun.file("packages/core/package.json").json(); await writeFile("docs/generated.json",JSON.stringify({version}));')
     // Git is read only: the real Changesets CLI sees a clean baseline without creating test commits.
     await put("bin/git", '#!/bin/sh\ncase "$1" in\n merge-base) printf "%s\\n" "0000000000000000000000000000000000000001" ;;\n rev-parse) if [ "$2" = "--show-toplevel" ]; then printf "%s\\n" "$RELEASE_VERSION_FIXTURE_ROOT"; else printf "%s\\n" "0000000000000000000000000000000000000001"; fi ;;\n diff) exit 0 ;;\n *) exit 1 ;;\nesac\n')
     await chmod(join(root, "bin/git"), 0o755)
@@ -62,29 +59,26 @@ test("actual Changesets versions mixed-visibility packages and the wrapper synch
   for (const directory of releaseDirectories) {
     expect((await Bun.file(join(root, `packages/${directory}/package.json`)).json()).version).toBe("0.17.0")
     if (directory !== "core") expect((await Bun.file(join(root, `packages/${directory}/package.json`)).json()).dependencies["@xandreed/core"]).toBe("workspace:*")
-    expect(await readFile(join(root, `packages/${directory}/src/plugin.adapter.ts`), "utf8")).toContain('version: "0.17.0"')
-    expect(await readFile(join(root, `packages/${directory}/src/plugin.adapter.ts`), "utf8")).toContain('protocol = { version: "1" }')
-    expect(await readFile(join(root, `packages/${directory}/src/plugin.adapter.test.ts`), "utf8")).toContain(previous)
+    // Sources are not rewritten: a version literal in code is the code's.
+    expect(await readFile(join(root, `packages/${directory}/src/index.ts`), "utf8")).toBe(`export const protocol = { version: "1" }; export const example = "${previous}";\n`)
   }
   expect((await Bun.file(join(root, "packages/foundry/package.json")).json()).version).toBe("0.0.0")
   // An ignored workspace that depends on the released packages is left as it was, byte for byte.
   expect(await readFile(join(root, "packages/website/package.json"), "utf8")).toBe(ignoredManifest("website"))
   expect((await Bun.file(join(root, "packages/core/package.json")).json()).private).toBe(true)
-  expect((await Bun.file(join(root, "packages/runtime/package.json")).json()).private).toBe(false)
+  expect((await Bun.file(join(root, "packages/evals/package.json")).json()).private).toBe(false)
   expect(Object.hasOwn(await Bun.file(join(root, "packages/sdk/package.json")).json(), "private")).toBe(false)
   const changelog = await readFile(join(root, "CHANGELOG.md"), "utf8")
   expect(changelog).toContain("## 0.17.0 — 2026-11-04")
   expect(changelog).toContain("Keep existing release prose.")
   expect(changelog).toContain("Retain source evidence.")
   expect(await readFile(join(root, "CONTRIBUTING.md"), "utf8")).toBe("Release version `0.17.0`; tag v0.17.0.\n")
-  expect(await readFile(join(root, "docs/roadmap.md"), "utf8")).toBe("Workspace manifests share version `0.17.0`.\n")
-  expect(await readFile(join(root, ".agents/skills/add-plugin/SKILL.md"), "utf8")).toBe('definePlugin({version: "0.17.0"}); protocol version: "1".\n')
   expect(await readFile(join(root, "packages/sdk/fixtures/journal-0.16.0.json"), "utf8")).toBe("old journal bytes\n")
   expect(await readFile(join(root, "packages/evals/fixtures/run-0.16.0.json"), "utf8")).toBe("old run bytes\n")
   expect((await Bun.file(join(root, "packages/sdk/fixtures/journal-0.17.0.json")).json()).version).toBe("0.17.0")
   expect((await Bun.file(join(root, "packages/evals/fixtures/run-0.17.0.json")).json()).version).toBe("0.17.0")
-  expect((await Bun.file(join(root, "docs/plugin-reference.json")).json()).version).toBe("0.17.0")
-  expect((await readFile(join(root, "bun.lock"), "utf8")).match(/"version": "0.17.0"/g)).toHaveLength(24)
+  expect((await Bun.file(join(root, "docs/generated.json")).json()).version).toBe("0.17.0")
+  expect((await readFile(join(root, "bun.lock"), "utf8")).match(/"version": "0.17.0"/g)).toHaveLength(6)
   expect((await readdir(join(root, ".changeset"))).toSorted(Order.String)).toEqual(["README.md", "config.json"])
   expect((await runReleaseVersion(root, "2026-11-04", env)).hasChanges).toBe(false)
 }), 20000)

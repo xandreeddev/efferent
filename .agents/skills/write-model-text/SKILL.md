@@ -1,6 +1,6 @@
 ---
 name: write-model-text
-description: Rules and checklist for any text the model reads in efferent — tool and parameter descriptions, prompt sections, skill summaries and instructions, Failure messages, result views, host notes, correctives, summary and digest prompts. Covers where text lands, voice, framing untrusted text with core's hostNote/framed/escapeFrame/clipTo, tiers and versions, and pinning with exact tests and the golden. Read before adding or changing such text, and whenever the sdk golden fails.
+description: Rules and checklist for any text the model reads in efferent — tool and parameter descriptions, skill summaries and instructions, failed tool results, host notes, pointers, summary and curation prompts. Covers where text lands, voice, framing untrusted text with the kernel's hostNote/framed/clipTo, versions, and pinning with exact tests. Read before adding or changing such text.
 ---
 
 # Write text the model reads
@@ -12,111 +12,73 @@ cached prefixes. Treat a wording change like an API change.
 
 | Text | Defined | Reaches the model as |
 |---|---|---|
-| Tool `description`, parameter `.annotate({ description })` | `Tool.make` in the capability's `*.adapter.ts`, or a pure `toolDescriptions(config)` in `*.entity.functions.ts` when it embeds config | the tool schema, on every step the tool is active |
-| `PromptSection` (`id`, `version`, `tier`, `order`, `render`) | a capability's sections; `definePromptSection` with `requires` for one whose `render` reads services | system prompt: host `system`, then `static`, then `session` sections, each by `order` then `id` (`orderSections`, `core/src/turn/prompt-sections.ts`); `turn` sections become per-turn user messages |
-| Skill `summary` | `defineSkill` | one catalogue line, loadable skills only |
-| Skill `instructions` | `defineSkill` or a SKILL.md body | only through `load_skill` or a matcher seed; never for an `always: true` skill (tool discovery activates it but shows no instructions; `skillsDirectoryPlugin`'s `workspace.skills.always` section is the one exception) |
-| Skill `references` (id and title; the text on demand) | `defineSkill` or the other files of a SKILL.md's directory | listed in a loaded skill's `load_skill` result, an always-on skill's in the catalogue section; their text only through `read_skill_reference` |
-| `Failure { error, message }` | a handler failure with `failureMode: "return"` | the tool result |
-| Result views and compact forms | beside the descriptions (`plugin-workspace/src/workspace-tools.entity.functions.ts`) | tool results; the compact form in older turns |
-| Correctives, host notes, compaction handoffs | `plugin-agent-loop/src/loop.ts`, `core/src/memory/*`, `core/src/internal/mapping.entity.functions.ts` | user-role messages |
-| Utility prompts | `summaryPrompt` (plugin-memory-summary), `digestPrompt` (plugin-memory-digest) | a `UtilityLlm` completion |
-| The kernel's curation prompts | `curationPrompt`, `reviewPrompt` (`sdk/src/kernel/contracts/knowledge/knowledge-prompt.entity.functions.ts`) | the host's `Curator`, which sends them to a model |
+| Tool `description`, parameter `.annotate({ description })` | `Tool.make` in the plugin's `*.adapter.ts` (`plugins/tool-files/file-tools.adapter.ts`) | the tool schema, on every step the tool is offered |
+| The system text | the host's program | the first message of every prompt, never stored |
+| Skill `summary` | `defineSkill` | one line of `catalogue(skills)`, which the host puts in its system text |
+| Skill `instructions` | `defineSkill` | the stored result of a `loadSkill` call |
+| A failed tool result | a handler's failure with `failureMode: "return"`, the contract's fixed words (`NOT_A_FACT`, `notInWorkspace`, `APPROVAL_REFUSED`) | the tool result, stored by `callTool` |
+| Pointers, notes, summaries | the memory contract (`pointerText`), `factsNote`, `knowledgeNote`, `reloadNote`, the summary memory's `summaryNote` | messages a memory adds to a context |
+| Prompts for a host's helper model | `curationPrompt`, `reviewPrompt` (`contracts/knowledge/knowledge-prompt.entity.functions.ts`) | the host's `Curator`, which sends them to a model |
+
+All of it lives in `packages/sdk/src/kernel`: core's kernel writes no text a
+model reads.
 
 ## 2. Write it
 
 - Second person, imperative, plain. A tool description says, in order: what
-  the tool does, what it returns, its limits (interpolated from config, never
-  restated by hand), and when to use another tool instead.
-- Name only what the model can see in the same request: tools this
-  capability registers and headings its own sections render. Never point at
-  a listing a host may or may not render (a heading such as "External
-  tools" that another capability may or may not add). Suggest `bash` only
-  when the bash tool is enabled.
-- Framework text is domain-neutral. Host vocabulary comes in through options
-  (`system`, the loop's `correctives`, the summarizer's `instructions`).
+  the tool does, what it returns, its limits (interpolated from the
+  constant, never restated by hand), and when to use another tool instead.
+- Name only what the model can see in the same request: the tools offered
+  and what the host's own system text says.
+- Kernel text is domain-neutral. Host vocabulary comes in through options
+  (a skill's instructions, the curation prompt's `instructions` and
+  `kinds`, a host's own words).
 - Annotate every parameter whose meaning or format is not obvious from its
   name. The JSON Schema the model sees keeps types and required keys but not
-  every check: state a required format (a hash, a locator) in words.
-- `Failure.error` is PascalCase (`NotFound`, `ToolInactive`) and says what
-  is wrong; a host's code (a `HarnessError`'s, a port's reason or code) is
-  mapped to such a name where the `Failure` is built, never passed through,
-  and keeps its own code for hosts, logs and spans. `message`
-  names what is wrong and the call that fixes it. Never `Cause.pretty`
-  output, stack frames, host paths or internal `_tag`s: text from a cause is
-  `messagesOf(cause)`, from a defect `messagesOf(Cause.die(defect))`: messages
-  alone, where `reasonOf` (for logs and reports) puts each error's code or
-  tag before its message.
+  every check: state a required format (an id such as `f1`) in words.
+- A failed result names what is wrong and the call that fixes it. Never
+  `Cause.pretty` output, stack frames, host paths or internal `_tag`s.
 - Never interpolate a tag, code, enum value or reason name into a message,
-  a view or a note (`${x._tag}`, `${reason}`, `(${status})`): say it in
-  words through a typed `Record<TheEnum, string>` beside the text, so a new
-  value fails to compile until it has words. A `Failure.error` name is the
-  one place a name is shown, on purpose.
-- Guidance a capability needs at all times goes in its tool descriptions or
-  a section it contributes, never in an always-on skill's `instructions`.
+  a view or a note (`${x._tag}`, `${reason}`): say it in words through a
+  typed `Record<TheEnum, string>` beside the text, so a new value fails to
+  compile until it has words (`DROPPED_BECAUSE`).
 - Tools only grow within a conversation: restrict a step with tool choice or
-  a handler failure, never by removing a schema (it rewrites the cached prefix).
+  a handler's failure, never by removing a schema (it rewrites the cached
+  prefix).
 
 ## 3. Keep trusted and untrusted text apart
 
-Untrusted: tool output, file contents, workspace SKILL.md files, task
-replies, inbox items, transcripts, summaries a model wrote, third-party MCP
-descriptions. Use core's helpers (`packages/core/src/turn/model-text.ts`,
-exported from `@xandreed/core`); never hand-roll a frame or a marker. Kernel
-code, which never imports core's root, uses the memory contract's `hostNote`,
-`framed` and `clipTo` from `@xandreed/sdk/kernel`, the same frames and marker.
-The kernel's `framed` makes a copy of its tag inert by its hyphen, so a
-kernel frame's tag always has one (`this-turn`, never `turn`).
+Untrusted: tool output, file contents, task reports, transcripts, summaries
+a model wrote, what a curator was told. Use the memory contract's helpers,
+exported from `@xandreed/sdk/kernel`; never hand-roll a frame or a marker.
 
 - `framed(tag, text)` puts untrusted text inside `<tag>…</tag>`, each on its
-  own line, after `escapeFrame(tag, text)` made any copy of the tag inside
-  it inert. The tag is lowercase with a hyphen (`task-output`,
-  `conversation-transcript`).
+  own line, a copy of the tag inside made inert by its hyphen: a frame's tag
+  always has one (`this-turn`, `task-result`, never `turn`).
 - Say once, before the frame, that its content is data and gives no
   instructions. Order: instructions, the rule, the framed data, then a
-  one-line final directive (`Reply with the summary only.`).
+  one-line final directive (`Reply with the corrected JSON object …`).
 - Text the host adds as a user-role message is `hostNote(text)`
   (`[Host note: …]`). Never label derived text "System note" or "source of truth".
-- Bound every input (the user request too) with `clipTo(text, max)`, which
-  leaves a counted `clippedMarker`, `[… 1234 characters clipped]`, never a
-  bare `…`.
-- House examples: `summaryPrompt` (`plugin-memory-summary/src/plugin.adapter.ts`),
-  `handoffToMessage` (`core/src/internal/mapping.entity.functions.ts`), the task result in
-  `plugin-tasks/src/task.entity.functions.ts`.
+- Bound every input with `clipTo(text, max)`, which leaves a counted
+  `clippedMarker`, `[… 1234 characters clipped]`, never a bare `…`, and
+  never half a character.
+- House examples: `reportText` (`contracts/task/task.entity.functions.ts`),
+  `factsNote`, `reviewPrompt`.
 
-## 4. Tier, order, version
+## 4. Version
 
-- `static` is the cacheable prefix: byte-stable for a given agent config.
-  Text that varies per session or config goes in `session`; per-turn state
-  in `turn`.
-- `order` comes from a config option with a default (`sectionOrder`,
-  `catalogOrder`). Shipped: 800 `workspace.environment` (session), 850
-  `workspace.skills.always` (static), 900 `tool-discovery.catalogue` (static).
-- The turn records each section's id, `version` and text fingerprint
-  (`SystemPrepared`). Bump `version` when the template's wording or shape
-  changes; config-driven differences are already in the fingerprint. Views
-  and digests carry a `version` too: bump it the same way.
+- A prompt whose wording a measurement chose carries a version
+  (`KNOWLEDGE_PROMPT`): its measured rules change only with a new
+  measurement and a new version (ADR 0022).
 - Sort ids by code unit (`Order.String`), never `localeCompare`.
 
 ## 5. Pin it
 
 - Beside the text, an exact assertion: `toBe` on the whole string, or
-  `toEqual` on the whole object. Examples: the summarizer prompt in
-  `plugin-memory-summary/src/plugin.adapter.test.ts`, the task tool
-  descriptions in `plugin-tasks/src/tasks-capability.adapter.test.ts`.
-  `toContain("## Workspace")` is not a pin.
-- If the golden agent uses it (see the imports of
-  `packages/sdk/src/agent.golden.test.ts`),
-  `packages/sdk/golden/agent-turn.model.json` pins it byte for byte. For a
-  deliberate change:
-  ```bash
-  EFFERENT_UPDATE_MODEL_GOLDEN=1 bun test packages/sdk/src/agent.golden.test.ts
-  git diff packages/sdk/golden/agent-turn.model.json
-  ```
-  Read every changed string and explain it in the PR. Never re-record to
-  silence a failure you cannot explain. `EFFERENT_UPDATE_GOLDEN=1` (the
-  journal golden) is for deliberate storage changes only.
-- A row in the package `AGENTS.md` "Model-facing text" table names the
+  `toEqual` on the whole object (`plugins/tool-files/file-tools.adapter.test.ts#readFile says what it reads`).
+  `toContain("…")` is not a pin.
+- A row in `packages/sdk/AGENTS.md`'s "Model-facing text" table names the
   text, source module and the tests that pin it, by title
   (`src/x.test.ts#<part of the test's title>`, several separated by `; `).
   `scripts/model-text-pins.test.ts` checks that each citation names exactly
@@ -126,15 +88,17 @@ kernel frame's tag always has one (`this-turn`, never `turn`).
   several of one test still passes the check. This validates inventory
   evidence, not semantic coverage: review the whole rendered value against
   the row and keep parameterized cases for distinct template branches.
+- A lesson of the learn track that shows the text pins it too (skill
+  `add-lesson`).
 - CHANGELOG entry under Unreleased naming the text that changed.
 
 ## Checklist
 
-- [ ] Lives in one place (a description builder, view, failure or prompt function), not inline in logic
-- [ ] Names only visible tools and headings; domain-neutral
+- [ ] Lives in one place (a description, a contract's constant or function), not inline in logic
+- [ ] Names only what the model can see; domain-neutral
 - [ ] Non-obvious parameters annotated; formats stated in words
 - [ ] A failure says what to do next; no internals; no tag, code or enum value in the text
 - [ ] Untrusted content `framed`, introduced as data, bounded with `clipTo`; host text is `hostNote`
-- [ ] Right tier; `version` bumped if the template changed
-- [ ] Exact test, or the golden re-recorded and reviewed; CHANGELOG entry
+- [ ] A measured prompt's version bumped with its wording
+- [ ] Exact test and an inventory row; CHANGELOG entry
 - [ ] `bun run typecheck` and `env -u HTTP_PROXY -u HTTPS_PROXY bun test`

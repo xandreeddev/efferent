@@ -1,122 +1,87 @@
 ---
 name: change-event
-description: Add or change a TurnEvent, a journal kind or a stored payload in efferent — the union and its name lists, transient vs journaled vs recorded elsewhere, storedPayload, current-format-only stored shapes, RESERVED_KINDS and frameworkDraft, the hand-kept tables of the event reference, journal fixtures and goldens, docs:generate. Read before touching turn-event.entity.ts, session-event.entity.ts or session-event.entity.functions.ts.
+description: Add or change a kernel event or a stored record in efferent — storedEvent vs liveEvent, the name's owner prefix, tags, skippable, a plugin's vocabulary and UnknownRecord, the journal format (JOURNAL_FORMAT) and the journal fixtures. Read before defining a storedEvent or liveEvent, or changing the data of one.
 ---
 
 # Add or change an event
 
-The turn's events are one vocabulary: plugins publish them, hosts subscribe,
-and the journal stores most of them for as long as a session lives. Several
-lists must agree; the tests and `bun run docs:generate` fail one at a time
-when they do not. Work through this list instead.
+The kernel's journal holds records, and `Core` carries live events. The set
+is open: core holds no list of names, and every plugin defines its own
+(`docs/kernel.md`, ADRs 0002 and 0003). A record outlives the code that
+wrote it, so its name, tags and data are a stored format.
 
 ## 1. Decide what it is
 
-- An application's own event: `defineHostEvent(name, schema)` in the host or
-  plugin; no core change. Journaled under `name`, which must not be in
-  `RESERVED_KINDS` (`events.reserved`).
-- A plugin's own durable record, not on the bus: its own kind constant and
-  schema, exported by the plugin (`TASK_STARTED` and `TaskStarted` in
-  `plugin-tasks/src/task-records.entity.ts`).
-- A framework bus event: a `TurnEvent` member in core. The rest of this skill.
+- Published and never stored (progress, a pressure reading, a trace of side
+  work): `liveEvent(plugin, event, { data, tags })`, named
+  `plugin.<plugin>.<event>`, published through the open session or the
+  turn (`publish(definition, data)`).
+- Stored in the journal: `storedEvent(plugin, event, { data, skippable, tags })`,
+  appended through the open session (`session.append(stored(definition,
+  data))`). A record that bears a message carries it in the envelope's
+  `message`, and is the conversation's only when tagged `conversation`.
+- Neither: data a tool returns is its result (`callTool` stores it), and
+  what the UI shows is a view record (`showView`).
 
-## 2. The bus event (`packages/core/src/turn/turn-event.entity.ts`)
+## 2. Name and tag it
 
-- `Schema.TaggedStruct("<subject>.<what happened>", { … })`, lowercase,
-  past tense where it reports a fact: `tool.refused`, `context.built`,
-  `decision.recorded`. Fields follow skill `domain-entity` (branded ids,
-  `Schema.OptionFromNullOr` for absent values).
-- `.annotate({ description })`: who publishes it and when, what each field
-  means, and how it is stored ("Journaled as `x`", "Transient", or "Not
-  journaled from the bus: …"). At least 40 characters, unique; the event
-  reference is generated from it.
-- Add it to the `TurnEvent` union and to `TURN_EVENT_NAMES` in the union's order.
-- Update the member list in `turn-event.entity.test.ts`.
+- The name says who owns the contract that defines it: `core.` for core's
+  own (`core.session.turn.started`), `conversation.` for the conversation's
+  records, `plugin.<plugin>.<what>` for a plugin's (`plugin.window.dropped`,
+  `plugin.knowledge.memory`). A body's append of a `core.` record is
+  refused (`ReservedName`).
+- Tags say what a record is for, so a reader takes only what it rebuilds
+  from: one of `RESERVED_TAGS` (`conversation`, `turn`, `memory`, `ui`,
+  `trace`) or a plugin's own `<plugin>.<tag>`. A one-word tag that is not
+  reserved does not type.
+- `skippable`: whether a reader that does not know the record may pass over
+  it. Say yes only for a record nothing needs to rebuild what it reads
+  (`plugin.approval.decided`, `plugin.knowledge.restated`).
 
-## 3. Choose how it is stored
+## 3. Its vocabulary
 
-| It is | Do |
-|---|---|
-| Live rendering only | add it to `TransientTurnEvents`; its description says "Transient" |
-| Stored from the bus | add the name to `TURN_EVENT_KINDS` (`core/src/session/session-event.entity.ts`); it is stored whole under its name |
-| Stored without some keys (they are in memory already) | also add an entry to `storedPayload` (`session-event.entity.functions.ts`) and its stored schema (`<Name>Data` in `session-event.entity.ts`) to `StoredData`, as `tool.completed` does |
-| Read back by its fields (by the framework or a host) | add its stored schema to `StoredData` and its decoder to `storedDecoders` and `recordDecoders`: `readStored`, `decodeStored` and `storedRecordOf` then type it, and `journalSchemaOf` returns that same schema |
-| Already recorded by memory or the session | add it to `RECORDED_ELSEWHERE` |
+A plugin reads a journal through its vocabulary (`vocabularyOf(plugin, own,
+over)`, `readJournal`): the records under its prefix that it knows. A record
+under its prefix that it does not know is refused with `UnknownRecord`
+unless it is skippable; a record under another prefix is not its to judge.
+A new record a plugin's own readers must read goes into that plugin's
+vocabulary (`KNOWLEDGE_VOCABULARY`, `SUMMARY_VOCABULARY`); a test holds a
+journal with an unknown record read both ways (`unknown-records.test.ts`).
 
-- Append new kinds after the existing ones; never remove or reorder a
-  reserved kind (`session-event.entity.test.ts` checks earlier releases'
-  order). Every bus name is reserved, stored or not.
-- The framework's turn writes reserved kinds through `frameworkDraft(kind, data)`;
-  the turn writer refuses any other draft under a reserved kind. A plugin
-  never needs `frameworkDraft`; a test standing in for the turn may.
+## 4. Changing what is stored
 
-## 4. Changing a stored payload
-
-- Target the current stored format only. Breaking schema changes are permitted;
-  flag them in the CHANGELOG and reject unsupported stores without modifying
-  their bytes. Do not add migrations or compatibility decoding.
-- Any change a reader can tell (a key, a type, an optionality, a check)
-  bumps `STORED_FORMAT` (`packages/core/src/session/stored-format.entity.ts`)
-  by one: `bun run docs:generate` fails on an unbumped change and names the
-  shape, then appends the new format's row to `docs/stored-format.json`.
-  Name the new format in the CHANGELOG entry. A description alone is not a
-  change.
-- Every `STORED_FORMAT` bump needs a fresh store, an added optional key
-  included. The built-in backends record the format a store was created for
-  and refuse any other when the store opens, before a session is read
-  (`storedFormatRefusal`, `store.version`): files in `store.json`'s
-  `format`, SQLite in `PRAGMA application_id`. A store created before the
-  record holds `UNRECORDED_FORMAT` (19). A format bump therefore needs no
-  layout or schema bump; Sessions still checks each session's own format
-  (`session.version`). A custom `SessionLog` records and checks its store's
-  format the same way (`storedFormatRefusal` from `@xandreed/core`).
-  Add a CHANGELOG **Breaking** entry and a **Migration** step (a fresh store;
-  read old sessions with the release that wrote them); no update path is
-  required. State the new format where `scripts/session-store-docs.test.ts`
-  requires it.
+- Adding a record: a kernel that does not know it refuses it where its
+  plugin reads (`UnknownRecord`) unless it is skippable. Decide which, and
+  say it in the CHANGELOG.
+- Changing a record's data (a key, a type, an optionality, a check), or the
+  envelope: a journal of today's format must still decode, record by record,
+  with today's definitions (`packages/sdk/src/kernel/node/journal-compat.test.ts`
+  replays every fixture of `JOURNAL_FORMAT`). A change it cannot decode bumps
+  `JOURNAL_FORMAT` (`packages/core/src/kernel/session.entity.ts`) by one: a
+  turn then opens only on a journal of the new format, an older one is
+  refused (`FormatMismatch`) and left as it is. Never add a migration or
+  compatibility decoding. Name the new format in a CHANGELOG **Breaking**
+  entry with its **Migration** step (start a new session; read old ones with
+  the release that wrote them).
 - Never re-record a released version's fixture. `bun scripts/record-journal-fixture.ts`
-  records the current version's at release time (skill `release`) and refuses
-  to overwrite it. During development, `--unreleased --force` refreshes only
-  `journal-unreleased.json`. A new journal kind must be
-  produced by the recorder's scenario, or the next fixture fails "holds every
-  journal kind its version reserved".
+  records the current version's at release time (skill `release`) and
+  refuses to overwrite it; `--unreleased --force` refreshes only
+  `journal-unreleased.json`. A record the stock plugins store that the
+  recorder's host does not produce is not covered: extend the recorder's
+  program, and the compatibility test's list of definitions.
 
-## 5. The event reference (`scripts/generate-event-reference.ts`)
+## 5. Readers and folds
 
-Payloads, descriptions and reserved kinds come from the code; some facts are
-kept by hand and checked against it. Update the ones your change touches:
-
-- `JOURNAL`: writer and sensitivity of every journal kind.
-- `RECORDED_AS`: where each `RECORDED_ELSEWHERE` event ends up.
-- `ERROR_CODES` / `TASK_CODES`: where a new code comes from and what it
-  means. Add the code to `HARNESS_CODES` (core) too: the script fails on a
-  code a package raises that the list does not hold (the kits' own
-  `conformance.*` aside), and on a listed code without an entry. A code
-  is never renamed or removed; one no longer raised keeps its entry.
-
-Then `bun run docs:generate` and keep `docs/event-reference.json`,
-`docs/event-reference.md` and the website's `concepts/event-reference.md` in
-the diff. The events guide (`docs/events.md`) quotes regions of
-`packages/sdk/src/events-guide.test.ts`: change code there, never in the guide.
-
-## 6. Subscribers and goldens
-
-- Subscribers use `onEvent("<name>", …)`, `subscribeAll`, `TurnEventOf<"<name>">`;
-  a consumer of a subset dispatches with `Match.valueTags`
-  (`plugin-telemetry/src/turn-telemetry.adapter.ts`). `bun run typecheck`
-  finds exhaustive matches that miss the new member.
-- If the golden agent publishes it, re-record deliberately and read the diff:
-  `EFFERENT_UPDATE_GOLDEN=1` (journal) and `EFFERENT_UPDATE_MODEL_GOLDEN=1`
-  (event order the host sees) with `bun test packages/sdk/src/agent.golden.test.ts`.
+A fold over a journal (`turnsOf`, `factsOf`, `knowledgeOf`, `grantsOf`,
+`viewsOf`) is pure and total: it passes over a record it does not know.
+Its table test holds the new record, and one it must pass over.
 
 ## Checklist
 
-- [ ] Host event, plugin record or framework event: decided
-- [ ] Member, description, union, `TURN_EVENT_NAMES`, member-list test
-- [ ] Transient / stored / `storedPayload` / `RECORDED_ELSEWHERE` chosen; kinds appended, none removed
-- [ ] Current stored schemas are explicit; unsupported stores fail without mutation
-- [ ] `STORED_FORMAT` bumped for a stored-shape change, `docs/stored-format.json` regenerated, the format named in the CHANGELOG
-- [ ] `JOURNAL`, `RECORDED_AS`, error-code tables updated; docs:generate output in the diff
-- [ ] Recorder scenario writes any new journal kind
-- [ ] Goldens re-recorded on purpose and reviewed; CHANGELOG entry
-- [ ] `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/core/src/turn packages/core/src/session packages/sdk/src`
+- [ ] Live or stored: decided
+- [ ] Name under its owner's prefix; tags declared; `skippable` decided
+- [ ] The plugin's vocabulary knows it; `UnknownRecord` behaviour tested
+- [ ] A stored-data change still decodes the fixtures of `JOURNAL_FORMAT`, or bumps it with a Breaking entry
+- [ ] Recorder and compatibility test cover a new stock record
+- [ ] Folds pass over what they do not know; CHANGELOG entry
+- [ ] `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/core/src/kernel packages/sdk/src/kernel`

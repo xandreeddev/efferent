@@ -66,7 +66,7 @@ CI also runs foundry's gates on foundry's own source.
 A **registration** gate closes the other silent gap: a package is gated,
 built and published only once it is listed by hand, so every package must
 appear in each list the profile names (its rules, a boundaries layer, the
-build's package list, the tsconfig paths, the plugin reference), and the
+build's package list, the tsconfig paths, the published entries), and the
 build fails naming the list a package is missing from.
 
 ## Lessons — deterministic memory

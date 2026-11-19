@@ -10,12 +10,12 @@ describe("declarationSpecifiers", () => {
       `import { Effect } from "effect"`,
       `import type { Brand } from "effect/Brand"`,
       `export { x } from "./x.js"`,
-      `export * from "@xandreed/runtime"`,
+      `export * from "@xandreed/evals"`,
       `import fs = require("node:fs")`,
-      `declare module "@xandreed/plugin-models" { interface Extra {} }`,
+      `declare module "@xandreed/evals-cli" { interface Extra {} }`,
       `export declare const message: typeof import("@xandreed/sdk").UserMessage`,
       `export declare const brand: import("effect/Brand").Brand<"Id">`,
-    ].join("\n"))).toEqual(["node", "effect", "effect/Brand", "./x.js", "@xandreed/runtime", "node:fs", "@xandreed/plugin-models", "@xandreed/sdk", "effect/Brand"])
+    ].join("\n"))).toEqual(["node", "effect", "effect/Brand", "./x.js", "@xandreed/evals", "node:fs", "@xandreed/evals-cli", "@xandreed/sdk", "effect/Brand"])
   })
 })
 
@@ -28,7 +28,7 @@ describe("declarationImportProblems", () => {
         `import type { Brand } from "effect/Brand"`,
         `import { sha256 } from "@noble/hashes/sha2.js"`,
         `export { x } from "./x.js"`,
-        `export type { Inner } from "@xandreed/core/internal"`,
+        `export type { Inner } from "@xandreed/core/kernel"`,
         `import type { Stats } from "node:fs"`,
         `import type { Readable } from "stream"`,
         `import type { Database } from "bun:sqlite"`,

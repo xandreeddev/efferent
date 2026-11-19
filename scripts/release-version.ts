@@ -5,9 +5,8 @@ import { existsSync } from "node:fs"
 import { createRequire } from "node:module"
 import { dirname, join } from "node:path"
 import { Result } from "effect"
-import { isTestCode } from "./build-check.js"
 import {
-  changelogVersionText, lockVersionText, pluginVersionText, publishedVersionText, readSourceManifest,
+  changelogVersionText, lockVersionText, publishedVersionText, readSourceManifest,
   releaseDirectories, releaseVersionPlan, sharedReleaseVersion, validateReleaseConfiguration, versionOutputs,
 } from "./release-version-plan.js"
 import type { ReleaseVersionPlan } from "./release-version-plan.js"
@@ -40,17 +39,7 @@ export const runReleaseVersion = async (root = defaultRoot, day = new Date().toI
 
   // Check every deterministic edit and fixture collision before Changesets consumes the notes.
   const edits: Array<{ readonly path: string; readonly text: string }> = []
-  for (const directory of releaseDirectories) {
-    const cwd = join(root, "packages", directory)
-    for (const relative of new Bun.Glob("src/**/*.{ts,tsx}").scanSync({ cwd, onlyFiles: true })) {
-      if (isTestCode(relative)) continue
-      const path = join(cwd, relative)
-      const original = await readFile(path, "utf8")
-      const text = valueOf(pluginVersionText(original, previous, plan.version))
-      if (text !== original) edits.push({ path, text })
-    }
-  }
-  for (const relative of ["README.md", "packages/website/src/content/docs/getting-started.md", "packages/website/src/pages/index.astro", "CONTRIBUTING.md", "docs/roadmap.md", ".agents/skills/add-plugin/SKILL.md"]) {
+  for (const relative of ["README.md", "packages/website/src/content/docs/getting-started.md", "packages/website/src/pages/index.astro", "CONTRIBUTING.md"]) {
     edits.push({ path: join(root, relative), text: valueOf(publishedVersionText(relative, await readFile(join(root, relative), "utf8"), previous, plan.version)) })
   }
   edits.push({ path: join(root, "CHANGELOG.md"), text: valueOf(changelogVersionText(await readFile(join(root, "CHANGELOG.md"), "utf8"), plan.version, day, plan.summaries)) })

@@ -7,10 +7,10 @@ around them.
 
 ## Dev setup
 
-Requires [Bun](https://bun.sh) ≥ 1.3 (CI pins 1.3.0) and Node ≥ 24.5 on
-Linux: `verify:packages` runs the packed packages on Node, and
-`@xandreed/plugin-models` declares 24.5. Development runs TypeScript
-directly; distribution builds emit JavaScript and declarations.
+Requires [Bun](https://bun.sh) ≥ 1.3 (CI pins 1.3.0) and Node ≥ 24 on
+Linux: `verify:packages` runs the packed packages on Node and on Bun.
+Development runs TypeScript directly; distribution builds emit JavaScript
+and declarations.
 
 ```bash
 git clone https://github.com/xandreeddev/efferent && cd efferent
@@ -36,7 +36,7 @@ a `push.default` of `tracking` or `upstream` would push to.
 
 The tests expect no proxy in the environment: Bun's fetch sends even the
 loopback servers they start to `HTTP_PROXY` / `HTTPS_PROXY`, so run them with
-those unset (the proxy tests that would go direct skip when one is set).
+those unset.
 
 ## Gates and semantic review
 
@@ -58,7 +58,10 @@ warns that CI will refuse the grown file.
 
 ## Adding a package or a plugin
 
-Follow the `add-plugin` skill (`.agents/skills/add-plugin/SKILL.md`). A new
+A plugin is a layer in a folder of the sdk's kernel
+(`packages/sdk/src/kernel/plugins/<name>` or, for one that needs a runtime's
+modules, `src/kernel/node/<name>`) with a boundaries layer of its own: skill
+`kernel-architecture`, and skill `add-port` for a contract and its kit. A new
 package under `packages/` must be registered by hand, and
 `bun run typecheck` fails (`quality/package-registered`) naming each list
 it is missing from:
@@ -71,10 +74,9 @@ it is missing from:
 - `names` in `scripts/build-packages.ts`, so it is built, verified and
   published (foundry, development tooling, is exempt);
 - `compilerOptions.paths` in `tsconfig.base.json` (`"@xandreed/<name>"`);
-- for a `plugin-*` package, `firstParty` in
-  `scripts/generate-plugin-reference.ts` (import the package and list its
-  plugins; `bun run docs:generate` also fails on an exported plugin missing
-  there).
+- its root entry, `src/index.ts`, and each other entry in `CURATED_ENTRIES`
+  (core's and the sdk's root entry is their kernel's index until the
+  kernel's folders become the packages' `src`).
 
 The lists the check reads are the `registration` data in
 `foundry.config.ts`; the docs site (`packages/website`) is exempt.
@@ -95,25 +97,14 @@ release previews use the maintainer-owned PR handoff below.
   (`docs/composable-evaluations.md`); the battery is part of the definition of done.
 - Colocate tests next to the source (`foo.ts` / `foo.test.ts`); fixtures live
   outside `src/` so the gates never see deliberate violations.
-- A change to a documented contract updates `docs/framework.md` and the
-  matching page under `packages/website/src/content/docs/concepts/` in the
-  same PR. Their `@xandreed/*` imports in code blocks are compiled against
-  the packed packages (`verify:packages`); generated pages are never edited
-  by hand.
-- Run `bun run docs:generate` after a change to an event, a stored payload,
-  or a plugin's id, version, scope, configuration schema, defaults,
-  `requires`, `optional`, `provides` or `contributes`. It writes the
-  [plugin](docs/plugin-reference.json) and [event](docs/event-reference.md)
-  references, the guides' snippets and their website pages; CI fails on any
-  difference from what is committed.
-- Each exported first-party plugin has a guide in
-  `packages/website/src/content/docs/plugins/`, named from its id: remove
-  `@xandreed/plugin-` and replace `/` with `-`. Set its `pluginId`, title and
-  description in frontmatter. Write setup, composition and examples outside
-  the `plugin-reference:start/end` markers; `docs:generate` refreshes the
-  contract inside them and the sidebar navigation. Missing or orphaned guides
-  fail generation. `scripts/plugin-docs.test.ts` checks coverage, freshness and
-  TypeScript examples against the current public APIs.
+- A change to a documented contract updates `docs/kernel.md` (whose quotes
+  `packages/sdk/src/kernel/guide.test.ts` holds to their sources) and the
+  matching page under `packages/website/src/content/docs/` in the same PR.
+  Their `@xandreed/*` imports in code blocks are compiled against the packed
+  packages (`verify:packages`); generated pages are never edited by hand.
+- `bun run docs:generate` (`scripts/sync-guides.ts`) writes the guides'
+  snippets and their website pages; CI fails on any difference from what is
+  committed.
 - What each published entry exports is recorded in `api/`: one file per
   entry, `api/<package>.api.txt` for a package's root and
   `api/<package>--<subpath>.api.txt` for each other entry (every `/` of the
@@ -122,22 +113,20 @@ release previews use the maintainer-owned PR handoff below.
   that adds, removes or renames an export, or turns a value export into a
   type-only one, run `bun run api:update` (it runs `build:packages`, then
   rewrites `api/`) and commit the diff; `verify:packages` fails while `api/`
-  differs from the build. A package's root entry may not export a name
-  declared in a package's `src/internal/` folder: those modules are
-  published through an entry of their own, outside semver.
-- A change to a stored shape bumps `STORED_FORMAT` (skill `change-event`),
-  and every bump needs a fresh store: Sessions refuses a session of any
-  other format for every operation, reads included, with `session.version`,
-  and nothing migrates it. The built-in backends record the format a store
-  was created for and refuse a store of another format when it opens
-  (`store.version`), so no layout bump is needed. Say so under **Migration**.
+  differs from the build.
+- A change to a stored record that today's journals cannot decode bumps
+  `JOURNAL_FORMAT` (skill `change-event`): a turn opens only on a session of
+  the current format, another is refused (`FormatMismatch`) and nothing
+  migrates it. Say so under **Migration**.
 - Every release's journal fixture is kept, byte-identical to its tag, as
-  historical evidence of what that release wrote
+  historical evidence of what a kernel host stored with that release
   (`packages/sdk/fixtures/journal-<version>.json`).
-  `packages/sdk/src/journal-compat.test.ts` replays the fixtures at the
-  current `STORED_FORMAT` with this release's schemas, and checks that
-  Sessions refuses every other with `session.version` and leaves its bytes
-  unchanged: there is no migration or compatibility decoding. Record one per
+  `packages/sdk/src/kernel/node/journal-compat.test.ts` replays the fixtures
+  of the current `JOURNAL_FORMAT` with this release's definitions through a
+  directory journal, and checks that a journal of any other format is
+  refused and left byte for byte: there is no migration or compatibility
+  decoding. The engine of earlier releases kept its own journals, from 0.13.0
+  to its last release: they stay at their tags, and no code replays them. Record one per
   release with
   `bun scripts/record-journal-fixture.ts`. It refuses to overwrite an
   existing release fixture. During development, record
@@ -146,32 +135,15 @@ release previews use the maintainer-owned PR handoff below.
   the same rule: `packages/evals/src/run-compat.test.ts` reads each
   `packages/evals/fixtures/run-<version>.json`, recorded with
   `bun scripts/record-run-fixture.ts`.
-- The sdk golden (`packages/sdk/src/agent.golden.test.ts`) pins one
-  conversation byte for byte: what the model and the host see
-  (`packages/sdk/golden/agent-turn.model.json`) and what the session stores
-  (`agent-turn.journal.json`). After a deliberate change, re-record with
-  `EFFERENT_UPDATE_MODEL_GOLDEN=1` (model text) or `EFFERENT_UPDATE_GOLDEN=1`
-  (storage format) on `bun test packages/sdk/src/agent.golden.test.ts`, read
-  the whole `git diff` of the golden, and explain each change in the PR.
-  Never re-record to silence a failure you cannot explain.
-- A guide's code is not edited in the guide: `docs/events.md` quotes the
-  regions of `packages/sdk/src/events-guide.test.ts`, a test that runs, and
-  `bun run docs:generate` (`scripts/sync-guides.ts`) copies them in with the
-  imports they use and writes the guide's website page. It fails on a
-  snippet that imports from a relative path, the test runner (`bun:`) or
-  test scaffolding (a `testing` module), a region no guide quotes, a
-  snippet marker not followed by a `ts` fence, a TypeScript or JavaScript
-  fence that is neither a snippet nor marked `<!-- unchecked: why -->`, and
-  a link to a missing file or heading.
 - Add an entry under **Unreleased** in `CHANGELOG.md`: what changes for
   someone using the packages. Use its headings: `### Migration` (what a
   user must do), `### Breaking`, `### Added`, `### Fixed` and
   `### Repository` (changes to this repository only). Start a package's
-  entry with its name (`` `@xandreed/plugin-render`: ``).
+  entry with its name and entry (`` `@xandreed/sdk/kernel`: ``).
 
 ## Publishing
 
-Releases run in GitHub Actions. All 24 publishable packages share version
+Releases run in GitHub Actions. All 6 publishable packages share version
 `0.22.0` in source and publish together under npm's `latest` tag. Changesets
 versions this fixed group; the release workflow publishes the isolated build
 from `.artifacts/packages`, whose manifests have `private: false`.
@@ -184,7 +156,7 @@ from `.artifacts/packages`, whose manifests have `private: false`.
    usual entry under **Unreleased** in `CHANGELOG.md` too.
 2. After changesets reach `main`, `release-pr.yml` runs `release:version`
    and opens or updates `changeset-release/main`. It consumes the notes,
-   synchronizes package and plugin versions, updates the central changelog
+   synchronizes package versions, updates the central changelog
    and version markers, records the new journal/run fixtures and regenerates
    docs. Existing source-package visibility is preserved, including private
    packages such as core. Changesets versions the whole group, while the
@@ -267,7 +239,7 @@ test "$(pr_identity "$OWNER_PR")" = "$EXPECTED_OWNER"
 gh pr merge "$OWNER_PR" --repo "$RELEASE_REPO" --squash \
   --match-head-commit "$REVIEWED_HEAD" --author-email xandreed@proton.me \
   --subject "release $RELEASE_VERSION" \
-  --body 'Synchronize the shared package and plugin versions, release notes, compatibility fixtures and generated documentation.'
+  --body 'Synchronize the shared package versions, release notes, compatibility fixtures and generated documentation.'
 )
 ```
 
@@ -344,8 +316,12 @@ existing release skips the landing version only when both its source commit
 and packed integrity match. A retry can add a missing landing version
 without republishing the framework packages or moving the release tag.
 
-The final CI audit checks all 25 names for the release version, source commit
+The final CI audit checks all 7 names for the release version, source commit
 and archive integrity metadata, and reports whether provenance is present.
+The 18 packages of the old engine (`@xandreed/runtime`,
+`@xandreed/process-host` and the `@xandreed/plugin-*` packages) stay on npm
+at their last version as they are: the audit does not expect them at a new version, and
+they are never deprecated, unpublished or published again (ADR 0036).
 To repeat it from a checkout of the release source:
 
 ```sh

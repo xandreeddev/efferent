@@ -1,10 +1,11 @@
 // The learn track runs on the kernel alone: every `@xandreed/` specifier its
 // code names, the lessons' shown sources included, is one of the two kernel
-// entries. The old engine is never imported, nor shown to a learner. Lessons
-// 13 and 19 alone also name the eval package (`@xandreed/evals` and its
-// `/stats`), which brings core's root with it for its `ModelSpend` ledger:
-// only in their own files, which the page loads when their button is pressed
-// (13's evals, 19's check of the graders).
+// entries. The engine of earlier releases is gone, and no name of it (an
+// `@xandreed/plugin-*` package, core's old subpaths) is shown to a learner.
+// Lessons 13 and 19 alone also name the eval package (`@xandreed/evals` and
+// its `/stats`), which brings core's kernel with it for its `ModelSpend`
+// ledger: only in their own files, which the page loads when their button is
+// pressed (13's evals, 19's check of the graders).
 import { describe, expect, test } from "bun:test"
 import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
@@ -27,7 +28,7 @@ const allowedIn = (file: string, specifier: string): boolean => ALLOWED.has(spec
 export const specifiersOf = (text: string): ReadonlyArray<string> =>
   Array.from(text.matchAll(/(?:from|import)\s+\\?["'`](@xandreed\/[^"'`\\]+)\\?["'`]|import\(\s*["'`](@xandreed\/[^"'`]+)["'`]\s*\)/g), (match) => match[1] ?? match[2] ?? "")
 
-/** The track's files, this test aside: its controls name the old engine on purpose. */
+/** The track's files, this test aside: its controls name other entries on purpose. */
 const filesUnder = (dir: string): ReadonlyArray<string> =>
   readdirSync(dir, { withFileTypes: true }).flatMap((entry) =>
     entry.name === "generated-program-check" || entry.name === "node_modules" || entry.name === "imports.test.ts" ? []
@@ -62,7 +63,7 @@ describe("the learn track's imports", () => {
     expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/evals/testing/fixture.testing")).toBe(false)
   })
 
-  test("the scan sees an import of the old engine, written as code or inside a shown source", () => {
+  test("the scan sees an import of another entry, written as code or inside a shown source", () => {
     expect(specifiersOf('import { Agent } from "@xandreed/sdk"')).toEqual(["@xandreed/sdk"])
     expect(specifiersOf('export const IMPORTS = `import { Memory } from "@xandreed/core"`')).toEqual(["@xandreed/core"])
     expect(specifiersOf("const shown = \"import { x } from \\\"@xandreed/plugin-render\\\"\"")).toEqual(["@xandreed/plugin-render"])

@@ -1,5 +1,10 @@
 # Efferent repository audit
 
+> The packages this record cites (the old engine: the runtime, the process
+> host and the `plugin-*` packages, and core's and the sdk's code outside
+> their kernels) were removed (ADR 0036): its links to their files lead
+> nowhere in the current tree; read them at the revision it records.
+
 Source: `b682e58e9cecf492d19ecead8f95b96ca25c0c29` · 2026-11-09 · Node 24.16.0 · Bun 1.3.0 / 1.3.6.
 
 This is the historical audit of that revision. The fixes, breaking contracts

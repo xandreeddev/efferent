@@ -18,14 +18,14 @@ const stampOf = (builds: ReadonlyArray<Built>, overrides: Partial<BuildStamp> = 
   packages: builds.map(({ dir, manifest }) => ({ dir, name: manifest.name, version: manifest.version })),
   ...overrides,
 })
-/** The repository's shape: core at the bottom, plugins and runtime on core, sdk on runtime, the evals line apart. */
+/** The repository's shape: core at the bottom, the sdk and evals on core, the eval CLI and exporters on evals. */
 const repository = [
-  built("sdk", ["runtime", "core", "plugin-sessions"]),
-  built("evals-cli", ["evals"]),
-  built("plugin-sessions", ["core"]),
-  built("runtime", ["core"]),
+  built("evals-langsmith", ["evals"]),
+  built("sdk", ["core"]),
+  built("evals-cli", ["evals", "core"]),
+  built("evals-langfuse", ["evals"]),
   built("core"),
-  built("evals"),
+  built("evals", ["core"]),
 ]
 const ran = (stdout: string): PublishState["head"] => ({ success: true, stdout, stderr: "" })
 const state = (overrides: Partial<PublishState> = {}): PublishState => ({
@@ -43,13 +43,13 @@ describe("planPublish", () => {
     const plan = planPublish(state())
     expect(plan.reasons).toEqual([])
     expect(plan.version).toBe("0.14.0")
-    expect(plan.order.map(({ dir }) => dir)).toEqual(["core", "evals", "evals-cli", "plugin-sessions", "runtime", "sdk"])
+    expect(plan.order.map(({ dir }) => dir)).toEqual(["core", "evals", "sdk", "evals-cli", "evals-langfuse", "evals-langsmith"])
   })
 
   test("refuses packages that do not share one version", () => {
-    const builds = [built("core"), built("runtime", ["core"], "0.13.0")]
+    const builds = [built("core"), built("sdk", ["core"], "0.13.0")]
     const plan = planPublish(state({ builds, stamp: stampOf(builds, { version: null }) }))
-    expect(plan.reasons).toEqual(["the packages do not share one version: @xandreed/core@0.14.0, @xandreed/runtime@0.13.0"])
+    expect(plan.reasons).toEqual(["the packages do not share one version: @xandreed/core@0.14.0, @xandreed/sdk@0.13.0"])
   })
 
   test("refuses a build whose source manifest has moved on", () => {
@@ -76,16 +76,16 @@ describe("planPublish", () => {
   })
 
   test("refuses packages the stamp does not record, and stamped packages that are missing", () => {
-    expect(planPublish(state({ stamp: stampOf([...repository, built("plugin-tasks", ["core"])]) })).reasons)
-      .toEqual(["build.json records @xandreed/plugin-tasks@0.14.0, but ./.artifacts/packages/plugin-tasks is missing; rebuild"])
+    expect(planPublish(state({ stamp: stampOf([...repository, built("extra", ["core"])]) })).reasons)
+      .toEqual(["build.json records @xandreed/extra@0.14.0, but ./.artifacts/packages/extra is missing; rebuild"])
     expect(planPublish(state({ stamp: stampOf(repository.slice(1)) })).reasons)
-      .toEqual(["./.artifacts/packages/sdk holds @xandreed/sdk@0.14.0, which build.json does not record; rebuild"])
+      .toEqual(["./.artifacts/packages/evals-langsmith holds @xandreed/evals-langsmith@0.14.0, which build.json does not record; rebuild"])
   })
 
   test("refuses a dependency cycle and places nothing from it", () => {
-    const builds = [built("core"), built("runtime", ["core", "sdk"]), built("sdk", ["runtime"])]
+    const builds = [built("core"), built("evals", ["core", "evals-cli"]), built("evals-cli", ["evals"])]
     const plan = planPublish(state({ builds, stamp: stampOf(builds) }))
-    expect(plan.reasons).toEqual(["the @xandreed/* dependencies of @xandreed/runtime, @xandreed/sdk form a cycle"])
+    expect(plan.reasons).toEqual(["the @xandreed/* dependencies of @xandreed/evals, @xandreed/evals-cli form a cycle"])
     expect(plan.order.map(({ dir }) => dir)).toEqual(["core"])
   })
 

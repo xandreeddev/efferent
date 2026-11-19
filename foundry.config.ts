@@ -28,12 +28,11 @@ export const rulePacks = [effectPack, qualityPack, effectArchitecturePack]
  * none imports fails, so a list only shrinks. `effect` admits Effect's core
  * modules; each `effect/<module>` barrel (effect/ai was @effect/ai in v3;
  * effect/testing holds the test services) is named by itself, and no layer
- * takes the raw `effect/` or `@effect/` prefix. So the provider packages
- * (`@effect/ai-*`) are the models plugin's and, `@effect/ai-anthropic` alone,
- * the sdk kernel's Anthropic provider's (ADR 0026), Bun the SQLite session
- * log's alone (`bun:sqlite`; the models plugin reaches Bun's fetch and
- * WebSocket as globals), and the test libraries (`bun:test`, `fast-check`,
- * `effect/testing`) the `-tests` layers' alone.
+ * takes the raw `effect/` or `@effect/` prefix. So a provider package
+ * (`@effect/ai-anthropic`) is the sdk kernel's Anthropic provider's alone
+ * (ADR 0026), Bun the kernel's SQLite journal's alone (`bun:sqlite`, imported
+ * only when it is built on Bun), and the test libraries (`bun:test`,
+ * `fast-check`, `effect/testing`) the `-tests` layers' alone.
  */
 const CHECKED = [
   "packages/core/src/**",
@@ -41,50 +40,11 @@ const CHECKED = [
   "packages/evals-cli/src/**",
   "packages/evals-langfuse/src/**",
   "packages/evals-langsmith/src/**",
-  "packages/plugin-agent-loop/src/**",
-  "packages/runtime/src/**",
   "packages/sdk/src/**",
-  "packages/process-host/src/**",
-  "packages/plugin-memory-window/src/**",
-  "packages/plugin-memory-summary/src/**",
-  "packages/plugin-memory-digest/src/**",
-  "packages/plugin-memory/src/**",
-  "packages/plugin-rag/src/**",
-  "packages/plugin-knowledge-postgres/src/**",
-  "packages/plugin-tool-discovery/src/**",
-  "packages/plugin-models/src/**",
-  "packages/plugin-session-files/src/**",
-  "packages/plugin-session-sqlite/src/**",
-  "packages/plugin-sessions/src/**",
-  "packages/plugin-tasks/src/**",
-  "packages/plugin-render/src/**",
-  "packages/plugin-workspace/src/**",
-  "packages/plugin-telemetry/src/**",
   // The factory judges itself by the same profile (the dogfood).
   "packages/foundry/src/**",
 ]
 
-/**
- * The declared TYPE-ERASURE boundary: the router wrapping arbitrary provider
- * services, the compat/codex clients speaking effect/ai's generic surface,
- * the loop's call assembly, the npm undici's fetch typed as the global one
- * (its requests and responses have the global fetch types' shape but are
- * distinct classes, so nothing downstream may rely on `instanceof Response` /
- * `Headers`). `as never` is the design there and nowhere else — a new one
- * anywhere else fails. A run's tool handlers are typed (`ToolHandlers`), so
- * the registry builds them without one.
- * Test scaffolding (scripted providers, stubbed ports) is out of scope. An
- * entry whose file holds no `as never` any more fails too: the boundary
- * only shrinks.
- */
-const ERASURE_BOUNDARY = [
-  "packages/plugin-models/src/llm/router.ts",
-  "packages/plugin-models/src/llm/compat.ts",
-  "packages/plugin-models/src/llm/openAiCodex.ts",
-  "packages/plugin-models/src/llm/providers.ts",
-  "packages/plugin-models/src/transport/undici-fetch.adapter.ts",
-  "packages/plugin-agent-loop/src/loop.ts",
-]
 /**
  * Test code as the build leaves it out (scripts/build-check.ts): test and
  * bench files, `testing` modules and `testing/` folders. It is never built
@@ -103,12 +63,10 @@ const TEST_SCAFFOLDING: Arr.NonEmptyReadonlyArray<string> = [
 
 /**
  * The process edges that read `process.env` themselves: an entry point's
- * `main.ts`, and the local bash adapter, which hands each command a
- * filtered copy of the host's whole environment (a map `Config` cannot
- * enumerate). Everything else reads a variable through `Config`, so a
+ * `main.ts`. Everything else reads a variable through `Config`, so a
  * ConfigProvider can supply it.
  */
-const ENVIRONMENT_EDGES = ["**/main.ts", "packages/plugin-workspace/src/bash.adapter.ts"]
+const ENVIRONMENT_EDGES = ["**/main.ts"]
 
 /** What the sdk kernel's test code may import: every layer of the kernel, and core's. */
 const SDK_KERNEL_TESTS = [
@@ -149,7 +107,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-shell-process",
   "sdk-kernel-node-files-disk",
   "sdk-kernel-node-telemetry-otlp",
-  "core/kernel",
+  "core-kernel",
 ]
 
 /** A package's source, by its directory name: one entry of a list below. */
@@ -176,51 +134,14 @@ const testLayer = (name: string, canImport: ReadonlyArray<string>, externals: Re
  * registration gate reads its entries from the source.
  */
 const CURATED_ENTRIES: ReadonlyArray<string> = [
-  "packages/core/src/index.ts",
-  "packages/core/src/conformance/index.ts",
-  "packages/core/src/internal/index.ts",
   "packages/core/src/kernel/index.ts",
-  "packages/runtime/src/index.ts",
   "packages/evals-langfuse/src/index.ts",
   "packages/evals-langsmith/src/index.ts",
   "packages/evals/src/index.ts",
   "packages/evals/src/stats.ts",
   "packages/evals-cli/src/index.ts",
-  "packages/plugin-render/src/index.ts",
-  "packages/plugin-render/src/output.ts",
-  "packages/plugin-agent-loop/src/index.ts",
-  "packages/plugin-models/src/index.ts",
-  "packages/plugin-models/src/compat/index.ts",
-  "packages/plugin-models/src/conformance/index.ts",
-  "packages/plugin-models/src/scripted/index.ts",
-  "packages/plugin-memory-window/src/index.ts",
-  "packages/plugin-memory-summary/src/index.ts",
-  "packages/plugin-memory-digest/src/index.ts",
-  "packages/plugin-memory/src/index.ts",
-  "packages/plugin-rag/src/index.ts",
-  "packages/plugin-knowledge-postgres/src/index.ts",
-  "packages/plugin-tool-discovery/src/index.ts",
-  "packages/plugin-session-files/src/index.ts",
-  "packages/plugin-session-sqlite/src/index.ts",
-  "packages/plugin-sessions/src/index.ts",
-  "packages/plugin-tasks/src/index.ts",
-  "packages/plugin-workspace/src/index.ts",
-  "packages/plugin-telemetry/src/index.ts",
-  "packages/process-host/src/index.ts",
-  "packages/sdk/src/index.ts",
-  "packages/sdk/src/conformance/index.ts",
   "packages/sdk/src/kernel/index.ts",
   "packages/sdk/src/kernel/node/index.ts",
-]
-
-/**
- * Open schemas (`effect/no-unknown-json`) core keeps for now: a plugin
- * entry's in-code options may hold values that are not JSON (a function, a
- * layer). An entry goes once its file decodes what it reads; the list only
- * shrinks.
- */
-const UNKNOWN_JSON_EDGES = [
-  "packages/core/src/harness/config.entity.ts",
 ]
 
 /**
@@ -230,38 +151,11 @@ const UNKNOWN_JSON_EDGES = [
 const ENTITY_FILES = CHECKED.map((glob) => `${glob}/*.entity.ts`)
 
 /**
- * Casts to an object type (`effect/no-record-cast`) not yet replaced by a
- * decode or a type. The tool registry hands its two skill tools the
- * parameters the toolkit decoded, through a handler map typed `unknown`.
- * Each entry goes once its file is typed; like NULLABLE_EDGES the list
- * only shrinks.
+ * The provider-neutral package (`effect/no-provider-namespace`): core
+ * carries a provider's metadata and options opaque, with no file excused.
+ * Its tests and kits are left out.
  */
-const RECORD_CAST_EDGES = [
-  "packages/plugin-tool-discovery/src/registry.adapter.ts",
-]
-
-/**
- * The provider-neutral packages (`effect/no-provider-namespace`): core and
- * the agent loop carry a provider's metadata and options opaque, and write
- * their own under core's `ENGINE_KEY`, with no file excused. Their tests and
- * kits drive the loop with provider-shaped metadata and are left out.
- */
-const PROVIDER_NEUTRAL = [src("core"), src("plugin-agent-loop")]
-
-/**
- * Effect, Stream and Layer types whose requirements are `unknown`
- * (`effect/no-unknown-requirements`), so a service they read compiles
- * whether anything provides it or not. Tools and prompt sections declare
- * the services they read (`defineTool`, `definePromptSection`), checked by
- * key where they run. What stays: a turn's host layer (`NewTurn.layer`) and
- * the sdk code that provides it and the turn's plugins: a JSON config picks
- * those services at run time, and the plugin graph checks them by key.
- * FROZEN like NULLABLE_EDGES: the list only shrinks.
- */
-const UNKNOWN_REQUIREMENT_EDGES = [
-  "packages/core/src/ports/turn.port.ts",
-  "packages/sdk/src/agent.adapter.ts",
-]
+const PROVIDER_NEUTRAL = [src("core")]
 
 /**
  * The files that had no role suffix when `architecture/role-suffix-required`
@@ -273,15 +167,6 @@ const UNKNOWN_REQUIREMENT_EDGES = [
  * (`packages/foundry/foundry.config.ts`) enforces those layers.
  */
 const ROLELESS_FILES = [
-  "packages/core/src/conformance.functions.ts",
-  "packages/core/src/loop/cacheKey.ts",
-  "packages/core/src/loop/modelPolicy.ts",
-  "packages/core/src/loop/promptProvenance.ts",
-  "packages/core/src/loop/stepContext.ts",
-  "packages/core/src/loop/traceContent.ts",
-  "packages/core/src/memory/memory-session.ts",
-  "packages/core/src/turn/model-text.ts",
-  "packages/core/src/turn/prompt-sections.ts",
   "packages/evals/src/cli.functions.ts",
   "packages/evals/src/contracts/evaluation-app.contract.functions.ts",
   "packages/evals/src/contracts/evaluation-app.contract.ts",
@@ -291,40 +176,6 @@ const ROLELESS_FILES = [
   "packages/evals/src/graders/retrieval/contextual-relevancy.functions.ts",
   "packages/evals/src/graders/retrieval/ranking.functions.ts",
   "packages/evals/src/stats.ts",
-  "packages/plugin-agent-loop/src/loop.ts",
-  "packages/plugin-models/src/auth/anthropicOAuth.ts",
-  "packages/plugin-models/src/auth/localAuth.ts",
-  "packages/plugin-models/src/auth/openAiCodexOAuth.ts",
-  "packages/plugin-models/src/llm/compat.ts",
-  "packages/plugin-models/src/llm/modelCatalog.ts",
-  "packages/plugin-models/src/llm/openAiCodex.ts",
-  "packages/plugin-models/src/llm/openAiCodexWebSocket.ts",
-  "packages/plugin-models/src/llm/providers.ts",
-  "packages/plugin-models/src/llm/retry.ts",
-  "packages/plugin-models/src/llm/router.ts",
-  "packages/plugin-models/src/llm/sse.ts",
-  "packages/plugin-models/src/llm/utilityLlm.ts",
-  "packages/plugin-models/src/settings/localSettings.ts",
-  "packages/plugin-models/src/settings/roleView.ts",
-  "packages/plugin-models/src/storage/json-file.ts",
-  "packages/plugin-render/src/output.ts",
-  "packages/plugin-render/src/render-output.tools.ts",
-  "packages/plugin-telemetry/src/telemetry-metrics.ts",
-  "packages/runtime/src/graph.ts",
-]
-
-/**
- * Adapters by role whose names predate the role suffixes, each unwrapping
- * an `Option` where the edge takes a nullable (`effect/no-option-unwrap`):
- * the router hands a selection's credential and key to `buildProvider`
- * (public; `undefined` for none), and the subscription's WebSocket
- * transport answers with OpenAI's error body (`null` fields). Like
- * ROLELESS_FILES the list only shrinks: an entry renamed `*.adapter.ts`,
- * or that no longer unwraps, fails until it is removed.
- */
-const NULLABLE_EDGES = [
-  "packages/plugin-models/src/llm/router.ts",
-  "packages/plugin-models/src/llm/openAiCodexWebSocket.ts",
 ]
 
 /**
@@ -344,13 +195,18 @@ const privateText: NonNullable<typeof GateSuiteConfig.Encoded["privateText"]> = 
 }
 
 /**
+ * The packages whose root entry is their kernel's index, `src/kernel/index.ts`, until the kernel's folders become
+ * the packages' `src`: the registries read that file for them in place of `src/index.ts`.
+ */
+const KERNEL_ROOTED = ["packages/core", "packages/sdk"]
+
+/**
  * A package is gated, built and published only once it is listed by hand:
  * in CHECKED, in a boundaries layer below, in the build's `names`, in the
- * base tsconfig's `paths`, its root entry in CURATED_ENTRIES and, for a
- * plugin, in the plugin reference's `firstParty`. The registration gate
- * fails on every package one of them misses, naming the list. The docs site
- * is not a TypeScript package of the framework, and foundry is development
- * tooling: never built or published.
+ * base tsconfig's `paths` and its root entry in CURATED_ENTRIES. The
+ * registration gate fails on every package one of them misses, naming the
+ * list. The docs site is not a TypeScript package of the framework, and
+ * foundry is development tooling: never built or published.
  */
 const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> = {
   roots: ["packages"],
@@ -359,7 +215,14 @@ const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> 
     { source: "rules", hint: 'add "{path}/src/**" to CHECKED in foundry.config.ts' },
     {
       source: "boundaries",
+      exclude: KERNEL_ROOTED,
       hint: 'add a "{dir}" layer for "{path}/src/**" to boundaries.layers in foundry.config.ts, naming what it may import',
+    },
+    {
+      source: "boundaries",
+      probe: "{path}/src/kernel/index.ts",
+      include: KERNEL_ROOTED,
+      hint: 'add a "{dir}-kernel" layer for "{path}/src/kernel/**" to boundaries.layers in foundry.config.ts, naming what it may import',
     },
     {
       source: "const",
@@ -374,18 +237,18 @@ const registration: NonNullable<typeof GateSuiteConfig.Encoded["registration"]> 
       file: "foundry.config.ts",
       name: "CURATED_ENTRIES",
       entry: "{path}/src/index.ts",
-      exclude: ["packages/foundry"],
+      exclude: ["packages/foundry", ...KERNEL_ROOTED],
       hint: 'add "{path}/src/index.ts", and each subpath entry of its package.json `exports`, to CURATED_ENTRIES in foundry.config.ts: each export is then imported by another package, a script or a doc code block, or tagged @public',
     },
-    { source: "json-keys", file: "tsconfig.base.json", keys: ["compilerOptions", "paths"], entry: "{name}" },
     {
       source: "const",
-      file: "scripts/generate-plugin-reference.ts",
-      name: "firstParty",
-      entry: "{name}",
-      include: ["packages/plugin-*"],
-      hint: "import {name} in scripts/generate-plugin-reference.ts and add its plugins to `firstParty`",
+      file: "foundry.config.ts",
+      name: "CURATED_ENTRIES",
+      entry: "{path}/src/kernel/index.ts",
+      include: KERNEL_ROOTED,
+      hint: 'add "{path}/src/kernel/index.ts", and each subpath entry of its package.json `exports`, to CURATED_ENTRIES in foundry.config.ts',
     },
+    { source: "json-keys", file: "tsconfig.base.json", keys: ["compilerOptions", "paths"], entry: "{name}" },
   ],
 }
 
@@ -402,13 +265,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     { rule: "effect/no-nullable-return", include: CHECKED },
     { rule: "effect/match-over-tag-switch", include: CHECKED },
     { rule: "effect/no-as-any", include: CHECKED },
-    {
-      rule: "effect/no-as-never",
-      include: CHECKED,
-      exclude: TEST_SCAFFOLDING,
-      // `as never` is the design there; `as never as T` still fails.
-      boundary: ERASURE_BOUNDARY,
-    },
+    { rule: "effect/no-as-never", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/no-parallel-interface", include: CHECKED },
     // What crosses a boundary is decoded, or comes from a service.
     { rule: "effect/no-json-parse", include: CHECKED, exclude: TEST_SCAFFOLDING },
@@ -430,12 +287,10 @@ const config: typeof GateSuiteConfig.Encoded = {
       rule: "effect/no-option-unwrap",
       include: CHECKED,
       exclude: ["**/*.adapter.ts", "**/*.conformance.ts", ...TEST_SCAFFOLDING],
-      allow: NULLABLE_EDGES,
     },
     { rule: "effect/no-stringified-cause", include: CHECKED, exclude: TEST_SCAFFOLDING },
-    // Each with its allow list above, which only shrinks.
-    { rule: "effect/no-unknown-json", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_JSON_EDGES },
-    { rule: "effect/no-record-cast", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: RECORD_CAST_EDGES },
+    { rule: "effect/no-unknown-json", include: CHECKED, exclude: TEST_SCAFFOLDING },
+    { rule: "effect/no-record-cast", include: CHECKED, exclude: TEST_SCAFFOLDING },
     // Provider metadata and options stay opaque where no provider is meant.
     {
       rule: "effect/no-provider-namespace",
@@ -444,12 +299,12 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
-    // A foreign code is read by `errorCodeOf`, the framework's by `harnessCodeOf`.
+    // A foreign code is read by `errorCodeOf`.
     { rule: "effect/no-code-property-guard", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/prefer-effect-fn", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
-    // What an effect requires is in its type (the list above aside).
-    { rule: "effect/no-unknown-requirements", include: CHECKED, exclude: TEST_SCAFFOLDING, allow: UNKNOWN_REQUIREMENT_EDGES },
+    // What an effect requires is in its type.
+    { rule: "effect/no-unknown-requirements", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "quality/no-skipped-tests", include: CHECKED },
     { rule: "quality/no-empty-catch", include: CHECKED },
     // Every published entry (the list above).
@@ -466,130 +321,30 @@ const config: typeof GateSuiteConfig.Encoded = {
   boundaries: {
     layers: [
       // The CLI's and the exporters' tests use the evals fixture, a testing module evals does not export.
-      ...testLayer("evals-cli", ["evals-cli", "evals", "core/kernel"], ["effect", "node:", "bun:test", "fast-check"]),
+      ...testLayer("evals-cli", ["evals-cli", "evals", "core-kernel"], ["effect", "node:", "bun:test", "fast-check"]),
       { name: "evals-cli", path: src("evals-cli"), canImport: ["evals"], externals: ["effect", "node:", "tsx/esm/api"] },
       ...testLayer("evals-langfuse", ["evals-langfuse", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langfuse", path: src("evals-langfuse"), canImport: ["evals"], externals: ["effect", "@langfuse/client", "node:"] },
       ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
       // evals reaches core only for the ModelSpend ledger its runs share across their trials.
-      // The eval tests also reach the kernel's Node entry (`sdk/kernel/node`, a devDependency): one runs a run's budget
-      // over a real model provider of the kernel's (ADR 0026). The package's own code never imports the sdk.
-      ...testLayer("evals", ["evals", "core/kernel", "sdk/kernel/node"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
-      { name: "evals", path: src("evals"), canImport: ["core/kernel"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
-      // Core's kernel (`packages/core/src/kernel`, the entry `./kernel`) comes
-      // before core's other layers: one layer for all its roles, which imports
-      // nothing else of core and no runtime module, and which no other core
-      // layer may import. `./kernel` is a restricted subpath of the core entry
-      // layer below, reached only by a layer that names `core/kernel`: the
-      // sdk's kernel.
+      // The eval tests also reach the kernel's Node entry (`@xandreed/sdk/kernel/node`, a devDependency, a restricted
+      // subpath of `sdk-kernel`, the layer of the sdk's root entry): one runs a run's budget over a real model provider
+      // of the kernel's (ADR 0026). The package's own code never imports the sdk.
+      ...testLayer("evals", ["evals", "core-kernel", "sdk-kernel/kernel/node"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
+      { name: "evals", path: src("evals"), canImport: ["core-kernel"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
+      // Core's kernel (`packages/core/src/kernel`), the package's root entry and `./kernel`: one layer for all its
+      // roles, which imports no runtime module. A package that imports `@xandreed/core` or `@xandreed/core/kernel`
+      // names `core-kernel`.
       { name: "core-kernel-tests", path: "packages/core/src/kernel/**/*.test.ts", canImport: ["core-kernel"], externals: ["effect", "bun:test"] },
       { name: "core-kernel", path: "packages/core/src/kernel/**", canImport: [], externals: ["effect"] },
-      // Core's layers, by a file's role rather than its folder; a glob takes no
-      // alternatives, so a layer may need several entries. Its test code comes
-      // first, then from the bottom: the model (entities, and the References
-      // in `loop/`) imports nothing of core; the ports, the model; the logic
-      // (entity functions, `internal/`, the model-text frames), both; `core`
-      // (adapters, the turn's bus, harness, the memory session, prompt
-      // sections), those three; the kits, those four. The entries (`index.ts`,
-      // `conformance/` and `internal/`) are `core` too, what `@xandreed/core`
-      // reaches, and re-export every layer. `./conformance` is open to every
-      // package; `./internal` only to the agent loop, the models plugin and the
-      // sdk, each granted as `core/internal` in its importer's `canImport`. The
-      // model and `core` import `effect` alone; the ports, logic and kits also
-      // `effect/ai`.
-      ...testLayer("core", ["core-model", "core-ports", "core-logic", "core", "core-kits"], ["effect", "effect/ai", "effect/testing", "fast-check", "bun:test"]),
-      { name: "core", path: "packages/core/src/**/index.ts", canImport: ["core-model", "core-ports", "core-logic", "core-kits"], externals: ["effect"], restricted: ["internal", "kernel"] },
-      { name: "core-model", path: "packages/core/src/**/*.entity.ts", canImport: [], externals: ["effect"] },
-      { name: "core-model", path: "packages/core/src/loop/*.ts", canImport: [], externals: ["effect"] },
-      { name: "core-ports", path: "packages/core/src/ports/**", canImport: ["core-model"], externals: ["effect", "effect/ai"] },
-      { name: "core-logic", path: "packages/core/src/**/*.entity.functions.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
-      { name: "core-logic", path: "packages/core/src/internal/**", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
-      { name: "core-logic", path: "packages/core/src/turn/model-text.ts", canImport: ["core-model", "core-ports"], externals: ["effect", "effect/ai"] },
-      { name: "core-kits", path: "packages/core/src/**/*.conformance.ts", canImport: ["core-model", "core-ports", "core-logic", "core"], externals: ["effect", "effect/ai"] },
-      { name: "core", path: "packages/core/src/**", canImport: ["core-model", "core-ports", "core-logic"], externals: ["effect", "effect/ai"] },
       ...testLayer("foundry", ["foundry"], ["effect", "effect/testing", "typescript", "node:", "bun:test"]),
       { name: "foundry", path: src("foundry"), canImport: [], externals: ["effect", "typescript", "node:"] },
-      ...testLayer("plugin-agent-loop", ["plugin-agent-loop", "core", "core/internal"], ["effect", "effect/ai", "bun:test"]),
-      { name: "plugin-agent-loop", path: src("plugin-agent-loop"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
-      // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
-      ...testLayer("plugin-memory-window", ["plugin-memory-window", "core", "core/internal"], ["effect", "bun:test"]),
-      { name: "plugin-memory-window", path: src("plugin-memory-window"), canImport: ["core"], externals: ["effect"] },
-      ...testLayer("plugin-memory-summary", ["plugin-memory-summary", "core"], ["effect", "effect/testing", "bun:test"]),
-      { name: "plugin-memory-summary", path: src("plugin-memory-summary"), canImport: ["core"], externals: ["effect"] },
-      ...testLayer("plugin-memory-digest", ["plugin-memory-digest", "core"], ["effect", "effect/testing", "bun:test"]),
-      { name: "plugin-memory-digest", path: src("plugin-memory-digest"), canImport: ["core"], externals: ["effect"] },
-      ...testLayer("plugin-memory", ["plugin-memory", "core", "sdk", "plugin-agent-loop", "plugin-knowledge-postgres", "plugin-memory-window", "plugin-sessions", "plugin-tool-discovery"], ["effect", "effect/ai", "effect/testing", "bun:test"]),
-      { name: "plugin-memory", path: src("plugin-memory"), canImport: ["core"], externals: ["effect", "effect/ai"] },
-      ...testLayer("plugin-rag", ["plugin-rag", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-sessions", "plugin-tool-discovery"], ["effect", "effect/ai", "effect/testing", "bun:test"]),
-      { name: "plugin-rag", path: src("plugin-rag"), canImport: ["core"], externals: ["effect", "effect/ai"] },
-      ...testLayer("plugin-knowledge-postgres", ["plugin-knowledge-postgres", "core"], ["effect", "postgres", "bun:test"]),
-      { name: "plugin-knowledge-postgres", path: src("plugin-knowledge-postgres"), canImport: ["core"], externals: ["effect", "postgres"] },
-      ...testLayer("plugin-tool-discovery", ["plugin-tool-discovery", "core", "core/internal"], ["effect", "effect/ai", "bun:test"]),
-      { name: "plugin-tool-discovery", path: src("plugin-tool-discovery"), canImport: ["core", "core/internal"], externals: ["effect", "effect/ai"] },
-      // The package that imports the provider packages (`@effect/ai-*`; the sdk kernel's Anthropic provider imports
-      // `@effect/ai-anthropic` too, ADR 0026). It
-      // tells Bun by `process.versions` and reaches its fetch and WebSocket as
-      // globals, so it imports no `bun` module.
-      ...testLayer(
-        "plugin-models",
-        ["plugin-models", "core", "core/internal"],
-        ["effect", "effect/ai", "effect/http", "effect/testing", "@effect/ai-openai", "node:", "fast-check", "bun:test"],
-      ),
-      {
-        name: "plugin-models",
-        path: src("plugin-models"),
-        canImport: ["core", "core/internal"],
-        externals: ["effect", "effect/ai", "effect/http", "effect/socket", "@effect/ai-anthropic", "@effect/ai-openai", "undici", "ws", "node:"],
-      },
-      // The one package that imports Bun (`bun:sqlite`) as it loads, and so the
-      // one that does not load on Node (the kernel's SQLite journal imports it
-      // only when it is built on Bun).
-      ...testLayer("plugin-session-files", ["plugin-session-files", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:test", "fast-check"]),
-      { name: "plugin-session-files", path: src("plugin-session-files"), canImport: ["core"], externals: ["effect", "node:"] },
-      ...testLayer("plugin-session-sqlite", ["plugin-session-sqlite", "core", "plugin-sessions"], ["effect", "effect/testing", "node:", "bun:sqlite", "bun:test"]),
-      { name: "plugin-session-sqlite", path: src("plugin-session-sqlite"), canImport: ["core"], externals: ["effect", "node:", "bun:sqlite"] },
-      ...testLayer("plugin-sessions", ["plugin-sessions", "core"], ["effect", "effect/testing", "bun:test"]),
-      { name: "plugin-sessions", path: src("plugin-sessions"), canImport: ["core"], externals: ["effect", "node:"] },
-      ...testLayer("plugin-tasks", ["plugin-tasks", "core", "plugin-sessions"], ["effect", "effect/testing", "bun:test"]),
-      { name: "plugin-tasks", path: src("plugin-tasks"), canImport: ["core"], externals: ["effect", "effect/ai"] },
-      // The plugin test layers that import upward, this one and
-      // plugin-telemetry-tests below (sdk, the plugins an agent needs and, here,
-      // evals): the skills directory, the workspace tools and the telemetry
-      // plugin are tested end to end, through Agent.define. Test files are not
-      // built or packed, but if sdk ever lists one of these plugins as a
-      // devDependency, move its tests to sdk-tests rather than make the two
-      // devDependencies a cycle.
-      ...testLayer(
-        "plugin-workspace",
-        [
-          "plugin-workspace",
-          "core",
-          "runtime",
-          "sdk",
-          "evals",
-          "plugin-agent-loop",
-          "plugin-memory-window",
-          "plugin-sessions",
-          "plugin-tool-discovery",
-          "core/internal",
-        ],
-        ["effect", "effect/ai", "node:", "fast-check", "bun:test"],
-      ),
-      { name: "plugin-workspace", path: src("plugin-workspace"), canImport: ["core"], externals: ["effect", "effect/ai", "node:"] },
-      ...testLayer(
-        "plugin-telemetry",
-        ["plugin-telemetry", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-tool-discovery", "plugin-sessions"],
-        ["effect", "effect/ai", "effect/http", "bun:test"],
-      ),
-      { name: "plugin-telemetry", path: src("plugin-telemetry"), canImport: ["core"], externals: ["effect", "effect/http", "effect/observability"] },
-      ...testLayer("runtime", ["runtime", "core"], ["effect", "bun:test"]),
-      { name: "runtime", path: src("runtime"), canImport: ["core"], externals: ["effect", "node:"] },
-      // The sdk's kernel (`packages/sdk/src/kernel`, the entry `./kernel`)
-      // comes before the sdk's other layers. It imports core's kernel and
-      // nothing else of the workspace: not core's root, not the runtime, not
-      // the rest of the sdk. `./kernel` is a restricted subpath of the sdk's
-      // layer below, which no layer is granted. Inside it the import graph is
+      // The sdk's kernel (`packages/sdk/src/kernel`, the package's root entry
+      // and `./kernel`; its Node entry `./kernel/node`, a restricted subpath of
+      // `sdk-kernel`, so the browser entry cannot reach it by the package's
+      // name). It imports core's kernel and nothing else of the workspace.
+      // Inside it the import graph is
       // the one ADR 0002 records: the contracts (`contracts/**`) import core's
       // kernel and one another, never a plugin; each plugin folder is a layer
       // of its own that imports the contracts and core's kernel, never another
@@ -612,85 +367,55 @@ const config: typeof GateSuiteConfig.Encoded = {
       // `canImport`, so the browser entry cannot import one. `bun:sqlite` is imported only when the SQLite journal
       // is built on Bun (`node:sqlite` on Node), so the entry loads on both. A new port's folder gets its layer
       // here, its name in the entry's `canImport` and in `SDK_KERNEL_TESTS`.
-      { name: "sdk-kernel-node-writer", path: "packages/sdk/src/kernel/node/writer/**", canImport: ["core/kernel"], externals: ["effect", "node:"] },
-      { name: "sdk-kernel-node-journal-directory", path: "packages/sdk/src/kernel/node/journal-directory/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:"] },
-      { name: "sdk-kernel-node-journal-sqlite", path: "packages/sdk/src/kernel/node/journal-sqlite/**", canImport: ["sdk-kernel-node-writer", "core/kernel"], externals: ["effect", "node:", "bun:sqlite"] },
+      { name: "sdk-kernel-node-writer", path: "packages/sdk/src/kernel/node/writer/**", canImport: ["core-kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-journal-directory", path: "packages/sdk/src/kernel/node/journal-directory/**", canImport: ["sdk-kernel-node-writer", "core-kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-journal-sqlite", path: "packages/sdk/src/kernel/node/journal-sqlite/**", canImport: ["sdk-kernel-node-writer", "core-kernel"], externals: ["effect", "node:", "bun:sqlite"] },
       // The model providers (ADR 0026): the spend charge both share (`model-spend/`, as the stores share the lock), and
-      // a folder per provider. The Anthropic one is the only layer outside the models plugin that names a provider
+      // a folder per provider. The Anthropic one is the only layer that names a provider
       // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
-      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
-      { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
-      { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
+      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core-kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core-kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
       // An embedder over the OpenAI-compatible `/embeddings` wire (ADR 0032): the contract it implements, and the charge the
       // model providers share, since its requests charge the ledger as theirs do.
-      { name: "sdk-kernel-node-embedder-openai-compatible", path: "packages/sdk/src/kernel/node/embedder-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-embedder-openai-compatible", path: "packages/sdk/src/kernel/node/embedder-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       // The workspace's ports (ADR 0028): a shell over `node:child_process`, and files in a folder of the disk. Each imports the contract it implements
       // from `sdk-kernel-contracts` and nothing of another port's folder; it holds no store, so it takes no lock.
-      { name: "sdk-kernel-node-shell-process", path: "packages/sdk/src/kernel/node/shell-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-shell-process", path: "packages/sdk/src/kernel/node/shell-process/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "node:"] },
       // A media store in a folder (ADR 0034): the contract it implements, nothing of another port's folder, and no lock,
       // since a blob never changes once kept.
       { name: "sdk-kernel-node-media-directory", path: "packages/sdk/src/kernel/node/media-directory/**", canImport: ["sdk-kernel-contracts"], externals: ["effect", "node:"] },
-      { name: "sdk-kernel-node-files-disk", path: "packages/sdk/src/kernel/node/files-disk/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
+      { name: "sdk-kernel-node-files-disk", path: "packages/sdk/src/kernel/node/files-disk/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "node:"] },
       // The export of a host's traces and metrics over OTLP/HTTP (ADR 0030): Effect's own exporters behind a span policy,
       // a layer around the host's program. It imports nothing of the kernel: the spans and metrics it sends are the
       // program's, whoever made them.
       { name: "sdk-kernel-node-telemetry-otlp", path: "packages/sdk/src/kernel/node/telemetry-otlp/**", canImport: [], externals: ["effect", "effect/ai", "effect/http", "effect/observability"] },
       { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-embedder-openai-compatible", "sdk-kernel-node-media-directory", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk", "sdk-kernel-node-telemetry-otlp"], externals: [] },
-      { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-journal-web-storage", path: "packages/sdk/src/kernel/plugins/journal-web-storage/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-model-scripted", path: "packages/sdk/src/kernel/plugins/model-scripted/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-memory-flat", path: "packages/sdk/src/kernel/plugins/memory-flat/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-memory-summary", path: "packages/sdk/src/kernel/plugins/memory-summary/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-memory-window", path: "packages/sdk/src/kernel/plugins/memory-window/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-session", path: "packages/sdk/src/kernel/plugins/session/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-approval-auto", path: "packages/sdk/src/kernel/plugins/approval-auto/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-facts", path: "packages/sdk/src/kernel/plugins/facts/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-skills", path: "packages/sdk/src/kernel/plugins/skills/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-tool-read-result", path: "packages/sdk/src/kernel/plugins/tool-read-result/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-files-in-memory", path: "packages/sdk/src/kernel/plugins/files-in-memory/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-tool-files", path: "packages/sdk/src/kernel/plugins/tool-files/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-tasks", path: "packages/sdk/src/kernel/plugins/tasks/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-embedder-recorded", path: "packages/sdk/src/kernel/plugins/embedder-recorded/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-vectors-in-memory", path: "packages/sdk/src/kernel/plugins/vectors-in-memory/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-journal-web-storage", path: "packages/sdk/src/kernel/plugins/journal-web-storage/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-model-scripted", path: "packages/sdk/src/kernel/plugins/model-scripted/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-memory-flat", path: "packages/sdk/src/kernel/plugins/memory-flat/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-memory-summary", path: "packages/sdk/src/kernel/plugins/memory-summary/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-memory-window", path: "packages/sdk/src/kernel/plugins/memory-window/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-session", path: "packages/sdk/src/kernel/plugins/session/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-approval-auto", path: "packages/sdk/src/kernel/plugins/approval-auto/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-facts", path: "packages/sdk/src/kernel/plugins/facts/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-skills", path: "packages/sdk/src/kernel/plugins/skills/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-tool-read-result", path: "packages/sdk/src/kernel/plugins/tool-read-result/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-files-in-memory", path: "packages/sdk/src/kernel/plugins/files-in-memory/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-tool-files", path: "packages/sdk/src/kernel/plugins/tool-files/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-tasks", path: "packages/sdk/src/kernel/plugins/tasks/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-embedder-recorded", path: "packages/sdk/src/kernel/plugins/embedder-recorded/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-vectors-in-memory", path: "packages/sdk/src/kernel/plugins/vectors-in-memory/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-media-in-memory", path: "packages/sdk/src/kernel/plugins/media-in-memory/**", canImport: ["sdk-kernel-contracts"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-knowledge", path: "packages/sdk/src/kernel/plugins/knowledge/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-shell-scripted", path: "packages/sdk/src/kernel/plugins/shell-scripted/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-tool-shell", path: "packages/sdk/src/kernel/plugins/tool-shell/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-search-files", path: "packages/sdk/src/kernel/plugins/search-files/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-tool-search", path: "packages/sdk/src/kernel/plugins/tool-search/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-media-in-memory", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [] },
-      // The sdk tests may import the sdk by its package name and plugin-render: the
-      // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
-      // as written, so they import only what a consumer can.
-      ...testLayer(
-        "sdk",
-        [
-          "sdk",
-          "core",
-          "core/internal",
-          "runtime",
-          "plugin-session-sqlite",
-          "plugin-session-files",
-          "plugin-agent-loop",
-          "plugin-memory-window",
-          "plugin-memory-summary",
-          "plugin-memory-digest",
-          "plugin-tool-discovery",
-          "plugin-sessions",
-          "plugin-tasks",
-          "plugin-models",
-          "plugin-render",
-        ],
-        ["effect", "effect/ai", "effect/testing", "node:", "bun:test"],
-      ),
-      ...testLayer("process-host", ["process-host", "core", "sdk", "plugin-agent-loop", "plugin-memory-window", "plugin-session-files", "plugin-sessions", "plugin-tasks", "plugin-tool-discovery"], ["effect", "effect/ai", "fast-check", "node:", "bun:test"]),
-      { name: "process-host", path: src("process-host"), canImport: ["core"], externals: ["effect", "node:"] },
-      { name: "sdk", path: src("sdk"), canImport: ["core", "core/internal", "runtime"], externals: ["effect", "effect/ai"], restricted: ["kernel/node", "kernel"] },
-      // The tests read a tool's parameters as the model sees them (`toolParametersSchema`).
-      ...testLayer("plugin-render", ["plugin-render", "core", "core/internal"], ["effect", "node:", "bun:test"]),
-      { name: "plugin-render", path: src("plugin-render"), canImport: ["core"], externals: ["effect", "effect/ai", "node:"] },
+      { name: "sdk-kernel-plugin-knowledge", path: "packages/sdk/src/kernel/plugins/knowledge/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-shell-scripted", path: "packages/sdk/src/kernel/plugins/shell-scripted/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-tool-shell", path: "packages/sdk/src/kernel/plugins/tool-shell/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel-plugin-search-files", path: "packages/sdk/src/kernel/plugins/search-files/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
+      { name: "sdk-kernel-plugin-tool-search", path: "packages/sdk/src/kernel/plugins/tool-search/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-media-in-memory", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [], restricted: ["kernel/node"] },
     ],
   },
 }

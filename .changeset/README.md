@@ -2,7 +2,7 @@
 
 Run `bun run changeset` for a package change and commit the generated Markdown
 file with the change. Choose a patch, minor, or major bump and describe the
-resulting behavior. The 24 published framework packages form one fixed group;
+resulting behavior. The 6 published framework packages form one fixed group;
 changing one versions all of them together. Foundry and the website are not
 released packages.
 

@@ -1,6 +1,0 @@
-const makeCompatLanguageModel
-const promptWithImageLabels
-const toChatMessages
-interface ChatMessageOptions
-interface CompatConfig
-interface ModelSpendGuard
