@@ -22,6 +22,9 @@ export const TOKEN_KIND_ATTRIBUTE = "efferent.token.kind"
 /** The tool a call ran, `unknown` when the toolkit has no tool of the name the model wrote. */
 export const TOOL_ATTRIBUTE = "efferent.tool"
 
+/** The name the model wrote for a tool the toolkit has not: its text, which the export leaves out unless content is on. */
+export const ASKED_ATTRIBUTE = "efferent.tool.asked"
+
 /** The name a metric gives a model or a tool it cannot name. */
 export const UNKNOWN = "unknown"
 

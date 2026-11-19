@@ -5,7 +5,7 @@ import type { JournalStorageError, ListenerFailed, OpenSession, SessionRefused, 
 import { CurrentTurn } from "./current-turn.port.js"
 import { runningTurn } from "./running-turn.entity.functions.js"
 import { SentWhole } from "./sent-whole.port.js"
-import { OUTCOME_ATTRIBUTE } from "./telemetry.entity.js"
+import { ASKED_ATTRIBUTE, OUTCOME_ATTRIBUTE, UNKNOWN } from "./telemetry.entity.js"
 import { countTool } from "./telemetry.entity.functions.js"
 
 /**
@@ -77,7 +77,8 @@ const handled = <Tools extends Record<string, Tool.Any>>(toolkit: Toolkit.WithHa
  * tool annotated `SentWhole` has its result stored as `whole`, a failed one
  * too. It fails only when the result cannot be stored.
  *
- * The call is a span, `tool.call`, opened with the tool's name and the
+ * The call is a span, `tool.call`, opened with the tool's name (`unknown`
+ * for a name the toolkit has not, that name apart as `efferent.tool.asked`) and the
  * call's id and closed with whether its result is a failure
  * (`efferent.outcome`); a tool's own spans are under it. The parameters and
  * the result are not put on it: Effect AI's toolkit puts the parameters on
@@ -93,6 +94,8 @@ export const callTool = <Tools extends Record<string, Tool.Any>>(
   session: OpenSession,
 ): Effect.Effect<StoredEvent, JournalStorageError | ListenerFailed | SessionRefused, ToolNeeds<Tools>> => {
   const options = { whole: sentWhole(toolkit.tools, call.name) }
+  // A name the toolkit has is the host's; one it has not is the model's text, kept apart where the export can leave it out.
+  const known = Object.hasOwn(toolkit.tools, call.name)
   const ran = (result: unknown, failed: boolean): Ran => ({ draft: toolResult(call, result, failed, options), failed })
   return handled<Tools>(toolkit, call).pipe(
     Effect.flatMap(Stream.runLast),
@@ -105,12 +108,17 @@ export const callTool = <Tools extends Record<string, Tool.Any>>(
     Effect.provideService(CurrentTurn, runningTurn(session)),
     Effect.tap(({ failed }) => Effect.andThen(
       Effect.annotateCurrentSpan(OUTCOME_ATTRIBUTE, failed ? "failed" : "succeeded"),
-      countTool(Object.hasOwn(toolkit.tools, call.name) ? Option.some(call.name) : Option.none(), failed),
+      countTool(known ? Option.some(call.name) : Option.none(), failed),
     )),
     // A result that is not stored answers nothing: the next context would send the call without it.
     Effect.flatMap(({ draft }) => session.append(draft)),
     Effect.withSpan("tool.call", {
-      attributes: { "gen_ai.operation.name": "execute_tool", "gen_ai.tool.name": call.name.slice(0, NAME_SHOWN), "gen_ai.tool.call.id": call.id.slice(0, NAME_SHOWN) },
+      attributes: {
+        "gen_ai.operation.name": "execute_tool",
+        "gen_ai.tool.name": known ? call.name : UNKNOWN,
+        "gen_ai.tool.call.id": call.id.slice(0, NAME_SHOWN),
+        ...(known ? {} : { [ASKED_ATTRIBUTE]: call.name.slice(0, NAME_SHOWN) }),
+      },
     }),
   )
 }

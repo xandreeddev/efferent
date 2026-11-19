@@ -1,8 +1,9 @@
 import { describe, expect, test } from "bun:test"
-import { ConfigProvider, Effect, Layer, Metric, Option } from "effect"
+import { ConfigProvider, Effect, Layer, Metric, Option, Schema } from "effect"
 import type { Tracer } from "effect"
 import { HttpClient, HttpClientResponse } from "effect/http"
 import { flushTelemetry, otlpTelemetryFromEnvOver, otlpTelemetryOver } from "./otlp-telemetry.adapter.js"
+import { WITHHELD } from "./span-policy.adapter.js"
 import type { OtlpSpanPolicy } from "./otlp-telemetry.entity.js"
 
 /* ── a recording HttpClient: every OTLP/JSON trace post, decoded ── */
@@ -147,3 +148,38 @@ describe("otlpTelemetryFromEnvOver with a span policy", () => {
     expect(named(spans, "leaf").parentSpanId).toBe(named(spans, "middle").spanId)
   })
 })
+
+describe("otlpTelemetryOver with content off", () => {
+  /** A span that logs and then fails with words of its own, exported with content off or on: the bodies posted. */
+  const failing = (content: boolean) => Effect.runPromise(Effect.gen(function* () {
+    const bodies: Array<string> = []
+    yield* Effect.gen(function* () {
+      yield* Effect.logWarning("the request said secret words")
+      return yield* Effect.fail(new Refused({ message: "refused: the request said secret words" }))
+    }).pipe(
+      Effect.withSpan("failing"),
+      Effect.exit,
+      Effect.andThen(flushTelemetry),
+      Effect.provide(otlpTelemetryOver({ tracesUrl: "http://collector.test/v1/traces", protocol: "http/json", exportInterval: "1 hour", content })
+        .pipe(Layer.provide(Layer.succeed(HttpClient.HttpClient, recordingClient(bodies))))),
+      Effect.provideService(Metric.MetricRegistry, new Map()),
+    )
+    return bodies.join("\n")
+  }))
+
+  test("a failed span is sent with its failure's type and fixed words, and a log as `log` with its level: none of their words", async () => {
+    const off = await failing(false)
+    expect(off).not.toContain("secret words")
+    const span = named(spansOf([off]), "failing")
+    expect(span.events?.map((event) => [event.name, attributesOf(event.attributes)])).toEqual([
+      ["log", expect.objectContaining({ "effect.logLevel": "WARN" })],
+      ["exception", { "exception.type": "Refused", "exception.message": WITHHELD, "exception.stacktrace": `Refused: ${WITHHELD}` }],
+    ])
+    expect((JSON.parse(off) as { readonly resourceSpans: ReadonlyArray<{ readonly scopeSpans: ReadonlyArray<{ readonly spans: ReadonlyArray<{ readonly status: { readonly message?: string } }> }> }> })
+      .resourceSpans[0]!.scopeSpans[0]!.spans[0]!.status.message).toBe(WITHHELD)
+    // With content on, both say what they said.
+    expect((await failing(true)).match(/secret words/g)?.length).toBeGreaterThanOrEqual(2)
+  })
+})
+
+class Refused extends Schema.TaggedError<Refused>()("Refused", { message: Schema.String }) {}

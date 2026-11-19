@@ -138,11 +138,19 @@ export const DEFAULT_SERVICE_NAME = "efferent"
 
 /**
  * The span attributes that hold what was said, which the export leaves out unless `content` is on: Effect AI's
- * toolkit's `parameters` (a tool call's, on the span current where the call is handled: `tool.call`), and
- * OpenTelemetry's generative AI content attributes, a prompt, an answer, a tool's arguments and result.
+ * toolkit's `parameters` and `tool` (a tool call's, on the span current where the call is handled: `tool.call`; the
+ * name is the model's text), the name of a tool the toolkit has not (`efferent.tool.asked`), a failed attempt's words
+ * (`efferent.reason`), an exception's message and stack and a log's cause set as attributes, and OpenTelemetry's
+ * generative AI content attributes, a prompt, an answer, a tool's arguments and result.
  */
 export const CONTENT_ATTRIBUTES: ReadonlyArray<string> = [
   "parameters",
+  "tool",
+  "efferent.tool.asked",
+  "efferent.reason",
+  "exception.message",
+  "exception.stacktrace",
+  "effect.cause",
   "gen_ai.system_instructions",
   "gen_ai.input.messages",
   "gen_ai.output.messages",

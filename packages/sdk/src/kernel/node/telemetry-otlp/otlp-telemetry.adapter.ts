@@ -39,7 +39,7 @@ const exportLayer = (target: OtlpExport, spans: Option.Option<OtlpSpanPolicy>, c
       shutdownTimeout,
     }
     return OtlpTracer.make(options).pipe(
-      Effect.map(spanPolicyTracer(exportPolicyOf(spans, content))),
+      Effect.map(spanPolicyTracer(exportPolicyOf(spans, content), { withhold: !content })),
       Layer.effect(Tracer.Tracer),
       Layer.provideMerge(OtlpExporter.layerFlusher),
     ).pipe(Layer.provide(serialization(signal.protocol)))
