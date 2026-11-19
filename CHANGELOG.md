@@ -13,27 +13,36 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
   calls without writing a span (ADR 0030). `Sessions.turn` is the span
   `session.turn` (the session, the turn's number, how it ended), `callTool` is
-  `tool.call` (the tool, the call's id, whether its result is a
-  failure), and a model call keeps Effect AI's own `LanguageModel.streamText`
-  span; `planned` marks each attempt on the span it runs under
-  (`model.attempt`). `modelAnswer` counts `efferent.model.calls` by model
-  and outcome and `efferent.model.tokens` by kind, `callTool` counts
-  `efferent.tool.calls` by tool and outcome; no metric names a session or a turn.
+  `tool.call` (the tool, the call's id, whether its result is a failure), and
+  a model call keeps Effect AI's own `LanguageModel.streamText` span;
+  `planned` marks each attempt on the span it runs under (`model.attempt`).
+  A turn the inbox or a background task runs on a fiber of its own is a
+  trace of its own. `callTool` counts `efferent.tool.calls` by tool and
+  outcome. Every kernel span is named `<part>.<op>` with no `kernel.` prefix
+  (`kernel.session.begin` is now `session.begin`, `kernel.flat.context`
+  `flat_memory.context`, `kernel.approve` `approval.approve`,
+  `knowledge.curateAgain` `knowledge.curate_again`; ADR 0030 lists them).
 - `@xandreed/sdk/kernel/node`: `openAiCompatibleModel` gives each call's span
   the `gen_ai.*` attributes the Anthropic provider sets (the provider, the
   model asked and the one that answered, the output cap, why it stopped, the
   usage with the cache's shares), its new `provider` option naming
-  `gen_ai.provider.name` (`openai` by default). The spend charge counts
-  `efferent.model.cost`, what the ledger settled each call at, and nothing for a
-  call whose cost is not known. `otlpTelemetry`, `otlpTelemetryOver`,
-  `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry`
-  export the program's traces and metrics over OTLP/HTTP, from options or the
-  standard `OTEL_*` variables, with a span policy (`OtlpSpanPolicy`) that drops
-  spans and redacts attributes: the telemetry plugin's export, ported with its
-  tests. What was said (a prompt, an answer, a tool call's parameters) is left
-  out of the spans' attributes unless the host passes `content: true`, which
-  also writes each model call's prompt and answer on its span; a failed span's
-  error is sent as it is. LangSmith takes the same export at its OTLP endpoint;
+  `gen_ai.provider.name` (`openai` by default). The spend charge counts every
+  call a provider sends, a curator's and a summarizer's too:
+  `efferent.model.calls` by model and outcome (each attempt one),
+  `efferent.model.tokens` by kind, and `efferent.model.cost`, what the ledger
+  settled each call at, with `efferent.cost.basis` (`billed`, `usage` at the
+  host's price, or `held`, the worst case of a call that reported nothing),
+  and nothing for a call whose cost is not known; no metric names a session
+  or a turn. `otlpTelemetry`, `otlpTelemetryOver`, `otlpTelemetryFromEnv`,
+  `otlpTelemetryFromEnvOver` and `flushTelemetry` export the program's traces
+  and metrics over OTLP/HTTP, from options or the standard `OTEL_*`
+  variables, with a span policy (`OtlpSpanPolicy`) that drops spans and
+  redacts attributes: the telemetry plugin's export, ported with its tests.
+  What was said (a prompt, an answer, a tool call's parameters, a failed
+  attempt's reason, a failure's words, a log's text) is not sent unless the
+  host passes `content: true`, which also writes each model call's prompt
+  and answer on its span; with it off, a failed span is sent with its
+  error's type alone. LangSmith takes the same export at its OTLP endpoint;
   the plugin's LangSmith mapping is not ported.
 
 - Docs site: lesson 18 of the learn track, now "A memory that keeps itself",

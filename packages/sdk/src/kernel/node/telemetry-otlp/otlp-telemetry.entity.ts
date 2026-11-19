@@ -103,8 +103,10 @@ export interface OtlpTelemetryOptions {
  *   attribute is set (the span already holding it), so a value it leaves
  *   out never reaches the exporter. Every attribute as it is by default.
  *
- * Span and event names, links, and the status and `exception` events a
- * failed span gets from its exit are sent as they are.
+ * Span names and links are sent as they are. With the export's `content`
+ * off, a failed span's status and `exception` events name the failure's
+ * type alone, never its words, and a log written on a span is sent as
+ * `log` with its level; with it on, both are sent as they are.
  *
  * @public
  */

@@ -2475,11 +2475,15 @@ it ended); a model call is Effect AI's own span, `LanguageModel.streamText`,
 with the `gen_ai.*` attributes OpenTelemetry names (the provider, the model,
 the usage), one per attempt of a plan, which marks each attempt on the span
 it runs under; `callTool` is `tool.call` (the tool, the call's id,
-whether its result is a failure), a tool's own spans under it. `modelAnswer`
-counts each call by model and outcome with its tokens by kind, `callTool`
-each call by tool and outcome, and the Node entry's providers count what the
-ledger settled each call at: the cost has no other source, and a call whose
-cost is not known counts none. No metric names a session or a turn.
+whether its result is a failure), a tool's own spans under it. A turn the
+inbox or a background task runs on a fiber of its own is a trace of its own.
+The Node entry's providers count every call they send, a curator's and a
+summarizer's too, in the charge: `efferent.model.calls` by model and outcome,
+`efferent.model.tokens` by kind, and `efferent.model.cost`, what the ledger
+settled each call at, the one source of a cost, with its basis (`billed`,
+`usage` at the price, or `held`, an estimate for a call that reported
+nothing); a call whose cost is not known counts none. `callTool` counts
+`efferent.tool.calls` by tool and outcome. No metric names a session or a turn.
 
 The Node entry exports them over OTLP/HTTP, as a layer around the host's
 program: the `Tracer` and the metric registry are the program's, which no
@@ -2501,11 +2505,13 @@ const observed = <A, E, R>(program: Effect.Effect<A, E, R>) => program.pipe(
 )
 ```
 
-What was said stays out of the spans' attributes unless the host turns it on
-with `content: true`: off, the export leaves out a prompt, an answer and a
-tool call's `parameters` (which Effect AI's toolkit puts on the span it is
-handled under) before anything is sent; on, it also writes each model call's
-prompt and answer on its span. A failed span's error is sent as it is. A span policy (`spans`) drops spans, their children
+What was said stays in the process unless the host turns it on with
+`content: true`. Off, the export leaves out a prompt, an answer, a tool
+call's `parameters` (which Effect AI's toolkit puts on the span it is handled
+under) and a failed attempt's reason, sends a failed span's error as its type
+alone, never its words (a refused request can echo the prompt back), and a log
+as `log` with its level; on, it keeps all of it and also writes each model
+call's prompt and answer on its span. A span policy (`spans`) drops spans, their children
 kept under the nearest span kept, and redacts or drops attributes as they are
 set. LangSmith takes the same export at its OTLP endpoint; ADR 0030 shows the
 options.

@@ -937,30 +937,41 @@ the package roots.
   files, search and shell kits over `diskFiles` and `processShell` on Node
   and on Bun.
   Run: `bun test packages/sdk/src/kernel/node`.
-- Telemetry (ADR 0030). The kernel's spans and metrics are Effect's own: `Sessions.turn` is `session.turn`
-  (`efferent.session.id` and `gen_ai.conversation.id` as it opens, `efferent.turn` once it opened,
-  `efferent.outcome` at its end; `Sessions.open` opens none), `callTool` is `tool.call` (`gen_ai.operation.name`
-  `execute_tool`, `gen_ai.tool.name`, `gen_ai.tool.call.id`, `efferent.outcome`), and a model call is Effect AI's
-  own `LanguageModel.<method>` span, which `modelAnswer` never doubles; `planned` marks each attempt as the span
-  event `model.attempt` on the span it runs under. Both providers set the same `gen_ai.*` keys on the call's
-  span (`openAiCompatibleModel` by hand, before the request and as each part arrives, `provider` naming
-  `gen_ai.provider.name`). The metrics (`contracts/turn/telemetry.entity.ts`): `efferent.model.calls` and
-  `efferent.model.tokens` (kinds `input`, `cache_read`, `output`, apart) counted by `modelAnswer`, `efferent.tool.calls`
-  by `callTool`, and `efferent.model.cost` by the charge once `settle` took a held call's cost or an uncapped call's
-  bill (`metredCostOf`), never a 0 for an unknown cost; none names a session or a turn. The export
-  (`telemetry-otlp/`, `sdk-kernel-node-telemetry-otlp`, which imports Effect alone) is the old telemetry plugin's
-  OTLP files moved with their tests: `otlpTelemetry`, `otlpTelemetryOver` (the host's `HttpClient`),
-  `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry`, a layer around the program, Effect's OTLP
-  tracer always behind the policy (`exportPolicyOf`): with `content` off, the attributes of `CONTENT_ATTRIBUTES`
-  (Effect AI's toolkit's `parameters` among them) are left out before the host's `spans` policy is asked; on, the
-  layer also gives Effect AI's `CurrentSpanTransformer` (`contentOnSpan`), which writes a call's prompt and answer
-  in OpenTelemetry's message shape (`content.entity.functions.ts`). No variable turns content on. Tests:
+- Telemetry (ADR 0030). The kernel's spans and metrics are Effect's own, named by one rule: a span is `<part>.<op>`
+  in snake_case with no `kernel.` prefix, a metric and every attribute `efferent.*` (or OpenTelemetry's `gen_ai.*`).
+  `Sessions.turn` is `session.turn` (`efferent.session.id` and `gen_ai.conversation.id` as it opens, `efferent.turn`
+  once it opened, `efferent.outcome` at its end; `Sessions.open` opens none), `callTool` is `tool.call`
+  (`gen_ai.operation.name` `execute_tool`, `gen_ai.tool.name`, `unknown` for a name the toolkit has not, that name
+  apart as `efferent.tool.asked`, `gen_ai.tool.call.id`, `efferent.outcome`), and a model call is Effect AI's own
+  `LanguageModel.<method>` span, which `modelAnswer` never doubles; `planned` marks each attempt as the span event
+  `model.attempt` on the span it runs under. Both providers set the same `gen_ai.*` keys on the call's span
+  (`openAiCompatibleModel` by hand, before the request and as each part arrives, `provider` naming
+  `gen_ai.provider.name`). The inbox's worker and announcements and a task's turn are forked with no parent span
+  (`ownTrace`, `contracts/turn/telemetry.entity.functions.ts`), each turn a root `session.turn`. The attribute keys
+  are `contracts/turn/telemetry.entity.ts`'s, with `efferent.tool.calls`, which `callTool` counts. The model calls'
+  metrics are the charge's (`model-spend/`, which may import that contract): as it closes a call's hold it counts
+  `efferent.model.calls` (by the model asked and `CallOutcome`, one per attempt sent; nothing held, nothing counted)
+  and `efferent.model.tokens` (`tokensOf`, apart as `costOf` prices them), and once `settle` took it
+  `efferent.model.cost` with `efferent.cost.basis` (`metredCostOf`: `billed`, `usage` or `held`), never a 0 for an
+  unknown cost; `modelAnswer` counts nothing; none names a session or a turn. The export (`telemetry-otlp/`,
+  `sdk-kernel-node-telemetry-otlp`, which imports Effect alone) is the old telemetry plugin's OTLP files moved with
+  their tests: `otlpTelemetry`, `otlpTelemetryOver` (the host's `HttpClient`), `otlpTelemetryFromEnv`,
+  `otlpTelemetryFromEnvOver` and `flushTelemetry`, a layer around the program, Effect's OTLP tracer always behind the
+  policy (`exportPolicyOf`, `spanPolicyTracer`): with `content` off, the attributes of `CONTENT_ATTRIBUTES` are left
+  out before the host's `spans` policy is asked, a span's exit reaches the exporter with each failure as its type
+  alone (`withheldExit`, `WITHHELD`) and a log's event as `log` with its level; on, all of it is kept and the layer
+  also gives Effect AI's `CurrentSpanTransformer` (`contentOnSpan`), which writes a call's prompt and answer in
+  OpenTelemetry's message shape (`content.entity.functions.ts`). No variable turns content on. Tests:
   `telemetry.test.ts` (a host's turn over a local model server and a local collector: the span tree, the attributes,
-  the metrics, content off and on, a host's policy, an export that fails, the journal and requests unchanged, a
-  curation's trace, the region `docs/kernel.md` quotes), `telemetry-otlp/*.test.ts` (the moved tests, the `OTEL_*`
-  resolution as a table, the content rule, the content's shape), each provider's span ending with its stream
-  (whole, cut, interrupted), `planned`'s attempt events and `metredCostOf`'s table. `scripts/kernel-consumer.fixture.mjs`
-  exports one host turn with a tool call to a local collector on Node and on Bun.
+  the metrics with the cost's basis, content off and on, a host's policy, an export that fails, the journal and
+  requests unchanged, a curation's trace and counts over a provider, the region `docs/kernel.md` quotes),
+  `telemetry-content.test.ts` (a marker in every place a conversation's words come from, a turn under a plan over a
+  disk and a shell, well and refused with the request echoed: nothing posted holds one with content off, everything
+  with it on), `fibers-trace.test.ts` (the inbox's turns and a task's, each a root), `telemetry-otlp/*.test.ts` (the
+  moved tests, the `OTEL_*` resolution as a table, the content rule, a withheld failure and log, the content's
+  shape), each provider's span ending with its stream (whole, cut, interrupted) and its counts with each cost basis,
+  `planned`'s attempt events and the charge's tables (`metredCostOf`, `callOutcomeOf`, `tokensOf`).
+  `scripts/kernel-consumer.fixture.mjs` exports one host turn with a tool call to a local collector on Node and on Bun.
 
 ## Public surface
 
