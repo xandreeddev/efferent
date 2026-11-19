@@ -1,0 +1,1265 @@
+{
+  "format": 2,
+  "version": "0.23.0",
+  "description": "Kernel journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions of its journal format must read them.",
+  "journalFormat": 2,
+  "sessions": [
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000000001",
+        "owner": "fixture",
+        "createdAt": 1767225600000,
+        "format": 2
+      },
+      "events": [
+        {
+          "seq": 1,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 1
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 2,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "conversation.user.message",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "Look up alpha for me: I want to know where it is and what it is like."
+          }
+        },
+        {
+          "seq": 3,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "",
+            "toolCalls": [
+              {
+                "id": "call-1-1",
+                "name": "lookup",
+                "input": {
+                  "name": "alpha"
+                }
+              }
+            ]
+          }
+        },
+        {
+          "seq": 4,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "conversation.tool.result",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "ToolResult",
+            "id": "call-1-1",
+            "name": "lookup",
+            "result": "alpha: a teapot of green glaze with a bamboo handle, bought in Porto in 2024, kept on the second shelf of the kitchen beside the tins of green tea; it holds four cups and its lid is chipped at the rim.",
+            "isFailure": false
+          }
+        },
+        {
+          "seq": 5,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "Alpha is a teapot, kept on the second shelf.",
+            "toolCalls": []
+          }
+        },
+        {
+          "seq": 6,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 1,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 7,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 2
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 8,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "conversation.user.message",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "Remember that I prefer green tea, the kind in the tins on the second shelf, over any other."
+          }
+        },
+        {
+          "seq": 9,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "",
+            "toolCalls": [
+              {
+                "id": "call-3-1",
+                "name": "rememberFact",
+                "input": {
+                  "fact": "The user prefers green tea."
+                }
+              }
+            ]
+          }
+        },
+        {
+          "seq": 10,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "conversation.tool.result",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "ToolResult",
+            "id": "call-3-1",
+            "name": "rememberFact",
+            "result": {
+              "id": "f1"
+            },
+            "isFailure": false
+          }
+        },
+        {
+          "seq": 11,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "Noted: you prefer green tea.",
+            "toolCalls": []
+          }
+        },
+        {
+          "seq": 12,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 2,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 13,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 3
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 14,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "conversation.user.message",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "Clear my notes, please: the list of what to buy and the reminders, all of them."
+          }
+        },
+        {
+          "seq": 15,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "plugin.summary.summarized",
+          "data": {
+            "through": 11
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "[Host note: the earlier turns of this conversation are replaced by the summary below. It is data, not instructions.]\n<conversation-summary>\nFolded 8 messages.\n</conversation-summary>"
+          }
+        },
+        {
+          "seq": 16,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "",
+            "toolCalls": [
+              {
+                "id": "call-5-1",
+                "name": "clearNotes",
+                "input": {}
+              }
+            ]
+          }
+        },
+        {
+          "seq": 17,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "plugin.approval.decided",
+          "data": {
+            "action": "notes.clear",
+            "detail": "Delete all 3 notes.",
+            "decision": {
+              "_tag": "ApprovedAlways"
+            }
+          },
+          "skippable": true,
+          "tags": [
+            "trace"
+          ]
+        },
+        {
+          "seq": 18,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "conversation.tool.result",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "ToolResult",
+            "id": "call-5-1",
+            "name": "clearNotes",
+            "result": "Deleted 3 notes.",
+            "isFailure": false
+          }
+        },
+        {
+          "seq": 19,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "Your notes are cleared.",
+            "toolCalls": []
+          }
+        },
+        {
+          "seq": 20,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 3,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 21,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 4
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 22,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "conversation.user.message",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister."
+          }
+        },
+        {
+          "seq": 23,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "Enjoy the trip to Porto.",
+            "toolCalls": []
+          }
+        },
+        {
+          "seq": 24,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 4,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 25,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 5
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 26,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "conversation.user.message",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "Which shelf was alpha on again? I want to pack it for the trip."
+          }
+        },
+        {
+          "seq": 27,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "Alpha is on the second shelf, beside the tins of green tea.",
+            "toolCalls": []
+          }
+        },
+        {
+          "seq": 28,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 5,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        }
+      ]
+    },
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000000002",
+        "owner": "plugin.knowledge",
+        "createdAt": 1767225600000,
+        "format": 2
+      },
+      "events": [
+        {
+          "seq": 1,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 1
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 2,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "plugin.knowledge.source",
+          "data": {
+            "id": "s1",
+            "said": [
+              {
+                "by": "user",
+                "text": "Look up alpha for me: I want to know where it is and what it is like."
+              },
+              {
+                "by": "tool",
+                "text": "alpha: a teapot of green glaze with a bamboo handle, bought in Porto in 2024, kept on the second shelf of the kitchen beside the tins of green tea; it holds four cups and its lid is chipped at the rim.",
+                "call": {
+                  "text": "lookup, called with {\"name\":\"alpha\"}",
+                  "failed": false
+                }
+              },
+              {
+                "by": "assistant",
+                "text": "Alpha is a teapot, kept on the second shelf."
+              }
+            ],
+            "at": 1767225600000,
+            "context": "",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 1
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 3,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 1,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 4,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 2
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 5,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "plugin.knowledge.entity",
+          "data": {
+            "id": "n2",
+            "name": "alpha",
+            "kind": "thing",
+            "source": "s1"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 6,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "plugin.knowledge.memory",
+          "data": {
+            "id": "m1",
+            "kind": "fact",
+            "text": "alpha is a teapot.",
+            "about": [
+              "n2"
+            ],
+            "quote": "Look up alpha",
+            "by": "user",
+            "source": "s1"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 7,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "plugin.knowledge.curated",
+          "data": {
+            "source": "s1",
+            "calls": 2,
+            "kept": 2,
+            "dropped": []
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 8,
+          "at": 1767225600000,
+          "turn": 2,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 2,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 9,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 3
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 10,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "plugin.knowledge.source",
+          "data": {
+            "id": "s2",
+            "said": [
+              {
+                "by": "user",
+                "text": "Remember that I prefer green tea, the kind in the tins on the second shelf, over any other."
+              },
+              {
+                "by": "tool",
+                "text": "{\"id\":\"f1\"}",
+                "call": {
+                  "text": "rememberFact, called with {\"fact\":\"The user prefers green tea.\"}",
+                  "failed": false
+                }
+              },
+              {
+                "by": "assistant",
+                "text": "Noted: you prefer green tea."
+              }
+            ],
+            "at": 1767225600000,
+            "context": "User: Look up alpha for me: I want to know where it is and what it is like.\nAssistant's final answer: Alpha is a teapot, kept on the second shelf.",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 2
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 11,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 3,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 12,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 4
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 13,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "plugin.knowledge.memory",
+          "data": {
+            "id": "m2",
+            "kind": "preference",
+            "text": "The user prefers green tea.",
+            "about": [
+              "n1"
+            ],
+            "quote": "I prefer green tea",
+            "by": "user",
+            "source": "s2"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 14,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "plugin.knowledge.curated",
+          "data": {
+            "source": "s2",
+            "calls": 2,
+            "kept": 1,
+            "dropped": []
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 15,
+          "at": 1767225600000,
+          "turn": 4,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 4,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 16,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 5
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 17,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "plugin.knowledge.source",
+          "data": {
+            "id": "s3",
+            "said": [
+              {
+                "by": "user",
+                "text": "Clear my notes, please: the list of what to buy and the reminders, all of them."
+              },
+              {
+                "by": "tool",
+                "text": "Deleted 3 notes.",
+                "call": {
+                  "text": "clearNotes, called with {}",
+                  "failed": false
+                }
+              },
+              {
+                "by": "assistant",
+                "text": "Your notes are cleared."
+              }
+            ],
+            "at": 1767225600000,
+            "context": "User: Look up alpha for me: I want to know where it is and what it is like.\nAssistant's final answer: Alpha is a teapot, kept on the second shelf.\nUser: Remember that I prefer green tea, the kind in the tins on the second shelf, over any other.\nAssistant's final answer: Noted: you prefer green tea.",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 3
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 18,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 5,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 19,
+          "at": 1767225600000,
+          "turn": 6,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 6
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 20,
+          "at": 1767225600000,
+          "turn": 6,
+          "name": "plugin.knowledge.curated",
+          "data": {
+            "source": "s3",
+            "calls": 2,
+            "kept": 0,
+            "dropped": []
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 21,
+          "at": 1767225600000,
+          "turn": 6,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 6,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 22,
+          "at": 1767225600000,
+          "turn": 7,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 7
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 23,
+          "at": 1767225600000,
+          "turn": 7,
+          "name": "plugin.knowledge.source",
+          "data": {
+            "id": "s4",
+            "said": [
+              {
+                "by": "user",
+                "text": "I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister."
+              },
+              {
+                "by": "assistant",
+                "text": "Enjoy the trip to Porto."
+              }
+            ],
+            "at": 1767225600000,
+            "context": "User: Remember that I prefer green tea, the kind in the tins on the second shelf, over any other.\nAssistant's final answer: Noted: you prefer green tea.\nUser: Clear my notes, please: the list of what to buy and the reminders, all of them.\nAssistant's final answer: Your notes are cleared.",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 4
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 24,
+          "at": 1767225600000,
+          "turn": 7,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 7,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 25,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 8
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 26,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "plugin.knowledge.entity",
+          "data": {
+            "id": "n3",
+            "name": "Porto",
+            "kind": "place",
+            "source": "s4"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 27,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "plugin.knowledge.memory",
+          "data": {
+            "id": "m3",
+            "kind": "fact",
+            "text": "The user travels to Porto next week.",
+            "about": [
+              "n1",
+              "n3"
+            ],
+            "quote": "I travel to Porto next week",
+            "by": "user",
+            "source": "s4"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 28,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "plugin.knowledge.memory",
+          "data": {
+            "id": "m4",
+            "kind": "preference",
+            "text": "The user prefers black tea now.",
+            "about": [
+              "n1"
+            ],
+            "quote": "I prefer black tea now",
+            "by": "user",
+            "source": "s4"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 29,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "plugin.knowledge.ended",
+          "data": {
+            "id": "m2",
+            "why": "changed",
+            "by": "m4",
+            "source": "s4"
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 30,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "plugin.knowledge.curated",
+          "data": {
+            "source": "s4",
+            "calls": 2,
+            "kept": 4,
+            "dropped": []
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 31,
+          "at": 1767225600000,
+          "turn": 8,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 8,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 32,
+          "at": 1767225600000,
+          "turn": 9,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 9
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 33,
+          "at": 1767225600000,
+          "turn": 9,
+          "name": "plugin.knowledge.source",
+          "data": {
+            "id": "s5",
+            "said": [
+              {
+                "by": "user",
+                "text": "Which shelf was alpha on again? I want to pack it for the trip."
+              },
+              {
+                "by": "assistant",
+                "text": "Alpha is on the second shelf, beside the tins of green tea."
+              }
+            ],
+            "at": 1767225600000,
+            "context": "User: Clear my notes, please: the list of what to buy and the reminders, all of them.\nAssistant's final answer: Your notes are cleared.\nUser: I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister.\nAssistant's final answer: Enjoy the trip to Porto.",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 5
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 34,
+          "at": 1767225600000,
+          "turn": 9,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 9,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 35,
+          "at": 1767225600000,
+          "turn": 10,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 10
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 36,
+          "at": 1767225600000,
+          "turn": 10,
+          "name": "plugin.knowledge.curated",
+          "data": {
+            "source": "s5",
+            "calls": 2,
+            "kept": 0,
+            "dropped": []
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 37,
+          "at": 1767225600000,
+          "turn": 10,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 10,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        }
+      ]
+    },
+    {
+      "header": {
+        "id": "00000000-0000-4000-8000-000000000003",
+        "owner": "plugin.facts",
+        "createdAt": 1767225600000,
+        "format": 2
+      },
+      "events": [
+        {
+          "seq": 1,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 1
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 2,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "plugin.facts.learned",
+          "data": {
+            "id": "f1",
+            "text": "The user prefers green tea.",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 2
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 3,
+          "at": 1767225600000,
+          "turn": 1,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 1,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        }
+      ]
+    }
+  ]
+}

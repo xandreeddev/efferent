@@ -24,7 +24,7 @@ packages share one copy of each. The browser-safe kernel is `@xandreed/core`
 and `@xandreed/sdk`; the parts that need Node or Bun (journals on a disk,
 model providers, a disk workspace and a shell, a media folder, OTLP export)
 are on `@xandreed/sdk/node`.
-Workspace packages share version `0.22.0`.
+Workspace packages share version `0.23.0`.
 
 ## A first program
 
