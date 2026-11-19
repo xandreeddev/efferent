@@ -290,8 +290,8 @@ assert.deepEqual(composed.seen, ["noted: built"])
 
 /**
  * The Node entry's model providers, one streamed call each over a local HTTP server that answers as the provider's
- * stream does, each charging a ledger: settled at the usage reported, and a call over the ledger's cap refused before
- * it is sent.
+ * stream does, each charging a ledger: settled at the usage reported, a call over the ledger's cap refused before it
+ * is sent, and a call to a closed port released.
  */
 const sseOf = (events) => events.map((event) => `${event.type === undefined ? "" : `event: ${event.type}\n`}data: ${JSON.stringify(event)}\n\n`).join("")
 const served = []
@@ -329,10 +329,17 @@ const providers = {
   overCap: await callOver(openAiCompatibleModel({ model: "m", baseUrl: `${base}/v1`, maxOutputTokens: 100, spend: spendOf("m", { total: 0.0001 }) })),
 }
 server.close()
+// A port that was opened and closed: the connection is refused before the request leaves, and the hold is released.
+const closed = createServer()
+await new Promise((resolve) => closed.listen(0, "127.0.0.1", resolve))
+const closedPort = closed.address().port
+await new Promise((resolve) => closed.close(resolve))
+providers.connectionRefused = await callOver(openAiCompatibleModel({ model: "m", baseUrl: `http://127.0.0.1:${closedPort}/v1`, maxOutputTokens: 100, spend: spendOf("m") }))
 assert.deepEqual(providers, {
   openAiCompatible: { text: "Hello!", totals: { settled: (10 * 1 + 2 * 5) / 1_000_000, reserved: 0 } },
   anthropic: { text: "Hello!", totals: { settled: (10 * 1 + 2 * 5) / 1_000_000, reserved: 0 } },
   overCap: { refused: true, totals: { settled: 0, reserved: 0 } },
+  connectionRefused: { refused: false, totals: { settled: 0, reserved: 0 } },
 })
 assert.deepEqual(served, ["/v1/chat/completions", "/v1/messages"])
 

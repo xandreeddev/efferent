@@ -33,11 +33,14 @@ which entry the providers belong on.
   sdk's rules (`chat-wire.entity.ts` and its functions; the website keeps its copy, which a page imports). So
   `@effect/ai-openai` is not a dependency of the sdk: only `@effect/ai-anthropic` is.
 - **`anthropicModel(options)`** is Effect AI's Anthropic provider (`@effect/ai-anthropic`): streaming, tool calls,
-  thinking, the provider's errors mapped by its client. Prompt caching marks the request with the API's own
+  the provider's errors mapped by its client. Prompt caching marks the request with the API's own
   top-level `cache_control` (`cache`: `5m` by default, `1h`, `off`), so the provider caches the prefix up to the last
   block it can and the next request of the conversation reads it back. The old plugin's placement of its own marks
   on chosen blocks, its per-model thinking settings, its beta headers and its subscription sign-in are not ported.
-- Each is a `Layer<LanguageModel, never, ModelSpend>`: a stack with no ledger does not compile (ADR 0020). It sends
+- Each is a `Layer<LanguageModel, never, ModelSpend>`: a stack with no ledger does not compile (ADR 0020). The
+  ledger is the one in context when the layer is built, and every call of that layer charges it: an eval host that
+  gives each trial an account builds the provider's layer under the trial's account, or the trial's accounting sees
+  none of its calls. It sends
   over `fetch` (`effect/http`'s `FetchHttpClient`), which Node 24 and Bun both have; a host or a test gives its own
   `fetch` with `FetchHttpClient.Fetch`.
 
@@ -73,8 +76,8 @@ which entry the providers belong on.
   marks per call, `reaching`): one that left settles at the amount held, since the provider may have billed it (a
   stream cut, an interruption, a timeout, a 5xx); one that never left releases (refused before the socket opened, a
   connection refused: `ECONNREFUSED`, Bun's `ConnectionRefused` and the like, `neverConnected`).
-- **A refusal status releases too.** The brief this cut was made from says to release only a request that provably
-  never left. A 4xx (but 408) did leave, but it is the provider's refusal to start: no token was generated and none
+- **A refusal status releases too.** The rule above releases only a request that provably never left. A 4xx (but
+  408) did leave, but it is the provider's refusal to start: no token was generated and none
   is billed (a refused key, no credit, a bad request, a rate limit). Settling it at the hold would spend a budget on
   calls that cost nothing, most of all on rate limits a plan retries, each retry a full hold. So `Refused` releases
   as `Unsent` does, and only a provider that bills a refusal would reopen it.
@@ -94,9 +97,8 @@ stored as whole: Effect AI's Anthropic provider would end it as if it were whole
 ### Which entry
 
 The providers import no runtime module: `fetch` is a browser's too. They stay on the Node entry, and the browser
-entry gains none of them. A key a page holds is readable by every script on the page; Anthropic refuses a browser's
-call unless it is told to accept the risk, and the gateway answers a browser's failed call without the headers the
-page needs to read why. The learn track's evals lessons, which run in a browser, keep the page's own gateway model
+entry gains none of them. A key a page holds is readable by every script on the page, and the gateway answers a
+browser's failed call without the headers the page needs to read why (the learn track's gateway model says so). The learn track's evals lessons, which run in a browser, keep the page's own gateway model
 with the learner's key, and its budget stays the lesson's. The browser entry's bundle also stays free of
 `@effect/ai-anthropic`. Moving a provider there later is an export, not a rewrite: its folder imports nothing a
 browser lacks.

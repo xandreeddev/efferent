@@ -84,6 +84,20 @@ describe("a call's hold", () => {
     expect(Option.map(spendRefusalOf(error), (refusal) => [refusal.reason, refusal.cap, refusal.committed, refusal.requested])).toEqual(Option.some(["total", 0.05, 0.001, 0.05]))
   })
 
+  test("names no cap of its own by default: a ledger that caps every reservation itself, as an eval run's account does, refuses it", async () => {
+    const run = await over(answer, Effect.gen(function* () {
+      const shared = yield* ModelSpend
+      // An eval run's trial account: every reservation's total capped at the run's budget, whatever the caller asked.
+      const account = ModelSpend.of({ ...shared, reserve: (request) => shared.reserve({ ...request, caps: { total: 0.05 } }) })
+      const first = yield* Effect.flatMap(call(hold(0.03)), Stream.runDrain).pipe(Effect.provideService(ModelSpend, account))
+      const second = yield* Effect.flip(Effect.flatMap(call(hold(0.05)), Stream.runDrain).pipe(Effect.provideService(ModelSpend, account)))
+      return { first, refused: isSpendRefusal(second) }
+    }))
+    expect(run.outcome).toMatchObject({ _tag: "Success", success: { refused: true } })
+    expect(run.calls).toBe(1)
+    expect(run.totals).toEqual({ settled: 0.001, reserved: 0 })
+  })
+
   test("is settled at the amount held when the stream is cut after the request left", async () => {
     const run = await over([{ _tag: "Fails", retryable: true, pieces: ["Hel"] }], Effect.flatMap(call(hold(0.02)), Stream.runDrain))
     expect(run.outcome._tag).toBe("Failure")

@@ -829,7 +829,9 @@ the package roots.
   unchanged.
 - The model providers (ADR 0026), each a `Layer<LanguageModel, never,
   ModelSpend>` over `fetch` (`FetchHttpClient`; a test gives its own with
-  `FetchHttpClient.Fetch`), a layer of its own that imports the shared charge
+  `FetchHttpClient.Fetch`) that charges the ledger in context when the layer
+  is built (an eval host builds it under each trial's account), a layer of
+  its own that imports the shared charge
   (`model-spend/`, `sdk-kernel-node-model-spend`) and never the other's
   folder: `openAiCompatibleModel` (`model-openai-compatible/`,
   `OpenAiCompatibleOptions`): chat completions, streamed, on its own wire
@@ -873,6 +875,7 @@ the package roots.
   `model-spend/*.test.ts` (the worst case, the cost, how a hold is closed as
   a table, a refusal and its guard; the lifecycle over `scriptedModel`: held
   while it streams, settled at what was reported, a shared ledger refusing,
+  a ledger that caps each reservation itself as an eval run's account does,
   a stream cut and an interruption after the request left settled at the
   hold, a call failed or interrupted before it left released),
   `model-openai-compatible/*.test.ts` and `model-anthropic/*.test.ts` (over a
@@ -883,7 +886,8 @@ the package roots.
   turn with `modelAnswer` and `callTool`), and `models.test.ts` (the region
   `docs/kernel.md` quotes: the gateway's model under a ledger capped at
   five cents). `scripts/kernel-consumer.fixture.mjs` runs one call of each
-  over a local HTTP server, and one the cap refuses, on Node and on Bun.
+  over a local HTTP server, one the cap refuses and one to a closed port,
+  released, on Node and on Bun.
   Run: `bun test packages/sdk/src/kernel/node`.
 
 ## Public surface
