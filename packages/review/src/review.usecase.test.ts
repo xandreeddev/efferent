@@ -2,7 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
-import { SessionId } from "@xandreed/core"
+import { modelSpendMemory, SessionId } from "@xandreed/core"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import type { CiRun } from "./forge.entity.js"
 import { Forge } from "./forge.port.js"
@@ -18,6 +18,7 @@ import { directoryLogs } from "./review-logs.adapter.js"
 import type { PassInput } from "./review-pass.port.js"
 import { ReviewPasses } from "./review-pass.port.js"
 import { ReviewReport } from "./review-report.entity.js"
+import type { ReviewOptions } from "./review.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 
 const fixture = gitFixture()
@@ -64,32 +65,80 @@ describe("at the first head", () => {
   })
 })
 
+const FINDING = { path: "src/sum.ts", line: 4, kind: "bug" as const, severity: "low" as const, claim: "A multiplication by one.", evidence: "total += value * 1" }
+
+/**
+ * Passes and checks by hand: each pass reports the multiplication, the third also a line no change touches; each
+ * check answers `verdict`, quoting `quote`. What each was asked, and in what order the passes started and answered.
+ */
+const scripted = (quote: string) => {
+  const asked: Array<PassInput> = []
+  const events: Array<string> = []
+  const layer = Layer.effect(ReviewPasses, Effect.gen(function* () {
+    const findings = yield* Findings
+    return ReviewPasses.of({
+      run: (input) => Effect.gen(function* () {
+        asked.push(input)
+        const stage = input.reviewed.stage
+        if (stage._tag === "Find") {
+          events.push(`pass ${stage.pass} started`)
+          yield* findings.record(stage.pass, FINDING)
+          if (stage.pass === 3) yield* findings.record(stage.pass, { ...FINDING, path: "README.md", line: 1 })
+          if (input.onFirstAnswer !== undefined) {
+            events.push(`pass ${stage.pass} answered first`)
+            yield* input.onFirstAnswer
+          }
+        } else yield* findings.judge(stage.check, { outcome: "confirmed", reason: "It does multiply by one.", quote })
+        return { stage, session: Option.some(SessionId.make("s-1")), ended: stage._tag === "Find" ? { _tag: "Answered" as const, summary: "One." } : { _tag: "Judged" as const }, calls: [{ step: 1, tokens: Option.some({ input: 10, cached: 4, output: 2 }), cost: 0.001 }], opened: ["src/sum.ts"] }
+      }),
+    })
+  }))
+  return { asked, events, layer }
+}
+
+const REVIEW_OPTIONS: ReviewOptions = {
+  prepare: OPTIONS, passes: 3, pass: { maxSteps: 4 }, finder: "candidates", vote: false, verify: true, verifyConcurrency: 2, verifySteps: 6,
+  budget: { total: 0.5, find: 0.3, verify: 0.2 }, model: "m",
+}
+
+const reviewWith = (passes: Layer.Layer<ReviewPasses, never, Findings>, options: ReviewOptions = REVIEW_OPTIONS) =>
+  Effect.runPromise(reviewPullRequest(repo, PULL.number, options).pipe(Effect.provide(passes.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
+
 describe("reviewPullRequest", () => {
-  test("prepares, runs a pass, and keeps the prepared review, the report and the pass's journal folder in a run folder of its own; a rerun gets another", async () => {
-    const asked: Array<PassInput> = []
-    const passes = Layer.effect(ReviewPasses, Effect.gen(function* () {
-      const findings = yield* Findings
-      return ReviewPasses.of({
-        run: (input) => Effect.gen(function* () {
-          asked.push(input)
-          yield* findings.record(input.reviewed.pass, { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "A multiplication by one.", evidence: "total += value * 1" })
-          return { pass: input.reviewed.pass, session: Option.some(SessionId.make("s-1")), ended: { _tag: "Answered" as const, summary: "One." }, calls: [{ step: 1, tokens: Option.some({ input: 10, cached: 4, output: 2 }), cost: 0.001 }], opened: ["src/sum.ts"] }
-        }),
-      })
-    }))
-    const review = () => Effect.runPromise(reviewPullRequest(repo, PULL.number, { prepare: OPTIONS, pass: { maxSteps: 4 }, model: "m" }).pipe(Effect.provide(passes.pipe(Layer.provideMerge(layers)))))
-    const report = await review()
-    const folder = join(logsRoot, `2-${fixture.head.slice(0, 12)}`, report.run)
-    expect([asked.length, asked[0]?.journalAt, asked[0]?.options, asked[0]?.reviewed.at, asked[0]?.prompt.tail.startsWith("Review the pull request above.")]).toEqual([1, join(folder, "pass-1"), { maxSteps: 4 }, fixture.head, true])
-    expect<unknown>([report.promptVersion, report.toolsVersion, report.model, report.findings.map((one) => [one.path, one.line, one.pass, one.restatesCi]), report.usage, report.passes.map((one) => one.session)]).toEqual([
-      "review-prompt-2", "review-tools-2", "m", [["src/sum.ts", 4, 1, false]], { input: 10, cached: 4, output: 2, cost: 0.001 }, [Option.some("s-1")],
+  test("three passes, the first alone until it answers; the findings merged; each kept bucket checked; everything kept in a run folder of its own; a rerun gets another", async () => {
+    const { asked, events, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer)
+    const folder = join(logsRoot, "2", fixture.head, report.run)
+    const finds = asked.filter((input) => input.reviewed.stage._tag === "Find")
+    const checks = asked.filter((input) => input.reviewed.stage._tag === "Verify")
+    expect(events.slice(0, 2)).toEqual(["pass 1 started", "pass 1 answered first"])
+    expect([finds.length, finds.map((input) => input.journalAt), finds[0]?.options, finds.every((input) => input.prompt.tail.startsWith("Review the pull request above and report every plausible defect")), finds.filter((input) => input.onFirstAnswer !== undefined).length]).toEqual([
+      3, [1, 2, 3].map((pass) => join(folder, `pass-${pass}`)), { maxSteps: 4 }, true, 1,
     ])
-    expect(existsSync(join(folder, "pass-1"))).toBe(true)
+    expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6 }, finds[0]?.prompt.prefix, true])
+    expect<unknown>([report.promptVersion, report.toolsVersion, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
+      "review-prompt-3", "review-tools-3", 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
+    ])
+    expect<unknown>([report.reported.map((one) => [one.path, one.line, one.votes, one.checked]), report.stages.find, report.stages.verify.calls]).toEqual([
+      [["src/sum.ts", 4, 3, "It does multiply by one."]], { input: 30, cached: 12, output: 6, cost: 0.003, calls: 3 }, 1,
+    ])
+    expect([existsSync(join(folder, "pass-1")), existsSync(join(folder, "check-1"))]).toEqual([true, true])
     const kept = await Effect.runPromise(Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewReport))(readFileSync(join(folder, "review.json"), "utf8")))
     expect(kept).toEqual(report)
     expect(readFileSync(join(folder, "prepared.json"), "utf8").includes(`"source": "first-ci-run"`)).toBe(true)
     await new Promise((resolve) => setTimeout(resolve, 5))
-    const again = await review()
-    expect([again.run === report.run, existsSync(join(folder, "review.json")), existsSync(join(logsRoot, `2-${fixture.head.slice(0, 12)}`, again.run, "review.json"))]).toEqual([false, true, true])
+    const again = await reviewWith(scripted("total += value * 1").layer)
+    expect([again.run === report.run, existsSync(join(folder, "review.json")), existsSync(join(logsRoot, "2", fixture.head, again.run, "review.json"))]).toEqual([false, true, true])
+  })
+
+  test("a confirmed verdict whose quote is not in the file near the cited lines counts as unsure, and is not reported", async () => {
+    const report = await reviewWith(scripted("return total * 2").layer)
+    expect<unknown>([report.verdicts.map((check) => [check.outcome, check.quoteHolds, check.why]), report.reported]).toEqual([[["unsure", false, "its quote is not in the file near the cited lines"]], []])
+  })
+
+  test("with the vote on, a bucket one pass found is left out; with checks off, the kept buckets are reported unchecked", async () => {
+    const { asked, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer, { ...REVIEW_OPTIONS, passes: 1, vote: true, verify: false })
+    expect<unknown>([asked.length, report.buckets.map((bucket) => bucket.why), report.verdicts, report.reported]).toEqual([1, ["one-vote"], [], []])
   })
 })

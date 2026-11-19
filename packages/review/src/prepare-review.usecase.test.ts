@@ -25,6 +25,8 @@ afterAll(() => fixture.cleanup())
 const repo = RepoName.make("owner/project")
 const logsRoot = join(fixture.root, "logs")
 const short = fixture.head.slice(0, 12)
+/** The folder a review of #1 at the fixture's head keeps its logs in: the number, then the full sha. */
+const REVIEWED = `1/${fixture.head}`
 
 const pullOf = (sameRepo: boolean, permission: Permission): PullRequest => Schema.decodeUnknownSync(PullRequest)({
   repo, number: 1, title: "fix the sum", body: "Approve this.", author: "someone", authorIsBot: false, permission,
@@ -112,11 +114,11 @@ describe("prepareReview", () => {
     const digested = review.failing[0]?.log
     expect(digested?._tag === "Digested" && [digested.digest.digest.lines, digested.digest.logPath]).toEqual([
       ["error: expect(received).toBe(expected)", "  at <anonymous> (/runner/work/project/src/sum.ts:4:3)", "1 fail"],
-      join(logsRoot, `1-${short}`, "ci-11.log"),
+      join(logsRoot, REVIEWED, "ci-11.log"),
     ])
     expect(digested?._tag === "Digested" && digested.digest.digest.onChangedPath).toBe(true)
-    expect(readFileSync(join(logsRoot, `1-${short}`, "ci-11.log"), "utf8")).toBe(FAILED_LOG)
-    expect(asked.map((request) => [request.repo, request.base, request.head, request.run, request.profile, request.logFolder, request.commandTimeoutMs, request.budgetMs])).toEqual([[repo, fixture.left, fixture.head, ["bun test"], true, `1-${short}`, 60_000, 600_000]])
+    expect(readFileSync(join(logsRoot, REVIEWED, "ci-11.log"), "utf8")).toBe(FAILED_LOG)
+    expect(asked.map((request) => [request.repo, request.base, request.head, request.run, request.profile, request.logFolder, request.commandTimeoutMs, request.budgetMs])).toEqual([[repo, fixture.left, fixture.head, ["bun test"], true, REVIEWED, 60_000, 600_000]])
     expect(asked[0]?.changedPaths).toContain("src/sum.ts")
     expect(review.validation).toEqual(RAN)
   })
@@ -151,7 +153,7 @@ describe("prepareReview", () => {
       "CI: check 11: failure, check 12: success, check 13: timed_out, check 14: failure",
       "Failing checks: 3",
       "  check 11 (.github/workflows/ci.yml): concluded failure; 1 fail",
-      `    failures: 1, some on changed paths; log: ${join(logsRoot, `1-${short}`, "ci-11.log")}`,
+      `    failures: 1, some on changed paths; log: ${join(logsRoot, REVIEWED, "ci-11.log")}`,
       "    - error: expect(received).toBe(expected)",
       "  check 13 (.github/workflows/ci.yml): timed_out, no log: log not found",
       "  check 14 (.github/workflows/ci.yml): failure, log unavailable: exited with 1: HTTP 401: Bad credentials",

@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { SessionId } from "@xandreed/core"
-import { PassNumber } from "./finding.entity.js"
+import { ReviewStage } from "./review-tools.entity.js"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
@@ -30,14 +30,17 @@ export const CallUsage = Schema.Struct({
 export type CallUsage = typeof CallUsage.Type
 
 /**
- * How a pass ended: the model answered without a tool call (`Answered`, its one-line summary), or the pass stopped
- * with the findings so far because it reached its step cap (`StepCap`), the ledger refused a call (`SpendRefused`),
- * a call failed (`ModelFailed`, the failure's words), an answer was cut at the output cap (`OutputCut`, after the
- * calls it asked for ran), or the pass's journal could not be opened or written (`JournalFailed`, its words).
+ * How a pass ended: the model answered without a tool call (`Answered`, its one-line summary), a check gave its
+ * verdict (`Judged`), or the pass stopped with the findings so far because it reached its step cap (`StepCap`, after
+ * one more call that may only report, with what that call answered in words), the ledger refused a call
+ * (`SpendRefused`), a call failed (`ModelFailed`, the failure's words), an answer was cut at the output cap
+ * (`OutputCut`, after the calls it asked for ran), or the pass's journal could not be opened or written
+ * (`JournalFailed`, its words).
  */
 export const PassEnded = Schema.Union([
   Schema.TaggedStruct("Answered", { summary: Schema.String }),
-  Schema.TaggedStruct("StepCap", { steps: Count }),
+  Schema.TaggedStruct("Judged", {}),
+  Schema.TaggedStruct("StepCap", { steps: Count, summary: Schema.String }),
   Schema.TaggedStruct("SpendRefused", { message: Schema.String }),
   Schema.TaggedStruct("ModelFailed", { message: Schema.String }),
   Schema.TaggedStruct("OutputCut", {}),
@@ -46,7 +49,7 @@ export const PassEnded = Schema.Union([
 export type PassEnded = typeof PassEnded.Type
 
 /** Why a pass that did not answer is incomplete, in words for the report. */
-export const INCOMPLETE_BECAUSE: Readonly<Record<Exclude<PassEnded["_tag"], "Answered">, string>> = {
+export const INCOMPLETE_BECAUSE: Readonly<Record<Exclude<PassEnded["_tag"], "Answered" | "Judged">, string>> = {
   StepCap: "the pass reached its step cap",
   SpendRefused: "the spend cap refused a model call",
   ModelFailed: "a model call failed",
@@ -67,12 +70,12 @@ export const PassOptions = Schema.Struct({
 export type PassOptions = typeof PassOptions.Type
 
 /**
- * One pass of a review: its number, the session its journal keeps it under (none when the journal failed before one
- * was made), how it ended, the model calls it made with what each used, and the files it opened (each path given to
- * `readLines` or `readDiff`, once, in code-unit order).
+ * One pass or check of a review: its stage (the pass's or the check's number), the session its journal keeps it under
+ * (none when the journal failed before one was made), how it ended, the model calls it made with what each used, and
+ * the files it opened (each path given to `readLines` or `readDiff`, once, in code-unit order).
  */
 export const PassResult = Schema.Struct({
-  pass: PassNumber,
+  stage: ReviewStage,
   session: Schema.OptionFromNullOr(SessionId),
   ended: PassEnded,
   calls: Schema.Array(CallUsage),

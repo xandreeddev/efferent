@@ -47,3 +47,35 @@ export const Finding = Schema.Struct({
   number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type Finding = typeof Finding.Type
+
+/** Which check of a review's verification gave a verdict, from 1: one check per bucket verified. */
+export const CheckNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("CheckNumber"))
+export type CheckNumber = typeof CheckNumber.Type
+
+/** What a check concluded of a finding: the problem is real, it is not, or the check could not tell. */
+export const VerdictOutcome = Schema.Literals(["confirmed", "refuted", "unsure"])
+export type VerdictOutcome = typeof VerdictOutcome.Type
+
+/** The longest a verdict's reason may be, in characters. */
+export const REASON_LIMIT = 600
+
+/** The longest a verdict's quote may be, in characters. */
+export const QUOTE_LIMIT = 1_000
+
+/**
+ * What the model answers with `verdict` when it checks a finding: the outcome, why, and the lines of the head's file
+ * the verdict rests on, quoted. The host checks the quote against the file (`quoteWithin`).
+ */
+export const VerdictReport = Schema.Struct({
+  outcome: VerdictOutcome,
+  reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(REASON_LIMIT)),
+  quote: Schema.String.check(Schema.isMaxLength(QUOTE_LIMIT)),
+})
+export type VerdictReport = typeof VerdictReport.Type
+
+/** A verdict as a review keeps it: what the check answered and the check's number. */
+export const Verdict = Schema.Struct({
+  ...VerdictReport.fields,
+  check: CheckNumber,
+})
+export type Verdict = typeof Verdict.Type

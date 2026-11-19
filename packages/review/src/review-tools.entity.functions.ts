@@ -4,7 +4,7 @@ import { GREP_TIMEOUT_MS } from "./checkout.entity.js"
 import type { GrepHit, TreeEntry } from "./checkout.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
-import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
+import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN, VERDICT } from "./review-tools.entity.js"
 
 /** Why a path that is in the tree is not read, in words that name what to do instead. */
 export const NOT_READ_BECAUSE: Readonly<Record<Exclude<TreeEntry["_tag"], "File">, (shown: string) => string>> = {
@@ -220,3 +220,12 @@ export const GIT_FAILED = "git could not read the commit under review for this c
 
 /** What `reportFinding` answers: the finding's number in its pass. */
 export const recordedText = (number: number): string => `recorded finding ${number}`
+
+/** What `verdict` answers: kept, or refused because the check already gave one. */
+export const judgedText = (kept: boolean): string => (kept ? "recorded your verdict" : "Your first verdict stands: a check gives one.")
+
+/** What `reportFinding` answers while a finding is being checked: the check gives a verdict instead. */
+export const NOT_FINDING_NOW = `You are checking a finding, not reporting new ones: call ${VERDICT} with your verdict on it.`
+
+/** What `verdict` answers while a pass is finding: there is no finding to check. */
+export const NOT_CHECKING_NOW = `There is no finding to check in this review: report each problem with ${REPORT_FINDING}.`
