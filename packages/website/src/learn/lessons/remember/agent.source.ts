@@ -19,7 +19,7 @@ export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
 ]
 
 /** The base's boot hook, which names every turn that starts, in any session. */
-const BOOT_HOOK = `    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.
+export const BOOT_HOOK = `    // On boot: hook an event, to run code when it fires. Here, the chat's status line names each turn.
     yield* core.on(turnStartedEvent, ({ data }) => chat.status(\`turn \${data.turn}\`), {
       name: "boot",
       wait: true,
@@ -46,7 +46,7 @@ export const OWN_LINE = "  Effect.provide(toolsLive), // what the agent's own to
 /** main's line for the kernel's handlers. */
 export const FACTS_LINE = "  Effect.provide(factHandlers), // the kernel's two tools: each call is a turn on the memory session\n"
 
-const FLAT_LINE = "  Effect.provide(flatMemory), // what of the journal the model sees\n"
+export const FLAT_LINE = "  Effect.provide(flatMemory), // what of the journal the model sees\n"
 
 /** main's line for memory.ts's memory. */
 export const MEMORY_LINE = "  Effect.provide(memory), // what the model sees: the conversation, then the facts that stand\n"

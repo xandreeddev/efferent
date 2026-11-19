@@ -101,7 +101,8 @@ checks.
   drive (`WorkspacePane`).
 
 - A pane that shows what the kernel says live (lesson 18's Graph tab, from
-  `plugin.graph.recalled`) folds the `Event` trace the page already hears,
+  `plugin.knowledge.recalled` and the knowledge session's records) folds the
+  `Event` trace the page already hears,
   with no listener of its own, and draws a pure function of the event's data
   with tests of its own, apart from the DOM. Seed data the page loads (lesson
   18's world) goes straight into its session as records, in one turn, never

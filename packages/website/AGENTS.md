@@ -146,6 +146,31 @@ check` (tsc over the learn code, the build, the link check) and
     answer starts and shows them first. The lesson calls `failing` once a
     build, so the list starts again whenever the program is built:
     Rebuild, Stop, Clear context and a model picked.
+  - Lesson 18's parts: `PageParts.curatorModel`, the model a curator asks:
+    the model picked when its kind is `echo` or `gateway`, else a page Echo
+    built once per runtime (a model that runs in the browser cannot read the
+    curation prompt, about 1,100 tokens on the lesson's first turn and 2,100
+    with the world loaded, in one request), with `PageParts.curatesByRule`
+    true then: the lesson hands agent.ts a chat whose status line adds
+    `BY_RULE` to a curation's line ("Curated turn 1: …", "s1: …"), so the
+    page says who curated; and
+    `PageParts.watchCurator(layer)`, a wrapper of the learner's `Curator`
+    that runs each `curate` with the page's `Curating` reference set to the
+    knowledge session and the turn that stored the job's source (read from
+    its journal), so the model watcher files the call there with `purpose:
+    "curation"`, never under the chat's last memory call, and counts it in
+    no failures list; the reply is traced as `CuratorAnswered`. The lesson
+    calls the learner's `curatorOn(curatorModel)` once at build, so one that
+    makes no layer refuses the build, and hands agent.ts a `curatorOn` whose
+    layer is watched. `runtime.curating` is true from a source's record (a
+    waited listener of `plugin.knowledge.source`), or a curator's first call
+    for a source taken up again, until its `plugin.knowledge.curated` or
+    `plugin.knowledge.failed`; Load the world, a kit that runs alone and
+    `runAlone` are refused meanwhile (`CURATING`), and the page keeps the
+    world button and the model picker off and Stop on. Stop, Rebuild and
+    Clear context stop the program, which cuts a curation short: its source
+    stays pending (the kernel stores nothing more), the page says so in a
+    `CurationCut` trace for each source being kept, and empties the set.
 - **The Context tab** (`trace-model.ts`, pure, and `panes/trace.ts`) builds
   each turn's steps, journal, memory and prompt from the traces.
   - What a turn's records say (its start, its messages, each answer's
@@ -160,8 +185,10 @@ check` (tsc over the learn code, the build, the link check) and
     owns (`plugin.tasks`, "Task N" and its task, lesson 17), drawn as a
     helper's is; the memory session, which the facts plugin owns
     and which has no parent ("Memory", lesson 11); the graph session,
-    which the graph plugin owns and which has no parent ("Graph", lesson
-    18); any other session of the program's own ("Session N"). The
+    which the graph plugin owns and which has no parent ("Graph"); the
+    knowledge session, owned by `KNOWLEDGE_OWNER` with no parent
+    ("Memory", kind `knowledge`, lesson 18); any other session of the
+    program's own ("Session N"). The
     runtime tells the page a session's header in a `Session` trace, for
     every session but the chat's, from its waited listener of a turn's
     start: so before the first record of that session's first turn here,
@@ -169,13 +196,23 @@ check` (tsc over the learn code, the build, the link check) and
     "another", not a helper. A new conversation (`startedOver`: Clear
     context, or a durable lesson's program naming another one) retires
     every other session with the old chat's, but the memory session's
-    board and the graph session's, which are no conversation's and keep
-    their records. A turn on either is three steps (opened, the fact's
+    board, the graph session's and the knowledge session's, which are no
+    conversation's and keep their records. A turn on either is three steps (opened, the fact's
     or the link's record, closed) and no model call; a fact's or a
     link's record is summed up with where it came from, and its row says
     what it is. A turn that stored many records at once (lesson 18's
-    Load the world, 654 in one turn) is one step that counts them by
-    kind ("Links stored: 557 links, 97 said again"), not one step each.
+    Load the world, 2,141 in one turn) is one step that counts them by
+    kind ("Kept: 557 memories, 97 said again, 3 ended, 374 entities, 2
+    other names, 554 sources, 554 curated"), not one step each. A turn of
+    the knowledge session that stored a source is followed by a step for
+    each curator call filed under it (`Board.curations`, from the `Prompt`
+    traces with `purpose: "curation"` and `CuratorAnswered`): "Curator
+    asked (extract)" with the prompt in the Prompt column as one message
+    added by the code, "Curator answered" with the reply, "Curator failed",
+    or "Curator cut short" after a `CurationCut`; then, while no curation
+    kept the source, "Not curated yet" (or that its tries failed), read
+    from the board's records with `knowledgeOf`: the program's next turn
+    takes it up, nothing else does.
     The pane (`panes/trace.ts`) draws what these functions give; the DOM
     wiring itself is type-checked, not run by a test.
   - A turn has one context per model call, and one prompt per attempt: a
@@ -368,59 +405,89 @@ check` (tsc over the learn code, the build, the link check) and
     workspace (the start of the kernel's words for `FilesRefused`), or
     failed. The line stays until the next turn starts, when the program's
     own line is put back (`underWorkspace` in `playground.ts`).
-- **Lesson 18's graph** (`Lesson.graph`, ADR 0019): a Graph tab beside
-  Context, and a world the page loads into the graph session.
+- **Lesson 18's Graph tab and world** (`Lesson.graph`): a Graph tab beside
+  Context, and a world the page loads into the knowledge session (ADR
+  0022, ADR 0023).
+  - The world as kept memories (`load-world.ts`, `worldDrafts`): one
+    `plugin.knowledge.source` per day the world says something (a host part
+    listing that day's sentences, at noon UTC that day, `meta` naming Load
+    the world) and a `plugin.knowledge.curated` of no model call closing
+    each, so no program takes one up; an entity per name as `normalName`
+    compares names, reused when the knowledge holds it by a name or another
+    name, Lisboa and Lisbon one entity under Lisbon and Acme and Acme Labs
+    one under Acme Labs (another name is a `plugin.knowledge.aliased`), a
+    pet `pet` (one Rex), a place `place`, a company `organization`, a
+    project `project`, anyone else `person`; one memory per first saying of
+    a sentence (or a restatement of a memory that says it word for word and
+    stands, or ended after the sentence's day: the fold does not count a
+    restatement of an ended memory, so what the world said before a
+    conversation changed it stays ended), a restatement for each saying
+    after, and a later employer or home ending the earlier one when it is
+    another entity. Over the world alone: 554 sources, 374 entities, 2 other
+    names, 557 memories (44 said more than once), 97 restatements, 3 ended,
+    2,141 records. Over the lesson's steps 3 to 6 the button says "556
+    memories, 98 said again and 3 ended, about 369 new entities": one of the
+    98 says again the memory step 5 ended, which the fold passes over, so the
+    fold counts 97, and the mdx says why where it states both. A knowledge
+    session that holds a source Load the world wrote refuses a second load
+    (`LOADED_ALREADY`).
   - The world (`lessons/connected-memory/world.ts`) is data: 654 generated
     sentences, `[subject, relation, object, day]` in the order said, the
-    same entries the ADR's numbers were measured on. `loadWorld`
-    (`load-world.ts`) writes them into the graph session in one turn, with
-    no tool call, as `linkThings` would store each: `plugin.graph.linked`
-    the first time its normalised parts are seen (ids going on from the
-    `plugin.graph.linked` records ever stored), `plugin.graph.restated`
-    after, each with a `from` of its own (the session `world`, the
-    sentence's place as the turn) so a repeat counts. The journal stamps a
-    record with the clock of the fiber that appends it, so each append is
-    given `clockAt(day, live)`, a `Clock` written out member by member (no
-    cast). A graph session that holds the world refuses a second load in
-    words (`LOADED_ALREADY`), before any turn opens.
+    same entries ADR 0019's and ADR 0023's numbers were measured on. Each
+    record is appended with `clockAt(day, live)`, a `Clock` written out
+    member by member (no cast), so its stored time is its day.
   - `runtime.loadWorld()` runs it on the page's base `Sessions` and takes
     turns with the chat as a kit that runs alone does: refused while a turn
-    runs (`TURN_RUNNING`), and `checking` true while it loads, so Send, the
-    chips and the model picker are off; the `data-world` button is one of
-    the buttons a turn turns off (`aloneButtons`). Core's hub holds 256
-    events for a reader that is behind; a test pins that the page heard all
-    656 records of the burst, in order.
+    runs (`TURN_RUNNING`) or a curation does (`CURATING`), and `checking`
+    true while it loads, so Send, the chips and the model picker are off;
+    the `data-world` button is one of the buttons a turn turns off
+    (`aloneButtons`). Core's hub holds 256 events for a reader that is
+    behind; a test pins that the page heard all 2,143 records of the burst,
+    in order.
   - The Graph tab (`data-file="graph"`, a step's `focus="graph"`) draws
-    `graph-model.ts` (no DOM) through `panes/graph.ts`. It is built on the
-    `Event` trace the page already hears: `heardRecall` folds each
-    `plugin.graph.recalled` of the conversation shown, the n-th of a turn
-    being its n-th model call, and the graph session's records (linked,
-    restated, unlinked) from any session. `graphViewOf(recalled, records)`
-    is pure: the things named and how, every link reached (at most
-    `RECALL_SHOWN`) with its rank, the words its path met, its count and
-    last day in the note's own words (the kernel's `saidText`, so the panel
-    and the note never disagree about a day near midnight), its weight when the walk weighed (by count ln(1 + count); by
-    a half-life against the heaviest link reached, which needs no clock),
-    whether it was sent and why not; the note's tokens (`linksNote` over the
-    sent links with the count and day the event gives, by `estimateTokens`)
-    against those of every link standing (`linksNote` of `saidOf`);
-    and the picture: each thing in a column by how many links from a named
-    thing it is, each link an arrow from the thing it was reached from,
-    thicker the more often said against the most said link reached. It
-    draws no "now": dates and counts only. A walk is picked by turn and
-    call ("Turn 3, model call 1 of 2"), the latest by default; Clear context
-    drops the walks and keeps the records. A memory with no `withGraph`
-    walks nothing, and the tab says so (`NO_WALK`).
+    `graph-model.ts` (no DOM) through `panes/graph.ts`, from the `Event`
+    trace the page already hears, with no listener of its own: `heardRecall`
+    folds the knowledge session's records from any session, and each
+    `plugin.knowledge.recalled` of the conversation shown, the n-th of a turn
+    being its n-th model call; Clear context drops the recalls and keeps the
+    records. It draws the memory always, as soon as the knowledge session
+    holds any and with no question asked (`memoryViewOf`): entities as dots,
+    each memory about two or more a line from its first `about`, its
+    subject, thicker the more often said against the most said drawn, an
+    ended one dashed, one about a single entity listed under it. By default
+    (`named`) it draws the user and what the conversation named (`namedBy`:
+    the entities of the memories kept from its own sources, and its recalls'
+    seeds), with their neighbours, at most `NEIGHBOURS` (6) each, the most
+    said first, the first column where the picture starts (the latest
+    recall's seeds a memory is about, else the first named one) and a column
+    for each memory further; when what was named holds no memory (Load
+    the world on a fresh page, or a new conversation), the `MOST_SAID` (5)
+    entities said about most often and their neighbours, so the picture is
+    never empty while anything is kept; `everything` (the "Show everything"
+    button) draws every entity, each in the column of how many memories away
+    it is, a column wrapped at `COLUMN_ROWS`. On top, lit: the recall
+    picked's seeds and the entities its walk started from, every memory it
+    sent (and those sent under them as what they replaced), and what the
+    latest curation stored, ended or said again; what either reached beyond
+    the picture is drawn too. Under the picture: the latest curation of a
+    turn (`latestCuration`; Load the world's, of no model call, are passed
+    over): what it kept, ended, said again and dropped with the check's
+    reason, or a failed try's reason; then the recall picked by turn and
+    call ("Turn 3, model call 1 of 2", the latest by default) in four steps
+    (`recallViewOf`): the seeds and how each was named, the memories ranked
+    with each one's place in the list about a seed and in the list the
+    message's words reach (with those words, and "for what replaced it"
+    where an ended memory took the place, `via`), why each was sent or not (the panel lists every memory sent and the first five that were not, the rest folded under a line that counts them),
+    the walk's bridges and what it found, and the note's tokens against those
+    of every standing memory. `graph-model.test.ts` pins the picture over
+    hand-built records and the world; `lesson.test.ts` pins it, the
+    curation and the recall at each step of the page.
   - Its controls (`config-edit.ts`, `CONTROLS`) each read and write one
-    option line of memory.ts's `withGraph({ … })(flatMemory)` call: `hops`
-    and `limit` as numbers, written as given so the kernel refuses a bad
-    one in its words; `names` and `weights` as chips, a radio button each
-    with its note under it (`NAMES_CHIPS`, `WEIGHTS_CHIPS`, each note's
-    claim pinned in lesson.test.ts), a choice the kernel's default is
-    written as no line. `syncControls` checks the radio whose value the
-    line holds; a radio unchecked writes nothing.
+    option line of memory.ts's `withKnowledge({ … })(flatMemory)` call,
+    `limit` and `walk`, as numbers, written as given so the kernel refuses a
+    bad one in its words.
   - `runtime.journal(session)` reads any session's journal, the
-    conversation's by default (lesson 18's tests read the graph session's).
+    conversation's by default (lesson 18's tests read the knowledge session's).
 - **Background tasks** (lesson 17, ADR 0018): a helper works on a task in
   a session of its own while the chat goes on, and its report comes back
   into the chat's one queue.
@@ -811,6 +878,49 @@ check` (tsc over the learn code, the build, the link check) and
     (`isReport`). The helper is offered tools.ts's tools and uses them by
     the same rules: a task that is a sum calls the calculator, and the
     report reads "The tool answered: calculator says 42.".
+  - Lesson 18's curator's rules (`models/echo-curation.ts`), in
+    `echoReply`, first after the summarizer's, so they answer a curator's
+    call, which offers no tool, whatever path it takes; each asleep unless
+    the request's first line is the kernel's, word for word
+    (`CURATION_HEAD`, `REVIEW_HEAD`): the kernel's prompt is never changed
+    for Echo. A review prompt is answered with the proposal unchanged. A
+    curation prompt is answered from its `<this-turn>` block's `User:` lines
+    for what to keep: each
+    sentence "<thing> <relation> <thing>." with a relation of
+    `MEMORY_RELATIONS` (the links' list) is a memory about the two, the
+    subject first in `about`, quoting the sentence ("My friend Ana Silva" is
+    Ana Silva); a thing `<stored-entities>` holds by a name or another name
+    is that entity, any other a new one under a key of its own, its kind
+    from its place in the relation ("works at": a person and an
+    organization; "lives in" and "is in": the object a place; "is the sister
+    of": two people; "sells": an organization; anything else a thing, never
+    from capitals); "I …" sentences are about `n1`; "X now <relation> Y."
+    also ends the standing memory about X with that relation, from
+    `<stored-memories>`, as `changed`; "Forget X." lists the standing
+    memories about X in `forget`; a sentence a standing memory says word for
+    word is a restatement. A question says nothing. Echo over-reaches in one
+    way, on purpose (lesson 18's step 8): in a source whose `User:` line is a
+    question, the first sentence of the `Assistant's final answer:` line
+    read as a memory about two stored entities (after any colon: "From what
+    I know: Ana Silva works at Acme.") is proposed as a new memory quoting
+    the assistant, and the kernel's checks drop it (`Its quote is not in what
+    the user said, a tool returned or the host wrote.`): a question Echo
+    answered from a note is curated "1 dropped", and a dropped memory leaves
+    no entity, since Echo proposes only stored ones. Echo streams a
+    curator's reply in one piece, at once. With no call to make, one question
+    sent with the kernel's note of memories (`knowledgeNote`: its first line,
+    word for word, then the frame) is answered from it (`answerFromNote`):
+    the note's first memory, then up to two other memories about a name the
+    first one says and the question does not (`namesIn`: runs of words that
+    start with a capital, and "the user"; names are compared whole, so
+    Project Pebble is not Project Pebble III), those that share a word with
+    the question first (the kernel's meeting rule: the same, or both four
+    letters or more and one starts the other), then in the note's order;
+    each without when it was said, and a line of what a memory replaced
+    after it as "Before that: <sentence>", taking no place ("From what I
+    know: Ana Silva works at Globex. Before that: Ana Silva works at Acme.
+    Globex has office in Porto. Globex is in Madrid."); the note is read
+    past as the links' is (`isAdded`).
   - Lesson 18's rules, for links, each asleep where its tool is not
     offered, placed after lesson 11's rules and before lesson 16's. In a
     message that does not end with a question mark, each sentence
