@@ -47,23 +47,32 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `efferent-review review <number> --repo <owner/name>` reviews a pull
   request with one pass of a model (DeepSeek V4.1 Flash through the Vercel
   AI Gateway by default, its key read from `VERCEL_API_KEY`), the host's own
-  loop on the kernel: a session in a directory journal per pass, flat
-  memory, a step cap (16) and a spend cap (`--max-cost`, $0.20 by default, each call's worst case held
-  at 1 byte a token).
+  loop on the kernel (`kernelPasses({ memory, tools, journal })`, each part
+  swappable): a session in a directory journal per pass, flat memory, a step
+  cap (`--max-steps`, 16) and a spend cap (`--max-cost`, $0.20 by default,
+  each call's worst case held at 1 byte a token and settled at what the
+  gateway bills); `--model` with its `--price` asks another model. A pass
+  that stops early keeps its findings: an answer cut at the output cap runs
+  its calls first, and a journal that fails ends the pass, not the review.
   The model reads with `readLines`, `searchCode`, `listFiles` and `readDiff`,
   each bounded and paging itself, over the clone's objects at the reviewed
-  commit (a link, a submodule, a folder, a binary file or a path out of the
-  tree is refused in words; a search pattern is never read as an option),
-  and reports with `reportFinding`. New model-facing texts: the review's
-  system text and prompt (`REVIEW_PROMPT` `review-prompt-1`), the five tools'
-  descriptions and answers (`REVIEW_TOOLS_VERSION` `review-tools-1`). The
-  report shows at most six findings by severity, marks one that only
-  restates a CI failure, and says why a pass that stopped early is
-  incomplete; `--json` prints it whole. `--at first` (both commands)
-  reviews the commit the pull request's earliest `pull_request` CI run
-  tested, against where its history meets the base. Each review keeps its
-  prepared review, its report (each call's tokens, cached tokens and cost)
-  and its pass's journal under its folder in the cache, for offline scoring.
+  commit (a link, a submodule, a folder, a binary file, a file over 1 MiB or
+  a path out of the tree is refused in words; a search pattern is never read
+  as an option; every line is cut at 500 characters and every answer at
+  30,000; the tools' git commands keep at most 4 MiB of output), and reports
+  with `reportFinding`. New model-facing texts: the review's system text and
+  prompt (`REVIEW_PROMPT` `review-prompt-2`), the five tools' descriptions
+  and answers (`REVIEW_TOOLS_VERSION` `review-tools-2`). The report shows at
+  most six findings by severity, the model's words printed plain, marks one
+  that only restates a CI failure, and says why a pass that stopped early is
+  incomplete; `--json` prints it whole. `--at first` (both commands) reviews
+  the commit of the pull request's earliest `pull_request` CI run while it was
+  open, a force-pushed one's included (else the head its first force-push
+  replaced, else its oldest commit, said so), against where its history
+  meets the base, and records the paths later commits changed. Each run of a
+  review keeps, in a folder of its own, its prepared review, its report (its
+  sessions, each call's tokens, cached tokens and cost) and its pass's
+  journal, for offline scoring.
 
 ## 0.23.0 — 2026-11-19
 
