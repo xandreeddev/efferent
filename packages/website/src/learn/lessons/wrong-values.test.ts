@@ -17,6 +17,7 @@ const NO_EXPORTED_PROGRAM = "agent.ts did not run: program is not an Effect. It 
 const NO_CHECKS = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
 const NO_FAILURES = "failures.ts did not run: failures is not a list of failures. It should be an array, each entry { retryable, pieces } or {}."
 const NO_KNOWLEDGE_MEMORY = "memory.ts did not run: memory is not a layer. It should be withKnowledge({ limit, walk, speaker, stopWords })(flatMemory)."
+const NO_MEANING_MEMORY = "memory.ts did not run: memory is not a layer. It should be withKnowledgeByMeaning({ limit, walk, pool, weights, speaker, stopWords })(flatMemory)."
 const NO_DATASET = "evals.ts did not run: dataset is not a dataset. It should be { id, version, input, reference, cases }, with input and reference schemas and cases a list."
 const NO_LABELS = "labels.ts did not run: labels is not a list of labelled answers. It should be an array, each entry { id, question, reference, answer, label }, with label true or false."
 const NO_GRADERS = 'graders.ts did not run: graders is not a list of graders. It should be an array, each entry { id, version, kind, metrics, run }, kind "code" or "model".'
@@ -190,6 +191,21 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["graders", "const key = SemanticJudge.key\nexport const graders = []", "graders.ts did not run: SemanticJudge is given when Check the graders is pressed, not when the program is built: read it inside a grader's run, as the starter does."],
     // A grader says what it is: a kind other than "code" or "model" is refused.
     ["graders", "export const graders = [{ id: \"text\", version: \"1\", kind: \"human\", metrics: [\"correct\"], run: () => 1 }]", NO_GRADERS],
+  ],
+  "recall-by-meaning": [
+    ["memory", "const memory = 42", NO_MEANING_MEMORY],
+    // The wrapper made and never given a memory is a function, not a layer.
+    ["memory", "const memory = withKnowledgeByMeaning({ limit: 8 })", NO_MEANING_MEMORY],
+    // The options of the list by meaning the kernel refuses, in its words: no text to rank, a weight past 10, every list
+    // off, and a floor past the most a cosine can be.
+    ["memory", "const memory = withKnowledgeByMeaning({ pool: 0 })(flatMemory)", "memory.ts did not run: withKnowledgeByMeaning's pool is a whole number from 1 to 100: how many texts the list by meaning ranks. It was given 0"],
+    ["memory", "const memory = withKnowledgeByMeaning({ weights: { meaning: 11 } })(flatMemory)", "memory.ts did not run: withKnowledgeByMeaning's weights.meaning is a number from 0 to 10, 0 turning its list off. It was given 11"],
+    ["memory", "const memory = withKnowledgeByMeaning({ weights: { seed: 0, words: 0, meaning: 0 } })(flatMemory)", "memory.ts did not run: withKnowledgeByMeaning's weights turn every list off: give one of seed, words and meaning a weight above 0"],
+    ["memory", "const memory = withKnowledgeByMeaning({ floor: 1.5 })(flatMemory)", "memory.ts did not run: withKnowledgeByMeaning's floor is a number from 0 to 1: the least cosine a memory needs to be in the list by meaning. It was given 1.5"],
+    // The other files are lesson 18's, refused as there.
+    ["curator", "const curatorOn = 42\nconst keep = Effect.void", "curator.ts did not run: curatorOn is not a function. It should be (model) => Layer.effect(Curator, …).pipe(Layer.provide(model))."],
+    ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.make(calculator)."],
+    ["agent", "const main = 42", NO_PROGRAM],
   ],
 }
 
