@@ -141,7 +141,9 @@ describe("a workspace", () => {
     // Whether a source at `path` (from the kernel's folder) imports anything in the files contract, wherever it sits.
     const reachesFiles = (path: string, text: string) => Array.from(text.matchAll(/from\s+"(\.[^"]*)"/g), (found) => relative(root, join(root, dirname(path), found[1] ?? "")))
       .some((target) => target.startsWith(`contracts${sep}files${sep}`))
-    const allowed = (path: string) => /^(contracts\/files|plugins\/tool-files|plugins\/files-in-memory)\//.test(path) || path === "index.ts" || /\.test\.ts$|(^|\/)testing(\.port)?\.ts$/.test(path)
+    // The search's contract names a `FilePath`, and its adapter reads `Files` for the search tool alone; the disk
+    // workspace implements it (ADR 0028). None builds the agent's state or a prompt.
+    const allowed = (path: string) => /^(contracts\/files|contracts\/search|plugins\/tool-files|plugins\/files-in-memory|plugins\/search-files|plugins\/tool-search|node\/files-disk)\//.test(path) || path === "index.ts" || /\.test\.ts$|(^|\/)testing(\.port)?\.ts$/.test(path)
     const offenders = sources(root).map((path) => relative(root, path)).filter((path) => !allowed(path) && reachesFiles(path, readFileSync(join(root, path), "utf8")))
     expect(offenders).toEqual([])
     // The controls: an import of the contract from a memory plugin, or from a contract beside it, would be caught.
