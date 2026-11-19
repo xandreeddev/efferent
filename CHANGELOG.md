@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.24.0 — 2026-11-19
+
 ### Removed
 
 - **Breaking:** `@xandreed/sdk` no longer has the window memory (ADR 0037):
@@ -44,6 +46,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   runs nothing of the pull request's: its commands run only through a
   sandboxed shell a host provides, and none ships yet. It asks no model
   yet. It is private: no release publishes it until its evals pass.
+
+### Changes
+
+- The window memory is removed (ADR 0037): `windowMemory`, `WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data are gone, since a memory that drops one more turn for every new message misses a provider's prompt cache on every message. Use `summaryMemory` over a `Summarizer` for a conversation kept to a budget, or `flatMemory` for the whole of it; a journal holding the window's `plugin.window.dropped` records opens as it is, and the turns it had dropped are sent again. New: `flatMemoryWith({ pointers })`, the flat memory with long tool results sent as pointers.
 
 ## 0.23.0 — 2026-11-19
 
