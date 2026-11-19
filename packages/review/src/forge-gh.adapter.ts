@@ -1,4 +1,6 @@
 import { Effect, Layer, Option, Schema } from "effect"
+import { clipTo } from "@xandreed/sdk"
+import { plainText } from "./log-digest.entity.functions.js"
 import { ForgeUnreadable, RunId } from "./forge.entity.js"
 import type { CheckRun, CiRun, FailedLog } from "./forge.entity.js"
 import { Forge } from "./forge.port.js"
@@ -44,7 +46,6 @@ const GhRuns = Schema.Struct({
 })
 
 const GhJobs = Schema.Struct({
-  total_count: Schema.Int,
   jobs: Schema.Array(Schema.Struct({
     name: Schema.String,
     status: Schema.String,
@@ -60,7 +61,14 @@ const decoded = <A, I>(schema: Schema.Codec<A, I>, args: ReadonlyArray<string>, 
   )
 
 /** Words in a failed `gh run view --log-failed` that say the log is gone or was never kept: an absence, not a failure. */
-const NO_LOG = /log not found|not found|expired|no longer available|HTTP 410|gone/i
+/**
+ * What `gh run view --log-failed` says of a log the forge no longer has or never kept: an absence, not a failure.
+ * Anything else (an auth or repository 404, a network error) is a failure with its reason.
+ */
+const NO_LOG = /failed to get run log: log not found|HTTP 410/
+
+/** The events whose CI runs for a head are read. */
+export const CI_EVENTS: ReadonlyArray<string> = ["pull_request", "push", "merge_group", "pull_request_target"]
 
 /** The permission the forge names, `role_name` (which tells `maintain` and `triage` apart) before `permission`. */
 const permissionOf = (answer: typeof GhPermission.Type): Permission => {
@@ -70,7 +78,8 @@ const permissionOf = (answer: typeof GhPermission.Type): Permission => {
 
 /**
  * The forge through the GitHub CLI, `gh`, on the host's shell (which keeps the host's environment, where `gh` reads
- * its login). Every output it parses is read whole (`runWhole`). The author's permission is asked of
+ * its login). Every output it parses is read whole (`runWhole`), every page of a list (`--paginate --slurp`). CI runs
+ * are those of the head's sha started by one of `CI_EVENTS`, a run with no job left out. The author's permission is asked of
  * `repos/<repo>/collaborators/<login>/permission`; a bot, and an answer that fails or names no permission, is `none`.
  */
 export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge, Effect.gen(function* () {
@@ -115,18 +124,18 @@ export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge,
   }, provided)
 
   const checksOf = Effect.fnUntraced(function* (repo: RepoName, id: number) {
-    const args = ["gh", "api", `repos/${repo}/actions/runs/${id}/jobs?per_page=100`]
-    const jobs = yield* decoded(GhJobs, args, (yield* runWhole(args)).stdout)
-    const checks: ReadonlyArray<CheckRun> = jobs.jobs.map((job) => ({ name: job.name, status: job.status, conclusion: Option.fromNullishOr(job.conclusion), url: job.html_url ?? "" }))
-    return { count: jobs.total_count, checks }
+    const args = ["gh", "api", "--paginate", "--slurp", `repos/${repo}/actions/runs/${id}/jobs?per_page=100`]
+    const pages = yield* decoded(Schema.Array(GhJobs), args, (yield* runWhole(args)).stdout)
+    const checks: ReadonlyArray<CheckRun> = pages.flatMap((page) => page.jobs).map((job) => ({ name: job.name, status: job.status, conclusion: Option.fromNullishOr(job.conclusion), url: job.html_url ?? "" }))
+    return checks
   })
 
   const ciRuns = Effect.fn("forge.ci_runs")(function* (repo: RepoName, head: CommitSha, workflows: ReadonlyArray<string>) {
-    const args = ["gh", "api", `repos/${repo}/actions/runs?head_sha=${head}&event=pull_request&per_page=100`]
-    const runs = (yield* decoded(GhRuns, args, (yield* runWhole(args)).stdout)).workflow_runs
-      .filter((run) => run.event === "pull_request" && (workflows.length === 0 || workflows.includes(run.path)))
-    const listed = yield* Effect.forEach(runs, (run) => Effect.map(checksOf(repo, run.id), (jobs) => ({ run, jobs })), { concurrency: 4 })
-    return listed.flatMap(({ run, jobs }): ReadonlyArray<CiRun> => jobs.count === 0 ? [] : [{
+    const args = ["gh", "api", "--paginate", "--slurp", `repos/${repo}/actions/runs?head_sha=${head}&per_page=100`]
+    const runs = (yield* decoded(Schema.Array(GhRuns), args, (yield* runWhole(args)).stdout)).flatMap((page) => page.workflow_runs)
+      .filter((run) => CI_EVENTS.includes(run.event) && (workflows.length === 0 || workflows.includes(run.path)))
+    const listed = yield* Effect.forEach(runs, (run) => Effect.map(checksOf(repo, run.id), (checks) => ({ run, checks })), { concurrency: 4 })
+    return listed.flatMap(({ run, checks }): ReadonlyArray<CiRun> => checks.length === 0 ? [] : [{
       id: RunId.make(run.id),
       name: run.name ?? run.path,
       workflowPath: run.path,
@@ -135,7 +144,7 @@ export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge,
       conclusion: Option.fromNullishOr(run.conclusion),
       url: run.html_url,
       attempt: run.run_attempt,
-      checks: jobs.checks,
+      checks,
     }])
   }, provided)
 
@@ -144,7 +153,7 @@ export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge,
     const whole = yield* runWhole(args, { exits: [0, 1] })
     const log: FailedLog = whole.code === 0
       ? whole.stdout.trim().length > 0 ? { _tag: "Log", text: whole.stdout } : { _tag: "NoLog", reason: "the run has no failed step with a log" }
-      : NO_LOG.test(whole.stderr) ? { _tag: "NoLog", reason: whole.stderr.trim().slice(0, 200) } : yield* Effect.fail(new CommandFailed({ reason: "exited", command: commandLine(args), message: `exited with 1: ${whole.stderr.trim().slice(-600)}` }))
+      : NO_LOG.test(whole.stderr) ? { _tag: "NoLog", reason: clipTo(plainText(whole.stderr.trim()), 200) } : yield* Effect.fail(new CommandFailed({ reason: "exited", command: commandLine(args), message: `exited with 1: ${clipTo(plainText(whole.stderr.trim()), 600)}` }))
     return log
   }, provided)
 

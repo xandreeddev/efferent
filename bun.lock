@@ -78,12 +78,13 @@
       "name": "@xandreed/review",
       "version": "0.0.0",
       "bin": {
-        "efferent-review": "./src/main.ts",
+        "efferent-review": "./bin/efferent-review.mjs",
       },
       "dependencies": {
         "@xandreed/core": "workspace:*",
         "@xandreed/sdk": "workspace:*",
         "effect": "4.0.7",
+        "tsx": "4.23.13",
       },
     },
     "packages/sdk": {

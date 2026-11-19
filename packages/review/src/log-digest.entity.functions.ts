@@ -1,10 +1,14 @@
 import { Option } from "effect"
-import { DIGEST_LIMITS } from "./log-digest.entity.js"
+import { clipTo } from "@xandreed/sdk"
+import { DIGEST_LIMITS, FAILURE_SHOWN, FAILURES_KEPT, SUMMARY_KEPT, SUMMARY_SHOWN } from "./log-digest.entity.js"
 import type { DigestLimits, Digested, LogFailure } from "./log-digest.entity.js"
 
 const CI_PREFIX = /^[^\t]*\t[^\t]*\t/
 const TIMESTAMP = /^\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}(?:\.\d+)?Z ?/
-const ANSI = /\x1b\[[0-9;]*[A-Za-z]/g
+/** OSC (`ESC ]` … BEL or `ESC \\`), CSI (`ESC [` … final byte) and every other escape (`ESC`, intermediates, a final). */
+const ESCAPES = /\x1b\][^\x07\x1b]*(?:\x07|\x1b\\)?|\x1b\[[0-?]*[ -/]*[@-~]|\x1b[ -/]*[0-~]?/g
+/** Every control character but a tab: C0, DEL and C1. */
+const CONTROLS = /[\u0000-\u0008\u000a-\u001f\u007f-\u009f]/g
 const MARKER = /^##\[(group|endgroup|warning|notice|debug|command)\]/
 const ERROR_MARKER = /^##\[error\]/
 const EXIT_LINE = /^Process completed with exit code \d+\.?$/
@@ -32,8 +36,11 @@ const LOCATION = [/^at\s/, /^-->\s/, /^❯\s/, /\.[cm]?[jt]sx?:\d+(?::\d+)?\)?$/
 const DURATION = /\s\[[\d.]+m?s\]$/
 const PATH_TOKEN = /[\w@.+-]+(?:\/[\w@.+-]+)+\.\w+/g
 
-/** A log line without what CI puts before it (`job<TAB>step<TAB>`, a timestamp) and without terminal colours. */
-const cleaned = (line: string): string => line.replace(CI_PREFIX, "").replace(TIMESTAMP, "").replace(ANSI, "").replace(/\r$/, "")
+/** A text without terminal escape sequences (OSC, CSI and the rest) and without control characters but tabs. */
+export const plainText = (text: string): string => text.replace(ESCAPES, "").replace(CONTROLS, "")
+
+/** A log line without what CI puts before it (`job<TAB>step<TAB>`, a timestamp, read first: the prefix is tabs) and plain. */
+const cleaned = (line: string): string => plainText(line.replace(CI_PREFIX, "").replace(TIMESTAMP, ""))
 
 /** Whether a failure's lines name a changed path: whole, or as a path that ends one (a package's own `src/x.ts`). */
 const namesChanged = (lines: ReadonlyArray<string>, changedPaths: ReadonlyArray<string>): boolean =>
@@ -57,7 +64,10 @@ interface Draft {
  * first seen. The summary is the runner's count and exit lines, in order, each once, joined by `; `. The lines shown
  * are each failure (` (seen N times)` after one seen more than once) and its location lines indented, then the
  * summary, at most `maxLines`: failures are cut first, and `linesCut` counts what the cap left out. CI's prefixes
- * (`job<TAB>step<TAB>timestamp`) and terminal colours are read past.
+ * (`job<TAB>step<TAB>timestamp`), escape sequences and control characters are read past. Each failure's line and
+ * location line is cut at `FAILURE_SHOWN` with `clipTo` (its marker a line of its own, counted against `maxLines`),
+ * at most `FAILURES_KEPT` failures are kept (`failuresCut` counts the rest) and the last `SUMMARY_KEPT` summary lines,
+ * cut at `SUMMARY_SHOWN`. Everything the digest holds is the pull request's text: data, never instructions.
  */
 export const digestLog = (text: string, changedPaths: ReadonlyArray<string>, limits: DigestLimits = DIGEST_LIMITS): Digested => {
   const raw = text.split("\n")
@@ -105,22 +115,26 @@ export const digestLog = (text: string, changedPaths: ReadonlyArray<string>, lim
     // expectation's diff between the two.
     if (Option.isSome(open) && LOCATION.some((pattern) => pattern.test(content)) && !DEPENDENCY_FRAME.test(content) && open.value.detail.length < limits.detailLines) open.value.detail.push(content)
   })
-  const failures: ReadonlyArray<LogFailure> = [...drafts.values()]
+  const sorted = [...drafts.values()]
     .map((draft) => ({ draft, onChangedPath: namesChanged([draft.text, ...draft.detail], changedPaths) }))
     .sort((a, b) => Number(b.onChangedPath) - Number(a.onChangedPath) || a.draft.first - b.draft.first)
-    .map(({ draft, onChangedPath }) => ({ text: draft.text, detail: [...draft.detail], count: draft.count, onChangedPath }))
-  const summary = summaries.length > 0 ? Option.some(summaries.join("; ")) : Option.none<string>()
+  const failures: ReadonlyArray<LogFailure> = sorted.slice(0, FAILURES_KEPT)
+    .map(({ draft, onChangedPath }) => ({ text: clipTo(draft.text, FAILURE_SHOWN), detail: draft.detail.map((line) => clipTo(line, FAILURE_SHOWN)), count: draft.count, onChangedPath }))
+  const kept = summaries.slice(-SUMMARY_KEPT)
+  const summary = kept.length > 0 ? Option.some(clipTo(kept.join("; "), SUMMARY_SHOWN)) : Option.none<string>()
   const failureLines = failures.flatMap((failure) => [
     failure.count > 1 ? `${failure.text} (seen ${failure.count} times)` : failure.text,
     ...failure.detail.map((line) => `  ${line}`),
-  ])
-  const room = limits.maxLines - (Option.isSome(summary) ? 1 : 0)
+  ]).flatMap((line) => line.split("\n"))
+  const summaryLines = Option.match(summary, { onNone: () => [], onSome: (text) => text.split("\n") })
+  const room = Math.max(0, limits.maxLines - summaryLines.length)
   const shown = failureLines.slice(0, room)
   return {
     summary,
     failures,
-    onChangedPath: failures.some((failure) => failure.onChangedPath),
-    lines: [...shown, ...Option.toArray(summary)],
+    failuresCut: sorted.length - failures.length,
+    onChangedPath: sorted.some((failure) => failure.onChangedPath),
+    lines: [...shown, ...summaryLines].slice(0, limits.maxLines),
     linesCut: failureLines.length - shown.length,
     logLines: raw.length,
   }

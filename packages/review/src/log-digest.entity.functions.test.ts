@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { digestLog } from "./log-digest.entity.functions.js"
+import { digestLog, plainText } from "./log-digest.entity.functions.js"
+import { FAILURES_KEPT } from "./log-digest.entity.js"
 
 const TSC = [
   "src/a.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.",
@@ -90,6 +91,7 @@ describe("digestLog", () => {
         { text: "src/b.ts(3,1): error TS2304: Cannot find name 'foo'.", detail: [], count: 1, onChangedPath: true },
         { text: "src/a.ts(12,5): error TS2322: Type 'string' is not assignable to type 'number'.", detail: [], count: 2, onChangedPath: false },
       ],
+      failuresCut: 0,
       onChangedPath: true,
       lines: [
         "src/b.ts(3,1): error TS2304: Cannot find name 'foo'.",
@@ -141,6 +143,28 @@ describe("digestLog", () => {
   })
 
   test("a log with no failure and no summary is empty", () => {
-    expect(digestLog("all good\n", [])).toEqual({ summary: Option.none(), failures: [], onChangedPath: false, lines: [], linesCut: 0, logLines: 1 })
+    expect(digestLog("all good\n", [])).toEqual({ summary: Option.none(), failures: [], failuresCut: 0, onChangedPath: false, lines: [], linesCut: 0, logLines: 1 })
+  })
+
+  test("escape sequences (OSC, CSI, others) and control characters are stripped, the CI prefix read first", () => {
+    expect(plainText("a\u001b]8;;https://x.example\u0007link\u001b]8;;\u0007 \u001b[31mred\u001b[0m\u001bc\u0085\u0007z\tt")).toBe("alink redz\tt")
+    const digest = digestLog("ci\tstep\t2026-11-19T11:47:00.5Z \u001b[31merror:\u001b[0m boom\u001b]0;title\u0007", [])
+    expect(digest.lines).toEqual(["error: boom"])
+  })
+
+  test("a long failure line is cut with clipTo, its marker a line of its own counted against maxLines", () => {
+    const digest = digestLog(`error: ${"x".repeat(400)}\nerror: second\n1 fail`, [], { maxLines: 3, detailLines: 3 })
+    expect(digest.lines.length).toBe(3)
+    expect(digest.lines[0]?.startsWith("error: xxx")).toBe(true)
+    expect(digest.lines[1]).toMatch(/^\[… \d+ characters clipped\]$/)
+    expect(digest.lines[2]).toBe("1 fail")
+    expect(digest.linesCut).toBe(1)
+  })
+
+  test("failures and summary lines are bounded: the first FAILURES_KEPT failures, the last six summary lines", () => {
+    const log = [...Array.from({ length: FAILURES_KEPT + 5 }, (_, at) => `error: failure ${at}`), ...Array.from({ length: 8 }, (_, at) => `${at} fail`)].join("\n")
+    const digest = digestLog(log, [])
+    expect([digest.failures.length, digest.failuresCut]).toEqual([FAILURES_KEPT, 5])
+    expect(digest.summary).toEqual(Option.some("2 fail; 3 fail; 4 fail; 5 fail; 6 fail; 7 fail"))
   })
 })

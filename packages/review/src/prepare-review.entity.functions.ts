@@ -20,6 +20,7 @@ const digestLines = (name: string, log: LogDigest): ReadonlyArray<string> => [
 const failingLines = (failing: FailingRun): ReadonlyArray<string> => Match.valueTags(failing.log, {
   Digested: ({ digest }) => digestLines(`${failing.run.name} (${failing.run.workflowPath})`, digest),
   NoLog: ({ reason }) => [`  ${failing.run.name} (${failing.run.workflowPath}): ${Option.getOrElse(failing.run.conclusion, () => "unknown")}, no log: ${reason}`],
+  Unavailable: ({ reason }) => [`  ${failing.run.name} (${failing.run.workflowPath}): ${Option.getOrElse(failing.run.conclusion, () => "unknown")}, log unavailable: ${reason}`],
 })
 
 /**

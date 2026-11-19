@@ -1,4 +1,8 @@
 import { Schema } from "effect"
+import type { AttributeRule, FileStats } from "./file-verdict.entity.js"
+import type { FileDiff as DiffFile } from "./diff.entity.js"
+import type { Digested } from "./log-digest.entity.js"
+import type { DroppedFile } from "./packed-diff.entity.js"
 import { CiRun } from "./forge.entity.js"
 import { FileVerdict } from "./file-verdict.entity.js"
 import { DigestLimits, LogDigest } from "./log-digest.entity.js"
@@ -45,12 +49,17 @@ export const Validation = Schema.Union([
 ])
 export type Validation = typeof Validation.Type
 
-/** A failed CI run with the digest of its failed steps' log, or why there is no log. */
+/**
+ * A failed CI run with the digest of its failed steps' log; or why there is no log (`NoLog`: the forge no longer has
+ * it); or why it could not be read (`Unavailable`: the forge refused or failed, said in its words, stripped and cut),
+ * which leaves this run's entry and fails nothing else.
+ */
 export const FailingRun = Schema.Struct({
   run: CiRun,
   log: Schema.Union([
     Schema.TaggedStruct("Digested", { digest: LogDigest }),
     Schema.TaggedStruct("NoLog", { reason: Schema.String }),
+    Schema.TaggedStruct("Unavailable", { reason: Schema.String }),
   ]),
 })
 export type FailingRun = typeof FailingRun.Type
@@ -70,3 +79,19 @@ export const PreparedReview = Schema.Struct({
   validation: Validation,
 })
 export type PreparedReview = typeof PreparedReview.Type
+
+/**
+ * The stages a preparation runs that are policy, not plumbing: each a pure function with a stock default
+ * (`STOCK_POLICIES`), so a host swaps one without touching the others. `verdict` decides which files the model reads;
+ * `pack` packs them under the budget; `rulesAlong` names the instruction files to look for; `digest` shortens a log;
+ * `mayRun` says whether a pull request's commands may run at all (its head and author); `failed` says whether a CI
+ * run counts as failed.
+ */
+export interface ReviewPolicies {
+  readonly verdict: (path: string, stats: FileStats, attributes: ReadonlyArray<AttributeRule>) => FileVerdict
+  readonly pack: (files: ReadonlyArray<DiffFile>, budgetTokens: number, earlier: ReadonlyArray<DroppedFile>) => PackedDiff
+  readonly rulesAlong: (changedPaths: ReadonlyArray<string>) => ReadonlyArray<string>
+  readonly digest: (text: string, changedPaths: ReadonlyArray<string>, limits: DigestLimits) => Digested
+  readonly mayRun: (pull: PullRequest) => boolean
+  readonly failed: (run: CiRun) => boolean
+}

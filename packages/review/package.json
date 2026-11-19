@@ -9,10 +9,11 @@
   "exports": {
     ".": "./src/index.ts"
   },
-  "bin": { "efferent-review": "./src/main.ts" },
+  "bin": { "efferent-review": "./bin/efferent-review.mjs" },
   "dependencies": {
     "@xandreed/core": "workspace:*",
     "@xandreed/sdk": "workspace:*",
-    "effect": "4.0.7"
+    "effect": "4.0.7",
+    "tsx": "4.23.13"
   }
 }

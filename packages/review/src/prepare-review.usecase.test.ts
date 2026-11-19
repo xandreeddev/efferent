@@ -9,7 +9,9 @@ import { Forge } from "./forge.port.js"
 import { FORGED_NAME, gitFixture } from "./git-fixture.testing.js"
 import { hostShell } from "./host-shell.adapter.js"
 import { DIGEST_LIMITS } from "./log-digest.entity.js"
-import type { PrepareOptions } from "./prepare-review.entity.js"
+import type { PrepareOptions, ReviewPolicies } from "./prepare-review.entity.js"
+import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
+import { CommandFailed } from "./host-command.entity.js"
 import { summaryText } from "./prepare-review.entity.functions.js"
 import { prepareReview } from "./prepare-review.usecase.js"
 import { PullRequest, RepoName } from "./pull-request.entity.js"
@@ -39,8 +41,10 @@ const FAILED_LOG = ["ci\tRun tests\t2026-11-19T11:47:00.5Z error: expect(receive
 
 const forgeOf = (pull: PullRequest) => Layer.succeed(Forge, Forge.of({
   pullRequest: (_repo: RepoName, _number: PullNumber) => Effect.succeed(pull),
-  ciRuns: () => Effect.succeed([run(11, "failure"), run(12, "success"), run(13, "timed_out")]),
-  failedLog: (_repo, id) => Effect.succeed(id === 11 ? { _tag: "Log" as const, text: FAILED_LOG } : { _tag: "NoLog" as const, reason: "log not found" }),
+  ciRuns: () => Effect.succeed([run(11, "failure"), run(12, "success"), run(13, "timed_out"), run(14, "failure")]),
+  failedLog: (_repo, id) => id === 14
+    ? Effect.fail(new CommandFailed({ reason: "exited", command: "gh run view 14", message: "exited with 1: HTTP 401: Bad credentials\u001b[0m" }))
+    : Effect.succeed(id === 11 ? { _tag: "Log" as const, text: FAILED_LOG } : { _tag: "NoLog" as const, reason: "log not found" }),
 }))
 
 const validationsStub = () => {
@@ -62,11 +66,11 @@ const worktrees = () => {
   return existsSync(folder) ? readdirSync(folder) : []
 }
 
-const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox = true) => {
+const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox = true, policies: ReviewPolicies = STOCK_POLICIES) => {
   const validations = validationsStub()
   const base = Layer.mergeAll(forgeOf(pull), gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot))
     .pipe(Layer.provide(hostShell({ cwd: fixture.root, env: fixture.env })))
-  const program = prepareReview(repo, pull.number, options)
+  const program = prepareReview(repo, pull.number, options, policies)
   const run = sandbox ? program.pipe(Effect.provide(Layer.merge(base, validations.layer))) : program.pipe(Effect.provide(base))
   return Effect.runPromise(run).then((review) => ({ review, asked: validations.asked }))
 }
@@ -82,8 +86,13 @@ describe("prepareReview", () => {
       { path: ":(glob)odd/AGENTS.md", text: "Odd rules.\n", from: fixture.left },
       { path: "src/AGENTS.md", text: "Source rules at the base.\n", from: fixture.left },
     ])
-    expect<unknown>(review.ci.map((ci) => ci.id)).toEqual([11, 12, 13])
-    expect<unknown>(review.failing.map((failing) => [failing.run.id, failing.log._tag])).toEqual([[11, "Digested"], [13, "NoLog"]])
+    expect<unknown>(review.ci.map((ci) => ci.id)).toEqual([11, 12, 13, 14])
+    // A log the forge refused is that run's entry, stripped, and fails nothing else.
+    expect<unknown>(review.failing.map((failing) => [failing.run.id, failing.log])).toEqual([
+      [11, expect.objectContaining({ _tag: "Digested" })],
+      [13, { _tag: "NoLog", reason: "log not found" }],
+      [14, { _tag: "Unavailable", reason: "exited with 1: HTTP 401: Bad credentials" }],
+    ])
     const digested = review.failing[0]?.log
     expect(digested?._tag === "Digested" && [digested.digest.digest.lines, digested.digest.logPath]).toEqual([
       ["error: expect(received).toBe(expected)", "  at <anonymous> (/runner/work/project/src/sum.ts:4:3)", "1 fail"],
@@ -121,13 +130,24 @@ describe("prepareReview", () => {
       "  left out: gen/out.ts (+1 -0): marked generated",
       "  left out: \"pic\\u000aFile: SAFE.ts (added, +1 -0).bin\" (+0 -0): a binary file",
       "Rules: AGENTS.md, :(glob)odd/AGENTS.md, src/AGENTS.md",
-      "CI: check 11: failure, check 12: success, check 13: timed_out",
-      "Failing checks: 2",
+      "CI: check 11: failure, check 12: success, check 13: timed_out, check 14: failure",
+      "Failing checks: 3",
       "  check 11 (.github/workflows/ci.yml): concluded failure; 1 fail",
       `    failures: 1, some on changed paths; log: ${join(logsRoot, `1-${short}`, "ci-11.log")}`,
       "    - error: expect(received).toBe(expected)",
       "  check 13 (.github/workflows/ci.yml): timed_out, no log: log not found",
+      "  check 14 (.github/workflows/ci.yml): failure, log unavailable: exited with 1: HTTP 401: Bad credentials",
       "Commands: skipped, the head branch is not in the base repository, so its scripts are not run",
     ].join("\n"))
+  })
+
+  test("each policy is the host's to swap: a verdict that keeps every file, CI that counts nothing failed, commands that never run", async () => {
+    const { review, asked } = await prepared(pullOf(true, "admin"), OPTIONS, true, {
+      ...STOCK_POLICIES,
+      verdict: (path) => ({ _tag: "Kept", path }),
+      failed: () => false,
+      mayRun: () => false,
+    })
+    expect([review.diff.kept.length, review.diff.dropped.length, review.failing.length, review.validation, asked.length]).toEqual([12, 0, 0, { _tag: "Skipped", reason: "permission" }, 0])
   })
 })

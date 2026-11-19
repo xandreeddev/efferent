@@ -30,20 +30,27 @@ const pull = (overrides: Record<string, unknown> = {}) => JSON.stringify({
   ...overrides,
 })
 
-const RUNS = JSON.stringify({
-  total_count: 3,
+/** `gh api --paginate --slurp`: an array of the pages, here two. */
+const RUNS = JSON.stringify([{
+  total_count: 5,
   workflow_runs: [
     { id: 11, name: "ci", path: ".github/workflows/ci.yml", event: "pull_request", status: "completed", conclusion: "failure", html_url: "https://example.com/runs/11", run_attempt: 2 },
     { id: 12, name: "ci", path: ".github/workflows/ci.yml", event: "pull_request", status: "completed", conclusion: "success", html_url: "https://example.com/runs/12", run_attempt: 1 },
     { id: 13, name: "labels", path: ".github/workflows/labels.yml", event: "pull_request", status: "completed", conclusion: "success", html_url: "https://example.com/runs/13", run_attempt: 1 },
-    { id: 14, name: "ci", path: ".github/workflows/ci.yml", event: "push", status: "completed", conclusion: "success", html_url: "https://example.com/runs/14", run_attempt: 1 },
   ],
-})
+}, {
+  total_count: 5,
+  workflow_runs: [
+    { id: 14, name: "ci", path: ".github/workflows/ci.yml", event: "push", status: "completed", conclusion: "success", html_url: "https://example.com/runs/14", run_attempt: 1 },
+    { id: 15, name: "nightly", path: ".github/workflows/nightly.yml", event: "schedule", status: "completed", conclusion: "failure", html_url: "https://example.com/runs/15", run_attempt: 1 },
+  ],
+}])
 
-const jobs = (count: number) => JSON.stringify({
+/** The jobs of a run as pages of one job each. */
+const jobs = (count: number) => JSON.stringify(count === 0 ? [{ total_count: 0, jobs: [] }] : Array.from({ length: count }, (_, at) => ({
   total_count: count,
-  jobs: Array.from({ length: count }, (_, at) => ({ name: `job ${at + 1}`, status: "completed", conclusion: "failure", html_url: `https://example.com/jobs/${at + 1}` })),
-})
+  jobs: [{ name: `job ${at + 1}`, status: "completed", conclusion: "failure", html_url: `https://example.com/jobs/${at + 1}` }],
+})))
 
 /** A host shell that answers each command line it knows and fails the test on any other. */
 const stub = (answers: Readonly<Record<string, Ran>>) => {
@@ -60,8 +67,8 @@ const stub = (answers: Readonly<Record<string, Ran>>) => {
 
 const VIEW = `gh pr view 7 --repo owner/project --json ${PULL_FIELDS}`
 const PERMISSION = "gh api repos/owner/project/collaborators/someone/permission"
-const RUNS_COMMAND = `gh api 'repos/owner/project/actions/runs?head_sha=${HEAD}&event=pull_request&per_page=100'`
-const JOBS = (id: number) => `gh api 'repos/owner/project/actions/runs/${id}/jobs?per_page=100'`
+const RUNS_COMMAND = `gh api --paginate --slurp 'repos/owner/project/actions/runs?head_sha=${HEAD}&per_page=100'`
+const JOBS = (id: number) => `gh api --paginate --slurp 'repos/owner/project/actions/runs/${id}/jobs?per_page=100'`
 
 const withForge = <A, E>(answers: Readonly<Record<string, Ran>>, use: (forge: Forge["Service"]) => Effect.Effect<A, E>) => {
   const { layer, asked } = stub(answers)
@@ -113,11 +120,12 @@ describe("ghForge", () => {
     expect(reason?._tag === "Fail" && reason.error._tag).toBe("ForgeUnreadable")
   })
 
-  test("lists the pull_request runs of a head with their checks, skipping a run with no job and other events", async () => {
-    const { exit } = await withForge({ [RUNS_COMMAND]: exited(RUNS), [JOBS(11)]: exited(jobs(2)), [JOBS(12)]: exited(jobs(0)), [JOBS(13)]: exited(jobs(1)) }, (forge) => forge.ciRuns(repo, CommitSha.make(HEAD), []))
-    expect(Exit.isSuccess(exit) && exit.value.map((run) => [run.id, run.name, run.workflowPath, Option.getOrNull(run.conclusion), run.attempt, run.checks.map((check) => check.name)])).toEqual([
-      [11, "ci", ".github/workflows/ci.yml", "failure", 2, ["job 1", "job 2"]],
-      [13, "labels", ".github/workflows/labels.yml", "success", 1, ["job 1"]],
+  test("lists the runs of a head from every page, pull request and push alike, with every page of their checks, skipping a run with no job and other events", async () => {
+    const { exit } = await withForge({ [RUNS_COMMAND]: exited(RUNS), [JOBS(11)]: exited(jobs(2)), [JOBS(12)]: exited(jobs(0)), [JOBS(13)]: exited(jobs(1)), [JOBS(14)]: exited(jobs(1)) }, (forge) => forge.ciRuns(repo, CommitSha.make(HEAD), []))
+    expect<unknown>(Exit.isSuccess(exit) && exit.value.map((run) => [run.id, run.event, run.workflowPath, Option.getOrNull(run.conclusion), run.attempt, run.checks.map((check) => check.name)])).toEqual([
+      [11, "pull_request", ".github/workflows/ci.yml", "failure", 2, ["job 1", "job 2"]],
+      [13, "pull_request", ".github/workflows/labels.yml", "success", 1, ["job 1"]],
+      [14, "push", ".github/workflows/ci.yml", "success", 1, ["job 1"]],
     ])
   })
 
@@ -127,15 +135,19 @@ describe("ghForge", () => {
     expect(asked).toEqual([RUNS_COMMAND, JOBS(13)])
   })
 
-  test("a failed log is read; a missing or expired one is an absence with its reason, not a failure", async () => {
+  test("a failed log is read; a missing or expired one is an absence with its reason; an auth or repository failure is a failure with its reason", async () => {
     const LOG = "gh run view 11 --repo owner/project --log-failed"
     const found = await withForge({ [LOG]: exited("ci\tstep\terror: boom\n") }, (forge) => forge.failedLog(repo, RunId.make(11)))
     expect(Exit.isSuccess(found.exit) && found.exit.value).toEqual({ _tag: "Log", text: "ci\tstep\terror: boom\n" })
     const missing = await withForge({ [LOG]: exited("", 1, "failed to get run log: log not found\n") }, (forge) => forge.failedLog(repo, RunId.make(11)))
     expect(Exit.isSuccess(missing.exit) && missing.exit.value).toEqual({ _tag: "NoLog", reason: "failed to get run log: log not found" })
-    const denied = await withForge({ [LOG]: exited("", 1, "HTTP 401: Bad credentials\n") }, (forge) => forge.failedLog(repo, RunId.make(11)))
-    const reason = Exit.isFailure(denied.exit) ? denied.exit.cause.reasons[0] : undefined
-    expect(reason?._tag === "Fail" && reason.error._tag).toBe("CommandFailed")
+    const expired = await withForge({ [LOG]: exited("", 1, "HTTP 410: Gone\n") }, (forge) => forge.failedLog(repo, RunId.make(11)))
+    expect(Exit.isSuccess(expired.exit) && expired.exit.value._tag).toBe("NoLog")
+    for (const stderr of ["HTTP 401: Bad credentials\n", "GraphQL: Could not resolve to a Repository with the name 'owner/project'. (repository)\n", "HTTP 404: Not Found\n"]) {
+      const failed = await withForge({ [LOG]: exited("", 1, stderr) }, (forge) => forge.failedLog(repo, RunId.make(11)))
+      const reason = Exit.isFailure(failed.exit) ? failed.exit.cause.reasons[0] : undefined
+      expect(reason?._tag === "Fail" && reason.error._tag === "CommandFailed" && reason.error.message).toBe(`exited with 1: ${stderr.trim()}`)
+    }
   })
 
   test("an output the host shell cut is never parsed", async () => {

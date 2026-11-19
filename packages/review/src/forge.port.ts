@@ -9,10 +9,10 @@ export type ForgeError = CommandFailed | OutputCut | ForgeUnreadable
 
 /**
  * The forge a pull request lives on, read-only. `pullRequest` answers the pull request with its files, its commits
- * and its author's permission (`none` when the forge will not say). `ciRuns` answers the CI runs started by the
- * `pull_request` event for a head commit, only those of the given workflow files when some are given, and never one
- * with no job. `failedLog` answers the log of a run's failed steps, or why there is none: a missing or expired log is
- * a result, never a failure.
+ * and its author's permission (`none` when the forge will not say). `ciRuns` answers every CI run for a head commit
+ * (a pull request's, a push's, a merge queue's), only those of the given workflow files when some are given, and
+ * never one with no job. `failedLog` answers the log of a run's failed steps, or why there is none: a missing or
+ * expired log is a result; an auth or repository failure is a failure with its reason.
  */
 export class Forge extends Context.Service<Forge, {
   readonly pullRequest: (repo: RepoName, number: PullNumber) => Effect.Effect<PullRequest, ForgeError>
