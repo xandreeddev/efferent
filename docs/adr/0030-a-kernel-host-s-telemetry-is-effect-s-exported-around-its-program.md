@@ -89,6 +89,7 @@ metrics carry, are `efferent.*`; OpenTelemetry's own keys (`gen_ai.*`) are kept 
 | `scripted_model.make`, `scripted_shell.make` | the scripted model and shell |
 | `journal_directory.<op>`, `journal_sqlite.<op>`, `disk_files.<op>`, `files_search.find`, `process_shell.run` | the Node entry's ports (unchanged) |
 | `openai_compatible_embedder.embed` | the Node entry's embedder (ADR 0032) |
+| `in_memory_media.<op>`, `directory_media.<op>` | the media stores (ADR 0034) |
 
 | Metric | Attribute keys |
 |---|---|

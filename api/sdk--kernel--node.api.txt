@@ -16,6 +16,7 @@ const SQLITE_SCHEMA
 const SpendOptions
 const anthropicModel
 const directoryJournal
+const directoryMedia
 const diskFiles
 const flushTelemetry
 const isSpendRefusal
@@ -30,6 +31,7 @@ const spendRefusalOf
 const sqliteJournal
 interface AnthropicOptions
 interface DirectoryJournalOptions
+interface DirectoryMediaOptions
 interface DiskFilesOptions
 interface EmbedPrefixes
 interface OpenAiCompatibleEmbedderOptions

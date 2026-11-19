@@ -73,6 +73,8 @@ caught up.
 | `recordedEmbedder({ model, vectors })` | sdk, `plugins/embedder-recorded` | an embedder of recorded vectors, for tests and a page with no model |
 | The vector store contract | sdk, `contracts/vector-store` | `VectorStore`, an index of the journal found by meaning, the host's; `VectorKey`, `Scored` |
 | `inMemoryVectors()` | sdk, `plugins/vectors-in-memory` | a store of vectors in memory |
+| The media contract | sdk, `contracts/media` | `MediaStore`, bytes for the model kept under their SHA-256, the host's; `MediaHash`, `mediaHashOf` |
+| `inMemoryMedia({ maxBytes? })` | sdk, `plugins/media-in-memory` | a store of media in memory |
 | `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
 | The task contract | sdk, `contracts/task` | `Tasks`, `TaskReports` (where the host takes a report), `TaskReport`, `taskReport`: a report the program stores as a user message whose `from` is the task's session |
 | `tasks(run)`, `taskTools`, `taskHandlers` | sdk, `plugins/tasks` | background tasks: the host's helper on a fiber of the plugin, the two tools that start and cancel one |
@@ -2201,6 +2203,32 @@ const askFirst: BeforeCall<Approval> = (session, call) => call.name !== "runComm
 A test gives `runCommand` a `scriptedShell(script)`, which answers the
 script and runs nothing, so a tool's test spawns no process.
 
+## Media: bytes kept by their hash
+
+An image a host will send a model is bytes the journal should not hold:
+a record names them, and a store keeps them. The media contract is that
+store ([ADR 0034](adr/0034-media-is-kept-by-its-hash.md)): `MediaStore`,
+`put(bytes)` to the bytes' key, their SHA-256 (`MediaHash`,
+`mediaHashOf`), and `get(hash)` to a copy of them, or none. Kept bytes
+never change: the same bytes put again give the same key. A put copies
+the bytes before it waits, so a buffer the caller changes later changes
+nothing kept; no bytes, more than the store's `maxBytes`
+(`MEDIA_LIMIT`, 3.75 MiB, unless its options name another) or a value
+that is no byte array of its own are `MediaRefused`, and a key that is
+no hash is refused before it is looked for. What a store holds under a
+key that is not that key's bytes is `MediaDamaged`, never given back and
+never said to be absent.
+
+The kernel ships `inMemoryMedia()`, which a page uses, and the Node entry
+`directoryMedia({ directory })`: each blob a file named by its key,
+written to a temporary file, flushed and published by an exclusive hard
+link, so a crash leaves it whole or absent; a get verifies what it reads;
+a put over a damaged blob keeps the damaged file in `damaged/` and
+repairs it. Two processes putting the same bytes converge, with no lock:
+a blob's name is its content. A host proves its own store with
+`mediaStoreConformance`. No record names media yet, and no model is sent
+an image from a store: that is the next media cut.
+
 ## Background tasks: work that goes on while the conversation does
 
 A task is work a helper does in a session of its own, a child of the one
@@ -2705,6 +2733,7 @@ fail on a careless plugin written for it.
 | `Files` | `filesConformance` | |
 | `Embedder` | `embedderConformance`, over texts the subject gives | |
 | `VectorStore` | `vectorStoreConformance` | |
+| `MediaStore` | `mediaStoreConformance`, at the store's own `maxBytes` | |
 | `ModelSpend` | `modelSpendConformance` | |
 | `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |
 | `TaskReports` | none | the host's sink, one call that puts a report in its queue: the tests hold the plugin's side (a delivery that waits keeps its task's slot) |
@@ -2728,6 +2757,10 @@ session plugin and three memories. A host's turn runs tools itself, through Effe
    `Sessions.recover`; a summary of old turns, `summaryMemory`; and results
    sent as pointers with a tool that reads them back, `pointed` and
    `readResult`.)
+3. **Media in the conversation.** A record that names a store's key, an
+   image sent from it on the OpenAI-compatible wire, and a memory that
+   resolves the key as it builds a context. (The store has returned:
+   `MediaStore`, `inMemoryMedia`, `directoryMedia`.)
 
 ## Open questions
 
