@@ -37,4 +37,4 @@ export interface RunningTurn {
  *
  * @public
  */
-export class CurrentTurn extends Context.Service<CurrentTurn, RunningTurn>()("@xandreed/sdk/kernel/CurrentTurn") {}
+export class CurrentTurn extends Context.Service<CurrentTurn, RunningTurn>()("@xandreed/sdk/CurrentTurn") {}

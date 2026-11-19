@@ -18,4 +18,4 @@ import type { Ran, RunRequest, ShellRefused, ShellUnavailable } from "./shell.en
  */
 export class Shell extends Context.Service<Shell, {
   readonly run: (request: RunRequest) => Effect.Effect<Ran, ShellRefused | ShellUnavailable>
-}>()("@xandreed/sdk/kernel/Shell") {}
+}>()("@xandreed/sdk/Shell") {}

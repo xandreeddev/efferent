@@ -25,4 +25,4 @@ export type MemoryFailure = JournalStorageError | UnknownRecord | ListenerFailed
 export class Memory extends Context.Service<Memory, {
   /** The messages of the context for the session's open turn, in the order the model reads them, the system text left to the caller. */
   readonly context: (session: OpenSession) => Effect.Effect<ReadonlyArray<Prompt.MessageEncoded>, MemoryFailure>
-}>()("@xandreed/core/kernel/Memory") {}
+}>()("@xandreed/sdk/Memory") {}

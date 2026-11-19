@@ -16,4 +16,4 @@ import type { CurationFailed, CurationJob } from "./curator.entity.js"
 export class Curator extends Context.Service<Curator, {
   /** The model's reply to `prompt`, as text that is not blank. */
   readonly curate: (input: { readonly prompt: string; readonly job: CurationJob }) => Effect.Effect<string, CurationFailed>
-}>()("@xandreed/sdk/kernel/Curator") {}
+}>()("@xandreed/sdk/Curator") {}

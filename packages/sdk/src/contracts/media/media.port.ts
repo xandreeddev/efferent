@@ -24,4 +24,4 @@ export class MediaStore extends Context.Service<MediaStore, {
   readonly maxBytes: number
   readonly put: (bytes: Uint8Array) => Effect.Effect<MediaHash, MediaRefused | MediaUnavailable>
   readonly get: (hash: MediaHash) => Effect.Effect<Option.Option<Uint8Array>, MediaRefused | MediaUnavailable | MediaDamaged>
-}>()("@xandreed/sdk/kernel/MediaStore") {}
+}>()("@xandreed/sdk/MediaStore") {}

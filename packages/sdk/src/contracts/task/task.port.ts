@@ -20,7 +20,7 @@ import type { StartedTask, TaskId, TaskRefused, TaskReport } from "./task.entity
 export class Tasks extends Context.Service<Tasks, {
   readonly start: (parent: SessionId, task: string) => Effect.Effect<StartedTask, TaskRefused>
   readonly cancel: (parent: SessionId, task: TaskId) => Effect.Effect<boolean>
-}>()("@xandreed/sdk/kernel/Tasks") {}
+}>()("@xandreed/sdk/Tasks") {}
 
 /**
  * Where a task's report goes when it ends (ADR 0018), which the host provides: into the one queue its program's loop
@@ -31,4 +31,4 @@ export class Tasks extends Context.Service<Tasks, {
  */
 export class TaskReports extends Context.Service<TaskReports, {
   readonly deliver: (report: TaskReport) => Effect.Effect<void>
-}>()("@xandreed/sdk/kernel/TaskReports") {}
+}>()("@xandreed/sdk/TaskReports") {}

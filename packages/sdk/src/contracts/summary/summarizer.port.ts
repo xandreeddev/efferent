@@ -16,4 +16,4 @@ export class Summarizer extends Context.Service<Summarizer, {
     readonly earlier: Option.Option<string>
     readonly messages: ReadonlyArray<Message>
   }) => Effect.Effect<string, SummaryFailed>
-}>()("@xandreed/sdk/kernel/Summarizer") {}
+}>()("@xandreed/sdk/Summarizer") {}

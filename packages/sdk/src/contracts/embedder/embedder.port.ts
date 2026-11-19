@@ -21,4 +21,4 @@ import type { EmbedAs, EmbedFailed, Vector } from "./embedder.entity.js"
 export class Embedder extends Context.Service<Embedder, {
   readonly model: string
   readonly embed: (texts: ReadonlyArray<string>, as: EmbedAs) => Effect.Effect<ReadonlyArray<Vector>, EmbedFailed>
-}>()("@xandreed/sdk/kernel/Embedder") {}
+}>()("@xandreed/sdk/Embedder") {}

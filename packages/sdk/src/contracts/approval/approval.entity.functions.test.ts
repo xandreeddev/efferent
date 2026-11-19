@@ -81,7 +81,7 @@ describe("approve, in a tool's handler", () => {
   test("with nobody to ask in the stack, the tool does not act, and its call fails", async () => {
     // Typed code does not compile without `Approval` (composition.test.ts). Untyped code runs: this is what it gets.
     const out = await called("act", Effect.succeed({ _tag: "Approved" }), false)
-    expect(out).toEqual({ message: ["Service not found: @xandreed/sdk/kernel/Approval", true], ran: 0, asked: 0, details: [], records: ["conversation.tool.result"] })
+    expect(out).toEqual({ message: ["Service not found: @xandreed/sdk/Approval", true], ran: 0, asked: 0, details: [], records: ["conversation.tool.result"] })
   })
 
   test("a question dropped with its turn decides nothing: no record is stored, and the work does not run", async () => {

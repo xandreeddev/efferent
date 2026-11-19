@@ -23,4 +23,4 @@ export class Files extends Context.Service<Files, {
   readonly read: (path: FilePath) => Effect.Effect<string, FileNotFound | FilesRefused | FilesUnavailable>
   readonly list: (folder: Option.Option<FilePath>) => Effect.Effect<ReadonlyArray<FilePath>, FilesUnavailable>
   readonly write: (path: FilePath, text: string, expected?: Expected) => Effect.Effect<void, FileChanged | FilesRefused | FilesUnavailable>
-}>()("@xandreed/sdk/kernel/Files") {}
+}>()("@xandreed/sdk/Files") {}

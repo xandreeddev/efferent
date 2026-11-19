@@ -13,4 +13,4 @@ import type { ApprovalRequest, Decision } from "./approval.entity.js"
  */
 export class Approval extends Context.Service<Approval, {
   readonly ask: (request: ApprovalRequest) => Effect.Effect<Decision>
-}>()("@xandreed/sdk/kernel/Approval") {}
+}>()("@xandreed/sdk/Approval") {}

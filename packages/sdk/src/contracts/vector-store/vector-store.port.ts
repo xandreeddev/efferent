@@ -29,4 +29,4 @@ export class VectorStore extends Context.Service<VectorStore, {
   readonly put: (entries: ReadonlyArray<VectorEntry>) => Effect.Effect<void, VectorsRefused | VectorsUnavailable>
   readonly search: (vector: Vector, options: SearchOptions) => Effect.Effect<ReadonlyArray<Scored>, VectorsRefused | VectorsUnavailable>
   readonly has: (keys: ReadonlyArray<VectorKey>) => Effect.Effect<ReadonlyArray<VectorKey>, VectorsUnavailable>
-}>()("@xandreed/sdk/kernel/VectorStore") {}
+}>()("@xandreed/sdk/VectorStore") {}

@@ -39,4 +39,4 @@ export interface Queued {
 export class Inbox extends Context.Service<Inbox, {
   /** Queue a message for the session. Returns at once, in call order, with its ticket and its reply. */
   readonly enqueue: (session: SessionId, message: string) => Effect.Effect<Queued, InboxRefused>
-}>()("@xandreed/sdk/kernel/Inbox") {}
+}>()("@xandreed/sdk/Inbox") {}

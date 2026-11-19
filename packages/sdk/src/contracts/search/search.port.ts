@@ -13,4 +13,4 @@ import type { Found, PatternInvalid, SearchQuery, SearchUnavailable } from "./se
  */
 export class Search extends Context.Service<Search, {
   readonly find: (query: SearchQuery) => Effect.Effect<Found, PatternInvalid | SearchUnavailable>
-}>()("@xandreed/sdk/kernel/Search") {}
+}>()("@xandreed/sdk/Search") {}

@@ -11,4 +11,4 @@ import { Context } from "effect"
  *
  * @public
  */
-export class SentWhole extends Context.Service<SentWhole, boolean>()("@xandreed/sdk/kernel/SentWhole") {}
+export class SentWhole extends Context.Service<SentWhole, boolean>()("@xandreed/sdk/SentWhole") {}
