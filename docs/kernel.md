@@ -2465,6 +2465,61 @@ A failure is an `AiError` whose reason says whether another try is worth it
 error, and not a refused key). The providers send over `fetch`, on Node and
 on Bun; a test gives its own with `FetchHttpClient.Fetch`.
 
+### An embedder that charges it
+
+The Node entry also has an `Embedder` over the network
+([ADR 0032](adr/0032-a-remote-embedder-charges-the-ledger-as-a-model-does.md)):
+`openAiCompatibleEmbedder`, over the OpenAI-compatible `/embeddings` endpoint
+of OpenAI, the gateway or a local server, a layer that needs `ModelSpend`.
+Each request holds its body's bytes at the model's input price (an
+embedding has no output, so its price's `output` is 0) and settles at what
+the provider billed, else at the tokens it reported, as a model call does; a refusal of the
+ledger is an `EmbedFailed` that `isSpendRefusal` reads. It sends texts in
+batches, puts the host's `prefixes` before a question and a kept text (e5
+reads `query: ` and `passage: `), and makes every vector unit length. Its
+`model`, the name its vectors are kept under, carries the model, the
+dimensions and the prefixes, so two configurations never share vectors:
+
+<!-- pinned: packages/sdk/src/kernel/node/embedders.test.ts#embedder -->
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
+import { cosine, Embedder } from "@xandreed/sdk/kernel"
+import { isSpendRefusal, openAiCompatibleEmbedder } from "@xandreed/sdk/kernel/node"
+
+const GEMINI = "google/gemini-embedding-001"
+
+/**
+ * Gemini's embedding model through the Vercel AI Gateway, its vectors cut to 768 numbers (and made unit length again).
+ * Its name, which the vectors are kept under, is `google/gemini-embedding-001 dimensions=768`: vectors of another
+ * length, or of another model, are never compared with these. Each request holds its texts' worst case at the input
+ * price (an embedding has no output) and is settled at the tokens the gateway reported, at that price: its
+ * embeddings answer says no cost.
+ */
+const gemini = Layer.unwrap(Effect.map(Config.Redacted("VERCEL_API_KEY"), (apiKey) => openAiCompatibleEmbedder({
+  model: GEMINI,
+  baseUrl: "https://ai-gateway.vercel.sh/v1",
+  apiKey,
+  dimensions: 768,
+  spend: { prices: { [GEMINI]: { input: 0.15, output: 0 } }, caps: { total: 0.01 } },
+})))
+
+/** The note nearest a question: the question embedded as a query, the notes as passages, compared by cosine. */
+const nearest = (question: string, notes: ReadonlyArray<string>) => Effect.gen(function* () {
+  const embedder = yield* Embedder
+  const [asked] = yield* embedder.embed([question], "query")
+  const kept = yield* embedder.embed(notes, "passage")
+  const scored = notes.map((note, at) => ({ note, score: asked === undefined ? 0 : cosine(asked, kept[at] ?? []) }))
+  return scored.toSorted((a, b) => b.score - a.score)[0]?.note ?? "no note"
+}).pipe(Effect.catchIf(isSpendRefusal, () => Effect.succeed("The budget is spent.")))
+
+const program = Effect.gen(function* () {
+  const note = yield* nearest("Where does Ana live now?", ["Ana moved to Braga in October.", "Carla likes green tea."])
+  return { note, totals: yield* (yield* ModelSpend).totals }
+}).pipe(Effect.provide(gemini.pipe(Layer.provideMerge(modelSpendMemory))))
+```
+
 ## Seeing what a host did: traces and metrics
 
 The kernel's work is traced with Effect's own spans and counted with its own

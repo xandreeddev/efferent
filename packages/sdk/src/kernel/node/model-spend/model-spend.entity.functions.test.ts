@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Exit, Option, Result } from "effect"
 import { AiError } from "effect/ai"
 import { ModelSpendExceeded } from "@xandreed/core/kernel"
+import { EmbedFailed } from "../../contracts/embedder/embedder.entity.js"
 import { callOutcomeOf, chargeOf, costOf, isRefusalStatus, isSpendRefusal, metredCostOf, neverConnected, settlementOf, spendRefusalOf, spendRefused, tokensOf, unchargeable, worstCaseOf } from "./model-spend.entity.functions.js"
 import type { Charge, Reported } from "./model-spend.entity.js"
 
@@ -19,6 +20,11 @@ describe("what a call holds", () => {
     const options = { prices: { m: price }, uncapped: ["free"], bytesPerToken: 2 }
     expect(chargeOf(options, "m", 4_000, Option.some(500))).toEqual(Result.succeed({ _tag: "Held", price, amount: worstCaseOf(price, 2_000, 500) }))
     expect(chargeOf(options, "free", 4_000, Option.none())).toEqual(Result.succeed({ _tag: "Unheld" }))
+  })
+
+  test("an output bound of 0, an embedding's, holds the input alone and is no missing bound (ADR 0032)", () => {
+    const embedding = { input: 0.15, output: 0 }
+    expect(chargeOf({ prices: { e: embedding } }, "e", 2_000, Option.some(0))).toEqual(Result.succeed({ _tag: "Held", price: embedding, amount: 2_000 * 0.15 / 1_000_000 }))
   })
 
   test("a model with no price is refused, and so is a priced call with no output bound", () => {
@@ -124,6 +130,13 @@ describe("a spend refusal", () => {
     expect([back._tag, back.reason, back.cap, back.committed, back.requested, back.message]).toEqual(["ModelSpendExceeded", "total", 0.05, 0.04, 0.02, refusal.message])
   })
 
+  test("is read from an embedder's EmbedFailed too, the ledger's refusal its cause (ADR 0032)", () => {
+    const failed = new EmbedFailed({ message: "The texts were not embedded by m: the total model spend cap of 0.05 would be passed", cause: refusal })
+    expect(isSpendRefusal(failed)).toBe(true)
+    const back = Option.getOrThrow(spendRefusalOf(failed))
+    expect([back._tag, back.reason, back.cap, back.committed, back.requested, back.message]).toEqual(["ModelSpendExceeded", "total", 0.05, 0.04, 0.02, refusal.message])
+  })
+
   test("is told apart from every other failure, a refusal for want of a price among them", () => {
     const others = [
       unchargeable("unpriced", "m", "OpenAiCompatible", "streamText"),
@@ -131,7 +144,10 @@ describe("a spend refusal", () => {
       AiError.make({ module: "m", method: "streamText", reason: new AiError.RateLimitError({}) }),
       refusal,
       new Error("no"),
+      new EmbedFailed({ message: "no vector", cause: unchargeable("unpriced", "m", "OpenAiCompatibleEmbedder", "embed") }),
+      new EmbedFailed({ message: "no vector" }),
+      { _tag: "EmbedFailed", cause: { _tag: "ModelSpendExceeded" } },
     ]
-    expect(others.map(isSpendRefusal)).toEqual([false, false, false, false, false])
+    expect(others.map(isSpendRefusal)).toEqual([false, false, false, false, false, false, false, false])
   })
 })

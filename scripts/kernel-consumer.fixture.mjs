@@ -8,7 +8,7 @@ import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
 import { callTool, Embedder, embedderConformance, Files, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
-import { anthropicModel, directoryJournal, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { anthropicModel, directoryJournal, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleEmbedder, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -365,6 +365,50 @@ assert.deepEqual(providers, {
 assert.deepEqual(served, ["/v1/chat/completions", "/v1/messages"])
 
 /**
+ * The Node entry's embedder over a local HTTP server that answers as the `/embeddings` wire does (a vector per text by
+ * its index, the usage): the embedder kit, each request charging a ledger; and a call over the ledger's cap refused
+ * before it is sent, its `EmbedFailed` read by `isSpendRefusal`.
+ */
+const LETTERS = "abcdefghijklmnopqrstuvwxyz :"
+const embeddingsServed = []
+const embeddingsServer = createServer((request, response) => {
+  let body = ""
+  request.on("data", (chunk) => { body += chunk })
+  request.on("end", () => {
+    const { input } = JSON.parse(body)
+    embeddingsServed.push(input.length)
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end(JSON.stringify({
+      data: input.map((text, index) => ({ index, embedding: Array.from(LETTERS, (letter) => 2 * Array.from(text).filter((one) => one === letter).length) })),
+      usage: { prompt_tokens: input.join("").length },
+    }))
+  })
+})
+await new Promise((resolve) => embeddingsServer.listen(0, "127.0.0.1", resolve))
+const embedderOver = (caps = {}) => openAiCompatibleEmbedder({
+  model: "e", baseUrl: `http://127.0.0.1:${embeddingsServer.address().port}/v1`, prefixes: { query: "query: ", passage: "passage: " }, batch: 2,
+  spend: { prices: { e: { input: 1, output: 0 } }, caps },
+})
+const embedderLedger = Effect.runSync(Effect.map(Layer.build(modelSpendMemory).pipe(Effect.scoped), (services) => Context.get(services, ModelSpend)))
+const embedderKit = await run(embedderConformance({
+  texts: ["a cat", "a stock price", "a lemon cake"],
+  open: built(Embedder, embedderOver(), Layer.succeed(ModelSpend, embedderLedger)),
+}))
+const embedderRefused = await Effect.runPromise(Effect.gen(function* () {
+  const failure = yield* Effect.flip(Effect.flatMap(Embedder, (embedder) => embedder.embed(["a cat"], "query")))
+  return { tag: failure._tag, refused: isSpendRefusal(failure), totals: yield* (yield* ModelSpend).totals }
+}).pipe(Effect.provide(Layer.provideMerge(embedderOver({ total: 0.000000001 }), modelSpendMemory)), Effect.timeout("20 seconds")))
+await new Promise((resolve) => embeddingsServer.close(resolve))
+const embedderTotals = Effect.runSync(embedderLedger.totals)
+assert.deepEqual(embedderKit.failed, [], "the embedder kit failed on the OpenAI-compatible embedder")
+assert.ok(embedderKit.checks >= 5)
+ran.openAiCompatibleEmbedder = embedderKit
+assert.ok(embedderTotals.settled > 0 && embedderTotals.reserved === 0, `the embedder's ledger after the kit: ${JSON.stringify(embedderTotals)}`)
+assert.deepEqual(embedderRefused, { tag: "EmbedFailed", refused: true, totals: { settled: 0, reserved: 0 } })
+// The kit's batches of three texts went out two and one; the refused call sent nothing.
+assert.ok(embeddingsServed.length > 0 && embeddingsServed.every((count) => count <= 2))
+
+/**
  * One host turn with a tool call, exported over OTLP/HTTP to a local collector (`otlpTelemetry`, the Node entry's):
  * the turn's span with the tool call's under it, no tool's parameters while content is off, and the turn's metrics.
  */
@@ -435,6 +479,7 @@ console.log(`kernel ${JSON.stringify({
   crashRecovered: true,
   layersComposed: true,
   modelProviders: true,
+  remoteEmbedder: true,
   workspaceKits: true,
   exportedTurn: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
