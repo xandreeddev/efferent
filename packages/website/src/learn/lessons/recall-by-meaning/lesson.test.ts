@@ -23,6 +23,7 @@ import { CONTROLS } from "./config-edit.ts"
 import { BIRD, CAPITAL, ORCHID, PET, recallByMeaning, THANKS, WORDS_ALONE } from "./lesson.ts"
 import { EMBEDDER_MODEL } from "./shipped.ts"
 import { recordedLesson, shippedFile } from "./testing.ts"
+import { SHIPPED } from "./vectors.ts"
 
 // Echo streams a word every 35 ms, and the walk runs many turns, each kept by the curator.
 setDefaultTimeout(240_000)
@@ -86,6 +87,8 @@ describe("lesson 20 on the page", () => {
   test("the shipped vectors are one for each text recall by meaning ranks over the world, under the kernel's key for it, made by the page's embedder", async () => {
     const file = shippedFile()
     expect([file.model, file.dimension]).toEqual([EMBEDDER_MODEL, 384])
+    // "about 310 KB of them", as the page loads them when Load the world is pressed.
+    expect(Math.round(SHIPPED.length / 10_000) * 10).toBe(310)
     const { runtime } = await page()
     await runtime.loadWorld()
     const id = SessionId.make((await runtime.list()).find((header) => header.owner === KNOWLEDGE_OWNER)!.id)

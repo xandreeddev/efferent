@@ -40,17 +40,17 @@ export const memory = withKnowledgeByMeaning({
 
 This lesson runs on **Echo**, with lesson 18's rules: as the curator, and answering a question sent with the note of memories from the note's first memory. One rule is new. A message that only greets or thanks ("Thanks!", "Hello"), sent with a note, is answered as one: *You're welcome.* Step 7 shows why it needs one.
 
-The model that turns a text into numbers is an **embedder**. The numbers it gives for a text are its **vector**: 384 numbers, whatever the length of the text. It was trained so that texts that mean nearly the same get vectors that point nearly the same way. How alike two vectors are is one number, their **cosine**: 1 when they point the same way, less the more they differ. On this page a memory and a message that has something to do with it are at about 0.78 to 0.84, and one that has nothing to do with it at about 0.74 to 0.76: the numbers are close, and only their order says much.
+The model that turns a text into numbers is an **embedder**. The numbers it gives for a text are its **vector**: 384 numbers, whatever the length of the text. It was trained so that texts that mean nearly the same get vectors that point nearly the same way. How alike two vectors are is one number, their **cosine**: 1 when they point the same way, less the more they differ. On this page the cosines of a message and the world's memories are between about 0.74 and 0.84: close together, so their order says more than their size.
 
 This page's embedder is e5-small-v2, made by others, small enough to run in your browser. It runs in a **worker**, a part of the page that works on its own, so the page stays responsive while it does. Press **Load the embedder**:
 
 <Embedder />
 
-The first time, it downloads about 34 MB, and says how far under the button; after that, the browser keeps it, and it loads in a few seconds. Then it says *The embedder is loaded: each message is now turned into numbers here, in the page, one text at a time.*, and how long it took.
+The first time, it downloads about 35 MB, and says how far under the button; after that, the browser keeps it, and it loads in about two seconds. Then it says *The embedder is loaded: each message is now turned into numbers here, in the page, one text at a time.*, and how long it took.
 
 Before it is loaded, nothing fails. Recall makes its list by meaning with the embedder, which says it is not loaded; recall leaves that list out for the request and runs by the other two, as lesson 18's did. After the curation's line, the status line says so: *The embedder is not loaded: recall used words alone.*, and the Graph tab says why: *Nothing was ranked by meaning. The embedder is not loaded: press Load the embedder to turn your messages into numbers. Recall used the other lists.* Nothing is built again when it loads: the next request uses it.
 
-DEEPSEEK
+DeepSeek V4.1 Flash, through the gateway, was run once through steps 3 to 7 on 19 November 2026, on this page in Chrome, with the embedder loaded and this page's settings, the model left to think before it answers, as the gateway's card does for every lesson; it curated as well as chatted. Sent the same notes Echo was, it answered **Who keeps a bird?** with "Ana Silva, Sven Tavares, Omar Moreau, Rui Reis, and Paula Zimmer each keep a parrot.", on a fresh conversation and again straight after the Orchid question, which it answered "João Reis leads Project Orchid, and he lives in Porto.". It answered **What pet does Rui Reis have?** with "Rui Reis has a parrot named Coco.", passing over the dogs of João Reis and Bruno Reis that the note held; **Who once called the Spanish capital home?** with "Bruno Reis once called Madrid home, before moving to Lisbon.", read from the note's "before that" line; and **Thanks!** with "You're welcome!", passing over the eight memories. Lesson 18's DeepSeek, asked about the bird, said none of its memories mentioned one. The run cost under a cent.
 
 </Step>
 
@@ -68,7 +68,7 @@ Press **Who keeps a bird?** Echo answers *From what I know: Ana Silva has parrot
 - The list by meaning ranks every memory that stands by its cosine to your message. *Ana Silva has parrot Pip.* is *1st by meaning (cosine 0.787)*, then four more parrots, from 0.781 to 0.775, then *Marco Alves leads Project Sparrow II.*, a sparrow being a bird too, a hamster, and a goal to learn the piano.
 - The first 8 are sent: *Sent 8 memories, in a note of about 179 tokens.* Sending all 554 that stand would take about 7,374.
 
-Only your message was turned into numbers for it: about FIRST of a second on this machine, the memories' vectors being in the store already.
+Only your message was turned into numbers for it, the memories' vectors being in the store already: on the machine this page was tried on, Echo's answer was there under half a second after the press, and Load the world took about half a second, the vectors included.
 
 </Step>
 
@@ -118,8 +118,6 @@ Your message names nothing, and no memory holds its word. The list by meaning st
 Echo answers *You're welcome.* That is the new rule of step 2: without it, a greeting that ends with a question mark ("Hi, are you there?") would be answered from the note's first memory.
 
 Could recall tell that nothing fits? The seed and words lists cannot: they add places, and never take one away, so they cannot stop the list by meaning from filling the note. A least cosine could: `withKnowledgeByMeaning` takes a `floor`, and leaves out of the list by meaning every memory less like your message than it. But compare the numbers. The greeting's best is 0.761. The parrot was 0.787 for the bird question, and that is high enough. Step 6's answer was 0.755: lower than eight memories that have nothing to do with "Thanks!". No floor keeps the greeting's memories out and step 6's answer in. The last experiment shows it. A floor is a number of one embedder's: another embedder's cosines are of other sizes, and the kernel sets none.
-
-DEEPSEEKTHANKS
 
 </Step>
 

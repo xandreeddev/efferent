@@ -34,6 +34,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `checkedMeaningOptions`, `MeaningOptions`, `MeaningRecallOptions`,
   `KNOWLEDGE_BY_MEANING`.
 
+- Docs site: lesson 20 of the learn track, "Recall by meaning", on the
+  knowledge module. Its program is lesson 18's, and memory.ts wraps the
+  flat memory with `withKnowledgeByMeaning` (limit, walk, pool and the
+  meaning list's weight as controls). The page gives the embedder,
+  e5-small-v2 in a worker on WebAssembly, loaded by "Load the embedder";
+  before it is loaded recall runs by words alone, the turn is answered and
+  the status line says so. Load the world puts the 557 vectors of the
+  world's memories, made ahead by the page's own worker and shipped with the
+  page (about 310 KB, loaded only when the button is pressed), in the
+  page's store, so a request embeds its message alone. The Graph tab's
+  recall panel shows each memory's place and cosine by meaning, and "for
+  what replaced it" where an ended memory took the place. Its steps: the
+  bird question reaching the parrot, fresh and straight after the Orchid
+  question; the three lists side by side; where meaning alone is wrong; an
+  ended memory found by meaning; and a greeting sent eight unrelated
+  memories, with a `floor` experiment that shows what it costs. Echo
+  answers a greeting or thanks sent with a note of memories as one. Lesson
+  18 and lesson 19 link to it.
+
 - Docs site: lesson 18 of the learn track, now "A memory that keeps itself",
   keeps its memory with a curator. Its program offers no tool that remembers
   (tools.ts is the calculator alone); after each turn's answer agent.ts runs
