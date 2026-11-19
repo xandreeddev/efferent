@@ -5,7 +5,8 @@
   `EmbedPrefixes`, `EMBEDDER_NAME_LIMIT`; `spendRefusalOf` and `isSpendRefusal` also read an `EmbedFailed`)
 - **Amends:** ADR 0026 (the charge holds a call with an output bound of 0; a refusal also rides in an `EmbedFailed`'s
   `cause`), ADR 0021 (what `EmbedAs` means on a model that reads no prefix of its own), ADR 0030 (the charge's
-  metrics carry `gen_ai.operation.name`; the span `openai_compatible_embedder.embed`)
+  metrics carry `gen_ai.operation.name`; the span `openai_compatible_embedder.embed`), ADR 0025 (`withKnowledgeByMeaning`
+  keeps the last message's vector while the message is the same, and warns once per reason its embedder fails)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -38,8 +39,11 @@ that says, `cost`). No encoding is asked for: the wire's default is a list of nu
   dividing a unit vector by its length leaves it as it was. A vector of zeros points nowhere and fails the call, as do
   a vector missing or given twice, numbers that are no vector, two lengths in one call, and a length other than the
   `dimensions` asked for: the name promises that length.
-- **Timeouts.** `timeouts.response` bounds the wait for the headers, as the providers' does (`reaching`); the body is
-  read whole, so `timeouts.idle` bounds that read (a body that does not come whole in time is a lost connection, settled
+- **Timeouts, in seconds.** `timeouts.response` bounds the wait for the headers, as the providers' does (`reaching`);
+  the body is read whole, so `timeouts.idle` bounds that read. Both are five seconds by default (`EMBEDDING_TIMEOUTS`),
+  not the providers' minute and two: a memory that ranks by meaning embeds before every request it builds and falls
+  back to words when the embedder fails, so a hung endpoint costs each context these seconds and no more. A batch of
+  64 passages answered in about a second on the gateway; a host whose embeddings take longer gives its own (a body that does not come whole in time is a lost connection, settled
   at the hold); a refusal whose body cannot be read in time is the provider's refusal by its status alone.
 
 ### `EmbedAs` means something on every model: prefixes
@@ -86,6 +90,24 @@ output, so its call is charged with an **output bound of 0**, and an embedding m
   `isSpendRefusal` tells a budget's refusal from every other failure of either; an eval run's account sees the refusal
   at the ledger as for a model call. The `AiError` stays the cause rather than becoming the failure: the contract's
   failure is `EmbedFailed`, and a caller that only embeds never matches a model's error.
+
+### Under recall by meaning
+
+`withKnowledgeByMeaning` (ADR 0025) builds a context before every request, so a turn of several steps would embed its
+last message at each. Its layer now keeps the last message's vector while the message is the same (the model is the
+layer's), so one turn embeds it once and the next turn its own; the passages it lacks are embedded 32 a call, each
+call's vectors put as it returns, so a call that fails leaves those before it stored and the next request embeds only
+what is still missing. The wrapper's 32 is under the embedder's default `batch` of 64, so each of its calls is one
+request: a smaller `batch` would split a call into requests that fail together.
+
+An embedder that fails costs the request the list by meaning alone (ADR 0025), which would hide an embedder that
+never works: a wrong key or a model with no price recalls by words on every turn and says so only in an event. So the
+layer logs a warning the first time each reason fails it, the reason being the failure's cause's tag and that cause's
+reason's (`AiError/AuthenticationError`, `ModelSpendExceeded`), else its words, at most 32 reasons a layer: the same
+refusal of every request is said once, and a new kind of failure is said when it first comes. Each context still asks
+the embedder again, so a key fixed meanwhile is used at once. `embedder-knowledge.test.ts` holds a turn of two steps
+(the passages once, the message once), a later batch failing, and a cap refusal and a 401 each recalling by words with
+the reason in the event and one warning.
 
 ### What a tracer sees
 

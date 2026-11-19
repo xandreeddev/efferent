@@ -513,11 +513,15 @@ it: `./kernel` is a `restricted` subpath.
   `withKnowledgeByMeaning({ …, pool?, weights? })`, the same needing
   `Embedder` and `VectorStore` too: with the list by meaning on, a last
   message and something to rank, the keys the store lacks embedded as
-  passages, 32 a call, and put, the last message alone embedded as a query,
+  passages, 32 a call, each call's vectors put as it returns, the last
+  message alone embedded as a query (its vector kept by the layer while the
+  message is the same: a turn's steps embed it once),
   the store searched among the keys of `meaningTexts` for `pool`, and what
   it found given to `recallKnowledge`; with it off nothing embedded;
   `EmbedFailed` skips the list by meaning for that request (recall by the
-  other lists, the reason in the event), `VectorsRefused` fails the context,
+  other lists, the reason in the event, and a warning logged the first time
+  each reason is met: the cause's tag and its reason's, else the words, at
+  most 32 reasons a layer), `VectorsRefused` fails the context,
   `VectorsUnavailable` dies; a model's name longer than `MEANING_MODEL_LIMIT` refused where the
   layer is built), `tool-files` (`ReadFile`, `ListFiles`,
   `WriteFile`, `EditFile`, `fileTools`, `fileHandlers`: they never ask,
@@ -947,7 +951,13 @@ the package roots.
   refusing before anything is sent, settlement at the bill, the usage, the
   hold and a refusal's release, the span and the counts, and with content
   off no marker of a text, the key or an echoed refusal exported),
-  `embedders.test.ts` (the region `docs/kernel.md` quotes).
+  `embedders.test.ts` (the region `docs/kernel.md` quotes),
+  `embedder-knowledge.test.ts` (`withKnowledgeByMeaning` over it and
+  `inMemoryVectors` in a host's turn of two steps: the passages embedded once
+  and the message once a turn; a later batch that fails leaving the earlier
+  stored; a cap refusal and a 401 recalling by words, the reason in the
+  event and one warning). Its waits are `EMBEDDING_TIMEOUTS`, five seconds
+  each, unless the host gives its own.
   `scripts/kernel-consumer.fixture.mjs` runs the kit over a local server
   and a call the cap refuses, on Node and on Bun.
 - The workspace's ports (ADR 0028), each a layer a host plugs in or leaves

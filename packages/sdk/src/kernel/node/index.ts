@@ -13,7 +13,7 @@ export type { OpenAiCompatibleOptions } from "./model-openai-compatible/openai-c
 export { anthropicModel } from "./model-anthropic/anthropic.adapter.js"
 export type { AnthropicOptions } from "./model-anthropic/anthropic.entity.js"
 export { openAiCompatibleEmbedder } from "./embedder-openai-compatible/openai-compatible-embedder.adapter.js"
-export { EMBEDDER_NAME_LIMIT } from "./embedder-openai-compatible/openai-compatible-embedder.entity.js"
+export { EMBEDDER_NAME_LIMIT, EMBEDDING_TIMEOUTS } from "./embedder-openai-compatible/openai-compatible-embedder.entity.js"
 export type { EmbedPrefixes, OpenAiCompatibleEmbedderOptions } from "./embedder-openai-compatible/openai-compatible-embedder.entity.js"
 export { processShell } from "./shell-process/process-shell.adapter.js"
 export type { ProcessShellOptions } from "./shell-process/process-shell.entity.js"

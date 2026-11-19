@@ -1689,8 +1689,10 @@ weights, and each memory's place and cosine in the list by meaning, with
 the memory that took the place when one it replaced did. An embedder that
 fails (`EmbedFailed`: not loaded yet, a service down) costs the request the
 list by meaning alone: recall runs by the other two, and the event says why
-(`meaning.skipped`); a store that refuses (`VectorsRefused`) fails the
-context. There is no floor on the cosine unless a host sets one (`floor`, 0
+(`meaning.skipped`), and the layer logs a warning the first time each
+reason fails it, so an embedder that never works is seen; a store that
+refuses (`VectorsRefused`) fails the context. The last message's vector is
+kept while the message is the same, so the steps of one turn embed it once. There is no floor on the cosine unless a host sets one (`floor`, 0
 to 1): every message that is not blank, a greeting too, is sent the
 memories nearest it. On e5-small-v2 no floor tells a greeting from a real
 question (ADR 0025 has the cosines), so none is set by default. On the sets of
