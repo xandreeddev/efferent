@@ -7,7 +7,7 @@ import { Forge } from "./forge.port.js"
 import type { LogDigest } from "./log-digest.entity.js"
 import { plainText } from "./log-digest.entity.functions.js"
 import type { DroppedFile } from "./packed-diff.entity.js"
-import type { FailingRun, PrepareOptions, PreparedReview, ReviewedAt, ReviewPolicies, SkipReason, Validation } from "./prepare-review.entity.js"
+import type { FailingRun, LaterChanges, PrepareOptions, PreparedReview, ReviewedAt, ReviewPolicies, SkipReason, Validation } from "./prepare-review.entity.js"
 import { reviewFolderOf } from "./prepare-review.entity.functions.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import type { PullNumber, RepoName } from "./pull-request.entity.js"
@@ -51,6 +51,10 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       return { sha: chosen.sha, source: chosen.source, base: yield* checkout.mergeBase(repo, pull.base.sha, chosen.sha) }
     })
   const files = yield* Effect.fromResult(parseUnifiedDiff(yield* checkout.diff(repo, at.base, at.sha)))
+  // What later commits changed, kept for scoring a review of an earlier commit against them.
+  const later: Option.Option<LaterChanges> = at.sha === pull.head.sha
+    ? Option.none()
+    : Option.some({ head: pull.head.sha, paths: yield* checkout.changedPaths(repo, at.sha, pull.head.sha) })
   const attributes = Option.match(yield* checkout.show(repo, at.base, ".gitattributes"), { onNone: () => [], onSome: attributesOf })
   const verdicts = files.map((file) => policies.verdict(file.path, file, attributes))
   const dropped: ReadonlyArray<DroppedFile> = verdicts.flatMap((verdict, at) => {
@@ -107,6 +111,6 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       })),
     })
 
-  const prepared: PreparedReview = { pullRequest: pull, at, files, verdicts, diff, rules, ci, failing, validation }
+  const prepared: PreparedReview = { pullRequest: pull, at, files, later, verdicts, diff, rules, ci, failing, validation }
   return prepared
 })

@@ -13,8 +13,9 @@ export type ForgeError = CommandFailed | OutputCut | ForgeUnreadable
  * (a pull request's, a push's, a merge queue's), only those of the given workflow files when some are given, and
  * never one with no job. `failedLog` answers the log of a run's failed steps, or why there is none: a missing or
  * expired log is a result; an auth or repository failure is a failure with its reason. `firstHead` answers the commit
- * the pull request was first pushed at: the one its earliest `pull_request` CI run tested, else its first commit
- * (`ForgeUnreadable` for a pull request with no commit).
+ * the pull request was first pushed at: the one its earliest `pull_request` CI run while it was open tested, else the
+ * head its first force-push replaced, else its first commit, with which it was (`ForgeUnreadable` for a pull request
+ * with no commit).
  */
 export class Forge extends Context.Service<Forge, {
   readonly pullRequest: (repo: RepoName, number: PullNumber) => Effect.Effect<PullRequest, ForgeError>

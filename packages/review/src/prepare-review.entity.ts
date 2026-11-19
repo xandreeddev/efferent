@@ -23,17 +23,29 @@ export const ReviewAt = Schema.Union([
 ])
 export type ReviewAt = typeof ReviewAt.Type
 
-/** Where the commit under review came from: the head, the earliest CI run, the first commit, or a sha given. */
+/** Where the commit under review came from: the head, one of the ways to the first head (`FirstHeadSource`), or a sha given. */
 export const AtSource = Schema.Literals(["head", ...FirstHeadSource.literals, "sha"])
 export type AtSource = typeof AtSource.Type
 
-/** The words for each source, for a person. */
+/** The words for each source, for a person: a fallback says what it may miss. */
 export const AT_SOURCE_WORDS: Readonly<Record<AtSource, string>> = {
   head: "its head",
   "first-ci-run": "its first head, the commit its earliest pull_request CI run tested",
-  "first-commit": "its first commit, since no pull_request CI run of it is known",
+  "before-first-force-push": "the head its first force-push replaced, since no pull_request CI run of it is known; an earlier push may have come before it",
+  "first-commit": "its oldest commit now, since no pull_request CI run or force-push of it is known; a rebase may have changed it",
   sha: "the commit asked for",
 }
+
+/**
+ * What the pull request changed after the commit under review, for scoring a review against later fixes: its head
+ * now, and the paths `<reviewed>...<head>` changes (from where the head's history left the reviewed commit, so changes
+ * merged in from the base count only where they touch the same paths).
+ */
+export const LaterChanges = Schema.Struct({
+  head: CommitSha,
+  paths: Schema.Array(Schema.String),
+})
+export type LaterChanges = typeof LaterChanges.Type
 
 /**
  * The commit under review (`sha`), where it came from, and the base its diff and rules are read from: the pull
@@ -103,13 +115,15 @@ export type FailingRun = typeof FailingRun.Type
 
 /**
  * A pull request prepared for review, with no model asked: the pull request, the commit under review and its base,
- * every changed file's diff (`files`, whole), each changed file's verdict, the diff packed under its budget, the repository's rules at the base commit, the CI runs of the head with a digest of each
+ * every changed file's diff (`files`, whole), what the pull request changed after the commit under review when it is
+ * not the head (`later`), each changed file's verdict, the diff packed under its budget, the repository's rules at the base commit, the CI runs of the head with a digest of each
  * failed one, and the commands asked for.
  */
 export const PreparedReview = Schema.Struct({
   pullRequest: PullRequest,
   at: ReviewedAt,
   files: Schema.Array(FileDiff),
+  later: Schema.OptionFromNullOr(LaterChanges),
   verdicts: Schema.Array(FileVerdict),
   diff: PackedDiff,
   rules: Schema.Array(RepoRules),

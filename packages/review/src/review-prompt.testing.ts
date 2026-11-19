@@ -32,6 +32,7 @@ export const PREPARED: PreparedReview = {
     { path: "src/sum.ts", oldPath: Option.none(), change: "modified", modeChange: Option.none(), binary: false, additions: 1, deletions: 1, hunks: [] },
     { path: "bun.lock", oldPath: Option.none(), change: "modified", modeChange: Option.none(), binary: false, additions: 1, deletions: 0, hunks: [] },
   ],
+  later: Option.none(),
   verdicts: [],
   diff: {
     text: "File: src/sum.ts (modified, +1 -1)\n@@ export const sum\n3   for (const value of values) {\n  - total += value\n4 + total += value * 1\n5   }\n\nLeft out of this diff:\n- bun.lock changed (+1 -0); no manifest changed",

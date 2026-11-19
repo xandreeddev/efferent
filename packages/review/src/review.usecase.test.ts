@@ -56,8 +56,10 @@ describe("at the first head", () => {
     expect(prepared.files.map((file) => file.path)).toContain("src/sum.ts")
     expect(prepared.rules.map((rule) => [rule.path, rule.from])).toEqual([["AGENTS.md", fixture.base], [":(glob)odd/AGENTS.md", fixture.base], ["src/AGENTS.md", fixture.base]])
     expect(ciOf.at(-1)).toBe(fixture.head)
+    // What the later commit changed, kept for scoring: it undid the multiplication in src/sum.ts.
+    expect<unknown>(prepared.later).toEqual(Option.some({ head: fixture.later, paths: ["src/sum.ts"] }))
     const atHead = await Effect.runPromise(prepareReview(repo, PULL.number, { ...OPTIONS, at: { _tag: "Head" } }).pipe(Effect.provide(layers)))
-    expect<unknown>([atHead.at, atHead.files.map((file) => file.path).includes("src/sum.ts")]).toEqual([{ sha: fixture.later, source: "head", base: fixture.left }, false])
+    expect<unknown>([atHead.at, atHead.files.map((file) => file.path).includes("src/sum.ts"), atHead.later]).toEqual([{ sha: fixture.later, source: "head", base: fixture.left }, false, Option.none()])
   })
 })
 
