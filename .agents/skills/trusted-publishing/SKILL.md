@@ -12,8 +12,11 @@ publish a different version to work around a permission failure.
 
 ## Package scope and settings
 
-The 24 framework names in `scripts/release-version-plan.ts` share a version.
-The unscoped `efferent` name is the 25th publication, containing documentation.
+The 6 framework names in `scripts/release-version-plan.ts` share a version.
+The unscoped `efferent` name is the 7th publication, containing documentation.
+The 18 names of the old engine (`@xandreed/runtime`, `@xandreed/process-host`
+and the `@xandreed/plugin-*` packages) stay on npm at 0.22.0 as they are:
+never deprecated, unpublished or published again.
 It is separate from the Changesets fixed group.
 
 Each npm package needs its own trusted publisher. Use GitHub owner
@@ -45,8 +48,8 @@ gh workflow run release-pr.yml --repo xandreeddev/efferent --ref main -f patch=t
 
 This records patch intent in CI, then runs the existing Changesets versioner.
 The helper refuses pending notes instead of consuming an unrelated version
-change. Review the generated `release <version>` PR: the 24 manifests, plugin
-versions, lockfile, documentation and new journal/run fixtures must agree.
+change. Review the generated `release <version>` PR: the 6 manifests, the
+lockfile, documentation and new journal/run fixtures must agree.
 Preserve existing released fixtures. Before squashing, use CONTRIBUTING.md's
 maintainer-owned release PR handoff, retaining the reviewed head/base and title.
 Do not merge or reopen the bot preview as the final PR: that keeps its author.
@@ -67,7 +70,7 @@ From a checkout of the exact release source, run:
 bun run release:status --root <release-checkout> --wait 180 --require-provenance
 ```
 
-The read-only audit checks all 25 names for the expected version, source SHA
+The read-only audit checks all 7 names for the expected version, source SHA
 and integrity metadata. The provenance flag requires attestation metadata;
 inspect the signed bundle when investigating what a particular attestation
 claims. Omitting the flag permits auditing historical releases without

@@ -17,7 +17,7 @@ const fixture = async (use: (root: string) => Promise<void>) => {
   try {
     await mkdir(join(root, "packages/core"), { recursive: true })
     await writeFile(join(root, "packages/core/package.json"), JSON.stringify({ name: "@xandreed/core", version }))
-    await writeFile(join(root, "README.md"), "# Efferent\n\n[Guide](docs/framework.md#tools)\n")
+    await writeFile(join(root, "README.md"), "# Efferent\n\n[Guide](docs/kernel.md#tools)\n")
     await writeFile(join(root, "LICENSE"), "MIT fixture license\n")
     await use(root)
   } finally { await rm(root, { recursive: true, force: true }) }
@@ -32,12 +32,12 @@ test("the landing manifest has documentation metadata and no executable or depen
 })
 
 test("the reserved-name notice precedes the current README and links use the immutable source", () => {
-  const prose = '[Guide with `code`](./docs/framework.md#tools) [Anchor](#install) [Web](https://example.test/doc) [Mail](mailto:a@example.test)\n`[inline](docs/leave.md)`\n``[other](docs/leave.md)``\n```md\n[fenced](docs/leave.md)\n```\n~~~md\n[tilde](docs/leave.md)\n~~~\n'
+  const prose = '[Guide with `code`](./docs/kernel.md#tools) [Anchor](#install) [Web](https://example.test/doc) [Mail](mailto:a@example.test)\n`[inline](docs/leave.md)`\n``[other](docs/leave.md)``\n```md\n[fenced](docs/leave.md)\n```\n~~~md\n[tilde](docs/leave.md)\n~~~\n'
   const readme = landingReadme(prose, sha, version)
   expect(readme.startsWith("**The `efferent` npm name is reserved")).toBe(true)
   expect(readme).toContain("npm install effect @xandreed/core @xandreed/sdk")
   expect(readme).toContain("[current project README](https://github.com/xandreeddev/efferent/blob/main/README.md)")
-  expect(readme).toContain(`[Guide with \`code\`](https://github.com/xandreeddev/efferent/blob/${sha}/docs/framework.md#tools)`)
+  expect(readme).toContain(`[Guide with \`code\`](https://github.com/xandreeddev/efferent/blob/${sha}/docs/kernel.md#tools)`)
   for (const untouched of ["[Anchor](#install)", "[Web](https://example.test/doc)", "[Mail](mailto:a@example.test)", "`[inline](docs/leave.md)`", "``[other](docs/leave.md)``", "[fenced](docs/leave.md)", "[tilde](docs/leave.md)"]) expect(readme).toContain(untouched)
   expect(() => landingReadme(prose, "main", version)).toThrow()
 })
@@ -52,7 +52,7 @@ test("actual npm pack is deterministic and contains exactly the documentation fi
   expect((await readdir(first.directory)).sort(Order.String)).toEqual(["LICENSE", "README.md", "package.json"])
   expect(second.integrity).toBe(first.integrity)
   expect(await readFile(second.tarball)).toEqual(bytes)
-  expect(await readFile(join(first.directory, "README.md"), "utf8")).toContain(`/blob/${sha}/docs/framework.md#tools`)
+  expect(await readFile(join(first.directory, "README.md"), "utf8")).toContain(`/blob/${sha}/docs/kernel.md#tools`)
 }), 20000)
 
 interface Scenario {

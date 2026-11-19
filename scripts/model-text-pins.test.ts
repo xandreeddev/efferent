@@ -37,7 +37,7 @@ const pinReferences = (evidence: string) => [...evidence.matchAll(/`([^`#]+\.tes
 test("each known model-text package retains its inventory and table header", () => {
   // This is a reviewed source inventory. Add a package when it introduces model text.
   expect(inventories.filter((entry) => entry.header && entry.rows.length > 0).map((entry) => entry.name)).toEqual([
-    "core", "evals", "foundry", "plugin-agent-loop", "plugin-memory", "plugin-memory-digest", "plugin-memory-summary", "plugin-memory-window", "plugin-models", "plugin-rag", "plugin-render", "plugin-sessions", "plugin-tasks", "plugin-tool-discovery", "plugin-workspace", "sdk",
+    "evals", "foundry", "sdk",
   ])
 })
 
@@ -149,13 +149,13 @@ test("a citation names one test that holds an exact expectation, in its body or 
 })
 
 test("deleting the assertion a row cites fails its citation, though the suite keeps many others", async () => {
-  const file = "packages/plugin-workspace/src/workspace-tools.adapter.test.ts"
+  const file = "packages/sdk/src/kernel/contracts/knowledge/knowledge-recall.entity.functions.test.ts"
   const text = await readFile(join(root, file), "utf8")
-  const cited = "each tool carries its description, as toolDescriptions words it"
+  const cited = "knowledgeNote: the note says the memories were kept and are data"
   expect(citationProblem(suiteBlocks(text), cited)).toBeUndefined()
-  const pin = text.split("\n").filter((line) => line.includes(").toEqual(toolDescriptions("))
+  const pin = text.split("\n").filter((line) => line.includes("expect(knowledgeNote(recall.sent)).toBe(["))
   expect(pin).toHaveLength(1)
-  const deleted = suiteBlocks(text.replace(pin[0]!, ""))
-  expect(deleted.filter((block) => block.exact).length).toBeGreaterThan(40)
+  const deleted = suiteBlocks(text.replace(pin[0]!, "(["))
+  expect(deleted.filter((block) => block.exact).length).toBeGreaterThan(15)
   expect(citationProblem(deleted, cited)).toBe("its test holds no exact expect assertion")
 })

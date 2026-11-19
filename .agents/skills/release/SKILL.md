@@ -6,8 +6,8 @@ description: Prepare Changesets release PRs and publish the exact tested release
 # Release through GitHub Actions
 
 Releases use `.github/workflows/release-pr.yml` and `release.yml`.
-All publishable packages (`names` in `scripts/build-packages.ts`) share one
-version. Changesets has one fixed group for them, including private source
+All publishable packages (`names` in `scripts/build-packages.ts`: core, the
+sdk and the four eval packages, ADR 0036) share one version. Changesets has one fixed group for them, including private source
 packages; the framework publisher uploads the isolated distribution build.
 CONTRIBUTING.md, "Publishing", is the complete workflow and setup reference.
 
@@ -39,7 +39,7 @@ it again. Do not publish a different version or an unreviewed source commit.
 
 When changesets reach main, `release-pr.yml` calls `release:version` and
 updates the bot-owned `changeset-release/main` branch. It consumes notes,
-bumps manifests, synchronizes `definePlugin` versions and version markers,
+bumps manifests, synchronizes the version markers,
 dates the central changelog, records the new journal and evaluation fixtures,
 updates lock metadata and regenerates documentation. Never overwrite an
 existing released fixture to silence a test.
@@ -62,10 +62,12 @@ creates the GitHub release and dispatches docs deployment at that tag.
 After framework publication, its separate `landing` job publishes the
 unscoped `efferent` name with only that release's README, license and package
 metadata. It shares the verified version and source commit but stays out of
-the 24-package framework cohort. `bun run publish:landing` previews its
+the 6-package framework cohort. `bun run publish:landing` previews its
 isolated package locally; live uploads require the CI context. Resume only
 when the registry records the same source commit and packed integrity.
-The final registry audit checks all 25 names and reports provenance presence.
+The final registry audit checks all 7 names and reports provenance presence;
+the 18 packages of the old engine stay on npm at 0.22.0 and are never
+audited, deprecated, unpublished or published again (ADR 0036).
 Use `bun run release:status --root <release-checkout> --wait 180` to repeat
 that read-only check. Add `--require-provenance` when verifying that every
 package was published with attestations through CI.
@@ -117,8 +119,8 @@ validated GitHub Actions context; local use retains interactive authentication.
 
 Run the definition of done from root AGENTS.md. Release script and workflow
 policy tests run within `bun test`; the package verification exercises the
-packed artifacts on Node and Bun. The new release's journal fixture replays
-under the release's schemas; fixtures of older stored formats are refused
-with `session.version` and left unchanged, never decoded by compatibility
-code. Provider-backed quality claims require their
+packed artifacts on Node and Bun. The new release's journal fixture (a
+kernel host's journals) replays under the release's definitions; a journal
+of another `JOURNAL_FORMAT` is refused (`FormatMismatch`) and left unchanged,
+never decoded by compatibility code. Provider-backed quality claims require their
 own configured models, credentials and evidence.

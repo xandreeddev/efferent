@@ -1,8 +1,10 @@
 # @xandreed/website
 
-The docs site (Astro), not published. The reference pages under
-`src/content/docs` are generated (`bun run docs:generate`); the learn track,
-`/learn`, is written by hand: interactive lessons that run a learner's agent
+The docs site (Astro), not published. The pages under `src/content/docs`
+are written by hand (getting started, which points to `docs/kernel.md`, the
+guide; the eval packages' and foundry's pages), and a guide `bun run
+docs:generate` mirrors there is never edited by hand; the learn track,
+`/learn`, is written by hand too: interactive lessons that run a learner's agent
 in the browser on the kernel. Check it with `bun run --cwd packages/website
 check` (tsc over the learn code, the build, the link check) and
 `bun test packages/website/src/learn`.
@@ -10,7 +12,7 @@ check` (tsc over the learn code, the build, the link check) and
 ## The learn track (`src/learn`, `src/content/learn`, `src/components/learn`)
 
 - **The kernel alone.** The track runs on `@xandreed/core/kernel` and
-  `@xandreed/sdk/kernel`, never the old engine; `src/learn/imports.test.ts`
+  `@xandreed/sdk/kernel`; `src/learn/imports.test.ts`
   fails on any other `@xandreed/` specifier, in the page's code or in a
   source a lesson shows. Lessons 13 and 19 alone may also name the eval
   package, `@xandreed/evals` and `@xandreed/evals/stats`, each in its own

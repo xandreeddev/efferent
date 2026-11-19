@@ -1,8 +1,7 @@
 # The kernel: a small core, every other part a layer
 
-This is a direction document. It describes the kernel, a second and much
-smaller way to build an agent that ships beside the existing engine, and
-where it goes next. The entries are `@xandreed/core/kernel` (what every
+This is a direction document. It describes the kernel, the way to build an
+agent here, and where it goes next. The entries are `@xandreed/core/kernel` (what every
 agent has, whatever its workflow) and `@xandreed/sdk/kernel` (the workflow
 contracts and the stock plugins). What the journal holds, why records carry
 tags and why the kernel has no loop are recorded in
@@ -13,16 +12,17 @@ core and plugins runs where it does, in
 [ADR 0002](adr/0002-core-owns-state-plugins-own-workflows.md); how plugins
 compose, in [ADR 0001](adr/0001-kernel-plugin-composition.md).
 
-The existing engine (`Agent.define` of `@xandreed/sdk`, described in the
-[framework guide](framework.md)) is complete: tools, skills, tasks, durable
-sessions, several memory strategies. The kernel starts from the other end:
-the smallest set of agreements that lets the parts of an agent be written,
-replaced and tested apart. It imports nothing of the engine and the engine
-imports nothing of it; nothing in it imports a runtime module, so it runs
-in a browser as it is, its Node entry aside (`@xandreed/sdk/kernel/node`,
-the stores on a disk). It is a first cut: [what it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
-is listed below. The engine stays the one to build on until the kernel has
-caught up.
+The engine of earlier releases (`Agent.define`, the runtime, the process
+host and the `@xandreed/plugin-*` packages) is gone ([ADR
+0036](adr/0036-the-old-engine-goes-and-the-kernel-takes-the-package-roots.md)).
+The kernel starts from the other end: the smallest set of agreements that
+lets the parts of an agent be written, replaced and tested apart. Nothing in
+it imports a runtime module, so it runs in a browser as it is, its Node
+entry aside (`@xandreed/sdk/kernel/node`: the stores on a disk, the model
+providers, a disk workspace and a shell, OTLP export). Until the next
+release moves it, each package's root entry is its kernel's index, beside
+`./kernel`. [What it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
+is listed below.
 
 ## Core, and plugins as layers
 
