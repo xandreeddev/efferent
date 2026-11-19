@@ -3,6 +3,8 @@
 - **Status:** accepted, 17 November 2026; superseded by ADR 0022, 18 November 2026: memory is kept by a curator
   after the turn, a memory is a sentence about entities, and no tool of the agent's writes it. The
   graph contract and its plugin stay in the kernel, unchanged, until the lessons that use them are moved
+- **Superseded:** removed on 19 November 2026 by the knowledge module, ADRs 0022 and 0023; this record is kept as
+  history
 - **Applies to:** `@xandreed/sdk/kernel` (the graph contract, the `graph` plugin, a host's memory)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 

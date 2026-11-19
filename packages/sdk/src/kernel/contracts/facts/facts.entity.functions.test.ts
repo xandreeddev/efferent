@@ -4,7 +4,7 @@ import { Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Seq, SessionId, stored, storedEvent, TurnNumber, userMessage } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import { factTools } from "../../index.js"
-import { checkedLimit, factFrom, factsNote, factsOf, factToForget, forgotten, learned, learnedOf, MEMORY_BUSY, nextFactId, noFactWith, NOT_A_FACT, relevant } from "./facts.entity.functions.js"
+import { checkedLimit, factFrom, factsNote, factsOf, factToForget, forgotten, learned, MEMORY_BUSY, nextFactId, noFactWith, NOT_A_FACT, relevant } from "./facts.entity.functions.js"
 import { questionOf } from "../memory/memory.entity.functions.js"
 import { FactId, FactText } from "./facts.entity.js"
 import type { Fact } from "./facts.entity.js"
@@ -16,13 +16,6 @@ const fact = (id: string, text: string): Fact => ({ id: FactId.make(id), text: S
 const told = (facts: ReadonlyArray<Fact>) => facts.map((one) => `${one.id}: ${one.text}`)
 
 describe("the facts that stand", () => {
-  test("learnedOf is each standing fact, in the order learned, with the time its record was stored", () => {
-    const journal = [learned(fact("f1", "The user's name is Ana.")), learned(fact("f2", "The user lives in Lisbon.")), forgotten(FactId.make("f1")), learned(fact("f3", "The user has a cat."))]
-      .map((draft, index) => ({ ...draft, seq: Seq.make(index + 1), at: 1_000 * (index + 1), turn: TurnNumber.make(index + 1) }))
-    expect(learnedOf(journal).map(({ fact: one, at }) => [String(one.id), at])).toEqual([["f2", 2_000], ["f3", 4_000]])
-    expect(learnedOf(journal).map(({ fact: one }) => one)).toEqual([...factsOf(journal)])
-  })
-
   test("factsOf is each fact learned, less those forgotten, in the order learned; other records are no facts", () => {
     const journal = journalOf([
       userMessage("go"),

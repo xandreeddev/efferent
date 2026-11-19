@@ -277,9 +277,6 @@ describe("the Context tab's row of sessions", () => {
     expect(kindOf("s1", "chat", header("plugin.facts"))).toBe("memory")
     // The memory session continues no other, as the kernel finds it: one the plugin owns under a parent is a child.
     expect(kindOf("s1", "chat", header("plugin.facts", "chat"))).toBe("helper")
-    // The graph session (lesson 18): the graph plugin owns it, and it continues no other, as the memory session.
-    expect(kindOf("s1", "chat", header("plugin.graph"))).toBe("graph")
-    expect(kindOf("s1", "chat", header("plugin.graph", "chat"))).toBe("helper")
     // A background task's session (lesson 17): the tasks plugin owns it, and it is a child. Without a parent it is another.
     expect(kindOf("s1", "chat", header("plugin.tasks", "chat"))).toBe("task")
     expect(kindOf("s1", "chat", header("plugin.tasks"))).toBe("other")
