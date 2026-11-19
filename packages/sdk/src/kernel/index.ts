@@ -66,6 +66,13 @@ export type { SearchOptions } from "./contracts/vector-store/vector-store.entity
 export { vectorStoreConformance } from "./contracts/vector-store/vector-store.conformance.js"
 export type { VectorStoreSubject } from "./contracts/vector-store/vector-store.conformance.js"
 export { inMemoryVectors } from "./plugins/vectors-in-memory/in-memory-vectors.adapter.js"
+export { MediaStore } from "./contracts/media/media.port.js"
+export { MEDIA_LIMIT, MediaDamaged, MediaHash, MediaRefused, MediaRefusedBecause, MediaUnavailable } from "./contracts/media/media.entity.js"
+export { checkedBytes, mediaHashOf } from "./contracts/media/media.entity.functions.js"
+export { mediaStoreConformance } from "./contracts/media/media.conformance.js"
+export type { MediaStoreSubject } from "./contracts/media/media.conformance.js"
+export { inMemoryMedia } from "./plugins/media-in-memory/in-memory-media.adapter.js"
+export type { InMemoryMediaOptions } from "./plugins/media-in-memory/in-memory-media.adapter.js"
 export type {
   About, CurateOptions, CurationCalls, CurationOptions, CurationOutcome, Ended, KeptRecords, Knowledge, KnownEntity, KnownMemory, KnownSource, NewSource, NextIds, ReadCuration, ShownKnowledge,
   ShownLimits, Staged, TurnSource, TurnSourceOptions,

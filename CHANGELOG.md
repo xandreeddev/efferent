@@ -10,6 +10,44 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: a store of images and other bytes for the model
+  (ADR 0034). `MediaStore` keeps bytes under their SHA-256 (`MediaHash`,
+  `mediaHashOf`, pure, so a page hashes as a process does) and gives them
+  back, never changed once kept: `put` copies before it waits (`checkedBytes`)
+  and refuses no bytes, more than the store's `maxBytes` (`MEDIA_LIMIT`,
+  3.75 MiB, by default) or a value that is no byte array of its own
+  (`MediaRefused`); `get` gives a copy of its own, none for a key nothing was
+  put under, refuses a key that is no hash, and fails with `MediaDamaged`
+  rather than give bytes that are not their key's. `mediaStoreConformance`
+  (`MediaStoreSubject`) is the contract as eight checks, and
+  `inMemoryMedia({ maxBytes? })` a store in memory.
+- `@xandreed/sdk/kernel/node`: `directoryMedia({ directory, maxBytes? })`, a
+  media store in a folder: each blob written whole, flushed and published by
+  an exclusive hard link, verified as it is read, a damaged one kept aside and
+  repaired by a put of its bytes, temporary files a crash left swept after an
+  hour, a foreign folder or another layout refused and left as it is. No
+  record names media yet: that, and sending an image from a store, is the
+  next media cut.
+- `@xandreed/sdk/kernel/node`: `openAiCompatibleEmbedder`, an `Embedder`
+  over the OpenAI-compatible `/embeddings` endpoint of OpenAI, the Vercel AI
+  Gateway or a local server (ADR 0032): texts in batches (`batch`, 64), each
+  after the host's `prefixes` for a question or a kept text, every vector made
+  unit length, `dimensions` sent when given. Its `model`, the name its vectors
+  are kept under, carries the model, the dimensions and the prefixes (or the
+  host's `name`, 1 to `EMBEDDER_NAME_LIMIT` characters). Each request charges
+  the `ModelSpend` ledger through the providers' charge, with an output bound
+  of 0 (an embedding model's price has `output: 0`), and is counted as a model
+  call; each `embed` is the span `openai_compatible_embedder.embed` with the
+  `gen_ai.*` attributes of an embeddings call. A failure is `EmbedFailed`; a
+  refusal of the ledger keeps its `ModelSpendExceeded` as the cause, which
+  `spendRefusalOf` and `isSpendRefusal` now read there too. The charge's
+  metrics (`efferent.model.calls`, `efferent.model.tokens`,
+  `efferent.model.cost`) carry `gen_ai.operation.name`, `chat` for a model's
+  calls and `embeddings` for an embedder's, so the two are told apart. Its waits
+  are five seconds each by default (`EMBEDDING_TIMEOUTS`). Under it,
+  `withKnowledgeByMeaning` keeps the last message's vector for the steps of
+  its turn, so they embed it once, and logs a warning the first
+  time each reason fails its embedder, so one that never works is seen.
 - `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
   calls without writing a span (ADR 0030). `Sessions.turn` is the span
   `session.turn` (the session, the turn's number, how it ended), `callTool` is
@@ -752,18 +790,23 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   | `@xandreed/plugin-memory-window` | `windowMemory` |
   | `@xandreed/plugin-memory-summary` | `summaryMemory` over a `Summarizer` |
   | `@xandreed/plugin-memory-digest` | none yet; a long result is sent as a pointer (`pointed`, `ReadResult`) |
-  | `@xandreed/plugin-memory` | `curate` with `withKnowledge`; `withFacts` with `factTools` |
-  | `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` and a `VectorStore`; retrieval of a document's passages: none yet |
+  | `@xandreed/plugin-memory` | `curate` with `withKnowledge`; `withFacts` with `factTools`; for the host's `EmbeddingModel`, an `Embedder`: `openAiCompatibleEmbedder` on `@xandreed/sdk/kernel/node` |
+  | `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` (`openAiCompatibleEmbedder` for its `EmbeddingModel`) and a `VectorStore`; retrieval of a document's passages: none yet |
   | `@xandreed/plugin-knowledge-postgres` | none yet |
   | `@xandreed/plugin-tool-discovery` | `defineSkill`, `skills(base, ...skills)` and `loadSkill` |
   | `@xandreed/plugin-models` | `openAiCompatibleModel` and `anthropicModel` on `@xandreed/sdk/kernel/node`; the router, the credential and settings stores and the subscription sign-ins: none yet |
-  | `@xandreed/plugin-session-files` | `directoryJournal` |
+  | `@xandreed/plugin-session-files` | `directoryJournal`; `directoryMedia` for its `MediaStoreDirectoryLive` |
   | `@xandreed/plugin-session-sqlite` | `sqliteJournal` |
   | `@xandreed/plugin-sessions` | `sessions()` over a journal, `recoverTurns`, and `inbox` |
   | `@xandreed/plugin-tasks` | `tasks(run)` with `startTask` and `cancelTask` |
   | `@xandreed/plugin-render` | view records (`showView`, `viewsOf`) and `progressEvent`; the feed's SSE and WebSocket transports: none yet |
   | `@xandreed/plugin-workspace` | `diskFiles`, `processShell`, `filesSearch` and their tools; image resizing and a skills directory: none yet |
   | `@xandreed/plugin-telemetry` | the kernel's spans and metrics, exported with `otlpTelemetry` and `otlpTelemetryFromEnv` |
+  | core's `MediaStore`, `MediaStoreMemoryLive` and their kit | the sdk kernel's `MediaStore`, `inMemoryMedia` and `mediaStoreConformance`; media in a message or a tool's result: none yet |
+
+  A local embedder in a Node or Bun process has none yet:
+  `openAiCompatibleEmbedder` also reaches a local server that speaks the
+  OpenAI-compatible wire, and `recordedEmbedder` serves kits and tests.
 
 ### Repository
 

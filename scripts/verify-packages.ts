@@ -184,7 +184,7 @@ console.log("core refuses a deep import on Node")
 } else console.log("node not on PATH: skipped the Node import check")
 const protocolFixtures: ReadonlyArray<PackedFixture> = [
   // The kernel's three entries: the three contracts' kits on the stock plugins (the memory kit on both memories), the files, search and shell kits over the Node entry's workspace ports (a folder of the disk and a process shell), one turn of a host's own over a stack of layers on the scripted model, two messages queued with the inbox running that turn, a host's turn with tools (Effect AI's Toolkit, each call stored with its result), the storage and sessions kits over the Node entry's two durable journals (SQLite over this runtime's driver), a process killed inside a turn on each, recovered by the next, a consumer's own contract composed as a layer, and a host's turn with a tool call exported over OTLP to a local collector.
-  { file: "kernel-consumer.fixture.mjs", marker: "kernel", required: ["storageKit", "sessionsKit", "memoryKit", "hostTurn", "inboxQueued", "toolTurn", "storeOutlives", "durableKits", "crashRecovered", "layersComposed", "workspaceKits", "exportedTurn"] },
+  { file: "kernel-consumer.fixture.mjs", marker: "kernel", required: ["storageKit", "sessionsKit", "memoryKit", "hostTurn", "inboxQueued", "toolTurn", "storeOutlives", "durableKits", "crashRecovered", "layersComposed", "workspaceKits", "remoteEmbedder", "exportedTurn"] },
 ]
 for (const fixture of protocolFixtures) await runPackedFixture(fixture)
 // The evaluation packages through the packed public API on Node.

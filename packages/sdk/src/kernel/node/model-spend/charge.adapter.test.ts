@@ -2,7 +2,7 @@
 // a call settled at what it reported, a stream cut and a call interrupted settled at the hold, a call that never
 // left released, and every hold closed.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from "effect"
+import { Deferred, Effect, Exit, Fiber, Metric, Option, Ref, Scope, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
 import { scriptedModel } from "../../index.js"
@@ -11,6 +11,7 @@ import { CallReach } from "./call-reach.port.js"
 import { chargedEffect, chargedSend, chargedStream } from "./charge.adapter.js"
 import type { Charging } from "./charge.adapter.js"
 import { isSpendRefusal, spendRefusalOf } from "./model-spend.entity.functions.js"
+import { modelCalls, modelCost, modelTokens } from "./model-spend.entity.js"
 import type { Charge, Reach, SpendOptions } from "./model-spend.entity.js"
 
 const price = { input: 1, output: 2 }
@@ -26,7 +27,7 @@ const reached = (reach: Reach) => Stream.fromEffect(Effect.flatMap(CallReach, (c
  * `unsent`), and the finish part's usage is what the provider reports.
  */
 const call = (charge: Charge, options: SpendOptions = { prices: {} }, unsent = false) => Effect.gen(function* () {
-  const charging: Charging = { spend: yield* ModelSpend, options, model: "scripted", module: "Scripted" }
+  const charging: Charging = { spend: yield* ModelSpend, options, model: "scripted", operation: "chat", module: "Scripted" }
   const model = yield* LanguageModel.LanguageModel
   return chargedStream(charging, "streamText", charge, (report) => Stream.concat(
     unsent ? Stream.empty : reached("Sent"),
@@ -125,7 +126,7 @@ describe("a call's hold", () => {
   test("is released when the call is interrupted before its request left", async () => {
     const run = await over(answer, Effect.gen(function* () {
       const spend = yield* ModelSpend
-      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", module: "Scripted" }
+      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", operation: "chat", module: "Scripted" }
       const taken = yield* Deferred.make<void>()
       const fiber = yield* chargedEffect(charging, "generateText", hold(0.02), () => Deferred.succeed(taken, undefined).pipe(Effect.andThen(Effect.never))).pipe(Effect.forkChild)
       yield* Deferred.await(taken)
@@ -143,7 +144,7 @@ describe("a send whose answer is a stream it gives (the Anthropic client's)", ()
     const run = await over(answer, Effect.gen(function* () {
       const spend = yield* ModelSpend
       const model = yield* LanguageModel.LanguageModel
-      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", module: "Scripted" }
+      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", operation: "chat", module: "Scripted" }
       // A host's scope that outlives many calls, the one a call finds in its context.
       const host = yield* Scope.make()
       const states: Array<string> = []
@@ -163,7 +164,7 @@ describe("a send whose answer is a stream it gives (the Anthropic client's)", ()
   test("is settled at the hold when the scope it runs in closes before its stream is read", async () => {
     const run = await over(answer, Effect.gen(function* () {
       const spend = yield* ModelSpend
-      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", module: "Scripted" }
+      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", operation: "chat", module: "Scripted" }
       const host = yield* Scope.make()
       yield* chargedSend(charging, "streamText", hold(0.02), () =>
         Effect.flatMap(CallReach, (cell) => Ref.set(cell, "Sent")).pipe(Effect.as([undefined, Stream.never] as [undefined, Stream.Stream<never>]))).pipe(Effect.provideService(Scope.Scope, host))
@@ -173,5 +174,28 @@ describe("a send whose answer is a stream it gives (the Anthropic client's)", ()
     }))
     expect(run.outcome).toMatchObject({ _tag: "Success", success: { reserved: 0.02 } })
     expect(run.totals).toEqual({ settled: 0.02, reserved: 0 })
+  })
+})
+
+describe("the charge's counts", () => {
+  test("carry what each call did, as its provider says: a model's chat and an embedder's embeddings are two series of one model", async () => {
+    const registry = new Map()
+    const counts = await Effect.runPromise(Effect.gen(function* () {
+      const spend = yield* ModelSpend
+      for (const operation of ["chat", "embeddings", "embeddings"] as const) {
+        const charging: Charging = { spend, options: { prices: {} }, model: "m", operation, module: "Test" }
+        yield* chargedEffect(charging, "call", hold(0.01), (report) => Effect.andThen(
+          Effect.flatMap(CallReach, (cell) => Ref.set(cell, "Sent")),
+          report({ input: 10, output: 0, cacheRead: 0, cacheWrite: 0, billed: 0.001 }),
+        ))
+      }
+      const count = (metric: typeof modelCalls, attributes: Record<string, string>) => Effect.map(Metric.value(Metric.withAttributes(metric, attributes)), (state) => state.count)
+      return yield* Effect.forEach(["chat", "embeddings"], (operation) => Effect.all([
+        count(modelCalls, { "efferent.model": "m", "gen_ai.operation.name": operation, "efferent.outcome": "answered" }),
+        count(modelTokens, { "efferent.model": "m", "gen_ai.operation.name": operation, "efferent.token.kind": "input" }),
+        count(modelCost, { "efferent.model": "m", "gen_ai.operation.name": operation, "efferent.cost.basis": "billed" }),
+      ], { concurrency: 1 }), { concurrency: 1 })
+    }).pipe(Effect.provide(modelSpendMemory), Effect.provideService(Metric.MetricRegistry, registry)))
+    expect(counts).toEqual([[1, 10, 0.001], [2, 20, 0.002]])
   })
 })

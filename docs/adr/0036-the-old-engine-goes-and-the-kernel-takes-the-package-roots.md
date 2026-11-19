@@ -39,18 +39,23 @@ The old engine is deleted before the next release. Each package that goes, and w
 | `@xandreed/plugin-memory-window` | `windowMemory` |
 | `@xandreed/plugin-memory-summary` | `summaryMemory` over the host's `Summarizer` |
 | `@xandreed/plugin-memory-digest` | None yet; a long tool result is sent as its start and a pointer (`pointed`, `ReadResult`, ADR 0011) |
-| `@xandreed/plugin-memory` | `curate` and `withKnowledge` (ADRs 0022, 0023); `withFacts` for facts the model keeps itself (ADR 0014) |
-| `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` and a `VectorStore` recalls memories by meaning (ADR 0025); retrieval of a document's passages: none yet |
+| `@xandreed/plugin-memory` | `curate` and `withKnowledge` (ADRs 0022, 0023); `withFacts` for facts the model keeps itself (ADR 0014); the host's Effect AI `EmbeddingModel` it required: an `Embedder`, `openAiCompatibleEmbedder` on the Node entry (ADR 0032) |
+| `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` and a `VectorStore` recalls memories by meaning (ADR 0025); its `EmbeddingModel`: `openAiCompatibleEmbedder` (ADR 0032); retrieval of a document's passages: none yet |
 | `@xandreed/plugin-knowledge-postgres` | None yet: vectors are an index of the journal (`inMemoryVectors`), and journals are on a disk (`directoryJournal`, `sqliteJournal`) |
 | `@xandreed/plugin-tool-discovery` | Skills: `defineSkill`, `skills(base, ...skills)` and the `loadSkill` tool (ADR 0013) |
 | `@xandreed/plugin-models` | `openAiCompatibleModel` and `anthropicModel` on the Node entry, which charge the ledger (ADR 0026); the router, the credential and settings stores and the subscription sign-ins: none yet |
-| `@xandreed/plugin-session-files` | `directoryJournal` (ADR 0024) |
+| `@xandreed/plugin-session-files` | `directoryJournal` (ADR 0024); its `MediaStoreDirectoryLive`: `directoryMedia` on the Node entry (ADR 0034) |
 | `@xandreed/plugin-session-sqlite` | `sqliteJournal` (ADR 0024) |
 | `@xandreed/plugin-sessions` | `sessions()` over a journal, `recoverTurns`, and the inbox (`inbox`, `inboxOf`) |
 | `@xandreed/plugin-tasks` | `tasks(run)` with the `startTask` and `cancelTask` tools (ADR 0018) |
 | `@xandreed/plugin-render` | View records (`showView`, `viewsOf`) and live progress (`progressEvent`, ADR 0009); the feed's SSE and WebSocket transports: none yet |
 | `@xandreed/plugin-workspace` | `diskFiles`, `processShell`, `filesSearch` and their tools (ADR 0028); image resizing and a skills directory: none yet |
 | `@xandreed/plugin-telemetry` | The kernel's spans and metrics, exported with `otlpTelemetry` and `otlpTelemetryFromEnv` (ADR 0030) |
+| Core's `MediaStore`, `MediaStoreMemoryLive` and their kit (core's old root, which ADR 0034 left for the old engine) | The sdk kernel's `MediaStore`, `inMemoryMedia` and `mediaStoreConformance` (ADR 0034); media in a message or a tool's result (`toolResultMedia`, `withMediaStore`): none yet, since no record names media |
+
+A local embedder that runs in a Node or Bun process has no replacement yet: the kernel ships `recordedEmbedder` for kits
+and tests and the remote `openAiCompatibleEmbedder`, which also reaches a local server that speaks the OpenAI-compatible
+wire; the e5 model that runs in a browser worker belongs to the docs site's lessons, not to a published package.
 
 The eighteen packages stay on npm at 0.22.0 as they are: never deprecated, never unpublished, never published again.
 The release notes say they are no longer published and what replaces each.

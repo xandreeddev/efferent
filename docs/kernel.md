@@ -73,6 +73,8 @@ is listed below.
 | `recordedEmbedder({ model, vectors })` | sdk, `plugins/embedder-recorded` | an embedder of recorded vectors, for tests and a page with no model |
 | The vector store contract | sdk, `contracts/vector-store` | `VectorStore`, an index of the journal found by meaning, the host's; `VectorKey`, `Scored` |
 | `inMemoryVectors()` | sdk, `plugins/vectors-in-memory` | a store of vectors in memory |
+| The media contract | sdk, `contracts/media` | `MediaStore`, bytes for the model kept under their SHA-256, the host's; `MediaHash`, `mediaHashOf` |
+| `inMemoryMedia({ maxBytes? })` | sdk, `plugins/media-in-memory` | a store of media in memory |
 | `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
 | The task contract | sdk, `contracts/task` | `Tasks`, `TaskReports` (where the host takes a report), `TaskReport`, `taskReport`: a report the program stores as a user message whose `from` is the task's session |
 | `tasks(run)`, `taskTools`, `taskHandlers` | sdk, `plugins/tasks` | background tasks: the host's helper on a fiber of the plugin, the two tools that start and cancel one |
@@ -1689,8 +1691,10 @@ weights, and each memory's place and cosine in the list by meaning, with
 the memory that took the place when one it replaced did. An embedder that
 fails (`EmbedFailed`: not loaded yet, a service down) costs the request the
 list by meaning alone: recall runs by the other two, and the event says why
-(`meaning.skipped`); a store that refuses (`VectorsRefused`) fails the
-context. There is no floor on the cosine unless a host sets one (`floor`, 0
+(`meaning.skipped`), and the layer logs a warning the first time each
+reason fails it, so an embedder that never works is seen; a store that
+refuses (`VectorsRefused`) fails the context. The last message's vector is
+kept for the steps of its turn, so they embed it once. There is no floor on the cosine unless a host sets one (`floor`, 0
 to 1): every message that is not blank, a greeting too, is sent the
 memories nearest it. On e5-small-v2 no floor tells a greeting from a real
 question (ADR 0025 has the cosines), so none is set by default. On the sets of
@@ -2199,6 +2203,32 @@ const askFirst: BeforeCall<Approval> = (session, call) => call.name !== "runComm
 A test gives `runCommand` a `scriptedShell(script)`, which answers the
 script and runs nothing, so a tool's test spawns no process.
 
+## Media: bytes kept by their hash
+
+An image a host will send a model is bytes the journal should not hold:
+a record names them, and a store keeps them. The media contract is that
+store ([ADR 0034](adr/0034-media-is-kept-by-its-hash.md)): `MediaStore`,
+`put(bytes)` to the bytes' key, their SHA-256 (`MediaHash`,
+`mediaHashOf`), and `get(hash)` to a copy of them, or none. Kept bytes
+never change: the same bytes put again give the same key. A put copies
+the bytes before it waits, so a buffer the caller changes later changes
+nothing kept; no bytes, more than the store's `maxBytes`
+(`MEDIA_LIMIT`, 3.75 MiB, unless its options name another) or a value
+that is no byte array of its own are `MediaRefused`, and a key that is
+no hash is refused before it is looked for. What a store holds under a
+key that is not that key's bytes is `MediaDamaged`, never given back and
+never said to be absent.
+
+The kernel ships `inMemoryMedia()`, which a page uses, and the Node entry
+`directoryMedia({ directory })`: each blob a file named by its key,
+written to a temporary file, flushed and published by an exclusive hard
+link, so a crash leaves it whole or absent; a get verifies what it reads;
+a put over a damaged blob keeps the damaged file in `damaged/` and
+repairs it. Two processes putting the same bytes converge, with no lock:
+a blob's name is its content. A host proves its own store with
+`mediaStoreConformance`. No record names media yet, and no model is sent
+an image from a store: that is the next media cut.
+
 ## Background tasks: work that goes on while the conversation does
 
 A task is work a helper does in a session of its own, a child of the one
@@ -2529,6 +2559,61 @@ A failure is an `AiError` whose reason says whether another try is worth it
 error, and not a refused key). The providers send over `fetch`, on Node and
 on Bun; a test gives its own with `FetchHttpClient.Fetch`.
 
+### An embedder that charges it
+
+The Node entry also has an `Embedder` over the network
+([ADR 0032](adr/0032-a-remote-embedder-charges-the-ledger-as-a-model-does.md)):
+`openAiCompatibleEmbedder`, over the OpenAI-compatible `/embeddings` endpoint
+of OpenAI, the gateway or a local server, a layer that needs `ModelSpend`.
+Each request holds its body's bytes at the model's input price (an
+embedding has no output, so its price's `output` is 0) and settles at what
+the provider billed, else at the tokens it reported, as a model call does; a refusal of the
+ledger is an `EmbedFailed` that `isSpendRefusal` reads. It sends texts in
+batches, puts the host's `prefixes` before a question and a kept text (e5
+reads `query: ` and `passage: `), and makes every vector unit length. Its
+`model`, the name its vectors are kept under, carries the model, the
+dimensions and the prefixes, so two configurations never share vectors:
+
+<!-- pinned: packages/sdk/src/kernel/node/embedders.test.ts#embedder -->
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
+import { cosine, Embedder } from "@xandreed/sdk/kernel"
+import { isSpendRefusal, openAiCompatibleEmbedder } from "@xandreed/sdk/kernel/node"
+
+const GEMINI = "google/gemini-embedding-001"
+
+/**
+ * Gemini's embedding model through the Vercel AI Gateway, its vectors cut to 768 numbers (and made unit length again).
+ * Its name, which the vectors are kept under, is `google/gemini-embedding-001 dimensions=768`: vectors of another
+ * length, or of another model, are never compared with these. Each request holds its texts' worst case at the input
+ * price (an embedding has no output) and is settled at the tokens the gateway reported, at that price: its
+ * embeddings answer says no cost.
+ */
+const gemini = Layer.unwrap(Effect.map(Config.Redacted("VERCEL_API_KEY"), (apiKey) => openAiCompatibleEmbedder({
+  model: GEMINI,
+  baseUrl: "https://ai-gateway.vercel.sh/v1",
+  apiKey,
+  dimensions: 768,
+  spend: { prices: { [GEMINI]: { input: 0.15, output: 0 } }, caps: { total: 0.01 } },
+})))
+
+/** The note nearest a question: the question embedded as a query, the notes as passages, compared by cosine. */
+const nearest = (question: string, notes: ReadonlyArray<string>) => Effect.gen(function* () {
+  const embedder = yield* Embedder
+  const [asked] = yield* embedder.embed([question], "query")
+  const kept = yield* embedder.embed(notes, "passage")
+  const scored = notes.map((note, at) => ({ note, score: asked === undefined ? 0 : cosine(asked, kept[at] ?? []) }))
+  return scored.toSorted((a, b) => b.score - a.score)[0]?.note ?? "no note"
+}).pipe(Effect.catchIf(isSpendRefusal, () => Effect.succeed("The budget is spent.")))
+
+const program = Effect.gen(function* () {
+  const note = yield* nearest("Where does Ana live now?", ["Ana moved to Braga in October.", "Carla likes green tea."])
+  return { note, totals: yield* (yield* ModelSpend).totals }
+}).pipe(Effect.provide(gemini.pipe(Layer.provideMerge(modelSpendMemory))))
+```
+
 ## Seeing what a host did: traces and metrics
 
 The kernel's work is traced with Effect's own spans and counted with its own
@@ -2542,7 +2627,9 @@ it runs under; `callTool` is `tool.call` (the tool, the call's id,
 whether its result is a failure), a tool's own spans under it. A turn the
 inbox or a background task runs on a fiber of its own is a trace of its own.
 The Node entry's providers count every call they send, a curator's and a
-summarizer's too, in the charge: `efferent.model.calls` by model and outcome,
+summarizer's too, and the embedder's requests, in the charge, each by model
+and by what it did (`gen_ai.operation.name`: `chat` or `embeddings`):
+`efferent.model.calls` by outcome,
 `efferent.model.tokens` by kind, and `efferent.model.cost`, what the ledger
 settled each call at, the one source of a cost, with its basis (`billed`,
 `usage` at the price, or `held`, an estimate for a call that reported
@@ -2646,6 +2733,7 @@ fail on a careless plugin written for it.
 | `Files` | `filesConformance` | |
 | `Embedder` | `embedderConformance`, over texts the subject gives | |
 | `VectorStore` | `vectorStoreConformance` | |
+| `MediaStore` | `mediaStoreConformance`, at the store's own `maxBytes` | |
 | `ModelSpend` | `modelSpendConformance` | |
 | `Tasks` | none | one plugin, `tasks(run)`, held by its own tests; a kit comes with a second |
 | `TaskReports` | none | the host's sink, one call that puts a report in its queue: the tests hold the plugin's side (a delivery that waits keeps its task's slot) |
@@ -2669,6 +2757,10 @@ session plugin and three memories. A host's turn runs tools itself, through Effe
    `Sessions.recover`; a summary of old turns, `summaryMemory`; and results
    sent as pointers with a tool that reads them back, `pointed` and
    `readResult`.)
+3. **Media in the conversation.** A record that names a store's key, an
+   image sent from it on the OpenAI-compatible wire, and a memory that
+   resolves the key as it builds a context. (The store has returned:
+   `MediaStore`, `inMemoryMedia`, `directoryMedia`.)
 
 ## Open questions
 

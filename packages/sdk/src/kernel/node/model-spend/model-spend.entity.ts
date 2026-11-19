@@ -8,7 +8,7 @@ const Tokens = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
  * What a model costs, in USD per million tokens: `input` and `output`, and the dearer or cheaper price of input
  * read from (`cacheRead`) or written to (`cacheWrite`) the provider's cache, each the input price when absent.
  * `maxOutput` is the most a request is reserved for, and sent with as its output cap, when the provider's options
- * name none.
+ * name none. An embedding model's price has `output: 0`: its calls give no output, so they hold their input alone.
  *
  * @public
  */

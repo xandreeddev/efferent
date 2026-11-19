@@ -334,9 +334,9 @@ describe("the OpenAI-compatible provider's counts", () => {
     const counts = await Effect.runPromise(Effect.gen(function* () {
       const count = (metric: typeof modelCalls, attributes: Record<string, string>) => Effect.map(Metric.value(Metric.withAttributes(metric, attributes)), (state) => state.count)
       return {
-        calls: [yield* count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": "answered" }), yield* count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": "failed" })],
-        tokens: yield* Effect.forEach(["input", "cache_read", "output"], (kind) => count(modelTokens, { "efferent.model": MODEL, "efferent.token.kind": kind })),
-        cost: yield* Effect.forEach(["billed", "usage", "held"], (basis) => count(modelCost, { "efferent.model": MODEL, "efferent.cost.basis": basis })),
+        calls: [yield* count(modelCalls, { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.outcome": "answered" }), yield* count(modelCalls, { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.outcome": "failed" })],
+        tokens: yield* Effect.forEach(["input", "cache_read", "output"], (kind) => count(modelTokens, { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.token.kind": kind })),
+        cost: yield* Effect.forEach(["billed", "usage", "held"], (basis) => count(modelCost, { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.cost.basis": basis })),
       }
     }).pipe(Effect.provideService(Metric.MetricRegistry, registry)))
     expect(counts.calls).toEqual([2, 1])
@@ -369,7 +369,7 @@ describe("the OpenAI-compatible provider's counts under a plan", () => {
     const [first, second] = [await Effect.runPromise(run), await Effect.runPromise(run)]
     expect([first._tag, second._tag]).toEqual(["Failure", "Success"])
     const counts = await Effect.runPromise(Effect.forEach(["failed", "refused", "answered", "unsent"], (outcome) =>
-      Effect.map(Metric.value(Metric.withAttributes(modelCalls, { "efferent.model": MODEL, "efferent.outcome": outcome })), (state) => state.count), { concurrency: 1 })
+      Effect.map(Metric.value(Metric.withAttributes(modelCalls, { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.outcome": outcome })), (state) => state.count), { concurrency: 1 })
       .pipe(Effect.provideService(Metric.MetricRegistry, registry)))
     expect(counts).toEqual([1, 1, 1, 0])
   })

@@ -1,7 +1,8 @@
 import { Cause, Exit, Match, Option, Predicate, Result, Schema } from "effect"
 import type { CallOutcome, CostBasis, TokenKind } from "../../contracts/turn/telemetry.entity.js"
 import { AiError } from "effect/ai"
-import type { ModelSpendExceeded, ModelSpendUnavailable } from "@xandreed/core/kernel"
+import { ModelSpendExceeded } from "@xandreed/core/kernel"
+import type { ModelSpendUnavailable } from "@xandreed/core/kernel"
 import { CarriedRefusal, REFUSAL_KEY } from "./model-spend.entity.js"
 import type { Charge, ModelPrice, Reach, Reported, SpendOptions } from "./model-spend.entity.js"
 
@@ -38,7 +39,7 @@ export type Unchargeable = "unpriced" | "unbounded"
 /**
  * What a call to `model` holds before it is sent, from its request body's size and its output bound: its worst case
  * at the model's price; nothing, for a model the host marked uncapped; or a refusal, for a model with no price, or a
- * priced call with no output bound.
+ * priced call with no output bound. A bound of 0 is one: an embedding's call holds its input alone (ADR 0032).
  */
 export const chargeOf = (options: SpendOptions, model: string, bodyBytes: number, output: Option.Option<number>): Result.Result<Charge, Unchargeable> =>
   Option.match(priceOf(options, model), {
@@ -151,21 +152,24 @@ export const ledgerUnavailable = (error: ModelSpendUnavailable, module: string, 
   AiError.make({ module, method, reason: new AiError.UnknownError({ description: `the spend ledger could not be reached, so nothing was sent: ${error.message}` }) })
 
 const decodeCarried = Schema.decodeUnknownOption(CarriedRefusal)
+const decodeRefusal = Schema.decodeUnknownOption(ModelSpendExceeded)
 
 /**
  * The ledger's refusal a model call failed with, when it was one: the `ModelSpendExceeded` the ledger gave, read from
- * the `AiError`'s reason. None for any other failure.
+ * the `AiError`'s reason, or from the `cause` of an embedder's `EmbedFailed` (ADR 0032). None for any other failure.
  *
  * @public
  */
-export const spendRefusalOf = (error: unknown): Option.Option<ModelSpendExceeded> =>
-  AiError.isAiError(error) && error.reason._tag === "InvalidRequestError"
-    ? Option.map(decodeCarried(error.reason.metadata), (carried) => carried[REFUSAL_KEY])
-    : Option.none()
+export const spendRefusalOf = (error: unknown): Option.Option<ModelSpendExceeded> => {
+  if (AiError.isAiError(error)) {
+    return error.reason._tag === "InvalidRequestError" ? Option.map(decodeCarried(error.reason.metadata), (carried) => carried[REFUSAL_KEY]) : Option.none()
+  }
+  return Predicate.isTagged(error, "EmbedFailed") && Predicate.hasProperty(error, "cause") ? decodeRefusal(error.cause) : Option.none()
+}
 
 /**
- * Whether a model call failed because the spend ledger refused to hold it: a budget refusal, told apart from every
- * other failure.
+ * Whether a model call, or an embedder's call, failed because the spend ledger refused to hold it: a budget refusal,
+ * told apart from every other failure.
  *
  * @public
  */
