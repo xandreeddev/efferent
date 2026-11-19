@@ -10,6 +10,24 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: a store of images and other bytes for the model
+  (ADR 0034). `MediaStore` keeps bytes under their SHA-256 (`MediaHash`,
+  `mediaHashOf`, pure, so a page hashes as a process does) and gives them
+  back, never changed once kept: `put` copies before it waits (`checkedBytes`)
+  and refuses no bytes, more than the store's `maxBytes` (`MEDIA_LIMIT`,
+  3.75 MiB, by default) or a value that is no byte array of its own
+  (`MediaRefused`); `get` gives a copy of its own, none for a key nothing was
+  put under, refuses a key that is no hash, and fails with `MediaDamaged`
+  rather than give bytes that are not their key's. `mediaStoreConformance`
+  (`MediaStoreSubject`) is the contract as eight checks, and
+  `inMemoryMedia({ maxBytes? })` a store in memory.
+- `@xandreed/sdk/kernel/node`: `directoryMedia({ directory, maxBytes? })`, a
+  media store in a folder: each blob written whole, flushed and published by
+  an exclusive hard link, verified as it is read, a damaged one kept aside and
+  repaired by a put of its bytes, temporary files a crash left swept after an
+  hour, a foreign folder or another layout refused and left as it is. No
+  record names media yet: that, and sending an image from a store, is the
+  next media cut.
 - `@xandreed/sdk/kernel/node`: `openAiCompatibleEmbedder`, an `Embedder`
   over the OpenAI-compatible `/embeddings` endpoint of OpenAI, the Vercel AI
   Gateway or a local server (ADR 0032): texts in batches (`batch`, 64), each

@@ -7,8 +7,8 @@ import { dirname, join } from "node:path"
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, Embedder, embedderConformance, Files, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
-import { anthropicModel, directoryJournal, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleEmbedder, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { callTool, Embedder, embedderConformance, Files, inMemoryMedia, MediaStore, mediaStoreConformance, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
+import { anthropicModel, directoryJournal, directoryMedia, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleEmbedder, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -91,6 +91,9 @@ const kits = {
     }), Layer.empty),
   }),
   vectors: vectorStoreConformance({ open: built(VectorStore, inMemoryVectors(), Layer.empty) }),
+  // The media stores (ADR 0034): in memory, and a folder of the Node entry, each at a small bound.
+  mediaInMemory: mediaStoreConformance({ open: built(MediaStore, inMemoryMedia({ maxBytes: 4096 }), Layer.empty) }),
+  mediaDirectory: mediaStoreConformance({ open: Effect.suspend(() => built(MediaStore, directoryMedia({ directory: fresh("media"), maxBytes: 4096 }), Layer.empty)) }),
   directoryStorage: journalStorageConformance(durableSubject("directory")),
   sqliteStorage: journalStorageConformance(durableSubject("sqlite")),
   sessionsOverDirectory: sessionsConformance({ open: (core) => sessionsOver(core, durable.directory.layer(fresh("journal"))) }),
