@@ -81,14 +81,15 @@ const contentOnSpan: Telemetry.SpanTransformer = ({ prompt, response, span }) =>
  * `HttpClient` (one that goes through a proxy, say): Effect's own
  * `OtlpTracer` and `OtlpMetrics` (`effect/observability`), configured by
  * `options` (`OtlpTelemetryOptions`). Provide it around the program that
- * defines the agent and runs its turns; it is the `Tracer` and the metrics
- * exporter of everything inside. Spans are batched and posted every
+ * builds the kernel's stack and runs its turns; it is the `Tracer` and the
+ * metrics exporter of everything inside. Spans are batched and posted every
  * `exportInterval`; the metrics registry (every `Metric` the program
- * updated: the telemetry plugin's, the step loop's, the models plugin's,
- * `Agent.turn`'s) is posted whole each interval. Closing the layer posts
+ * updated: the kernel's `kernel.model.*` and `kernel.tool.calls`, the
+ * host's own) is posted whole each interval. Closing the layer posts
  * what is left, waiting up to `shutdownTimeout`; a serverless host flushes
  * before it responds (`flushTelemetry`). A failed export is retried and
  * then turns that signal off for 60 seconds; it never fails the program.
+ * What was said is left out unless `options.content` is on (ADR 0030);
  * `options.spans` (`OtlpSpanPolicy`) drops spans and leaves attributes
  * out before they reach the exporter.
  *
