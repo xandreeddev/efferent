@@ -29,12 +29,14 @@ export const ReviewUsage = Schema.Struct({
 export type ReviewUsage = typeof ReviewUsage.Type
 
 /**
- * A review, as the command line prints it and keeps it beside the prepared review for offline scoring: the pull
- * request and the commit reviewed, the prompt's and the tool set's versions, the model, each pass (how it ended, its
- * calls with what each used, the files it opened), every finding (sorted by severity, then path, then line), the files
- * in the packed diff against those changed, what the calls used together, and the wall time.
+ * A review, as the command line prints it and keeps it beside the prepared review for offline scoring: its run (the
+ * folder it is kept in), the pull request and the commit reviewed, the prompt's and the tool set's versions, the
+ * model, each pass (its session, how it ended, its calls with what each used, the files it opened), every finding
+ * (sorted by severity, then path, then line), the files in the packed diff against those changed, what the calls used
+ * together, and the wall time.
  */
 export const ReviewReport = Schema.Struct({
+  run: Schema.String,
   repo: RepoName,
   number: PullNumber,
   at: ReviewedAt,

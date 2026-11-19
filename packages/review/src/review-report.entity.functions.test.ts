@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
+import { SessionId } from "@xandreed/core"
 import { PassNumber } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
 import { PREPARED } from "./review-prompt.testing.js"
-import { reportText, restatesCi, reviewReport } from "./review-report.entity.functions.js"
+import { reportText, restatesCi, reviewReport, runNameOf } from "./review-report.entity.functions.js"
 
 const pass = PassNumber.make(1)
 const finding = (path: string, line: number, severity: Finding["severity"], number: number, more: Partial<Finding> = {}): Finding =>
@@ -15,9 +16,11 @@ const FINDINGS = [
 ]
 
 const REPORT = reviewReport({
+  run: runNameOf(Date.UTC(2026, 10, 19, 22, 1, 51, 123)),
   prepared: PREPARED,
   passes: [{
     pass,
+    session: Option.some(SessionId.make("s-1")),
     ended: { _tag: "Answered", summary: "Seven problems." },
     calls: [{ step: 1, tokens: Option.some({ input: 30_000, cached: 0, output: 900 }), cost: 0.0101 }, { step: 2, tokens: Option.some({ input: 31_000, cached: 29_952, output: 400 }), cost: 0.0008 }],
     opened: ["src/a.ts", "src/sum.ts"],
@@ -71,6 +74,21 @@ describe("the review's report", () => {
     ])
     const cut = { ...REPORT, passes: REPORT.passes.map((one) => ({ ...one, ended: { _tag: "OutputCut" as const } })) }
     expect(reportText(cut).split("\n").find((line) => line.startsWith("Pass 1"))).toBe("Pass 1: incomplete: an answer was cut at the output cap")
+  })
+
+  test("reportText: the model's claim, evidence and summary are printed plain, escape sequences and control characters stripped", () => {
+    const sneaky = finding("src/a.ts", 3, "high", 1, { claim: "Bad\u001b[2J\u001b[31m red\u0007 claim.", evidence: "ok\u001b]8;;http://x\u0007link\u001b]8;;\u0007 line" })
+    const report = { ...REPORT, findings: [{ ...sneaky, restatesCi: false }], passes: REPORT.passes.map((one) => ({ ...one, ended: { _tag: "Answered" as const, summary: "Done\u001b[1A\rover" } })) }
+    expect(reportText(report).split("\n").slice(2, 6)).toEqual([
+      "src/a.ts:3 high bug — Bad red claim.",
+      "    > oklink line",
+      "",
+      "Pass 1: Doneover",
+    ])
+  })
+
+  test("runNameOf: a run named by the UTC time it started, safe in a folder's name", () => {
+    expect(REPORT.run).toBe("2026-11-19T22-01-51-123Z")
   })
 
   test("the record's totals: every call's tokens and cost added up", () => {

@@ -3,6 +3,7 @@ import { clipTo } from "@xandreed/sdk"
 import { shownPath } from "./diff.entity.functions.js"
 import { SEVERITY_RANK } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
+import { plainText } from "./log-digest.entity.functions.js"
 import { AT_SOURCE_WORDS } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
 import { INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
@@ -42,8 +43,12 @@ export const FINDING_ORDER: Order.Order<Finding> = Order.combine(
   Order.mapInput(Order.Number, (finding: Finding) => finding.line),
 )
 
-/** What a review is built from: the prepared review, its passes, its findings, the model and the wall time. */
+/** A run's name, from when it started: its UTC time with `-` for each `:` and `.`, such as `2026-11-19T22-01-51-123Z`. */
+export const runNameOf = (startedMillis: number): string => new Date(startedMillis).toISOString().replace(/[:.]/g, "-")
+
+/** What a review is built from: its run, the prepared review, its passes, its findings, the model and the wall time. */
 export interface ReportInput {
+  readonly run: string
   readonly prepared: PreparedReview
   readonly passes: ReadonlyArray<PassResult>
   readonly findings: ReadonlyArray<Finding>
@@ -58,6 +63,7 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
   const calls = input.passes.flatMap((pass) => pass.calls)
   const tokens = calls.flatMap((call) => Option.toArray(call.tokens))
   return {
+    run: input.run,
     repo: input.prepared.pullRequest.repo,
     number: input.prepared.pullRequest.number,
     at: input.prepared.at,
@@ -78,21 +84,28 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
   }
 }
 
+/**
+ * A text the model or a provider wrote, as a terminal shows it: escape sequences and control characters stripped
+ * (`plainText`), so a claim cannot move the cursor, recolour or hide a line; line breaks made spaces.
+ */
+const printable = (text: string): string => plainText(text.replaceAll("\n", " "))
+
 /** Why a pass is incomplete, in words, with the failure's own words when it has them; none for a pass that answered. */
 const incompleteOf = (ended: PassEnded): Option.Option<string> => Match.valueTags(ended, {
   Answered: () => Option.none(),
   StepCap: ({ steps }) => Option.some(`${INCOMPLETE_BECAUSE.StepCap} (${steps})`),
-  SpendRefused: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.SpendRefused}: ${clipTo(message, 300).replaceAll("\n", " ")}`),
-  ModelFailed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.ModelFailed}: ${clipTo(message, 300).replaceAll("\n", " ")}`),
+  SpendRefused: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.SpendRefused}: ${printable(clipTo(message, 300))}`),
+  ModelFailed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.ModelFailed}: ${printable(clipTo(message, 300))}`),
   OutputCut: () => Option.some(INCOMPLETE_BECAUSE.OutputCut),
+  JournalFailed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.JournalFailed}: ${printable(clipTo(message, 300))}`),
 })
 
-/** One finding as the report shows it: `path:line severity kind — claim`, then its quoted evidence, indented. */
+/** One finding as the report shows it: `path:line severity kind — claim`, then its quoted evidence, indented; the model's words made plain. */
 const findingLines = (finding: ReportedFinding): ReadonlyArray<string> => {
   const lines = finding.endLine !== undefined && finding.endLine > finding.line ? `${finding.line}-${finding.endLine}` : `${finding.line}`
-  const evidence = clipTo(finding.evidence.trimEnd(), EVIDENCE_SHOWN).split("\n").filter((line) => line.trim().length > 0)
+  const evidence = clipTo(finding.evidence.trimEnd(), EVIDENCE_SHOWN).split("\n").map(plainText).filter((line) => line.trim().length > 0)
   return [
-    `${shownPath(finding.path)}:${lines} ${finding.severity} ${finding.kind} — ${finding.claim.replaceAll("\n", " ")}${finding.restatesCi ? " (restates a CI failure)" : ""}`,
+    `${shownPath(finding.path)}:${lines} ${finding.severity} ${finding.kind} — ${printable(finding.claim)}${finding.restatesCi ? " (restates a CI failure)" : ""}`,
     ...evidence.map((line) => `    > ${line}`),
   ]
 }
@@ -118,7 +131,7 @@ export const reportText = (report: ReviewReport): string => {
     "",
     ...report.passes.map((pass) => Option.match(incompleteOf(pass.ended), {
       onSome: (why) => `Pass ${pass.pass}: incomplete: ${why}`,
-      onNone: () => `Pass ${pass.pass}: ${pass.ended._tag === "Answered" && pass.ended.summary.length > 0 ? pass.ended.summary.replaceAll("\n", " ") : "answered"}`,
+      onNone: () => `Pass ${pass.pass}: ${pass.ended._tag === "Answered" && pass.ended.summary.length > 0 ? printable(pass.ended.summary) : "answered"}`,
     })),
     `Files: ${report.packedFiles} in the pack of ${report.changedFiles} changed; opened ${opened.length}${opened.length === 0 ? "" : `: ${opened.map(shownPath).join(", ")}`}`,
     `Model: ${report.model}; ${steps} ${steps === 1 ? "call" : "calls"}; tokens ${report.usage.input} in (${report.usage.cached} cached, ${percent(report.usage.cached, report.usage.input)}), ${report.usage.output} out; cost $${report.usage.cost.toFixed(4)}; wall ${(report.wallMs / 1000).toFixed(1)} s`,

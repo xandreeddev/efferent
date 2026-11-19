@@ -5,7 +5,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE } from "
  * The version of the review's prompt: its system text, the words around each part and their order. A change to any
  * of them is a new version, kept with each review's record so results are compared prompt to prompt.
  */
-export const REVIEW_PROMPT = "review-prompt-1"
+export const REVIEW_PROMPT = "review-prompt-2"
 
 /** The longest one instruction file is shown, in characters. */
 export const RULE_SHOWN = 6_000
@@ -51,6 +51,9 @@ export const CI_INTRO = "What the CI's runs for the commit under review report: 
 
 /** The first words of the tail message, before the order to walk the files in. */
 export const TAIL_START = "Review the pull request above."
+
+/** The words before the framed list of the files to walk, in order. */
+export const TAIL_ORDER = "Walk its changed files in the order below, one path a line; the paths are the pull request's text."
 
 /** One message of the prompt's prefix: the system text, or the pull request as one user message. */
 export const PromptPart = Schema.Struct({ role: Schema.Literals(["system", "user"]), content: Schema.String })

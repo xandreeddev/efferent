@@ -2,6 +2,7 @@ import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
+import { SessionId } from "@xandreed/core"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import type { CiRun } from "./forge.entity.js"
 import { Forge } from "./forge.port.js"
@@ -61,7 +62,7 @@ describe("at the first head", () => {
 })
 
 describe("reviewPullRequest", () => {
-  test("prepares, runs a pass, and keeps the prepared review, the report and the pass's journal folder under the review's folder", async () => {
+  test("prepares, runs a pass, and keeps the prepared review, the report and the pass's journal folder in a run folder of its own; a rerun gets another", async () => {
     const asked: Array<PassInput> = []
     const passes = Layer.effect(ReviewPasses, Effect.gen(function* () {
       const findings = yield* Findings
@@ -69,19 +70,23 @@ describe("reviewPullRequest", () => {
         run: (input) => Effect.gen(function* () {
           asked.push(input)
           yield* findings.record(input.reviewed.pass, { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "A multiplication by one.", evidence: "total += value * 1" })
-          return { pass: input.reviewed.pass, ended: { _tag: "Answered" as const, summary: "One." }, calls: [{ step: 1, tokens: Option.some({ input: 10, cached: 4, output: 2 }), cost: 0.001 }], opened: ["src/sum.ts"] }
+          return { pass: input.reviewed.pass, session: Option.some(SessionId.make("s-1")), ended: { _tag: "Answered" as const, summary: "One." }, calls: [{ step: 1, tokens: Option.some({ input: 10, cached: 4, output: 2 }), cost: 0.001 }], opened: ["src/sum.ts"] }
         }),
       })
     }))
-    const report = await Effect.runPromise(reviewPullRequest(repo, PULL.number, { prepare: OPTIONS, pass: { maxSteps: 4 }, model: "m" }).pipe(Effect.provide(passes.pipe(Layer.provideMerge(layers)))))
-    const folder = join(logsRoot, `2-${fixture.head.slice(0, 12)}`)
-    expect([asked.length, asked[0]?.journalDir, asked[0]?.options, asked[0]?.reviewed.at, asked[0]?.prompt.tail.startsWith("Review the pull request above.")]).toEqual([1, join(folder, "pass-1"), { maxSteps: 4 }, fixture.head, true])
-    expect([report.promptVersion, report.toolsVersion, report.model, report.findings.map((one) => [one.path, one.line, one.pass, one.restatesCi]), report.usage]).toEqual([
-      "review-prompt-1", "review-tools-2", "m", [["src/sum.ts", 4, 1, false]], { input: 10, cached: 4, output: 2, cost: 0.001 },
+    const review = () => Effect.runPromise(reviewPullRequest(repo, PULL.number, { prepare: OPTIONS, pass: { maxSteps: 4 }, model: "m" }).pipe(Effect.provide(passes.pipe(Layer.provideMerge(layers)))))
+    const report = await review()
+    const folder = join(logsRoot, `2-${fixture.head.slice(0, 12)}`, report.run)
+    expect([asked.length, asked[0]?.journalAt, asked[0]?.options, asked[0]?.reviewed.at, asked[0]?.prompt.tail.startsWith("Review the pull request above.")]).toEqual([1, join(folder, "pass-1"), { maxSteps: 4 }, fixture.head, true])
+    expect<unknown>([report.promptVersion, report.toolsVersion, report.model, report.findings.map((one) => [one.path, one.line, one.pass, one.restatesCi]), report.usage, report.passes.map((one) => one.session)]).toEqual([
+      "review-prompt-2", "review-tools-2", "m", [["src/sum.ts", 4, 1, false]], { input: 10, cached: 4, output: 2, cost: 0.001 }, [Option.some("s-1")],
     ])
     expect(existsSync(join(folder, "pass-1"))).toBe(true)
     const kept = await Effect.runPromise(Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewReport))(readFileSync(join(folder, "review.json"), "utf8")))
     expect(kept).toEqual(report)
     expect(readFileSync(join(folder, "prepared.json"), "utf8").includes(`"source": "first-ci-run"`)).toBe(true)
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    const again = await review()
+    expect([again.run === report.run, existsSync(join(folder, "review.json")), existsSync(join(logsRoot, `2-${fixture.head.slice(0, 12)}`, again.run, "review.json"))]).toEqual([false, true, true])
   })
 })

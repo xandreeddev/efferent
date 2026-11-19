@@ -1,4 +1,5 @@
 import { Schema } from "effect"
+import { SessionId } from "@xandreed/core"
 import { PassNumber } from "./finding.entity.js"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
@@ -31,7 +32,8 @@ export type CallUsage = typeof CallUsage.Type
 /**
  * How a pass ended: the model answered without a tool call (`Answered`, its one-line summary), or the pass stopped
  * with the findings so far because it reached its step cap (`StepCap`), the ledger refused a call (`SpendRefused`),
- * a call failed (`ModelFailed`, the failure's words) or an answer was cut at the output cap (`OutputCut`).
+ * a call failed (`ModelFailed`, the failure's words), an answer was cut at the output cap (`OutputCut`, after the
+ * calls it asked for ran), or the pass's journal could not be opened or written (`JournalFailed`, its words).
  */
 export const PassEnded = Schema.Union([
   Schema.TaggedStruct("Answered", { summary: Schema.String }),
@@ -39,6 +41,7 @@ export const PassEnded = Schema.Union([
   Schema.TaggedStruct("SpendRefused", { message: Schema.String }),
   Schema.TaggedStruct("ModelFailed", { message: Schema.String }),
   Schema.TaggedStruct("OutputCut", {}),
+  Schema.TaggedStruct("JournalFailed", { message: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type PassEnded = typeof PassEnded.Type
 
@@ -48,7 +51,14 @@ export const INCOMPLETE_BECAUSE: Readonly<Record<Exclude<PassEnded["_tag"], "Ans
   SpendRefused: "the spend cap refused a model call",
   ModelFailed: "a model call failed",
   OutputCut: "an answer was cut at the output cap",
+  JournalFailed: "the pass's journal could not be kept",
 }
+
+/** A pass's journal could not be opened, read or written: what failed, in its words, and the failure. */
+export class PassJournalFailed extends Schema.TaggedError<PassJournalFailed>()("PassJournalFailed", {
+  message: Schema.String,
+  cause: Schema.optional(Schema.Defect()),
+}) {}
 
 /** What a pass is asked: the most model calls it makes. */
 export const PassOptions = Schema.Struct({
@@ -57,11 +67,13 @@ export const PassOptions = Schema.Struct({
 export type PassOptions = typeof PassOptions.Type
 
 /**
- * One pass of a review: its number, how it ended, the model calls it made with what each used, and the files it
- * opened (each path given to `readLines` or `readDiff`, once, in code-unit order).
+ * One pass of a review: its number, the session its journal keeps it under (none when the journal failed before one
+ * was made), how it ended, the model calls it made with what each used, and the files it opened (each path given to
+ * `readLines` or `readDiff`, once, in code-unit order).
  */
 export const PassResult = Schema.Struct({
   pass: PassNumber,
+  session: Schema.OptionFromNullOr(SessionId),
   ended: PassEnded,
   calls: Schema.Array(CallUsage),
   opened: Schema.Array(Schema.String),

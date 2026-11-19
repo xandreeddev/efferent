@@ -2,7 +2,7 @@ import { Match, Option } from "effect"
 import { clipTo, framed } from "@xandreed/sdk"
 import { shownPath } from "./diff.entity.functions.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, PULL_INTRO, REVIEW_SYSTEM, RULE_SHOWN, RULES_INTRO, RULES_SHOWN, TAIL_START, TITLE_SHOWN } from "./review-prompt.entity.js"
+import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, PULL_INTRO, REVIEW_SYSTEM, RULE_SHOWN, RULES_INTRO, RULES_SHOWN, TAIL_ORDER, TAIL_START, TITLE_SHOWN } from "./review-prompt.entity.js"
 import type { ReviewPrompt, ReviewPromptOptions } from "./review-prompt.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 
@@ -61,7 +61,8 @@ export const reviewPrompt = (prepared: PreparedReview, options: ReviewPromptOpti
     CI_INTRO,
     framed("ci-digest", ciText(prepared)),
   ].join("\n\n")
-  const order = options.order.length === 0 ? "" : ` Walk its changed files in this order: ${options.order.map(shownPath).join(", ")}.`
+  // The paths are the pull request's text: framed, one a line, each shown as `shownPath` shows it.
+  const order = options.order.length === 0 ? "" : `\n\n${TAIL_ORDER}\n\n${framed("changed-files", options.order.map(shownPath).join("\n"))}`
   return {
     prefix: [{ role: "system", content: REVIEW_SYSTEM }, { role: "user", content: context }],
     tail: `${TAIL_START}${order}`,

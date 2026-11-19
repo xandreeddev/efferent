@@ -14,6 +14,7 @@ import { prepareReview } from "./prepare-review.usecase.js"
 import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
 import { directoryLogs } from "./review-logs.adapter.js"
 import { DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
+import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
 import { kernelPasses } from "./review-pass.adapter.js"
 import { DEFAULT_MAX_STEPS } from "./review-pass.entity.js"
@@ -38,7 +39,7 @@ export const reviewLayers = (repo: RepoName, cacheRoot: string, host: CliHost) =
 }
 
 /** The flags that take a value; `--workflow` may be given more than once, the others once. */
-const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--at", "--max-cost"]
+const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--at", "--max-cost", "--max-steps", "--model", "--price"]
 const REPEATED = ["--workflow"]
 const SWITCHES = ["--json"]
 
@@ -95,6 +96,26 @@ const wholeNumber = (text: string, what: string) => {
   return Number.isInteger(number) && number >= 1 ? Effect.succeed(number) : Effect.fail(usage(`${what} must be a whole number of at least 1, not ${JSON.stringify(text)}`))
 }
 
+/** The flags only `review` reads. */
+const REVIEW_ONLY = ["--max-cost", "--max-steps", "--model", "--price"]
+
+/**
+ * The model a review asks: `DEFAULT_REVIEW_MODEL`, or another id of the same endpoint (`--model`), which needs its
+ * price (`--price <input>,<cached input>,<output>`, USD per million tokens), since the ledger holds and settles by it.
+ */
+const modelOf = (id: Option.Option<string>, price: Option.Option<string>): Effect.Effect<ReviewModel, UsageError> => {
+  const parsed = Option.map(price, (text) => text.split(",").map(Number))
+  const prices = Option.filter(parsed, (numbers) => numbers.length === 3 && numbers.every((number) => Number.isFinite(number) && number >= 0))
+  if (Option.isSome(price) && Option.isNone(prices)) return Effect.fail(usage(`--price must be three numbers of USD per million tokens, input,cached,output, not ${JSON.stringify(price.value)}`))
+  const named = Option.getOrElse(id, () => DEFAULT_REVIEW_MODEL.model)
+  if (named !== DEFAULT_REVIEW_MODEL.model && Option.isNone(prices)) return Effect.fail(usage(`--model ${named} needs its --price (input,cached,output, USD per million tokens)`))
+  return Effect.succeed({
+    ...DEFAULT_REVIEW_MODEL,
+    model: named,
+    price: Option.match(prices, { onNone: () => DEFAULT_REVIEW_MODEL.price, onSome: ([input = 0, cacheRead = 0, output = 0]) => ({ input, cacheRead, output }) }),
+  })
+}
+
 /** The commands of the command line. */
 const COMMANDS = ["prepare", "review"]
 
@@ -102,8 +123,9 @@ const COMMANDS = ["prepare", "review"]
  * The command line. `prepare <number> --repo <owner/name>` reads the pull request, prepares it (`prepareReview`) and
  * prints a short summary, or the whole prepared review as JSON with `--json`. `review <number> --repo <owner/name>`
  * prepares it and runs one pass of the model over it (`reviewPullRequest`): the model is `DEFAULT_REVIEW_MODEL`, its
- * key read from the environment variable it names, every call charged to one ledger capped at `--max-cost`
- * (`DEFAULT_MAX_COST`); it prints the report, or the report as JSON with `--json`. `--at` reviews the head (the
+ * key read from the environment variable it names (another id of its endpoint with `--model` and its `--price`), every
+ * call charged to one ledger capped at `--max-cost` (`DEFAULT_MAX_COST`), the pass capped at `--max-steps`
+ * (`DEFAULT_MAX_STEPS`); it prints the report, or the report as JSON with `--json`. `--at` reviews the head (the
  * default), the first head (`first`) or a commit by its sha. Clones, logs and records go under `--cache`
  * (`~/.efferent-review` by default; never inside a repository). `gh` and `git` run with the host's environment. It
  * runs none of the pull request's commands: it provides no `Validations`, since none that is a sandbox ships yet.
@@ -126,19 +148,21 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const cacheRoot = Option.getOrElse(one(line, "--cache"), () => join(host.home, ".efferent-review"))
   const json = line.switches.has("--json")
   if (command === "prepare") {
-    if (Option.isSome(one(line, "--max-cost"))) return yield* Effect.fail(usage("--max-cost is a flag of review, not of prepare"))
+    const ofReview = REVIEW_ONLY.find((flag) => Option.isSome(one(line, flag)))
+    if (ofReview !== undefined) return yield* Effect.fail(usage(`${ofReview} is a flag of review, not of prepare`))
     const prepared = yield* prepareReview(repo, number, options).pipe(Effect.provide(reviewLayers(repo, cacheRoot, host)))
     yield* Console.log(json ? JSON.stringify(yield* Schema.encodeEffect(PreparedReview)(prepared).pipe(Effect.orDie), null, 2) : summaryText(prepared))
     return 0
   }
   const maxCost = yield* Option.match(one(line, "--max-cost"), { onNone: () => Effect.succeed(DEFAULT_MAX_COST), onSome: costOf })
-  const model = DEFAULT_REVIEW_MODEL
+  const maxSteps = yield* Option.match(one(line, "--max-steps"), { onNone: () => Effect.succeed(DEFAULT_MAX_STEPS), onSome: (text) => wholeNumber(text, "--max-steps") })
+  const model = yield* modelOf(one(line, "--model"), one(line, "--price"))
   const apiKey = yield* Config.Redacted(model.keyVariable).parse(ConfigProvider.fromEnv({ env: host.env })).pipe(
     Effect.mapError(() => usage(`review needs the model's key in the environment variable ${model.keyVariable}`)),
   )
   const needs = Layer.mergeAll(reviewLayers(repo, cacheRoot, host), findingsInMemory, modelSpendMemory)
-  const layers = kernelPasses.pipe(Layer.provideMerge(reviewModel(model, apiKey, maxCost).pipe(Layer.provideMerge(needs))))
-  const report = yield* reviewPullRequest(repo, number, { prepare: options, pass: { maxSteps: DEFAULT_MAX_STEPS }, model: model.model }).pipe(Effect.provide(layers))
+  const layers = kernelPasses().pipe(Layer.provideMerge(reviewModel(model, apiKey, maxCost).pipe(Layer.provideMerge(needs))))
+  const report = yield* reviewPullRequest(repo, number, { prepare: options, pass: { maxSteps }, model: model.model }).pipe(Effect.provide(layers))
   yield* Console.log(json ? JSON.stringify(yield* Schema.encodeEffect(ReviewReport)(report).pipe(Effect.orDie), null, 2) : reportText(report))
   return 0
 })
