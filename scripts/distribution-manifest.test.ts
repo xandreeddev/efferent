@@ -5,14 +5,14 @@ import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { distributionDependencies, installedCopies, PEERS } from "./distribution-manifest.js"
 
-const versions = new Map([["@xandreed/core", "0.14.0"], ["@xandreed/runtime", "0.14.0"]])
+const versions = new Map([["@xandreed/core", "0.14.0"], ["@xandreed/evals", "0.14.0"]])
 
 describe("distributionDependencies", () => {
   test("workspace packages are caret ranges of their version, and core and effect caret-range peers", () => {
     expect(distributionDependencies({
-      dependencies: { "@xandreed/core": "workspace:*", "@xandreed/runtime": "workspace:*", effect: "4.0.7", undici: "^7.30.1", "@effect/ai-openai": "4.0.7" },
+      dependencies: { "@xandreed/core": "workspace:*", "@xandreed/evals": "workspace:*", effect: "4.0.7", undici: "^7.30.1", "@effect/ai-openai": "4.0.7" },
     }, versions)).toEqual({
-      dependencies: { "@xandreed/runtime": "^0.14.0", undici: "^7.30.1", "@effect/ai-openai": "4.0.7" },
+      dependencies: { "@xandreed/evals": "^0.14.0", undici: "^7.30.1", "@effect/ai-openai": "4.0.7" },
       peerDependencies: { "@xandreed/core": "^0.14.0", effect: "^4.0.7" },
     })
   })
@@ -33,7 +33,7 @@ describe("distributionDependencies", () => {
       .map(([dependency, range]) => `${name} -> ${dependency}@${range}`))
     expect(pinned).toEqual([])
     expect(built.filter(({ dependencies }) => PEERS.some((peer) => peer in dependencies)).map(({ name }) => name)).toEqual([])
-    expect(built.filter(({ peerDependencies }) => "@xandreed/core" in peerDependencies).length).toBeGreaterThan(10)
+    expect(built.filter(({ peerDependencies }) => "@xandreed/core" in peerDependencies).map(({ name }) => name).sort()).toEqual(["@xandreed/evals", "@xandreed/sdk", "@xandreed/website"])
   })
 })
 

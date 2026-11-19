@@ -18,7 +18,7 @@ const json = (body: unknown, status = 200) => new Response(JSON.stringify(body),
 const dependencies = (fetch: ReleaseAuditDependencies["fetch"]): ReleaseAuditDependencies => ({ fetch, now: () => 0, sleep: async () => {} })
 
 describe("public release audit", () => {
-  test("audits the exact 24 framework names and landing package with six public requests at most", async () => {
+  test("audits the exact 6 framework names and landing package with six public requests at most", async () => {
     let active = 0
     let maximum = 0
     const report = await auditRelease({ version, sha }, dependencies(async (url, init) => {
@@ -35,9 +35,9 @@ describe("public release audit", () => {
     }))
     expect(report.ok).toBe(true)
     expect(report.entries.map((entry) => entry.name)).toEqual([...auditedReleaseNames])
-    expect(new Set(report.entries.map((entry) => entry.name)).size).toBe(25)
+    expect(new Set(report.entries.map((entry) => entry.name)).size).toBe(7)
     expect(maximum).toBe(6)
-    expect(report.counts).toEqual({ published: 25, missing: 0, mismatch: 0, unavailable: 0, provenance: 1 })
+    expect(report.counts).toEqual({ published: 7, missing: 0, mismatch: 0, unavailable: 0, provenance: 1 })
     expect(report.entries.every((entry) => entry.gitHead === sha && entry.integrity === integrity)).toBe(true)
   })
 
@@ -51,7 +51,7 @@ describe("public release audit", () => {
     }))
     expect(report.ok).toBe(true)
     expect(report.entries[0]?.via).toBe("packument")
-    expect(requests).toHaveLength(26)
+    expect(requests).toHaveLength(8)
   })
 
   test("missing versions, immutable mismatches and unavailable metadata stay distinct", async () => {
@@ -65,15 +65,21 @@ describe("public release audit", () => {
       if (index === 4) return json({ ...metadata(name), version: "0.15.1" })
       if (index === 5) return json({ name, version, dist: { integrity } })
       if (index === 6) return json({}, 503)
-      if (index === 7) return new Response("not JSON", { status: 200 })
-      if (index === 8) throw new Error("fixture network failure")
       return json(metadata(name))
     }))
     expect(report.ok).toBe(false)
-    expect(report.counts).toEqual({ published: 16, missing: 2, mismatch: 4, unavailable: 3, provenance: 0 })
+    expect(report.counts).toEqual({ published: 0, missing: 2, mismatch: 4, unavailable: 1, provenance: 0 })
     expect(report.entries[2]?.reason).toContain("gitHead")
     expect(report.entries[5]?.gitHead).toBe(null)
     expect(report.entries[6]?.reason).toContain("503")
+    // Fewer names than cases: the unreadable answers are a second audit.
+    const unreadable = await auditRelease({ version, sha }, dependencies(async (url) => {
+      const index = auditedReleaseNames.indexOf(packageOf(url))
+      if (index === 0) return new Response("not JSON", { status: 200 })
+      if (index === 1) throw new Error("fixture network failure")
+      return json(metadata(packageOf(url)))
+    }))
+    expect(unreadable.counts).toEqual({ published: 5, missing: 0, mismatch: 0, unavailable: 2, provenance: 0 })
   })
 
   test("missing, malformed and non-SHA512 integrity are permanent mismatches", async () => {
@@ -90,7 +96,7 @@ describe("public release audit", () => {
     })
     expect(report.ok).toBe(false)
     expect(report.counts.mismatch).toBe(invalid.length)
-    expect(report.counts.published).toBe(25 - invalid.length)
+    expect(report.counts.published).toBe(7 - invalid.length)
     expect(report.attempts).toBe(1)
     expect(report.entries.slice(0, invalid.length).every((entry) => !entry.retryable && entry.reason?.includes("sha512 integrity"))).toBe(true)
   })
@@ -122,7 +128,7 @@ describe("public release audit", () => {
       now: () => clock, sleep: async (milliseconds) => { slept.push(milliseconds); clock += milliseconds }, fetch: async () => json({}, 404),
     })
     expect(report.ok).toBe(false)
-    expect(report.counts.missing).toBe(25)
+    expect(report.counts.missing).toBe(7)
     expect(report.attempts).toBe(2)
     expect(clock).toBe(6000)
     expect(slept).toEqual([5000, 1000])
@@ -130,7 +136,7 @@ describe("public release audit", () => {
       now: () => 0, sleep: async () => { throw new Error("An immutable mismatch must not wait") },
       fetch: async (url) => json({ ...metadata(packageOf(url)), gitHead: other }),
     })
-    expect(mismatch.counts.mismatch).toBe(25)
+    expect(mismatch.counts.mismatch).toBe(7)
     expect(mismatch.attempts).toBe(1)
   })
 
@@ -140,13 +146,13 @@ describe("public release audit", () => {
     expect(informational.counts.provenance).toBe(0)
     const required = await auditRelease({ version, sha, requireProvenance: true }, dependencies(async (url) => json(metadata(packageOf(url)))))
     expect(required.ok).toBe(false)
-    expect(required.counts.mismatch).toBe(25)
+    expect(required.counts.mismatch).toBe(7)
     let clock = 0
     const propagated = await auditRelease({ version, sha, requireProvenance: true, waitSeconds: 30 }, {
       now: () => clock, sleep: async (milliseconds) => { clock += milliseconds }, fetch: async (url) => json(metadata(packageOf(url), clock > 0)),
     })
     expect(propagated.ok).toBe(true)
-    expect(propagated.counts.provenance).toBe(25)
+    expect(propagated.counts.provenance).toBe(7)
     expect(propagated.attempts).toBe(2)
   })
 
@@ -179,7 +185,7 @@ test("source inference validates the complete shared distribution and reads its 
     await writeFile(join(root, "packages/core/package.json"), JSON.stringify({ name: "wrong-package", version }))
     await expect(releaseAuditSource(root)).rejects.toThrow("another package name")
     await writeFile(join(root, "packages/core/package.json"), JSON.stringify({ name: "@xandreed/core", version: "0.16.1" }))
-    await expect(releaseAuditSource(root)).rejects.toThrow("All 24 source distribution packages")
+    await expect(releaseAuditSource(root)).rejects.toThrow("All 6 source distribution packages")
   } finally {
     await rm(root, { recursive: true, force: true })
   }
@@ -202,7 +208,7 @@ test("the CLI emits JSON, a step summary and failing status without registry aut
     expect(code).toBe(1)
     expect(stderr).toBe("")
     const report = JSON.parse(stdout)
-    expect(report.counts).toEqual({ published: 0, missing: 0, mismatch: 25, unavailable: 0, provenance: 0 })
+    expect(report.counts).toEqual({ published: 0, missing: 0, mismatch: 7, unavailable: 0, provenance: 0 })
     expect(report.entries.map((entry: { name: string }) => entry.name)).toEqual([...auditedReleaseNames])
     expect(await readFile(summary, "utf8")).toContain("| efferent | mismatch: Registry provenance metadata is missing")
   } finally {

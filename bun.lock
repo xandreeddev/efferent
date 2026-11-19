@@ -75,225 +75,13 @@
         "typescript": "^5.9.3",
       },
     },
-    "packages/plugin-agent-loop": {
-      "name": "@xandreed/plugin-agent-loop",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-knowledge-postgres": {
-      "name": "@xandreed/plugin-knowledge-postgres",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-        "postgres": "^4.0.0",
-      },
-    },
-    "packages/plugin-memory": {
-      "name": "@xandreed/plugin-memory",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-knowledge-postgres": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
-        "@xandreed/sdk": "workspace:*",
-      },
-    },
-    "packages/plugin-memory-digest": {
-      "name": "@xandreed/plugin-memory-digest",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-memory-summary": {
-      "name": "@xandreed/plugin-memory-summary",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-memory-window": {
-      "name": "@xandreed/plugin-memory-window",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-models": {
-      "name": "@xandreed/plugin-models",
-      "version": "0.22.0",
-      "dependencies": {
-        "@effect/ai-anthropic": "4.0.7",
-        "@effect/ai-openai": "4.0.7",
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-        "undici": "^7.30.1",
-        "ws": "^8.21.0",
-      },
-    },
-    "packages/plugin-rag": {
-      "name": "@xandreed/plugin-rag",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
-        "@xandreed/sdk": "workspace:*",
-      },
-    },
-    "packages/plugin-render": {
-      "name": "@xandreed/plugin-render",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-session-files": {
-      "name": "@xandreed/plugin-session-files",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-sessions": "workspace:*",
-      },
-    },
-    "packages/plugin-session-sqlite": {
-      "name": "@xandreed/plugin-session-sqlite",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-sessions": "workspace:*",
-      },
-    },
-    "packages/plugin-sessions": {
-      "name": "@xandreed/plugin-sessions",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-tasks": {
-      "name": "@xandreed/plugin-tasks",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-sessions": "workspace:*",
-      },
-    },
-    "packages/plugin-telemetry": {
-      "name": "@xandreed/plugin-telemetry",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
-        "@xandreed/sdk": "workspace:*",
-      },
-    },
-    "packages/plugin-tool-discovery": {
-      "name": "@xandreed/plugin-tool-discovery",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
-    "packages/plugin-workspace": {
-      "name": "@xandreed/plugin-workspace",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/evals": "workspace:*",
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
-        "@xandreed/runtime": "workspace:*",
-        "@xandreed/sdk": "workspace:*",
-      },
-    },
-    "packages/process-host": {
-      "name": "@xandreed/process-host",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-session-files": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tasks": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
-        "@xandreed/sdk": "workspace:*",
-      },
-    },
-    "packages/runtime": {
-      "name": "@xandreed/runtime",
-      "version": "0.22.0",
-      "dependencies": {
-        "@xandreed/core": "workspace:*",
-        "effect": "4.0.7",
-      },
-    },
     "packages/sdk": {
       "name": "@xandreed/sdk",
       "version": "0.22.0",
       "dependencies": {
         "@effect/ai-anthropic": "4.0.7",
         "@xandreed/core": "workspace:*",
-        "@xandreed/runtime": "workspace:*",
         "effect": "4.0.7",
-      },
-      "devDependencies": {
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-memory-digest": "workspace:*",
-        "@xandreed/plugin-memory-summary": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-models": "workspace:*",
-        "@xandreed/plugin-render": "workspace:*",
-        "@xandreed/plugin-session-files": "workspace:*",
-        "@xandreed/plugin-session-sqlite": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tasks": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
       },
     },
     "packages/website": {
@@ -315,11 +103,6 @@
         "@xandreed/core": "workspace:*",
         "@xandreed/evals": "workspace:*",
         "@xandreed/foundry": "workspace:*",
-        "@xandreed/plugin-agent-loop": "workspace:*",
-        "@xandreed/plugin-memory-window": "workspace:*",
-        "@xandreed/plugin-sessions": "workspace:*",
-        "@xandreed/plugin-tool-discovery": "workspace:*",
-        "@xandreed/runtime": "workspace:*",
         "@xandreed/sdk": "workspace:*",
         "astro": "^6.4.8",
         "effect": "4.0.7",
@@ -408,8 +191,6 @@
     "@codemirror/view": ["@codemirror/view@6.43.15", "", { "dependencies": { "@codemirror/state": "^6.7.0", "crelt": "^1.0.6", "style-mod": "^4.1.0", "w3c-keyname": "^2.2.4" } }, "sha512-HHsfpqFeHyXLs983pSRe38Xajs0vFWZQ2BuX0m7Ki8w3jZ5iD8cuR3lBz2/5/X53Dhf32SBHKh6rtSTB6tKeGw=="],
 
     "@effect/ai-anthropic": ["@effect/ai-anthropic@4.0.7", "", { "peerDependencies": { "effect": "^4.0.7" } }, "sha512-LgLeLM1UJKMgCE6dUbIfLYZNUTPyjacmTHlSzcdSRk2yBwdzEguhF9Lh4IorLAUC2ViFY9b+QaAAHVlYueG/wQ=="],
-
-    "@effect/ai-openai": ["@effect/ai-openai@4.0.7", "", { "peerDependencies": { "effect": "^4.0.7" } }, "sha512-9zkzfZE64RLbKH/98V/nUdu2gXKKQ62iWUvevCpaCU8lBDnfRfn9aMTt5jkHq6c7yQbi9owuJk/TidnNgzXxiQ=="],
 
     "@emnapi/runtime": ["@emnapi/runtime@1.11.1", "", { "dependencies": { "tslib": "^2.4.0" } }, "sha512-vgj7R3y3Wgx24IQaGPA/R6YFXLHVMOZ0uVEyIQPaWs+rd1AzfEMXlAC22FYwO1XkKR6NPsq7mUandH8oIRdZFw=="],
 
@@ -716,42 +497,6 @@
     "@xandreed/evals-langsmith": ["@xandreed/evals-langsmith@workspace:packages/evals-langsmith"],
 
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
-
-    "@xandreed/plugin-agent-loop": ["@xandreed/plugin-agent-loop@workspace:packages/plugin-agent-loop"],
-
-    "@xandreed/plugin-knowledge-postgres": ["@xandreed/plugin-knowledge-postgres@workspace:packages/plugin-knowledge-postgres"],
-
-    "@xandreed/plugin-memory": ["@xandreed/plugin-memory@workspace:packages/plugin-memory"],
-
-    "@xandreed/plugin-memory-digest": ["@xandreed/plugin-memory-digest@workspace:packages/plugin-memory-digest"],
-
-    "@xandreed/plugin-memory-summary": ["@xandreed/plugin-memory-summary@workspace:packages/plugin-memory-summary"],
-
-    "@xandreed/plugin-memory-window": ["@xandreed/plugin-memory-window@workspace:packages/plugin-memory-window"],
-
-    "@xandreed/plugin-models": ["@xandreed/plugin-models@workspace:packages/plugin-models"],
-
-    "@xandreed/plugin-rag": ["@xandreed/plugin-rag@workspace:packages/plugin-rag"],
-
-    "@xandreed/plugin-render": ["@xandreed/plugin-render@workspace:packages/plugin-render"],
-
-    "@xandreed/plugin-session-files": ["@xandreed/plugin-session-files@workspace:packages/plugin-session-files"],
-
-    "@xandreed/plugin-session-sqlite": ["@xandreed/plugin-session-sqlite@workspace:packages/plugin-session-sqlite"],
-
-    "@xandreed/plugin-sessions": ["@xandreed/plugin-sessions@workspace:packages/plugin-sessions"],
-
-    "@xandreed/plugin-tasks": ["@xandreed/plugin-tasks@workspace:packages/plugin-tasks"],
-
-    "@xandreed/plugin-telemetry": ["@xandreed/plugin-telemetry@workspace:packages/plugin-telemetry"],
-
-    "@xandreed/plugin-tool-discovery": ["@xandreed/plugin-tool-discovery@workspace:packages/plugin-tool-discovery"],
-
-    "@xandreed/plugin-workspace": ["@xandreed/plugin-workspace@workspace:packages/plugin-workspace"],
-
-    "@xandreed/process-host": ["@xandreed/process-host@workspace:packages/process-host"],
-
-    "@xandreed/runtime": ["@xandreed/runtime@workspace:packages/runtime"],
 
     "@xandreed/sdk": ["@xandreed/sdk@workspace:packages/sdk"],
 
@@ -1187,8 +932,6 @@
 
     "postcss": ["postcss@8.5.15", "", { "dependencies": { "nanoid": "^3.3.12", "picocolors": "^1.1.1", "source-map-js": "^1.2.1" } }, "sha512-FfR8sjd4em2T6fb3I2MwAJU7HWVMr9zba+enmQeeWFfCbm+UOC/0X4DS8XtpUTMwWMGbjKYP7xjfNekzyGmB3A=="],
 
-    "postgres": ["postgres@4.0.0", "", {}, "sha512-kBh8qXtcvvIAc00DftQyOxz7M/3Zxww1tRMXZPLzipNXXl5PIzHml+9zB3Mrge2U8ldc0WF1ZdLp1iYQi7Kh3A=="],
-
     "prettier": ["prettier@3.10.0", "", { "bin": { "prettier": "bin/prettier.cjs" } }, "sha512-mBi4765LgjO1PFjlEs7pUeK0nb1bw71c+N4/ItfeUWNdY5cV2pRKaFpbbFRYmDJMO+5ZwzGxHRqHxFZna7iv5w=="],
 
     "prismjs": ["prismjs@1.30.0", "", {}, "sha512-DEvV2ZF2r2/63V+tK8hQvrR2ZGn10srHbXviTlcv7Kpzw8jWiNTqbVgjO3IY8RxrrOUF8VPMQQFysYYYv0YZxw=="],
@@ -1314,8 +1057,6 @@
     "ultrahtml": ["ultrahtml@1.6.0", "", {}, "sha512-R9fBn90VTJrqqLDwyMph+HGne8eqY1iPfYhPzZrvKpIfwkWZbcYlfpsb8B9dTvBfpy1/hqAD7Wi8EKfP9e8zdw=="],
 
     "uncrypto": ["uncrypto@0.1.3", "", {}, "sha512-Ql87qFHB3s/De2ClA9e0gsnS6zXG27SkTiSJwjCc9MebbfapQfuPzumMIUMi38ezPZVNFcHI9sUIepeQfw8J8Q=="],
-
-    "undici": ["undici@7.30.1", "", {}, "sha512-03KrMbjIFDWQR5RNPrSw3bd1r12JpyFQl9/yxjUbJtqkjmllqC5lFjZh6ujeuJCKr8EOQvRW872Oy/az+nLYxg=="],
 
     "undici-types": ["undici-types@7.18.2", "", {}, "sha512-AsuCzffGHJybSaRrmr5eHr81mwJU3kjw6M+uprWvCXiNeN9SOGwQ3Jn8jb8m3Z6izVgknn1R0FTCEAP2QrLY/w=="],
 

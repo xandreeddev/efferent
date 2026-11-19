@@ -61,13 +61,13 @@ jobs:
           commit-message: |
             release ${{ steps.version.outputs.version }}
 
-            Synchronize the shared package and plugin versions, release notes,
+            Synchronize the shared package versions, release notes,
             compatibility fixtures and generated documentation from changesets.
           body: |
             ## What
 
             - Release the framework packages together at `${{ steps.version.outputs.version }}`.
-            - Consume the pending changesets and synchronize plugin metadata,
+            - Consume the pending changesets and synchronize the version markers,
               the central changelog, compatibility fixtures and generated docs.
 
             ## Handoff

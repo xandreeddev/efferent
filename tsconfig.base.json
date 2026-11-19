@@ -26,13 +26,7 @@
     "baseUrl": ".",
     "paths": {
       "@xandreed/core": [
-        "packages/core/src/index.ts"
-      ],
-      "@xandreed/core/conformance": [
-        "packages/core/src/conformance/index.ts"
-      ],
-      "@xandreed/core/internal": [
-        "packages/core/src/internal/index.ts"
+        "packages/core/src/kernel/index.ts"
       ],
       "@xandreed/core/kernel": [
         "packages/core/src/kernel/index.ts"
@@ -46,56 +40,17 @@
       "@xandreed/foundry/gates/rules/packs.js": [
         "packages/foundry/src/gates/rules/packs.ts"
       ],
-      "@xandreed/plugin-render": [
-        "packages/plugin-render/src/index.ts"
-      ],
-      "@xandreed/plugin-render/output": [
-        "packages/plugin-render/src/output.ts"
-      ],
-      "@xandreed/plugin-agent-loop": [
-        "packages/plugin-agent-loop/src/index.ts"
-      ],
-      "@xandreed/runtime": [
-        "packages/runtime/src/index.ts"
-      ],
       "@xandreed/website": [
         "packages/website/src/index.ts"
       ],
-      "@xandreed/process-host": [
-        "packages/process-host/src/index.ts"
-      ],
       "@xandreed/sdk": [
-        "packages/sdk/src/index.ts"
-      ],
-      "@xandreed/sdk/conformance": [
-        "packages/sdk/src/conformance/index.ts"
+        "packages/sdk/src/kernel/index.ts"
       ],
       "@xandreed/sdk/kernel": [
         "packages/sdk/src/kernel/index.ts"
       ],
       "@xandreed/sdk/kernel/node": [
         "packages/sdk/src/kernel/node/index.ts"
-      ],
-      "@xandreed/plugin-models": [
-        "packages/plugin-models/src/index.ts"
-      ],
-      "@xandreed/plugin-models/compat": [
-        "packages/plugin-models/src/compat/index.ts"
-      ],
-      "@xandreed/plugin-models/conformance": [
-        "packages/plugin-models/src/conformance/index.ts"
-      ],
-      "@xandreed/plugin-models/testing": [
-        "packages/plugin-models/src/scripted/index.ts"
-      ],
-      "@xandreed/plugin-session-sqlite": [
-        "packages/plugin-session-sqlite/src/index.ts"
-      ],
-      "@xandreed/plugin-session-files": [
-        "packages/plugin-session-files/src/index.ts"
-      ],
-      "@xandreed/plugin-sessions": [
-        "packages/plugin-sessions/src/index.ts"
       ],
       "@xandreed/evals": [
         "packages/evals/src/index.ts"
@@ -114,36 +69,6 @@
       ],
       "@xandreed/evals-langsmith": [
         "packages/evals-langsmith/src/index.ts"
-      ],
-      "@xandreed/plugin-memory-window": [
-        "packages/plugin-memory-window/src/index.ts"
-      ],
-      "@xandreed/plugin-memory-summary": [
-        "packages/plugin-memory-summary/src/index.ts"
-      ],
-      "@xandreed/plugin-memory-digest": [
-        "packages/plugin-memory-digest/src/index.ts"
-      ],
-      "@xandreed/plugin-memory": [
-        "packages/plugin-memory/src/index.ts"
-      ],
-      "@xandreed/plugin-rag": [
-        "packages/plugin-rag/src/index.ts"
-      ],
-      "@xandreed/plugin-knowledge-postgres": [
-        "packages/plugin-knowledge-postgres/src/index.ts"
-      ],
-      "@xandreed/plugin-tool-discovery": [
-        "packages/plugin-tool-discovery/src/index.ts"
-      ],
-      "@xandreed/plugin-tasks": [
-        "packages/plugin-tasks/src/index.ts"
-      ],
-      "@xandreed/plugin-workspace": [
-        "packages/plugin-workspace/src/index.ts"
-      ],
-      "@xandreed/plugin-telemetry": [
-        "packages/plugin-telemetry/src/index.ts"
       ]
     }
   }

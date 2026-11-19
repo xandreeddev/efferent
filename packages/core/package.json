@@ -4,12 +4,10 @@
   "engines": { "node": ">=24", "bun": ">=1.3.0" },
   "private": true,
   "type": "module",
-  "description": "The agent kernel of the new line: entities, ports, the provider-agnostic agent loop, and the session chassis — pure Effect, no IO, no provider SDKs.",
-  "main": "./src/index.ts",
+  "description": "The agent kernel: the journal, sessions, events and the model spend ledger, with their conformance kits — pure Effect, no IO, no provider SDKs.",
+  "main": "./src/kernel/index.ts",
   "exports": {
-    ".": "./src/index.ts",
-    "./conformance": "./src/conformance/index.ts",
-    "./internal": "./src/internal/index.ts",
+    ".": "./src/kernel/index.ts",
     "./kernel": "./src/kernel/index.ts"
   },
   "dependencies": {

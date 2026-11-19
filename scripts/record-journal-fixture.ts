@@ -1,63 +1,29 @@
-import { Clock, Context, Effect, Layer, Option, Ref, Schema, Stream, Tracer } from "effect"
-import type { Scope } from "effect"
-import { LanguageModel, Tool } from "effect/ai"
+import { Clock, Effect, Layer, Option, Ref, Schema } from "effect"
+import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { existsSync } from "node:fs"
-import { mkdir, readFile, writeFile } from "node:fs/promises"
+import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
+import { JOURNAL_FORMAT, Journal, JournalStorage, kernel, SessionId, Sessions, TurnNumber, userMessage } from "@xandreed/core/kernel"
 import {
-  ConversationId,
-  CurrentAgentRun,
-  CurrentAgentStep,
-  defineCapability,
-  defineHostEvent,
-  defineSkill,
-  defineTool,
-  Failure,
-  HarnessError,
-  InboxItemId,
-  IntentMatcher,
-  ModelCallId,
-  ModelRequestHook,
-  onTool,
-  RESERVED_KINDS,
-  recordCompletion,
-  RunId,
-  RunOrdinal,
-  SessionHeader,
-  SessionLogEvent,
-  SessionLogMemoryLive,
-  Sessions,
-  STORED_FORMAT,
-  SubjectId,
-  subscribeAll,
-  TaskExecutor,
-  TaskRunner,
-  Tasks,
-  TaskQuestionId,
-  ToolInterceptor,
-  TurnAdmissionOpen,
-  UserMessage,
-  UtilityCompletion,
-  UtilityLlm,
-} from "@xandreed/core"
-import type { JsonObject, ModelCallPurpose, SessionAddress, TokenUsage, Turn, TurnError, TurnOutcome, TurnPolicy } from "@xandreed/core"
-import { stepLoopPlugin } from "@xandreed/plugin-agent-loop"
-import { memoryDigestPlugin } from "@xandreed/plugin-memory-digest"
-import { memorySummaryPlugin } from "@xandreed/plugin-memory-summary"
-import { memoryWindowPlugin } from "@xandreed/plugin-memory-window"
-import { SessionsLive, sessionsDefaults } from "@xandreed/plugin-sessions"
-import { TASK_ANSWERED, TASK_STARTED, TaskAnswered, TaskStarted, TasksLive, tasksDefaults } from "@xandreed/plugin-tasks"
-import { toolDiscoveryPlugin } from "@xandreed/plugin-tool-discovery"
-import { Agent } from "@xandreed/sdk"
+  Approval, approve, callTool, curate, Curator, CurrentTurn, factHandlers, factTools, knowledgeSession, Memory, modelAnswer, scriptedModel, sessions,
+  Summarizer, summaryMemory, turnSource, turnsOf, withFacts,
+} from "@xandreed/sdk/kernel"
+import type { ModelScript } from "@xandreed/sdk/kernel"
+import { directoryJournal } from "@xandreed/sdk/kernel/node"
 
 /*
- * Records one session journal as the current code writes it, for the
- * journal compatibility test (`packages/sdk/src/journal-compat.test.ts`):
- * historical evidence of what this release stored, which later releases of
- * the same stored format replay and others refuse unchanged. The recording is
- * deterministic: a scripted model, a fixed clock, and ids minted from a
- * counter (`crypto.randomUUID` is replaced for this process), so it holds no
- * time, path or machine of the recording.
+ * Records the journals a kernel host stores, for the journal compatibility
+ * test (`packages/sdk/src/kernel/node/journal-compat.test.ts`): historical
+ * evidence of what this release stored, which later releases of the same
+ * journal format (`JOURNAL_FORMAT`) replay and others refuse unchanged. The
+ * recording is deterministic: a scripted model, curator and summarizer, a
+ * fixed clock, and session ids minted from a counter, so it holds no time,
+ * path or machine of the recording.
+ *
+ * The host's program runs over the durable directory journal
+ * (`directoryJournal`), in a folder under `.artifacts/` removed after, and the
+ * fixture is every session the store then holds, as `JournalStorage.read`
+ * gives it: its header and its events.
  *
  * The normal release command writes `journal-<version>.json`, using the
  * packages' shared version, and never replaces an existing release fixture.
@@ -65,16 +31,14 @@ import { Agent } from "@xandreed/sdk"
  * only `--unreleased --force` may replace that development fixture. The
  * compatibility test reads every fixture in that folder.
  *
- * Coverage: five agent turns (a digested tool result, a loaded skill, step
- * context, a system variant and a stream that falls back; a quick reply with
- * a host event; a failure; a matcher-seeded skill, a planned batch, a call
- * the registry refuses and a compaction), an inbox item
- * whose turns fail until it is dropped, a background task that completes and
- * is delivered to the inbox, one that is cancelled before it runs, and a
- * queued steer atomically taken before a new turn's first provider step,
- * a reducing two-turn summary with an atomic render-snapshot pointer, and a
- * host request hook whose accepted patch and combined context are durable,
- * and an intercepted tool call with a rewritten input and replaced answer.
+ * Coverage: four turns of one conversation, each a host's loop of
+ * `modelAnswer` and `callTool` over a summary memory wrapped by `withFacts`:
+ * a tool call and its result; a fact remembered (`rememberFact`, stored in
+ * the memory session); a tool that asks first, approved for good
+ * (`plugin.approval.decided`); and a long message after which the memory
+ * folds the earlier turns into a summary (`plugin.summary.summarized`). Each
+ * turn is then kept by the curation step (`curate`) in the knowledge session:
+ * a source curated into entities and memories, one memory ending another.
  */
 
 const root = join(import.meta.dir, "..")
@@ -92,15 +56,7 @@ if (existsSync(target) && !(unreleased && force)) {
   process.exit(1)
 }
 
-/* ── fixed ids and time ── */
-
-const minted = { count: 0 }
-const fixedId = (n: number) => `00000000-0000-4000-8000-${n.toString(16).padStart(12, "0")}`
-Object.defineProperty(globalThis.crypto, "randomUUID", {
-  configurable: true,
-  writable: true,
-  value: () => fixedId(0x100 + ++minted.count),
-})
+/* ── fixed time ── */
 
 const epoch = 1_767_225_600_000
 const realClock = Clock.Clock.defaultValue()
@@ -114,401 +70,119 @@ const fixedClock: Clock.Clock = {
   sleep: (duration) => realClock.sleep(duration),
 }
 
-/* ── the host's definitions ── */
+/* ── the host's tools ── */
 
-const Item = Schema.Struct({ id: Schema.String, detail: Schema.String })
 const Lookup = Tool.make("lookup", {
-  description: "Look records up by query.",
-  parameters: Schema.Struct({ query: Schema.String }),
-  success: Schema.Struct({ items: Schema.Array(Item) }),
-  failure: Failure,
+  description: "Look a record up by its name.",
+  parameters: Schema.Struct({ name: Schema.String }),
+  success: Schema.String,
+})
+const ClearNotes = Tool.make("clearNotes", {
+  description: "Delete every note.",
+  success: Schema.String,
+  failure: Schema.String,
   failureMode: "return",
+  dependencies: [Approval, CurrentTurn],
 })
-const Deliver = Tool.make("deliver", {
-  description: "Deliver the final answer.",
-  parameters: Schema.Struct({ text: Schema.String }),
-  success: Schema.Boolean,
-  failure: Failure,
-  failureMode: "return",
-})
-const Note = Tool.make("note", {
-  description: "Take a note.",
-  parameters: Schema.Struct({ text: Schema.String }),
-  success: Schema.Boolean,
-  failure: Failure,
-  failureMode: "return",
-})
-
-const found = (items: ReadonlyArray<typeof Item.Type>) => items.map((item) => `FOUND ${item.id}: ${item.detail}`).join("\n")
-
-const host = defineCapability({
-  id: "fixture-host", version: "1",
-  tools: [
-    defineTool({
-      tool: Lookup,
-      handler: ({ query }) => Effect.succeed({ items: ["a", "b", "c"].map((suffix) => ({ id: `record-${query}-${suffix}`, detail: `${query} ${suffix} `.repeat(12) })) }),
-      view: {
-        version: "1",
-        render: (result) => found(result.items),
-        compact: (result) => `(earlier lookup found ${result.items.map((item) => item.id).join(", ")})`,
-        subjects: (result) => result.items.map((item) => ({ kind: "record", id: SubjectId.make(item.id), label: Option.none(), data: Option.none() })),
-        digest: {
-          _tag: "Select", version: "1", instructions: "Keep the records the request needs.",
-          items: (result) => result.items.map((item) => ({ key: item.id, text: item.detail })),
-          render: (result, _params, keep) => found(result.items.filter((item) => keep.includes(item.id))),
-        },
-      },
-      annotations: { readOnly: true },
-    }),
-    defineTool({ tool: Deliver, handler: () => Effect.succeed(true) }),
-    // Once per turn: a second call is refused (`tool.refused`).
-    defineTool({ tool: Note, handler: () => Effect.succeed(true), annotations: { maxCallsPerRun: Option.some(1) } }),
-  ],
-  skills: [
-    defineSkill({ id: "core", summary: "Look records up.", tools: ["lookup"], always: true }),
-    defineSkill({ id: "delivery", summary: "Deliver a final answer.", instructions: "Deliver once, with the record id.", tools: ["deliver"] }),
-    defineSkill({ id: "notes", summary: "Take notes.", instructions: "Note what the user asks to keep.", tools: ["note"] }),
-  ],
-  promptSections: [
-    { id: "persona", version: "1", tier: "session", order: 0, render: () => Effect.succeed(Option.some("SESSION persona: a fixture agent.")) },
-    { id: "rules", version: "1", tier: "static", order: 5, render: () => Effect.succeed(Option.some("STATIC rules.")) },
-    {
-      id: "style", version: "1", tier: "static", order: 7,
-      render: ({ variant }) => Effect.succeed(Option.some(Option.match(variant, { onNone: () => "STYLE plain.", onSome: (name) => `STYLE ${name}.` }))),
-    },
-    { id: "turn-note", version: "1", tier: "turn", order: 0, render: ({ active }) => Effect.succeed(Option.some(`TURN active: ${active.join(", ")}`)) },
-  ],
-})
-
-const Prepared = defineHostEvent("note.prepared", Schema.Struct({ id: Schema.String }))
-
-/* ── a scripted provider ── */
-
-const usage = { inputTokens: { total: 100 }, outputTokens: { total: 10 } }
-type Part = ReadonlyArray<unknown>
-const call = (id: string, name: string, params: unknown): Part => [{ type: "tool-call", id, name, params }, { type: "finish", reason: "tool-calls", usage }]
-const stop = (text: string): Part => [{ type: "text", text }, { type: "finish", reason: "stop", usage }]
-
-/** Scripted dispatches exercise the same public recorder custom host models use. */
-const fixtureCompletion = (purpose: ModelCallPurpose, counts: TokenUsage) => Effect.gen(function* () {
-  const run = yield* CurrentAgentRun
-  const step = yield* CurrentAgentStep
-  yield* recordCompletion({
-    callId: ModelCallId.make(yield* Effect.sync(() => crypto.randomUUID())),
-    attempt: 1, purpose, method: "Text", model: Option.none(),
-    runId: Option.map(run, (value) => value.id),
-    run: Option.map(run, (value) => value.ordinal),
-    step: Option.isSome(run) ? step : Option.none(),
-    durationMs: 0, usage: { _tag: "Known", usage: counts }, outcome: { _tag: "Completed" },
-  })
-}).pipe(Effect.catch((error) => Effect.die(error)))
-
-const scripted = (script: ReadonlyArray<Part>) => Effect.gen(function* () {
-  const served = yield* Ref.make(0)
-  return yield* LanguageModel.make({
-    generateText: () => Ref.getAndUpdate(served, (value) => value + 1).pipe(
-      Effect.tap(() => fixtureCompletion("Loop", { inputTokens: 100, outputTokens: 10, totalTokens: 110, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 })),
-      Effect.map((index) => (script[index] ?? stop("done")) as never),
-    ),
-    streamText: () => Stream.die("not scripted") as never,
-  })
-})
-
-const digester = Context.make(UtilityLlm, UtilityLlm.of({
-  complete: () => fixtureCompletion("Helper", { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 }).pipe(
-    Effect.as(new UtilityCompletion({ text: "- record-alpha-b\nrecord-unknown", usage: { inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0 } })),
-  ),
-}))
-const matcher = Context.make(IntentMatcher, IntentMatcher.of({
-  id: "keyword", version: "1",
-  match: ({ userMessage }) => Effect.succeed({
-    skills: userMessage.text.includes("note") ? ["notes"] : [],
-    probabilities: Option.some({ notes: userMessage.text.includes("note") ? 0.9 : 0.1 }),
-    abstained: false,
+const tools = Toolkit.merge(Toolkit.make(Lookup, ClearNotes), factTools)
+const toolsLive = Layer.mergeAll(
+  Toolkit.make(Lookup, ClearNotes).toLayer({
+    lookup: ({ name }) => Effect.succeed(`${name}: a teapot, kept on the second shelf.`),
+    clearNotes: () => Effect.as(approve({ action: "notes.clear", detail: "Delete all 3 notes." }), "Deleted 3 notes."),
   }),
+  factHandlers,
+)
+
+/* ── the scripted parts: the model, the person who approves, the summarizer and the curator ── */
+
+const script: ModelScript = [
+  { _tag: "Calls", pieces: [], calls: [{ name: "lookup", params: { name: "alpha" } }] },
+  { _tag: "Answers", pieces: ["Alpha is a teapot, ", "kept on the second shelf."] },
+  { _tag: "Calls", pieces: [], calls: [{ name: "rememberFact", params: { fact: "The user prefers green tea." } }] },
+  { _tag: "Answers", pieces: ["Noted: you prefer green tea."] },
+  { _tag: "Calls", pieces: [], calls: [{ name: "clearNotes", params: {} }] },
+  { _tag: "Answers", pieces: ["Your notes are cleared."] },
+  { _tag: "Answers", pieces: ["Enjoy the trip to Porto."] },
+]
+const approval = Layer.succeed(Approval, Approval.of({ ask: () => Effect.succeed({ _tag: "ApprovedAlways" as const }) }))
+const summarizer = Layer.succeed(Summarizer, Summarizer.of({
+  summarize: ({ earlier, messages }) => Effect.succeed(`${Option.getOrElse(earlier, () => "")}The user looked up alpha, said they prefer green tea and cleared their notes (${messages.length} messages).`),
 }))
-
-/** Background work runs when the recording says so: one task runs, the other is cancelled first. */
-const queued = Effect.runSync(Ref.make<ReadonlyArray<(deadline: Option.Option<number>) => Effect.Effect<void>>>([]))
-const runner = Layer.succeed(TaskRunner, TaskRunner.of({ run: (work) => Ref.update(queued, (all) => [...all, work]) }))
-const runQueued = Ref.getAndSet(queued, []).pipe(Effect.flatMap((works) => Effect.forEach(works, (work) => work(Option.none()), { discard: true })))
-const executor = Layer.succeed(TaskExecutor, TaskExecutor.of({
-  turn: (_writer, task) => Effect.succeed({ outcome: "completed" as const, reply: Option.some(`found ${task.instructions}`) }),
-  react: () => Effect.void,
-}))
-
-/* ── the recording ── */
-
-const conversation = ConversationId.make(fixedId(0x601d))
-const completedTask = ConversationId.make(fixedId(0x7a51))
-const cancelledTask = ConversationId.make(fixedId(0x7a52))
-
-// Tracing is disabled for the existing journal scenarios. A separate traced
-// task uses stable IDs without changing the native span's behavior or shape.
-const fixtureTraceId = "1234567890abcdef1234567890abcdef"
-class FixtureSpan extends Tracer.NativeSpan {
-  constructor(options: ConstructorParameters<typeof Tracer.NativeSpan>[0], readonly fixedSpanId: string) { super(options) }
-  override get traceId() { return Option.match(this.parent, { onNone: () => fixtureTraceId, onSome: (parent) => parent.traceId }) }
-  override get spanId() { return this.fixedSpanId }
+/** What a model would answer for each source, by its id, asked to extract or to review. */
+const replies: Readonly<Record<string, string>> = {
+  s1: `{"entities":[{"key":"a","name":"alpha","kind":"thing"}],"aliases":[],"memories":[{"kind":"fact","text":"alpha is a teapot.","about":["a"],"quote":"Look up alpha","by":"user","on":null,"ends":[],"why":null}],"restates":[],"forget":[]}`,
+  s2: `{"entities":[],"aliases":[],"memories":[{"kind":"preference","text":"The user prefers green tea.","about":["n1"],"quote":"I prefer green tea","by":"user","on":null,"ends":[],"why":null}],"restates":[],"forget":[]}`,
+  s3: `{"entities":[],"aliases":[],"memories":[],"restates":[],"forget":[]}`,
+  s4: `{"entities":[{"key":"p","name":"Porto","kind":"place"}],"aliases":[],"memories":[{"kind":"fact","text":"The user travels to Porto next week.","about":["n1","p"],"quote":"I travel to Porto next week","by":"user","on":null,"ends":[],"why":null},{"kind":"preference","text":"The user prefers black tea now.","about":["n1"],"quote":"I prefer black tea now","by":"user","on":null,"ends":["m2"],"why":"changed"}],"restates":[],"forget":[]}`,
 }
+const curator = Layer.succeed(Curator, Curator.of({
+  curate: ({ job }) => Effect.succeed(replies[job.source] ?? "{}"),
+}))
 
-const record = Effect.gen(function* () {
-  const sessions = Context.get(yield* Layer.build(SessionsLive(sessionsDefaults).pipe(Layer.provide(Layer.merge(SessionLogMemoryLive, TurnAdmissionOpen)))), Sessions)
-  const tasks = Context.get(yield* Layer.build(TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(Layer.succeed(Sessions, sessions), runner, executor)))), Tasks)
-  const agent = yield* Agent.define({
-    plugins: [{ plugin: memoryWindowPlugin, options: { digestOnWriteChars: 1 } }, toolDiscoveryPlugin, stepLoopPlugin, memoryDigestPlugin],
-    capabilities: [host],
-    turnServices: [LanguageModel.LanguageModel, UtilityLlm],
-    limits: { streaming: false, maxSteps: 6 },
-    cacheKeyPrefix: "fixture",
-    system: "FIXTURE system prefix.",
-  })
-  const address: SessionAddress = { id: conversation, owner: "fixture" }
-  yield* sessions.create({ owner: address.owner, id: conversation, meta: { recorded: packageVersion } })
+/* ── the host's program ── */
 
-  const input = (runId: string, text: string, model: LanguageModel.LanguageModel, extra?: { readonly key: string; readonly command: JsonObject }) => ({
-    turn: { session: address, userMessage: new UserMessage({ text }), runId: RunId.make(runId), ...extra },
-    services: Context.merge(Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, model), digester), matcher), Context.make(Sessions, sessions)),
-  })
-  const turnOf = (turnInput: ReturnType<typeof input>, use: (turn: Turn) => Effect.Effect<TurnOutcome, TurnError, Scope.Scope>) =>
-    Effect.exit(agent.turn(turnInput, use))
+const SYSTEM = "You keep a person's notes. Use a tool when it helps."
+const MAX_STEPS = 4
 
-  /** Deliver through the loop: complete once delivered. */
-  const answer = (policy: TurnPolicy) => (turn: Turn) => Effect.gen(function* () {
-    const delivered = yield* Ref.make(Option.none<string>())
-    yield* subscribeAll(turn.events, [onTool(Deliver, ({ input: params }) => Ref.set(delivered, Option.some(params.text)))])
-    yield* turn.tools.select(turn.userMessage)
-    const result = yield* turn.run({
-      completion: () => Ref.get(delivered).pipe(Effect.map((text) => ({ complete: Option.isSome(text), awaiting: [], facts: {} }))),
-      limits: { requireCompletion: true },
-      ...policy,
-    })
-    return { outcome: result.outcome, reply: Option.orElse(yield* Ref.get(delivered), () => Option.some(result.text)) } satisfies TurnOutcome
-  })
-
-  // 1. A digested tool result, a skill the model loads, step context, and a system variant from step 2;
-  // the model does not stream, so the first step falls back (`stream.fallback`).
-  const first = yield* scripted([call("c1", "lookup", { query: "alpha" }), call("c2", "load_skill", { skills: ["delivery"] }), call("c3", "deliver", { text: "record-alpha-b" })])
-  yield* turnOf(input("run-1", "find alpha", first, { key: "client-command-1", command: { source: "fixture" } }), (turn) => Effect.gen(function* () {
-    yield* turn.context({ id: "intent", version: "1", text: "INTENT: look a record up" })
-    return yield* answer({
-      model: (step) => Effect.succeed(step.stepIndex >= 2 ? Option.some({ model: first, variant: Option.some("brief") }) : Option.none()),
-      step: (step) => Effect.succeed({ context: Option.some(`STEP ${step.stepIndex}`), toolChoice: Option.none() }),
-      limits: { requireCompletion: true, streaming: true },
-    })(turn)
-  }))
-
-  // 2. A quick reply; a task publishes a host event.
-  yield* turnOf(input("run-2", "hello again", yield* scripted([])), (turn) => Effect.gen(function* () {
-    yield* turn.tasks.fork("note", Prepared.publish(turn.events, { id: "n1" }))
-    yield* turn.tasks.await(["note"])
-    return yield* turn.reply(`turn ${turn.turn} noted`)
-  }))
-
-  // 3. A failure after some work.
-  yield* turnOf(input("run-3", "fail please", yield* scripted([])), (turn) => Effect.gen(function* () {
-    yield* turn.context({ id: "intent", version: "1", text: "INTENT: give up" })
-    return yield* Effect.fail(new HarnessError({ code: "host.failed", message: "the host gave up" }))
-  }))
-
-  // 4. The matcher seeds a skill (a decision), a planned first batch, a forced tool choice and a second note the
-  // registry refuses; the earlier lookup is compacted.
-  const twoNotes: Part = [
-    { type: "tool-call", id: "e1", name: "note", params: { text: "gamma" } },
-    { type: "tool-call", id: "e1b", name: "note", params: { text: "gamma again" } },
-    { type: "finish", reason: "tool-calls", usage },
-  ]
-  const fourth = yield* scripted([twoNotes, call("e2", "deliver", { text: "record-gamma-a" })])
-  yield* turnOf(input("run-4", "note gamma, then deliver it", fourth), answer({
-    initial: { calls: [{ name: "lookup", params: { query: "gamma" } }], skills: [] },
-    step: (step) => Effect.succeed({ context: Option.none(), toolChoice: step.stepIndex === 1 ? Option.some({ tool: "note" }) : Option.none() }),
-  }))
-
-  // 5. An inbox item whose turns fail: dropped after the configured attempts.
-  yield* sessions.deliver(address, { id: InboxItemId.make("reminder-1"), source: { kind: "host", channel: "fixture" }, content: "Remind the user about record-alpha-b." })
-  yield* sessions.drain(address, () => Effect.fail(new HarnessError({ code: "host.unavailable", message: "the reminder could not be handled" })))
-
-  // 6. A background task that completes: its result is delivered to the inbox and the parent reacts.
-  yield* tasks.start(address, { taskId: completedTask, instructions: "find beta", mode: "fork", meta: { runId: "run-4" } })
-  yield* runQueued
-
-  // 7. A background task cancelled before it runs.
-  yield* tasks.start(address, { taskId: cancelledTask, instructions: "find delta", mode: "spawn" })
-  yield* tasks.cancel(address, cancelledTask)
-  yield* runQueued
-
-  // 8. A queued steer becomes a separate raw user message before step zero;
-  // its inbox.taken receipt is stored atomically with that message.
-  yield* sessions.enqueue(address, {
-    id: InboxItemId.make("steer-1"), userMessage: new UserMessage({ text: "Use the revised record selection." }),
-    delivery: "steer", source: { kind: "host", channel: "fixture" },
-  })
-  yield* turnOf(input("run-8", "apply the queued update", yield* scripted([stop("the revised selection is ready")])), (turn) => Effect.gen(function* () {
-    yield* turn.tools.select(turn.userMessage)
-    const result = yield* turn.run({})
-    return { outcome: result.outcome, reply: Option.some(result.text) } satisfies TurnOutcome
-  }))
-
-  // An independent conversation keeps the earlier recording unchanged while
-  // producing the real summary strategy's protocol snapshot.
-  const snapshotAddress: SessionAddress = { id: ConversationId.make(fixedId(0x60ff)), owner: address.owner }
-  yield* sessions.create(snapshotAddress)
-  const summaryAgent = yield* Agent.define({
-    plugins: [{ plugin: memorySummaryPlugin, options: { triggerRatio: 0.5, cooldownTurns: 0 } }, toolDiscoveryPlugin, stepLoopPlugin],
-    turnServices: [LanguageModel.LanguageModel, UtilityLlm],
-    budgetTokens: 1_000,
-    limits: { streaming: false, maxSteps: 1 },
-  })
-  const summarizer = UtilityLlm.of({ complete: () => fixtureCompletion("Helper", {
-    inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
-  }).pipe(Effect.as(new UtilityCompletion({ text: "Earlier snapshot fixture context.", usage: {
-    inputTokens: 1, outputTokens: 1, totalTokens: 2, cacheReadTokens: 0, cacheWriteTokens: 0, reasoningTokens: 0,
-  } }))) })
-  yield* Effect.forEach([
-    { run: "snapshot-fixture-1", reply: "Earlier fixture evidence ".repeat(180) },
-    { run: "snapshot-fixture-2", reply: "The checkpoint is ready." },
-  ], ({ run, reply }) => Effect.gen(function* () {
-    const model = yield* scripted([stop(reply)])
-    return yield* summaryAgent.turn({
-      turn: { session: snapshotAddress, runId: RunId.make(run), userMessage: new UserMessage({ text: `Inspect ${run}.` }) },
-      services: Context.make(Sessions, sessions).pipe(Context.add(LanguageModel.LanguageModel, model), Context.add(UtilityLlm, summarizer)),
-    }, (turn) => Effect.gen(function* () {
-      yield* turn.tools.select(turn.userMessage)
-      const done = yield* turn.run({})
-      return { outcome: done.outcome, reply: Option.some(done.text) }
-    }))
-  }), { concurrency: 1, discard: true })
-  if (!(yield* sessions.read(snapshotAddress)).some((event) => event.kind === "memory.snapshot")) {
-    return yield* Effect.die("the fixture summary did not publish a memory snapshot")
+/** One turn: the model answers, or asks for tools; their results are stored, and the model is asked again. */
+const turn = (conversation: SessionId, message: string) => Effect.scoped(Effect.gen(function* () {
+  const memory = yield* Memory
+  const model = yield* LanguageModel.LanguageModel
+  const toolkit = yield* tools
+  const session = yield* (yield* Sessions).open(conversation)
+  yield* session.append(userMessage(message))
+  for (let step = 1; step <= MAX_STEPS; step++) {
+    const prompt = Prompt.make([{ role: "system", content: SYSTEM }, ...(yield* memory.context(session))])
+    const answer = yield* modelAnswer(model.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" }), session)
+    if (answer.toolCalls.length === 0) return answer.text
+    for (const call of answer.toolCalls) yield* callTool(toolkit, call, session)
   }
+  return `I stopped after ${MAX_STEPS} steps.`
+}))
 
-  // Keep every earlier conversation exact while recording the optional patch
-  // through the real SDK preparation and version 2 header writer.
-  const hookAddress: SessionAddress = { id: ConversationId.make(fixedId(0x6100)), owner: address.owner }
-  yield* sessions.create(hookAddress)
-  const hookAgent = yield* Agent.define({
-    plugins: [memoryWindowPlugin, toolDiscoveryPlugin, stepLoopPlugin],
-    turnServices: [LanguageModel.LanguageModel, ModelRequestHook],
-    limits: { streaming: false, maxSteps: 1 },
-    system: "FIXTURE request hook base.",
-  })
-  const hookModel = yield* scripted([stop("The prepared request is ready.")])
-  yield* hookAgent.turn({
-    turn: { session: hookAddress, runId: RunId.make("hook-fixture-1"), userMessage: new UserMessage({ text: "Prepare the host request." }) },
-    services: Context.make(Sessions, sessions).pipe(
-      Context.add(LanguageModel.LanguageModel, hookModel),
-      Context.add(ModelRequestHook, ModelRequestHook.of({ prepare: () => Effect.succeed({
-        system: "FIXTURE accepted hook system.", context: "FIXTURE hook context.", toolChoice: null,
-      }) })),
-    ),
-  }, (turn) => Effect.gen(function* () {
-    yield* turn.tools.select(turn.userMessage)
-    const done = yield* turn.run({ step: () => Effect.succeed({ context: Option.some("FIXTURE policy context."), toolChoice: Option.none() }) })
-    return { outcome: done.outcome, reply: Option.some(done.text) }
-  }))
+/** After a turn is answered: the turn as a source, kept by the curation step in the knowledge session. */
+const keep = (conversation: SessionId, turn: TurnNumber) => Effect.gen(function* () {
+  const said = turnSource(turnsOf((yield* (yield* Sessions).read(conversation)).events), turn)
+  if (Option.isNone(said)) return yield* Effect.die(`turn ${turn} of the recording holds no message`)
+  yield* curate(yield* knowledgeSession, { said: said.value.said, context: said.value.context, at: epoch, from: { session: conversation, turn } })
+})
 
-  const interceptedAddress: SessionAddress = { id: ConversationId.make(fixedId(0x6101)), owner: address.owner }
-  yield* sessions.create(interceptedAddress)
-  const interceptedModel = yield* scripted([call("intercepted-lookup", "lookup", { query: "alpha" }), stop("The intercepted lookup is ready.")])
-  yield* agent.turn({
-    turn: { session: interceptedAddress, runId: RunId.make("interceptor-fixture-1"), userMessage: new UserMessage({ text: "Inspect the intercepted lookup." }) },
-    services: Context.merge(Context.merge(Context.make(LanguageModel.LanguageModel, interceptedModel), digester), matcher).pipe(
-      Context.add(Sessions, sessions),
-      Context.add(ToolInterceptor, ToolInterceptor.of({
-        before: ({ tool }) => Effect.succeed(tool === Lookup.name ? { _tag: "Rewrite", input: { query: "beta" } } : { _tag: "Allow" }),
-        after: ({ tool }) => Effect.succeed(tool === Lookup.name ? { _tag: "Replace", outcome: { _tag: "Success", encoded: {
-          items: [{ id: "record-rewritten", detail: "The host accepted this replacement." }],
-        } } } : { _tag: "Keep" }),
-      })),
-    ),
-  }, (turn) => Effect.gen(function* () {
-    yield* turn.tools.select(turn.userMessage)
-    const done = yield* turn.run({})
-    return { outcome: done.outcome, reply: Option.some(done.text) }
-  }))
-  if ((yield* sessions.read(interceptedAddress)).filter((event) => event.kind === "tool.intercepted").length !== 2) {
-    return yield* Effect.die("the fixture did not record both tool interception phases")
-  }
+const messages = [
+  "Look up alpha for me.",
+  "Remember that I prefer green tea.",
+  "Clear my notes, please.",
+  `I travel to Porto next week, and I prefer black tea now. ${"Here is the plan for each day of the trip, in order. ".repeat(12)}`,
+]
 
-  // Keep this scenario after the preceding sessions so their deterministic
-  // ids and bytes remain unchanged as helper conversations grow.
-  const questionParent: SessionAddress = { id: ConversationId.make(fixedId(0x6023)), owner: address.owner }
-  const questionChild: SessionAddress = { id: ConversationId.make(fixedId(0x7a53)), owner: address.owner }
-  const questionId = TaskQuestionId.make("fixture-question")
-  yield* sessions.create(questionParent)
-  const helperExecutor = Layer.succeed(TaskExecutor, TaskExecutor.of({
-    turn: (writer) => writer.admitted.origin === "task" ? Tasks.pipe(Effect.flatMap((current) => current.ask(writer, {
-      questionId, text: "Which record should I inspect?", askedBy: { run: { id: writer.admitted.runId, turn: writer.admitted.turn, ordinal: RunOrdinal.make(0) }, step: 0 },
-    }).pipe(Effect.orDie)), Effect.as({ outcome: "waiting" as const, reply: Option.none() }))
-      : Effect.succeed({ outcome: "completed" as const, reply: Option.some("The selected record is ready.") }),
-    react: () => Effect.void,
-  }))
-  const helperTasks = Context.get(yield* Layer.build(TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(Layer.succeed(Sessions, sessions), runner, helperExecutor)))), Tasks)
-  yield* helperTasks.start(questionParent, { taskId: questionChild.id, instructions: "Inspect the chosen record.", mode: "spawn" })
-  yield* runQueued
-  if ((yield* helperTasks.status(questionParent, questionChild.id)).status !== "waiting") return yield* Effect.die("the fixture helper did not yield waiting")
-  yield* helperTasks.answer(questionParent, questionChild.id, { questionId, text: "Inspect beta." })
-  const answered = (yield* sessions.read(questionChild, { kinds: [TASK_ANSWERED] }))[0]
-  if (answered === undefined) return yield* Effect.die("the fixture helper did not store its answer outbox")
-  const acceptedAnswer = yield* Schema.decodeUnknownEffect(TaskAnswered)(answered.data)
-  const answerWriter = yield* sessions.begin(questionChild, { _tag: "Queued", input: acceptedAnswer.input.id, runId: RunId.make("helper-answer-fixture") })
-  const followed = yield* helperTasks.execute(answerWriter)
-  yield* answerWriter.end({ reason: followed.outcome, failure: Option.none() })
-  yield* helperTasks.reconcile(questionParent)
+const record = (directory: string) => Effect.gen(function* () {
+  const minted = yield* Ref.make(0)
+  const mintId = Effect.map(Ref.updateAndGet(minted, (count) => count + 1), (count) => SessionId.make(`00000000-0000-4000-8000-${count.toString(16).padStart(12, "0")}`))
+  const { model } = yield* scriptedModel(script)
+  const store = sessions({ mintId }).pipe(Layer.provideMerge(directoryJournal({ directory })), Layer.provideMerge(kernel()))
+  const memory = withFacts({ limit: 5 })(summaryMemory({ budgetTokens: 250, keepTurns: 0 }).pipe(Layer.provide(summarizer)))
+  return yield* Effect.gen(function* () {
+    const all = yield* Sessions
+    const conversation = yield* all.create({ owner: "fixture" })
+    yield* Effect.forEach(messages, (message, index) => Effect.andThen(turn(conversation, message), keep(conversation, TurnNumber.make(index + 1))), { concurrency: 1, discard: true })
+    const storage = yield* JournalStorage
+    const headers = yield* storage.list
+    return yield* Effect.forEach(headers, (header) => storage.read(header.id), { concurrency: 1 })
+  }).pipe(Effect.provide(Layer.mergeAll(memory, toolsLive, model, approval, curator).pipe(Layer.provideMerge(store))))
+}).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock))
 
-  const fixtureSpans: Tracer.Span[] = []
-  const traceSessions = yield* Effect.gen(function* () {
-    const parent: SessionAddress = { id: ConversationId.make(fixedId(0x6024)), owner: address.owner }
-    const child: SessionAddress = { id: ConversationId.make(fixedId(0x7a54)), owner: address.owner }
-    yield* sessions.create(parent)
-    const tracedTasks = Context.get(yield* Layer.build(TasksLive(tasksDefaults).pipe(Layer.provide(Layer.mergeAll(Layer.succeed(Sessions, sessions), runner, executor)))), Tasks)
-    yield* tracedTasks.start(parent, { taskId: child.id, instructions: "Inspect the traced record.", mode: "spawn" })
-    yield* runQueued
-    const row = (yield* sessions.read(parent, { kinds: [TASK_STARTED] }))[0]
-    if (row === undefined) return yield* Effect.die("the fixture did not store its traced task start")
-    const started = yield* Schema.decodeUnknownEffect(TaskStarted)(row.data)
-    if (started.traceParent === undefined || started.traceParent.traceId !== fixtureTraceId || started.traceParent.sampled !== true) {
-      return yield* Effect.die("the fixture did not retain its task's trace parent")
-    }
-    return [parent, child]
-  }).pipe(
-    Effect.withParentSpan(Tracer.externalSpan({ traceId: fixtureTraceId, spanId: "abcdef1234567890", sampled: true })),
-    Effect.withTracer(Tracer.make({ span: (options) => {
-      const span = new FixtureSpan(options, (fixtureSpans.length + 1).toString(16).padStart(16, "0"))
-      fixtureSpans.push(span)
-      return span
-    } })),
-    Effect.withTracerEnabled(true),
-  )
-
-  // A host action recorded under an idempotency key (`transact.keyed`), and its retry, which records nothing.
-  const keyedAddress: SessionAddress = { id: ConversationId.make(fixedId(0x6025)), owner: address.owner }
-  yield* sessions.create(keyedAddress)
-  const keyedAction = sessions.transact(keyedAddress, () => Effect.succeed({ drafts: [{ kind: "note.prepared", data: { id: "keyed-action" } }], result: undefined }),
-    { key: "fixture-action-1", command: { choice: "approve" } })
-  yield* keyedAction
-  if ((yield* Effect.flip(keyedAction))._tag !== "TransactDuplicate") return yield* Effect.die("the fixture's keyed action was not answered as a duplicate")
-
-  const journal = (session: SessionAddress) => Effect.gen(function* () {
-    const view = yield* sessions.get(session)
-    const events = yield* sessions.read(session)
-    return { header: Schema.encodeSync(SessionHeader)(view.header), events: Schema.encodeSync(Schema.Array(SessionLogEvent))(events) }
-  })
-  return yield* Effect.forEach([address, { id: completedTask, owner: address.owner }, { id: cancelledTask, owner: address.owner }, snapshotAddress, hookAddress, interceptedAddress, questionParent, questionChild, ...traceSessions, keyedAddress], journal)
-}).pipe(Effect.scoped, Effect.provideService(Clock.Clock, fixedClock), Effect.withTracerEnabled(false))
-
-const sessions = await Effect.runPromise(record)
+const scratchRoot = join(root, ".artifacts")
+await mkdir(scratchRoot, { recursive: true })
+const scratch = await mkdtemp(join(scratchRoot, "record-journal-"))
+const journals = await Effect.runPromise(record(join(scratch, "journal"))).finally(() => rm(scratch, { recursive: true, force: true }))
 const fixture = {
-  format: 1,
+  format: 2,
   version,
   description: unreleased
-    ? "Development session journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture."
-    : "Session journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions must read them.",
-  /** The stored format this version writes (`STORED_FORMAT`): later versions find it in docs/stored-format.json's history. */
-  storedFormat: STORED_FORMAT,
-  /** The kinds this version reserved: the recording holds each, and later versions must keep them reserved. */
-  reserved: RESERVED_KINDS,
-  sessions,
+    ? "Development kernel journals, recorded by scripts/record-journal-fixture.ts --unreleased; not a released-version fixture."
+    : "Kernel journals as this version stores them, recorded by scripts/record-journal-fixture.ts. Later versions of its journal format must read them.",
+  /** The journal format this version writes (`JOURNAL_FORMAT`): a later kernel of the same format replays it, any other refuses it. */
+  journalFormat: JOURNAL_FORMAT,
+  sessions: Schema.encodeSync(Schema.Array(Journal))(journals),
 }
 const text = `${JSON.stringify(fixture, null, 2)}\n`
 if (/\/home\/|\/Users\/|[A-Z]:\\\\/.test(text)) {
@@ -517,5 +191,5 @@ if (/\/home\/|\/Users\/|[A-Z]:\\\\/.test(text)) {
 }
 await mkdir(join(target, ".."), { recursive: true })
 await writeFile(target, text, { flag: unreleased && force ? "w" : "wx" })
-const kinds = new Set(sessions.flatMap((session) => session.events.map((event) => event.kind)))
-console.log(`Recorded ${sessions.reduce((sum, session) => sum + session.events.length, 0)} events of ${kinds.size} kinds in ${sessions.length} sessions to ${relative(root, target)}`)
+const names = new Set(journals.flatMap((journal) => journal.events.map((event) => event.name)))
+console.log(`Recorded ${journals.reduce((sum, journal) => sum + journal.events.length, 0)} events of ${names.size} names in ${journals.length} sessions to ${relative(root, target)}`)

@@ -32,23 +32,14 @@ interface Guide {
   readonly description: string
 }
 
-const guides: ReadonlyArray<Guide> = [{
-  source: "docs/events.md",
-  page: "guides/events",
-  title: "Events guide",
-  description: "Stream a turn to a client, react to its tools, see its start and end, publish your own events, follow a session's journal from anywhere, and serve it all over HTTP.",
-}, {
-  source: "docs/process-protocol.md",
-  page: "guides/process-protocol",
-  title: "Process protocol",
-  description: "Bind a host-supplied agent to bounded stdio, push durable messages, steer or cancel turns, and preserve work across process restart.",
-}]
+/**
+ * The guides the website mirrors. None while the old engine's guides are gone and the kernel's guide
+ * (`docs/kernel.md`, whose quotes `packages/sdk/src/kernel/guide.test.ts` pins) has no page yet.
+ */
+const guides: ReadonlyArray<Guide> = []
 
 /** Repository files with a page of their own on the website; any other file a guide links to is linked on GitHub. */
-const sitePages: ReadonlyMap<string, string> = new Map([
-  ["docs/event-reference.md", "/docs/concepts/event-reference/"],
-  ...guides.map((guide): readonly [string, string] => [guide.source, `/docs/${guide.page}/`]),
-])
+const sitePages: ReadonlyMap<string, string> = new Map(guides.map((guide): readonly [string, string] => [guide.source, `/docs/${guide.page}/`]))
 
 const read = (file: string) => readFile(join(root, file), "utf8")
 

@@ -11,7 +11,6 @@
     "packages/*"
   ],
   "scripts": {
-    "example:memory": "bun scripts/memory-walkthrough.ts",
     "foundry": "bun packages/foundry/src/main.ts",
     "test": "bun test",
     "check": "bun run typecheck",
@@ -24,7 +23,7 @@
     "publish:packages": "bun scripts/publish-packages.ts",
     "publish:landing": "bun scripts/publish-npm-landing.ts",
     "release:publish": "bun scripts/release-publish.ts",
-    "docs:generate": "bun scripts/generate-plugin-reference.ts && bun scripts/generate-event-reference.ts && bun scripts/generate-stored-format.ts && bun scripts/sync-guides.ts",
+    "docs:generate": "bun scripts/sync-guides.ts",
     "eval:cli": "bun packages/evals-cli/src/main.ts",
     "changeset": "changeset",
     "release:version": "bun scripts/release-version.ts",

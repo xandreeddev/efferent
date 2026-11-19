@@ -7,7 +7,7 @@ const commit = "9b898c1bb0740d8ba71cd8429cc5b408c46755cb"
 const other = "15d6dc518d5aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa"
 const core = { name: "@xandreed/core", version: "0.16.0" }
 const metadata = { ...core, gitHead: commit }
-const runtime = { name: "@xandreed/runtime", version: core.version, dependencies: { "@xandreed/core": core.version } }
+const runtime = { name: "@xandreed/evals", version: core.version, dependencies: { "@xandreed/core": core.version } }
 
 const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?: number; body?: unknown; runtime?: { body: unknown; status?: number; disappears?: boolean }; remote?: string; remoteAfterPublish?: string; networkFailure?: boolean; ci?: boolean; sourceRoot?: boolean; publisher?: boolean; tty?: boolean; env?: Record<string, string>; account?: string; dirty?: boolean; builtHead?: string; certificateSha?: string } = {}) => {
   const root = await mkdtemp(join(tmpdir(), "efferent-release-preflight-"))
@@ -26,12 +26,12 @@ const runRelease = async (options: { dryRun?: boolean; verify?: boolean; status?
     await writeFile(join(source, "packages/core/package.json"), JSON.stringify(core))
     await writeFile(join(source, ".artifacts/packages/core/package.json"), JSON.stringify({ ...core, gitHead: options.builtHead ?? commit, description: "Preserve unrelated distribution fields", exports: { ".": "./dist/index.js" } }))
     if (options.runtime !== undefined) {
-      await mkdir(join(source, "packages/runtime"), { recursive: true })
-      await mkdir(join(source, ".artifacts/packages/runtime"), { recursive: true })
-      await writeFile(join(source, "packages/runtime/package.json"), JSON.stringify(runtime))
-      await writeFile(join(source, ".artifacts/packages/runtime/package.json"), JSON.stringify({ ...runtime, gitHead: commit }))
+      await mkdir(join(source, "packages/evals"), { recursive: true })
+      await mkdir(join(source, ".artifacts/packages/evals"), { recursive: true })
+      await writeFile(join(source, "packages/evals/package.json"), JSON.stringify(runtime))
+      await writeFile(join(source, ".artifacts/packages/evals/package.json"), JSON.stringify({ ...runtime, gitHead: commit }))
     }
-    await writeFile(join(source, ".artifacts/packages/build.json"), JSON.stringify({ commit, dirty: options.dirty ?? false, version: core.version, packages: [{ dir: "core", ...core }, ...(options.runtime === undefined ? [] : [{ dir: "runtime", name: runtime.name, version: runtime.version }])] }))
+    await writeFile(join(source, ".artifacts/packages/build.json"), JSON.stringify({ commit, dirty: options.dirty ?? false, version: core.version, packages: [{ dir: "core", ...core }, ...(options.runtime === undefined ? [] : [{ dir: "evals", name: runtime.name, version: runtime.version }])] }))
     await writeFile(commands, "")
     await writeFile(join(root, "bin/git"), `#!/bin/sh
 case "$1" in
@@ -65,7 +65,7 @@ process.on("exit", () => { if (process.env.GITHUB_SHA !== originalWorkflowSha) p
 const runtimeRequests = { count: 0 };
 globalThis.fetch = async (url) => {
   if (process.env.RELEASE_TEST_NETWORK_FAILURE === "1") throw new Error("fixture network unavailable");
-  if (String(url).includes("@xandreed%2fruntime/")) {
+  if (String(url).includes("@xandreed%2fevals/")) {
     runtimeRequests.count += 1;
     return new Response(process.env.RELEASE_TEST_RUNTIME_BODY, { status: process.env.RELEASE_TEST_RUNTIME_DISAPPEARS === "1" && runtimeRequests.count >= 2 ? 404 : Number(process.env.RELEASE_TEST_RUNTIME_STATUS) });
   }
@@ -142,7 +142,7 @@ describe("CI release source isolation", () => {
   test("a package disappearing between presence and provenance checks refuses before skip or upload", async () => {
     const result = await runRelease({ ci: true, publisher: true, env: oidc, runtime: { body: { ...runtime, gitHead: commit }, disappears: true } })
     expect(result.code).toBe(1)
-    expect(result.output).toContain("@xandreed/runtime@0.16.0 disappeared from the registry")
+    expect(result.output).toContain("@xandreed/evals@0.16.0 disappeared from the registry")
     expect(result.output).not.toContain("skip @xandreed/")
     expect(result.commands).toEqual([])
   })
@@ -151,7 +151,7 @@ describe("CI release source isolation", () => {
     for (const body of [{ ...runtime, gitHead: other }, runtime]) {
       const result = await runRelease({ ci: true, publisher: true, env: oidc, runtime: { body } })
       expect(result.code).toBe(1)
-      expect(result.output).toContain("@xandreed/runtime@0.16.0")
+      expect(result.output).toContain("@xandreed/evals@0.16.0")
       expect(result.output).not.toContain("skip ")
       expect(result.commands).toEqual([])
     }
@@ -161,7 +161,7 @@ describe("CI release source isolation", () => {
     const result = await runRelease({ ci: true, publisher: true, env: oidc, runtime: { body: { ...runtime, gitHead: commit } } })
     expect(result.code).toBe(0)
     expect(result.output).toContain("skip @xandreed/core@0.16.0 (already on npm)")
-    expect(result.output).toContain("skip @xandreed/runtime@0.16.0 (already on npm)")
+    expect(result.output).toContain("skip @xandreed/evals@0.16.0 (already on npm)")
     expect(result.output).toContain("nothing to publish")
     expect(result.commands).toEqual([])
   })

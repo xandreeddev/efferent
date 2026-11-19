@@ -2,11 +2,7 @@ import { Result, Schema } from "effect"
 import ts from "typescript"
 
 /** Keep this group equal to the distribution builder's explicit list. */
-export const releaseDirectories = [
-  "core", "runtime", "sdk", "process-host", "evals", "evals-cli", "evals-langfuse", "evals-langsmith",
-  "plugin-agent-loop", "plugin-memory-window", "plugin-memory-summary", "plugin-memory-digest", "plugin-memory", "plugin-rag", "plugin-knowledge-postgres", "plugin-tool-discovery", "plugin-models",
-  "plugin-session-files", "plugin-session-sqlite", "plugin-sessions", "plugin-tasks", "plugin-render", "plugin-workspace", "plugin-telemetry",
-] as const
+export const releaseDirectories = ["core", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-langsmith"] as const
 export const releaseNames: ReadonlyArray<string> = releaseDirectories.map((name) => `@xandreed/${name}`)
 /** The workspace packages Changesets ignores: they are versioned and published by nothing here. */
 const ignoredNames: ReadonlyArray<string> = ["@xandreed/foundry", "@xandreed/website"]
@@ -38,7 +34,7 @@ export const validateReleaseConfiguration = (text: string, buildSource: string):
 export const sharedReleaseVersion = (manifests: ReadonlyArray<SourceManifest>): Result.Result<string, string> => {
   const version = manifests[0]?.version ?? ""
   return sameNames(manifests.map((manifest) => manifest.name), releaseNames) && isReleaseVersion(version) && manifests.every((manifest) => manifest.version === version)
-    ? Result.succeed(version) : failure("All 24 source distribution packages must share one stable semantic version")
+    ? Result.succeed(version) : failure(`All ${releaseDirectories.length} source distribution packages must share one stable semantic version`)
 }
 const NoteRelease = Schema.Struct({ name: Schema.String, type: Schema.Literals(["major", "minor", "patch"]) })
 const CliPlan = Schema.Struct({
@@ -65,28 +61,6 @@ export const releaseVersionPlan = (text: string, current: string): Result.Result
 interface Edit { readonly start: number; readonly end: number; readonly text: string }
 const edited = (source: string, edits: ReadonlyArray<Edit>) => [...edits].sort((a, b) => b.start - a.start).reduce((text, edit) => text.slice(0, edit.start) + edit.text + text.slice(edit.end), source)
 const property = (object: ts.ObjectLiteralExpression, name: string): ts.PropertyAssignment | undefined => object.properties.find((entry): entry is ts.PropertyAssignment => ts.isPropertyAssignment(entry) && (ts.isIdentifier(entry.name) || ts.isStringLiteral(entry.name)) && entry.name.text === name)
-/** Update only literal versions on definePlugin calls; prompt/schema versions remain untouched. */
-export const pluginVersionText = (source: string, previous: string, next: string): Result.Result<string, string> => {
-  const file = ts.createSourceFile("plugin.ts", source, ts.ScriptTarget.Latest, true)
-  const edits: Edit[] = []
-  const problems: string[] = []
-  const visit = (node: ts.Node) => {
-    if (ts.isCallExpression(node) && ts.isIdentifier(node.expression) && node.expression.text === "definePlugin") {
-      const argument = node.arguments[0]
-      const version = argument && ts.isObjectLiteralExpression(argument) ? property(argument, "version")?.initializer : undefined
-      const id = argument && ts.isObjectLiteralExpression(argument) ? property(argument, "id")?.initializer : undefined
-      const firstParty = id && ts.isStringLiteral(id) && id.text.startsWith("@xandreed/plugin-")
-      const internalProtocol = !firstParty && version && ts.isStringLiteral(version) && /^\d+$/.test(version.text)
-      if (!internalProtocol) {
-        if (!version || !ts.isStringLiteral(version) || version.text !== previous) problems.push("Every released definePlugin call must declare the current shared version as a string literal")
-        else edits.push({ start: version.getStart(file), end: version.end, text: JSON.stringify(next) })
-      }
-    }
-    ts.forEachChild(node, visit)
-  }
-  visit(file)
-  return problems.length ? failure(problems[0]!) : Result.succeed(edited(source, edits))
-}
 /** Preserve Bun's JSONC formatting and external resolutions, changing only workspace version strings. */
 export const lockVersionText = (source: string, previous: string, next: string): Result.Result<string, string> => {
   const file = ts.parseJsonText("bun.lock", source)
@@ -119,7 +93,7 @@ export const changelogVersionText = (source: string, version: string, day: strin
 }
 export const publishedVersionText = (name: string, source: string, previous: string, next: string): Result.Result<string, string> => {
   // These guides contain current-release examples, sometimes several or none when the prose is generic.
-  if (["CONTRIBUTING.md", "docs/roadmap.md", ".agents/skills/add-plugin/SKILL.md"].includes(name)) {
+  if (name === "CONTRIBUTING.md") {
     const version = previous.replaceAll(".", "\\.")
     return Result.succeed(source.replace(new RegExp(`(?<![0-9.])${version}(?![0-9]|\\.[0-9])`, "g"), next))
   }
