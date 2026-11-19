@@ -1429,8 +1429,8 @@ A host proves its own embedder with `embedderConformance` (n texts give n
 vectors in order, each pointing where its text's vector alone points; the
 same vector twice; one length; no texts, no vectors; a query and a passage
 of one length), over three or more texts it gives, and its own store with
-`vectorStoreConformance`. No memory wrapper of the kernel's uses the two: a
-host that sends what it keeps by meaning writes its own over them.
+`vectorStoreConformance`. The knowledge's `withKnowledgeByMeaning` uses the
+two to find what is kept by meaning (below, "Found by meaning").
 
 ## Knowledge kept by a curator
 
@@ -1633,7 +1633,66 @@ single questions need, both memories of 8 of 14 that need two, and both of
 78 of 94 generated two-step questions; with no walk, 20, 1 and 0. ADR 0023
 has the counts and what they rest on. A question whose words the memory
 does not hold, and that names nobody, finds nothing: finding it takes
-ranking by meaning, over ADR 0021's contracts.
+ranking by meaning, the next section.
+
+### Found by meaning
+
+"Who keeps a bird?" cannot reach "Ana Silva has parrot Pip." by words:
+nobody is named, and "bird" is not "parrot" to a comparison of letters.
+`withKnowledgeByMeaning(options)` is `withKnowledge` with a third list,
+ranked by meaning, fused by rank with the other two (ADR 0025). It needs an
+`Embedder` and a `VectorStore` (ADR 0021) beside `Sessions`:
+
+<!-- pinned: packages/sdk/src/kernel/knowledge-meaning.test.ts#meaning-memory -->
+
+```ts
+// The vectors of an embedding model, recorded: a host gives its own embedder (a model in the page, a service) and its
+// own store of vectors, an index of the journal made again from it when lost.
+const embedder = recordedEmbedder({ model: recording.model, vectors: recording.vectors })
+// The memory a conversation reads with: every message, then what is kept about what the conversation names, what its
+// words reach, and what is nearest its last message by meaning, three memories at most.
+const english = { speaker: ["i", "me", "my"], stopWords: ["who", "a", "where", "does", "do", "is", "in", "the", "what"] }
+const memory3 = withKnowledgeByMeaning({ limit: 3, walk: 0, ...english })(flatMemory)
+```
+
+- **What is ranked** is what the other two lists rank: the memories that
+  stand, and those ended as `changed` into one that stands
+  (`meaningTexts`), an ended one taking its place for what replaced it.
+- **Vectors are an index of the journal.** Each text is kept under
+  `meaningKey(model, text)`, the embedder's model, a line feed and the
+  text, never an id; what the store lacks is embedded as passages, 32 a
+  call, and put, so a later request embeds only its message, and a store
+  that was lost is filled again from the journal. A host that ships
+  vectors made ahead puts them under the same keys.
+- **The last message alone** is embedded, as a query, and the store is
+  searched among those keys for `pool` texts (50 unless given).
+- **Weights.** A place `p` (from 0) adds `weight / (10 + p)`: 1 for the
+  list about a seed, 0.5 for the words', 1.5 for the list by meaning,
+  unless `weights` says otherwise. A weight of 0 turns a list off; with the
+  list by meaning off nothing is embedded, and the context is
+  `withKnowledge`'s. The walk by subject, the note and the places are
+  `withKnowledge`'s.
+
+<!-- pinned: packages/sdk/src/kernel/knowledge-meaning.test.ts#bird -->
+
+```ts
+const { context, heard } = await askKept("Who keeps a bird?")
+// "bird" is not "parrot" to a comparison of letters: nothing is named and no word meets, so the list by meaning is
+// the only one, and its nearest memory is sent first.
+expect(context[1]?.split("\n").slice(0, 3)).toEqual([NOTE, "<known-memories>", "Ana Silva has parrot Pip. (said on 2026-11-10)"])
+const parrot = heard[0]?.memories.find((one) => one.text === "Ana Silva has parrot Pip.")
+expect<unknown>([parrot?.seed, parrot?.words, parrot?.meaning?.place, parrot?.meaning?.via]).toEqual([null, null, 1, null])
+```
+
+`plugin.knowledge.recalled` says the embedder's model, the pool and the
+weights, and each memory's place and cosine in the list by meaning, with
+the memory that took the place when one it replaced did. An embedder that
+fails (`EmbedFailed`) and a store that refuses (`VectorsRefused`) fail the
+context as they are. There is no floor on the cosine: every message with a
+word in it, a greeting too, is sent the memories nearest it. On the sets of
+the section above, with e5-small-v2 and with Gemini's embedder, the third
+list found 189 and 194 of 224 questions against 178 by words alone; ADR
+0025 has the table and what it leaves out.
 
 A host proves its own curator with `curatorConformance`: asked for a first
 call and for a review, it answers with text that is not blank or fails with

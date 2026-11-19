@@ -149,6 +149,8 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/knowledge.test.ts#records",
       "packages/sdk/src/kernel/knowledge.test.ts#recall",
       "packages/sdk/src/kernel/knowledge.test.ts#recalled",
+      "packages/sdk/src/kernel/knowledge-meaning.test.ts#meaning-memory",
+      "packages/sdk/src/kernel/knowledge-meaning.test.ts#bird",
       "packages/sdk/src/kernel/contracts/inbox/inbox.port.ts#",
       "packages/sdk/src/kernel/durable.test.ts#resume",
       "packages/sdk/src/kernel/node/durable.test.ts#durable",

@@ -81,6 +81,7 @@ const ForgottenData
 const Found
 const InboxQueuedData
 const KEY_LIMIT
+const KNOWLEDGE_BY_MEANING
 const KNOWLEDGE_CHECKS
 const KNOWLEDGE_OWNER
 const KNOWLEDGE_PROMPT
@@ -98,6 +99,7 @@ const ListFiles
 const ListView
 const LoadSkill
 const LoadedSkill
+const MEANING_MODEL_LIMIT
 const MEMORY_LIMIT
 const MemoryData
 const MemoryDay
@@ -177,6 +179,7 @@ const VectorKey
 const View
 const ViewData
 const ViewId
+const WORDS_WEIGHTS
 const WRITE_FILE
 const WRITE_LIMIT
 const WindowDroppedData
@@ -192,6 +195,7 @@ const autoApprove
 const callTool
 const catalogue
 const checkedKnowledgeOptions
+const checkedMeaningOptions
 const clipTo
 const clippedMarker
 const cosine
@@ -241,6 +245,8 @@ const knowledgeRecalledOf
 const knowledgeSession
 const learnedEvent
 const loadedOf
+const meaningKey
+const meaningTexts
 const memoryConformance
 const memoryEndedEvent
 const memoryEvent
@@ -301,11 +307,13 @@ const windowMemory
 const windowPressureEvent
 const withFacts
 const withKnowledge
+const withKnowledgeByMeaning
 const workspacePath
 const writtenEvent
 interface Answered
 interface Asked
 interface Bridge
+interface ByMeaning
 interface CallRead
 interface ClosedRead
 interface CurateOptions
@@ -317,6 +325,7 @@ interface Ended
 interface FactsOptions
 interface FilesSearchOptions
 interface FilesSubject
+interface FoundText
 interface FusedMemory
 interface InboxOptions
 interface KeptRecords
@@ -329,6 +338,9 @@ interface KnownEntity
 interface KnownMemory
 interface KnownSource
 interface ListPlace
+interface MeaningOptions
+interface MeaningPlace
+interface MeaningRecallOptions
 interface MemorySubject
 interface MemoryWrapperSubject
 interface MessageRead
@@ -337,6 +349,7 @@ interface NextIds
 interface PointerOptions
 interface Queued
 interface ReadCuration
+interface RecallWeights
 interface RecordedOptions
 interface RecordedVectors
 interface ResultRead

@@ -10,6 +10,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: what is kept can also be found by meaning (ADR 0025).
+  `withKnowledgeByMeaning(options)` is `withKnowledge` with a third list,
+  the memories nearest the last message by an `Embedder`'s cosine, fused by
+  rank with the list about a seed and the words' list; it needs an
+  `Embedder` and a `VectorStore` beside `Sessions`. Its options are
+  `withKnowledge`'s, `pool` (how many texts the list ranks, 50) and
+  `weights` (`{ seed, words, meaning }`, 1, 0.5 and 1.5 unless given, a
+  weight of 0 turning a list off: with meaning off nothing is embedded),
+  refused in words where written. Vectors are an index of the journal,
+  keyed by the embedder's model and the memory's text (`meaningKey`), what
+  the store lacks embedded 32 a call before the search. `recallKnowledge`
+  takes what a store found (`ByMeaning`) and stays pure;
+  `plugin.knowledge.recalled` now says the weights, the model and the pool,
+  and each memory's place and cosine by meaning. `withKnowledge` is
+  unchanged. On ADR 0023's sets with two more, the third list at 1.5 found
+  189 (e5-small-v2) and 194 (Gemini) of 224 questions against 178 by words
+  alone, and "Who keeps a bird?" now reaches "Ana Silva has parrot Pip.".
+  New: `RecallWeights`, `WORDS_WEIGHTS`, `ByMeaning`, `FoundText`,
+  `MeaningPlace`, `meaningTexts`, `meaningKey`, `MEANING_MODEL_LIMIT`,
+  `checkedMeaningOptions`, `MeaningOptions`, `MeaningRecallOptions`,
+  `KNOWLEDGE_BY_MEANING`.
+
 - Docs site: lesson 18 of the learn track, now "A memory that keeps itself",
   keeps its memory with a curator. Its program offers no tool that remembers
   (tools.ts is the calculator alone); after each turn's answer agent.ts runs
