@@ -749,15 +749,24 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
     const about = factAbout(known, question)
     if (about !== undefined) return { text: `I remember: "${about.text}" That is fact ${about.id}.`, calls: [] }
   }
+  const remembered = memoriesIn(sent.content.flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])))
+  // One greeting or thanks, with memories sent for this request (lesson 20): answered as one, never from the note. It
+  // asks nothing a memory holds, and recall by meaning sends a note to any message ("Thanks!" is sent eight memories).
+  const greeting = pending.length === 1 ? greetingReply(pending[0] ?? "") : undefined
+  if (greeting !== undefined && remembered.length > 0) return { text: greeting, calls: [] }
   // One question, with memories sent for this request (lesson 18, withKnowledge): answered from the note's first
   // memory and up to two more about what it brings in (answerFromNote), a line of what a memory replaced read as
   // "Before that: …".
-  const remembered = memoriesIn(sent.content.flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])))
   if (question !== undefined && remembered.length > 0) return { text: `From what I know: ${answerFromNote(question, remembered).join(" ")}`, calls: [] }
   // An answer of Echo's own, with no tool to call and no result to pass on: in the haiku skill's form while it is loaded.
   if (loaded.includes(HAIKU_SKILL)) return { text: HAIKU, calls: [] }
   return { text: echoReply(toChatMessages(sent)), calls: [] }
 }
+
+/** What Echo answers a message that only greets or thanks (lesson 20), sent with a note of memories: none for any other. */
+export const greetingReply = (message: string): string | undefined =>
+  /^\s*(thanks|thank you|cheers)\b/i.test(message) ? "You're welcome."
+    : /^\s*(hi|hello|hey|good (morning|afternoon|evening))\b/i.test(message) ? "Hello! Ask me about anyone kept in memory." : undefined
 
 /** Whether a request is one the curator sends (lesson 18): its reply comes at once, with no wait between words. */
 const isCurationReply = (request: string): boolean => isCurationPrompt(request) || isReviewPrompt(request)

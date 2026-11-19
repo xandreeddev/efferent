@@ -308,6 +308,9 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
     case "Reported":
       // Lesson 17: a task's report waits in the chat's queue, for a turn of its own.
       return withEntry(board, { ...base, kind: "chat", turn: board.records.at(-1)?.turn ?? 0, title: `task ${trace.task}'s report waits in the chat's queue`, detail: trace.session })
+    case "Embedded":
+      // Lesson 20: the page's embedder made vectors, inside the context being built for the turn open.
+      return withEntry(board, { ...base, kind: "memory", turn: board.records.at(-1)?.turn ?? 0, title: `the embedder made ${trace.count} vector${trace.count === 1 ? "" : "s"}, of ${trace.as === "query" ? "a message" : "memories"}`, detail: json(trace) })
     case "ReportsDropped":
       return withEntry(board, { ...base, kind: "program", turn: board.records.at(-1)?.turn ?? 0, title: `${trace.sessions.length === 1 ? "a report" : `${trace.sessions.length} reports`} dropped as the program stopped`, detail: json(trace.sessions) })
     case "Asking":

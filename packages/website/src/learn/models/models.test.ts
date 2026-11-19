@@ -1762,6 +1762,27 @@ describe("Echo as the curator, and Echo reading the note of memories (lesson 18)
     expect(echoStep(Prompt.make([{ role: "user", content: "Where does Ana work?" }, { role: "user", content: noteOf("Ana Silva works at Acme. (said on 2026-11-16)").replace("were kept", "are kept") }]), ["calculator"]).text).not.toStartWith("From what I know")
   })
 
+  /** The note lesson 20's page sent for "Thanks!" on a new conversation after Load the world: eight memories by meaning alone (probed on Echo). */
+  const THANKS_NOTE = [
+    "Eva Kowalski met Wen Dias. (said on 2024-08-08)", "Jonas Lopes plays go. (said on 2024-03-23)", "Farid Haddad works at Initech. (said on 2024-01-09)", "Omar Jansen plays go. (said on 2024-04-11)",
+    "Ines Kowalski works at Blue Sun. (said on 2024-03-12)", "Yusuf Zimmer works at Massive Dynamic. (said on 2024-01-10)", "Wen Castro met Ines Kowalski. (said on 2026-03-12)", "Wen Dias met Yusuf Gomes. (said on 2024-05-11)",
+  ]
+
+  test("lesson 20: a greeting or thanks sent with the note of memories is answered as one, never from the note; without a note, as before", () => {
+    // "Thanks!" asks for nothing a memory holds: without the rule it is repeated as any message is, and a greeting that
+    // ends with a question mark is answered from the note's first memory, which has nothing to do with it.
+    expect(askedWith("Thanks!", THANKS_NOTE)).toEqual({ text: "You're welcome.", calls: [] })
+    expect(askedWith("Thank you so much!", THANKS_NOTE).text).toBe("You're welcome.")
+    expect(askedWith("Hi, are you there?", THANKS_NOTE)).toEqual({ text: "Hello! Ask me about anyone kept in memory.", calls: [] })
+    expect(askedWith("Good morning!", THANKS_NOTE).text).toBe("Hello! Ask me about anyone kept in memory.")
+    // A question with the same note is answered from it, as lesson 18's rule says; a greeting with no note, as before.
+    expect(askedWith("Who plays go?", THANKS_NOTE).text).toStartWith("From what I know: ")
+    expect(echoStep(Prompt.make([{ role: "user", content: "Thanks!" }]), ["calculator"]).text).toBe('You said: "Thanks!". This is the start of the conversation.')
+    // "Think" and "Hire" start like a greeting and are none.
+    expect(askedWith("Think of a bird?", THANKS_NOTE).text).toStartWith("From what I know: ")
+    expect(askedWith("Hire me?", THANKS_NOTE).text).toStartWith("From what I know: ")
+  })
+
   test("the names a line of the note says are its runs of words with a capital, and the user: Ana Silva is not Ana Costa, and Project Pebble is not Project Pebble III", () => {
     expect(namesIn("Ana Silva works at Globex.")).toEqual(["ana silva", "globex"])
     expect(namesIn("Ana Costa works at Initech.")).toEqual(["ana costa", "initech"])
