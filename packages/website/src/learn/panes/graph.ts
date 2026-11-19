@@ -125,15 +125,35 @@ const rowOf = (row: RecallRow): HTMLElement =>
     el("span", { class: "grp-why" }, row.why),
     ...row.before.map((text) => el("span", { class: "grp-row-detail" }, `before that: ${text}`)))
 
+/** How many memories that were not sent a list shows before the rest are folded away. */
+const NOT_SENT_SHOWN = 5
+
+/**
+ * A list of a recall's memories: every one that was sent, the first few that were not (the next in line), and the
+ * rest of those folded under a line that counts them, so a recall over many memories does not bury what was sent.
+ */
+const rowsOf = (rows: ReadonlyArray<RecallRow>): ReadonlyArray<HTMLElement> => {
+  const unsent = rows.filter((row) => !row.sent)
+  const folded = new Set(unsent.slice(NOT_SENT_SHOWN))
+  const shown = rows.filter((row) => !folded.has(row))
+  const rest = rows.filter((row) => folded.has(row))
+  return [
+    el("ol", { class: "grp-rows" }, ...shown.map(rowOf)),
+    ...(rest.length === 0 ? [] : [el("details", { class: "grp-folded" },
+      el("summary", {}, `${rest.length} more ${rest.length === 1 ? "memory" : "memories"} not sent`),
+      el("ol", { class: "grp-rows" }, ...rest.map(rowOf)))]),
+  ]
+}
+
 /** The recall's steps, in words. */
 const stepsOf = (view: RecallView): ReadonlyArray<HTMLElement> => [
   el("li", {}, el("strong", {}, "1. The seeds: what your message named"), el("ul", { class: "grp-named" }, ...view.seeds.map((line) => el("li", {}, line)))),
   el("li", {}, el("strong", {}, "2. Memories about the seeds, and those your words reach, fused"),
-    ...(view.ranked.length === 0 ? [el("p", {}, "None.")] : [el("ol", { class: "grp-rows" }, ...view.ranked.map(rowOf))])),
+    ...(view.ranked.length === 0 ? [el("p", {}, "None.")] : rowsOf(view.ranked))),
   el("li", {}, el("strong", {}, "3. The walk by subject"),
     ...(view.bridges.length === 0 ? [el("p", {}, "It started from nothing: the best memories about the seeds brought in no entity your message did not name.")]
       : [el("ul", { class: "grp-named" }, ...view.bridges.map((line) => el("li", {}, line)))]),
-    ...(view.walked.length === 0 ? [] : [el("ol", { class: "grp-rows" }, ...view.walked.map(rowOf))])),
+    ...(view.walked.length === 0 ? [] : rowsOf(view.walked))),
   el("li", {}, el("strong", {}, "4. What was sent"), el("p", {}, view.sent), ...Option.toArray(Option.map(view.more, (more) => el("p", { class: "grp-more" }, more)))),
 ]
 

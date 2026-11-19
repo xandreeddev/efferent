@@ -477,7 +477,7 @@ check` (tsc over the learn code, the build, the link check) and
     (`recallViewOf`): the seeds and how each was named, the memories ranked
     with each one's place in the list about a seed and in the list the
     message's words reach (with those words, and "for what replaced it"
-    where an ended memory took the place, `via`), why each was sent or not,
+    where an ended memory took the place, `via`), why each was sent or not (the panel lists every memory sent and the first five that were not, the rest folded under a line that counts them),
     the walk's bridges and what it found, and the note's tokens against those
     of every standing memory. `graph-model.test.ts` pins the picture over
     hand-built records and the world; `lesson.test.ts` pins it, the

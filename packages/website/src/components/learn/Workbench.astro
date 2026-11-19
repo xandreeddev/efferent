@@ -47,7 +47,7 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
             <span class="dot" aria-hidden="true"></span>Context
           </button>
           {lesson.graph !== undefined && (
-            <button role="tab" type="button" class="tab-graph" data-file="graph" aria-selected="false" title="What the walk of each request did: what the question named, the links it reached and ranked, and what was sent">
+            <button role="tab" type="button" class="tab-graph" data-file="graph" aria-selected="false" title="The memory kept so far, and for each request what recall chose: what your message named, the memories it ranked and reached, and what was sent">
               Graph
             </button>
           )}

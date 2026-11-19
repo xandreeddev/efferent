@@ -1560,7 +1560,8 @@ body.app {
 }
 .grp-picture {
   overflow: auto;
-  max-height: 22rem;
+  /* As tall as the pane allows: a short box hid most of a picture of the world behind its own scroll. */
+  max-height: min(40rem, 62vh);
   border: 1px solid var(--border);
   border-radius: 8px;
   background: var(--surface);
@@ -2534,4 +2535,9 @@ body.app {
   color: var(--text);
   font: inherit;
   font-size: 0.85rem;
+}
+.grp-folded > summary {
+  cursor: pointer;
+  color: var(--text-2, var(--text));
+  margin: 0.25rem 0 0.5rem;
 }
