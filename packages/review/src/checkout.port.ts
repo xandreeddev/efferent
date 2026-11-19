@@ -18,6 +18,8 @@ export type CheckoutError = CommandFailed | OutputCut | CommitMissing
  * what a path is in a commit's tree (a link, a submodule or a folder is never read), `blob` answers a blob's text,
  * `files` the paths of a commit's regular files, `grep` the lines of its tracked text files that hold a pattern
  * (`PatternRefused` for a regular expression git cannot read), and `mergeBase` where two commits' histories meet.
+ * `entry`, `blob` and `grep` run under the host shell's small output bound (`tool`). `changedPaths` answers the paths
+ * `from...to` changes (from where `to` left `from`), for a review's records.
  */
 export class Checkout extends Context.Service<Checkout, {
   readonly fetch: (repo: RepoName, base: PullEnd, head: HeadToFetch) => Effect.Effect<void, CheckoutError>
@@ -29,4 +31,5 @@ export class Checkout extends Context.Service<Checkout, {
   readonly files: (repo: RepoName, at: CommitSha) => Effect.Effect<ReadonlyArray<string>, CheckoutError>
   readonly grep: (repo: RepoName, at: CommitSha, request: GrepRequest) => Effect.Effect<ReadonlyArray<GrepHit>, CheckoutError | PatternRefused>
   readonly mergeBase: (repo: RepoName, one: CommitSha, other: CommitSha) => Effect.Effect<CommitSha, CheckoutError>
+  readonly changedPaths: (repo: RepoName, from: CommitSha, to: CommitSha) => Effect.Effect<ReadonlyArray<string>, CheckoutError>
 }>()("@xandreed/review/Checkout") {}

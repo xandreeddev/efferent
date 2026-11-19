@@ -77,7 +77,7 @@ describe("reviewPullRequest", () => {
     const folder = join(logsRoot, `2-${fixture.head.slice(0, 12)}`)
     expect([asked.length, asked[0]?.journalDir, asked[0]?.options, asked[0]?.reviewed.at, asked[0]?.prompt.tail.startsWith("Review the pull request above.")]).toEqual([1, join(folder, "pass-1"), { maxSteps: 4 }, fixture.head, true])
     expect([report.promptVersion, report.toolsVersion, report.model, report.findings.map((one) => [one.path, one.line, one.pass, one.restatesCi]), report.usage]).toEqual([
-      "review-prompt-1", "review-tools-1", "m", [["src/sum.ts", 4, 1, false]], { input: 10, cached: 4, output: 2, cost: 0.001 },
+      "review-prompt-1", "review-tools-2", "m", [["src/sum.ts", 4, 1, false]], { input: 10, cached: 4, output: 2, cost: 0.001 },
     ])
     expect(existsSync(join(folder, "pass-1"))).toBe(true)
     const kept = await Effect.runPromise(Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewReport))(readFileSync(join(folder, "review.json"), "utf8")))

@@ -1,8 +1,8 @@
-import { Effect, Layer, Match } from "effect"
+import { Context, Effect, Layer, Match } from "effect"
 import { Shell } from "@xandreed/sdk"
 import { processShell } from "@xandreed/sdk/node"
-import { CommandFailed, OutputCut } from "./host-command.entity.js"
-import type { Whole } from "./host-command.entity.js"
+import { CommandFailed, OutputCut, TOOL_OUTPUT_BYTES } from "./host-command.entity.js"
+import type { OutputBound, Whole } from "./host-command.entity.js"
 import { commandLine } from "./host-command.entity.functions.js"
 import { HostShell } from "./host-shell.port.js"
 
@@ -23,28 +23,34 @@ export interface HostShellOptions {
   readonly timeoutMs?: number
 }
 
-/** The host's shell over the kernel's `processShell`, given the host's environment and a large output bound. */
+/**
+ * The host's shell over two of the kernel's `processShell`s with the host's environment: one with a large output
+ * bound for what the reviewer parses whole (`whole`, the default), one with `TOOL_OUTPUT_BYTES` for the commands the
+ * model's tools run (`tool`), so no tool call holds more than a few MiB of a command's output.
+ */
 export const hostShell = (options: HostShellOptions): Layer.Layer<HostShell> =>
   Layer.effect(HostShell, Effect.gen(function* () {
-    const shell = yield* Shell
-    return HostShell.of({ run: shell.run })
-  })).pipe(
-    Layer.provide(processShell({
-      cwd: options.cwd,
-      env: options.env,
-      outputBytes: options.outputBytes ?? HOST_OUTPUT_BYTES,
-      timeoutMs: options.timeoutMs ?? HOST_TIMEOUT_MS,
-    })),
-  )
+    const shellOf = (outputBytes: number) => Effect.map(
+      Layer.build(processShell({ cwd: options.cwd, env: options.env, outputBytes, timeoutMs: options.timeoutMs ?? HOST_TIMEOUT_MS })),
+      (built) => Context.get(built, Shell),
+    )
+    const whole = yield* shellOf(options.outputBytes ?? HOST_OUTPUT_BYTES)
+    const tool = yield* shellOf(Math.min(options.outputBytes ?? HOST_OUTPUT_BYTES, TOOL_OUTPUT_BYTES))
+    return HostShell.of({ run: (request, bound: OutputBound = "whole") => (bound === "tool" ? tool : whole).run(request) })
+  }))
 
 /** The end of a text, for a failure's message: its last lines, at most 600 characters. */
 const endOf = (text: string): string => text.trim().slice(-600)
 
-/** What a host command is asked: where it starts, how long it may run, and which exit codes are not failures. */
+/**
+ * What a host command is asked: where it starts, how long it may run, which exit codes are not failures, and which
+ * output bound it runs under (`whole` by default; `tool` for a command a model's tool runs).
+ */
 export interface WholeOptions {
   readonly cwd?: string
   readonly timeoutMs?: number
   readonly exits?: ReadonlyArray<number>
+  readonly bound?: OutputBound
 }
 
 /**
@@ -59,7 +65,7 @@ export const runWhole = Effect.fn("host_shell.run")(function* (args: ReadonlyArr
     command,
     ...(options.cwd === undefined ? {} : { cwd: options.cwd }),
     ...(options.timeoutMs === undefined ? {} : { timeoutMs: options.timeoutMs }),
-  }).pipe(
+  }, options.bound ?? "whole").pipe(
     Effect.catchTag("ShellRefused", (refused) => Effect.fail(new CommandFailed({ reason: "refused", command, message: refused.reason }))),
     Effect.catchTag("ShellUnavailable", (unavailable) => Effect.fail(new CommandFailed({ reason: "unavailable", command, message: unavailable.message }))),
   )

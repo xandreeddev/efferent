@@ -25,13 +25,16 @@ export const REGULAR: ReadonlyArray<string> = ["100644", "100755"]
 /** One `ls-tree -z` entry: its mode, type and object, then its path after a tab. */
 export const LS_ENTRY = /^(\d+) (\w+) ([0-9a-f]+)\t/
 
-/** What a listed entry is, by its mode and type. */
-export const entryOf = (mode: string, type: string, object: string): TreeEntry => {
+/** One `ls-tree -l -z` entry: its mode, type and object, its size (`-` for no blob) padded with spaces, then its path after a tab. */
+export const LS_SIZED_ENTRY = /^(\d+) (\w+) ([0-9a-f]+) +(\d+|-)\t/
+
+/** What a listed entry is, by its mode and type; a regular file with its blob and its size in bytes. */
+export const entryOf = (mode: string, type: string, object: string, bytes: number): TreeEntry => {
   if (type === "tree") return { _tag: "Folder" }
   if (type === "commit") return { _tag: "Submodule" }
   if (mode === "120000") return { _tag: "Link" }
   const blob = Schema.decodeUnknownOption(BlobSha)(object)
-  return REGULAR.includes(mode) && Option.isSome(blob) ? { _tag: "File", blob: blob.value } : { _tag: "Missing" }
+  return REGULAR.includes(mode) && Option.isSome(blob) && Number.isInteger(bytes) && bytes >= 0 ? { _tag: "File", blob: blob.value, bytes } : { _tag: "Missing" }
 }
 
 /**

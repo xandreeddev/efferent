@@ -1,11 +1,12 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Layer } from "effect"
+import { Effect, Layer, Option } from "effect"
 import { Tool } from "effect/ai"
 import { kernel, Sessions, userMessage } from "@xandreed/core"
 import { callTool, inProcessJournal, sessions } from "@xandreed/sdk"
 import { gitCheckout } from "./checkout-git.adapter.js"
+import { BlobSha } from "./checkout.entity.js"
 import { Checkout } from "./checkout.port.js"
 import type { CheckoutError } from "./checkout.port.js"
 import { CommandFailed, OutputCut } from "./host-command.entity.js"
@@ -59,7 +60,7 @@ describe("the review's tools say what they do, in fixed words", () => {
   test("readLines: what it reads, its limit, what it refuses and the tool for a change", () => {
     expect([ReadLines.name, ReadLines.description]).toEqual([
       "readLines",
-      "Read lines of a file as it is at the commit under review, numbered. Returns at most 150 lines from `from`, the file's number of lines, and the call that reads on. Only files are read: not a folder, a symbolic link, a submodule or a binary file. To see what the pull request changed in a file, use readDiff.",
+      "Read lines of a file as it is at the commit under review, numbered. Returns at most 150 lines from `from` (fewer when they hold more than 30000 characters), the file's number of lines, and the call that reads on. Only files of at most 1048576 bytes are read: not a folder, a symbolic link, a submodule or a binary file. To see what the pull request changed in a file, use readDiff.",
     ])
     expect(Tool.getJsonSchema(ReadLines)).toEqual({
       type: "object",
@@ -106,7 +107,7 @@ describe("the review's tools say what they do, in fixed words", () => {
   test("readDiff: what it reads, how lines are marked, its page and the files left out", () => {
     expect([ReadDiff.name, ReadDiff.description]).toEqual([
       "readDiff",
-      "Read what the pull request changes in one file, written as the diff you were given is: each line with its number in the new file and + for an added line, a removed line with - and no number. Returns one page of at most 150 lines and the call that reads the next. Every changed file can be read, those left out of the diff you were given included.",
+      "Read what the pull request changes in one file, written as the diff you were given is: each line with its number in the new file and + for an added line, a removed line with - and no number. Returns one page of at most 150 lines (fewer when they hold more than 30000 characters) and the call that reads the next. Every changed file can be read, those left out of the diff you were given included.",
     ])
     expect(Tool.getJsonSchema(ReadDiff)).toEqual({
       type: "object",
@@ -228,7 +229,8 @@ describe("searchCode over the tracked files at the head", () => {
     ])
     const [many, magic, regex, bad, out] = stored.map((entry) => (Array.isArray(entry) ? entry : []))
     const lines = String(many?.[0]).split("\n")
-    expect([lines.length, lines[0], lines[1], lines[51]]).toEqual([52, "403 lines hold \"value\"; the first 50:", "src/big.ts:1: export const value0 = 0 // a line long enough", "353 more matches: narrow with path."])
+    // At most 51 lines of one file are read, so a file that holds more makes the counts "at least".
+    expect([lines.length, lines[0], lines[1], lines[51]]).toEqual([52, "At least 54 lines hold \"value\"; the first 50:", "src/big.ts:1: export const value0 = 0 // a line long enough", "at least 4 more matches: narrow with path."])
     expect(magic).toEqual(["1 line holds \"export\" in :(glob)odd:\n:(glob)odd/a.ts:1: export const a = 2", false])
     expect(String(regex?.[0]).split("\n")[0]).toBe("10 lines hold \"value[0-9]+ = 39[0-9]\" in src/big.ts:")
     expect(bad).toEqual(["git cannot read the pattern as an extended regular expression: check its brackets and escapes, or leave regex out to search for the text as it is.", true])
@@ -276,7 +278,7 @@ describe("a git command of a tool's that fails", () => {
   const failing = (failure: CheckoutError) => Layer.succeed(Checkout, Checkout.of({
     fetch: () => Effect.fail(failure), diff: () => Effect.fail(failure), show: () => Effect.fail(failure), worktree: () => Effect.fail(failure),
     entry: () => Effect.fail(failure), blob: () => Effect.fail(failure), files: () => Effect.fail(failure), grep: () => Effect.fail(failure),
-    mergeBase: () => Effect.fail(failure),
+    mergeBase: () => Effect.fail(failure), changedPaths: () => Effect.fail(failure),
   }))
   const storedOver = (checkout: Layer.Layer<Checkout>, made: ReadonlyArray<readonly [string, unknown]>) =>
     Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -304,6 +306,23 @@ describe("a git command of a tool's that fails", () => {
       ["git could not read the commit under review for this call: try it again, or go on without it.", true],
       ["git could not read the commit under review for this call: try it again, or go on without it.", true],
       ["git could not read the commit under review for this call: try it again, or go on without it.", true],
+    ])
+  })
+
+  test("a file over 1 MiB is refused by its size, in its own words, before a byte of it is read", async () => {
+    const read: Array<string> = []
+    const huge = Layer.succeed(Checkout, Checkout.of({
+      fetch: () => Effect.void, diff: () => Effect.succeed(""), show: () => Effect.succeed(Option.none()), worktree: () => Effect.succeed(""),
+      entry: () => Effect.succeed({ _tag: "File" as const, blob: BlobSha.make("a".repeat(40)), bytes: 5_000_000 }),
+      blob: (_repo, blob) => Effect.sync(() => {
+        read.push(blob)
+        return "x"
+      }),
+      files: () => Effect.succeed([]), grep: () => Effect.succeed([]), mergeBase: () => Effect.succeed(head), changedPaths: () => Effect.succeed([]),
+    }))
+    expect([await storedOver(huge, [["readLines", { path: "dist/app.min.js" }]]), read]).toEqual([
+      [["dist/app.min.js holds 5000000 bytes, more than readLines reads (1048576): find what you need in it with searchCode and path set to it.", true]],
+      [],
     ])
   })
 })

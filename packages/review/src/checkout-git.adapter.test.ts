@@ -4,7 +4,7 @@ import { join } from "node:path"
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import type { Transport } from "./checkout.entity.js"
-import { entryOf, gitArgv, grepHitsOf } from "./checkout.entity.functions.js"
+import { entryOf, gitArgv, grepHitsOf, LS_SIZED_ENTRY } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff, renderDiff } from "./diff.entity.functions.js"
 import { attributesOf, fileVerdict } from "./file-verdict.entity.functions.js"
@@ -53,11 +53,16 @@ describe("gitArgv", () => {
 })
 
 describe("the tree's entries and a search's lines, as git prints them", () => {
-  test("entryOf: a regular file by its blob, a link, a submodule, a folder; any other mode is no file", () => {
+  test("entryOf: a regular file by its blob and size, a link, a submodule, a folder; any other mode is no file", () => {
     const blob = "a".repeat(40)
-    expect<unknown>([entryOf("100644", "blob", blob), entryOf("100755", "blob", blob), entryOf("120000", "blob", blob), entryOf("160000", "commit", blob), entryOf("040000", "tree", blob), entryOf("100664", "blob", blob), entryOf("100644", "blob", "not-a-sha")]).toEqual([
-      { _tag: "File", blob }, { _tag: "File", blob }, { _tag: "Link" }, { _tag: "Submodule" }, { _tag: "Folder" }, { _tag: "Missing" }, { _tag: "Missing" },
+    expect<unknown>([entryOf("100644", "blob", blob, 12), entryOf("100755", "blob", blob, 0), entryOf("120000", "blob", blob, 9), entryOf("160000", "commit", blob, Number.NaN), entryOf("040000", "tree", blob, Number.NaN), entryOf("100664", "blob", blob, 3), entryOf("100644", "blob", "not-a-sha", 3), entryOf("100644", "blob", blob, Number.NaN)]).toEqual([
+      { _tag: "File", blob, bytes: 12 }, { _tag: "File", blob, bytes: 0 }, { _tag: "Link" }, { _tag: "Submodule" }, { _tag: "Folder" }, { _tag: "Missing" }, { _tag: "Missing" }, { _tag: "Missing" },
     ])
+  })
+
+  test("the sized listing: ls-tree -l pads a size with spaces, and a tree's is -", () => {
+    expect(LS_SIZED_ENTRY.exec(`100644 blob ${"a".repeat(40)}    1234\tsrc/a b.ts`)?.slice(1, 5)).toEqual(["100644", "blob", "a".repeat(40), "1234"])
+    expect(LS_SIZED_ENTRY.exec(`040000 tree ${"b".repeat(40)}       -\tsrc`)?.slice(1, 5)).toEqual(["040000", "tree", "b".repeat(40), "-"])
   })
 
   test("grepHitsOf: commit:path NUL line NUL text, a path with a line feed or a colon read whole, a line number that is none passed over", () => {

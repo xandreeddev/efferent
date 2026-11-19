@@ -14,7 +14,7 @@ export const REPORT_FINDING = "reportFinding"
  * The version of the review's tool set: their names, descriptions, parameters and answers. A change to any of them
  * is a new version, kept with each review's record so results are compared tool set to tool set.
  */
-export const REVIEW_TOOLS_VERSION = "review-tools-1"
+export const REVIEW_TOOLS_VERSION = "review-tools-2"
 
 /** The most lines one `readLines` call reads. */
 export const READ_LINES_LIMIT = 150
@@ -39,6 +39,12 @@ export const GLOB_LIMIT = 200
 
 /** The most lines one page of `readDiff` holds. */
 export const DIFF_PAGE = 150
+
+/** The most characters of lines one answer of `readLines` or one page of `readDiff` holds. */
+export const PAGE_CHARS = 30_000
+
+/** The largest file `readLines` reads, in bytes: 1 MiB. */
+export const READ_FILE_BYTES = 1024 * 1024
 
 /**
  * What the tools read: the repository, the commit under review, every file the pull request changes (the whole

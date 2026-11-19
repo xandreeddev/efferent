@@ -22,11 +22,12 @@ export type BlobSha = typeof BlobSha.Type
 
 /**
  * What a path is in a commit's tree, as `git ls-tree` lists it: a regular file (`File`, mode 100644 or 100755) with
- * its blob, a symbolic link (`Link`, 120000), a submodule (`Submodule`, a commit), a folder (`Folder`, a tree), or
- * nothing (`Missing`). Only a `File` is ever read: a link's target is the pull request's text and may point anywhere.
+ * its blob and its size in bytes, a symbolic link (`Link`, 120000), a submodule (`Submodule`, a commit), a folder
+ * (`Folder`, a tree), or nothing (`Missing`). Only a `File` is ever read: a link's target is the pull request's text
+ * and may point anywhere.
  */
 export const TreeEntry = Schema.Union([
-  Schema.TaggedStruct("File", { blob: BlobSha }),
+  Schema.TaggedStruct("File", { blob: BlobSha, bytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(0)) }),
   Schema.TaggedStruct("Link", {}),
   Schema.TaggedStruct("Submodule", {}),
   Schema.TaggedStruct("Folder", {}),
@@ -34,11 +35,15 @@ export const TreeEntry = Schema.Union([
 ])
 export type TreeEntry = typeof TreeEntry.Type
 
-/** What a search of a commit's tracked files asks: the pattern, read literally unless `regex`, and a file or folder to search in. */
+/**
+ * What a search of a commit's tracked files asks: the pattern, read literally unless `regex`, a file or folder to
+ * search in, and the most lines it reads of one file (`git grep --max-count`).
+ */
 export const GrepRequest = Schema.Struct({
   pattern: Schema.String,
   regex: Schema.Boolean,
   path: Schema.OptionFromNullOr(Schema.String),
+  maxPerFile: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type GrepRequest = typeof GrepRequest.Type
 

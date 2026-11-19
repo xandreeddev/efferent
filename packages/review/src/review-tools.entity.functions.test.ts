@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
-import { Result } from "effect"
-import { globMatches, linesPage, listText, searchText, treePath } from "./review-tools.entity.functions.js"
+import { Option, Result } from "effect"
+import type { FileDiff } from "./diff.entity.js"
+import { diffPage, globMatches, linesPage, listText, patternRefusal, searchText, treePath } from "./review-tools.entity.functions.js"
 
 describe("treePath", () => {
   test.each([
@@ -58,13 +59,47 @@ describe("the tools' answers, past their caps", () => {
   })
 
   test("searchText: a long line cut at 200 characters with a count, on one line", () => {
-    const text = searchText("x", "src", [{ path: "src/a.ts", line: 3, text: `  ${"x".repeat(400)}  ` }])
+    const text = searchText("x", "src", [{ path: "src/a.ts", line: 3, text: `  ${"x".repeat(400)}  ` }], false)
     const [head, line] = text.split("\n")
     expect([head, line?.length, line?.endsWith(" [… 239 characters clipped]"), text.split("\n").length]).toEqual(["1 line holds \"x\" in src:", 200, true, 2])
+  })
+
+  test("patternRefusal: an empty pattern, a NUL, one too long", () => {
+    expect([patternRefusal(""), patternRefusal("a\u0000b"), patternRefusal("p".repeat(301)), patternRefusal("ok")]).toEqual([
+      Result.fail("The pattern is empty: give the text to search for."),
+      Result.fail("The pattern holds a NUL character, which no line of text holds: give the text to search for."),
+      Result.fail("The pattern has 301 characters; give at most 300."),
+      Result.succeed("ok"),
+    ])
   })
 
   test("linesPage: an empty file, and a long line clipped with a count", () => {
     expect(linesPage("a.txt", "", 1, 150)).toEqual(Result.succeed("a.txt is empty."))
     expect(linesPage("a.txt", `${"y".repeat(600)}\r\n`, 1, 150)).toEqual(Result.succeed(`a.txt: lines 1 to 1 of 1.\n1| ${"y".repeat(473)} [… 127 characters clipped]\nThis is the end of the file.`))
+  })
+
+  test("linesPage: lines past 30,000 characters wait for the next call", () => {
+    const text = Array.from({ length: 150 }, () => "z".repeat(499)).join("\n")
+    const page = Result.getOrThrow(linesPage("wide.ts", text, 1, 150)).split("\n")
+    // Each numbered line is 504 characters with its line feed ("  1| " and 499): 59 fit in 30,000.
+    expect([page[0], page.length, page.at(-1)]).toEqual(["wide.ts: lines 1 to 59 of 150.", 61, "Lines 60 to 150 follow: call readLines with from 60 to read on."])
+  })
+
+  test("diffPage: a long line cut at 500 characters with a count, and a page cut at 30,000 characters", () => {
+    const line = (at: number, text: string) => ({ _tag: "Added" as const, line: at, text })
+    const file = (lines: ReadonlyArray<ReturnType<typeof line>>): FileDiff => ({
+      path: "dist/app.min.js", oldPath: Option.none(), change: "added", modeChange: Option.none(), binary: false, additions: lines.length, deletions: 0,
+      hunks: [{ oldStart: 0, oldCount: 0, newStart: 1, newCount: lines.length, section: "", lines }],
+    })
+    expect(diffPage([file([line(1, "m".repeat(3_000_000))])], "dist/app.min.js", 1)).toEqual(Result.succeed([
+      "The diff of dist/app.min.js, page 1 of 1:",
+      "File: dist/app.min.js (added, +1 -0)",
+      "@@",
+      `1 + ${"m".repeat(465)} [… 2999535 characters clipped]`,
+      "This is the end of this file's diff.",
+    ].join("\n")))
+    const wide = Result.getOrThrow(diffPage([file(Array.from({ length: 140 }, (_, at) => line(at + 1, "w".repeat(600))))], "dist/app.min.js", 1)).split("\n")
+    // The header, "@@" and 59 lines of 500 characters fit in 30,000; the title and the closing line come around them.
+    expect([wide[0], wide.length, wide.at(-1), wide.join("\n").length <= 30_000 + 200]).toEqual(["The diff of dist/app.min.js, page 1 of 3:", 63, "Call readDiff with page 2 for the rest.", true])
   })
 })

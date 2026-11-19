@@ -5,8 +5,8 @@ import { shownPath } from "./diff.entity.functions.js"
 import { CLAIM_LIMIT, EVIDENCE_LIMIT, FindingKind, LineNumber, Severity } from "./finding.entity.js"
 import { Findings } from "./findings.port.js"
 import type { Reviewed } from "./review-tools.entity.js"
-import { DIFF_PAGE, GLOB_LIMIT, LIST_FILES, LIST_LIMIT, PATTERN_LIMIT, READ_DIFF, READ_LINES, READ_LINES_LIMIT, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
-import { diffPage, GIT_FAILED, globRefusal, linesPage, listText, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, treePath } from "./review-tools.entity.functions.js"
+import { DIFF_PAGE, GLOB_LIMIT, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, READ_LINES_LIMIT, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
+import { diffPage, GIT_FAILED, globRefusal, linesPage, listText, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, tooLarge, treePath } from "./review-tools.entity.functions.js"
 import type { CheckoutError } from "./checkout.port.js"
 
 /** A git command of a tool's that failed: logged whole for the host, and answered in fixed words, never git's. */
@@ -16,7 +16,7 @@ const PATH = "A file's path from the repository's root, with / between folders, 
 
 /** The tool that reads numbered lines of a file at the commit under review. */
 export const ReadLines = Tool.make(READ_LINES, {
-  description: `Read lines of a file as it is at the commit under review, numbered. Returns at most ${READ_LINES_LIMIT} lines from \`from\`, the file's number of lines, and the call that reads on. Only files are read: not a folder, a symbolic link, a submodule or a binary file. To see what the pull request changed in a file, use ${READ_DIFF}.`,
+  description: `Read lines of a file as it is at the commit under review, numbered. Returns at most ${READ_LINES_LIMIT} lines from \`from\` (fewer when they hold more than ${PAGE_CHARS} characters), the file's number of lines, and the call that reads on. Only files of at most ${READ_FILE_BYTES} bytes are read: not a folder, a symbolic link, a submodule or a binary file. To see what the pull request changed in a file, use ${READ_DIFF}.`,
   parameters: Schema.Struct({
     path: Schema.String.annotate({ description: PATH }),
     from: Schema.optionalKey(LineNumber.annotate({ description: "The first line to read, from 1. Left out, 1." })),
@@ -53,7 +53,7 @@ export const ListFiles = Tool.make(LIST_FILES, {
 
 /** The tool that reads what the pull request changes in one file. */
 export const ReadDiff = Tool.make(READ_DIFF, {
-  description: `Read what the pull request changes in one file, written as the diff you were given is: each line with its number in the new file and + for an added line, a removed line with - and no number. Returns one page of at most ${DIFF_PAGE} lines and the call that reads the next. Every changed file can be read, those left out of the diff you were given included.`,
+  description: `Read what the pull request changes in one file, written as the diff you were given is: each line with its number in the new file and + for an added line, a removed line with - and no number. Returns one page of at most ${DIFF_PAGE} lines (fewer when they hold more than ${PAGE_CHARS} characters) and the call that reads the next. Every changed file can be read, those left out of the diff you were given included.`,
   parameters: Schema.Struct({
     path: Schema.String.annotate({ description: `${PATH} The pull request must change it.` }),
     page: Schema.optionalKey(LineNumber.annotate({ description: "The page to read, from 1. Left out, 1." })),
@@ -100,7 +100,10 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
       const entry = yield* checkout.entry(repo, at, tracked).pipe(Effect.catch(gitFailed))
       const shown = shownPath(tracked)
       return yield* Match.valueTags(entry, {
-        File: ({ blob }) => Effect.flatMap(Effect.catch(checkout.blob(repo, blob), gitFailed), (text) => Effect.fromResult(linesPage(tracked, text, from ?? 1, count ?? READ_LINES_LIMIT))),
+        // The size first: a file over READ_FILE_BYTES is refused before a byte of it is read.
+        File: ({ blob, bytes }) => bytes > READ_FILE_BYTES
+          ? Effect.fail(tooLarge(tracked, bytes))
+          : Effect.flatMap(Effect.catch(checkout.blob(repo, blob), gitFailed), (text) => Effect.fromResult(linesPage(tracked, text, from ?? 1, count ?? READ_LINES_LIMIT))),
         Link: () => Effect.fail(NOT_READ_BECAUSE.Link(shown)),
         Submodule: () => Effect.fail(NOT_READ_BECAUSE.Submodule(shown)),
         Folder: () => Effect.fail(NOT_READ_BECAUSE.Folder(shown)),
@@ -110,7 +113,9 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
     searchCode: Effect.fn("review_tools.search_code")(function* ({ pattern, regex, path }) {
       yield* Effect.fromResult(patternRefusal(pattern))
       const within = path === undefined ? Option.none<string>() : Option.some(yield* Effect.fromResult(treePath(path)))
-      const hits = yield* checkout.grep(repo, at, { pattern, regex: regex ?? false, path: within }).pipe(
+      // A file's lines are read up to one past the most shown, so a file that holds more says the counts are at least those.
+      const maxPerFile = SEARCH_LIMIT + 1
+      const hits = yield* checkout.grep(repo, at, { pattern, regex: regex ?? false, path: within, maxPerFile }).pipe(
         Effect.catchTags({
           PatternRefused: () => Effect.fail(REGEX_REFUSED),
           OutputCut: () => Effect.fail(SEARCH_TOO_BIG),
@@ -118,7 +123,9 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
           CommitMissing: gitFailed,
         }),
       )
-      return searchText(pattern, Option.getOrNull(within), hits)
+      const perFile = new Map<string, number>()
+      for (const hit of hits) perFile.set(hit.path, (perFile.get(hit.path) ?? 0) + 1)
+      return searchText(pattern, Option.getOrNull(within), hits, [...perFile.values()].some((count) => count >= maxPerFile))
     }),
     listFiles: Effect.fn("review_tools.list_files")(function* ({ glob }) {
       yield* Effect.fromResult(globRefusal(glob))

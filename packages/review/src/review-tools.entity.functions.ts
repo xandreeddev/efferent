@@ -4,7 +4,7 @@ import { GREP_TIMEOUT_MS } from "./checkout.entity.js"
 import type { GrepHit, TreeEntry } from "./checkout.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
-import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PATTERN_LIMIT, READ_DIFF, READ_LINES, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
+import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
 
 /** Why a path that is in the tree is not read, in words that name what to do instead. */
 export const NOT_READ_BECAUSE: Readonly<Record<Exclude<TreeEntry["_tag"], "File">, (shown: string) => string>> = {
@@ -35,10 +35,28 @@ const linesOf = (text: string): ReadonlyArray<string> => {
   return text.endsWith("\n") ? lines.slice(0, -1) : lines
 }
 
+/** A line as a tool shows it: clipped at `LINE_SHOWN` with a count of what was left out, on one line. */
+const shownLine = (line: string): string => clipTo(line, LINE_SHOWN).replace("\n", " ")
+
+/** How many of `lines`, from the first, fit in `PAGE_CHARS` (each with its line feed), and at least one. */
+const fitting = (lines: ReadonlyArray<string>): number => {
+  let used = 0
+  for (let at = 0; at < lines.length; at++) {
+    used += (lines[at] ?? "").length + 1
+    if (used > PAGE_CHARS) return Math.max(1, at)
+  }
+  return lines.length
+}
+
+/** A file too large for `readLines`: its size and the tool that reads it instead. */
+export const tooLarge = (path: string, bytes: number): string =>
+  `${shownPath(path)} holds ${bytes} bytes, more than ${READ_LINES} reads (${READ_FILE_BYTES}): find what you need in it with ${SEARCH_CODE} and path set to it.`
+
 /**
  * `count` lines of a file's text from line `from`, numbered (`  42| text`, each line clipped at `LINE_SHOWN` with a
- * count of what was left out), under a line naming the file, the lines shown and its total, and over a line saying
- * how to read on, or that the file ends there. A binary file, and a `from` past the end, are failures in words.
+ * count of what was left out), at most `PAGE_CHARS` characters of them, under a line naming the file, the lines shown
+ * and its total, and over a line saying how to read on, or that the file ends there. A binary file, and a `from` past
+ * the end, are failures in words. The text is at most `READ_FILE_BYTES` (the tool refuses a larger file first).
  */
 export const linesPage = (path: string, text: string, from: number, count: number): Result.Result<string, string> => {
   const shown = shownPath(path)
@@ -47,34 +65,39 @@ export const linesPage = (path: string, text: string, from: number, count: numbe
   const total = lines.length
   if (total === 0) return Result.succeed(`${shown} is empty.`)
   if (from > total) return Result.fail(`${shown} has ${total} lines: give from between 1 and ${total}.`)
-  const last = Math.min(total, from + count - 1)
-  const width = String(last).length
-  const numbered = lines.slice(from - 1, last).map((line, at) => `${String(from + at).padStart(width)}| ${clipTo(line, LINE_SHOWN).replace("\n", " ")}`)
+  const asked = Math.min(total, from + count - 1)
+  const width = String(asked).length
+  const candidates = lines.slice(from - 1, asked).map((line, at) => `${String(from + at).padStart(width)}| ${shownLine(line)}`)
+  const numbered = candidates.slice(0, fitting(candidates))
+  const last = from + numbered.length - 1
   const next = last < total ? `Lines ${last + 1} to ${total} follow: call ${READ_LINES} with from ${last + 1} to read on.` : "This is the end of the file."
   return Result.succeed([`${shown}: lines ${from} to ${last} of ${total}.`, ...numbered, next].join("\n"))
 }
 
-/** A pattern too long to search for, or an empty one: the failure in words; else none. */
+/** A pattern too long to search for, an empty one, or one with a NUL: the failure in words; else the pattern. */
 export const patternRefusal = (pattern: string): Result.Result<string, string> =>
   pattern.length === 0 ? Result.fail("The pattern is empty: give the text to search for.")
-    : pattern.length > PATTERN_LIMIT ? Result.fail(`The pattern has ${pattern.length} characters; give at most ${PATTERN_LIMIT}.`)
-      : Result.succeed(pattern)
+    : pattern.includes("\u0000") ? Result.fail("The pattern holds a NUL character, which no line of text holds: give the text to search for.")
+      : pattern.length > PATTERN_LIMIT ? Result.fail(`The pattern has ${pattern.length} characters; give at most ${PATTERN_LIMIT}.`)
+        : Result.succeed(pattern)
 
 /**
  * What a search found, as the model reads it: how many lines hold the pattern (and where it looked), then at most
  * `SEARCH_LIMIT` of them as `path:line: text`, each cut at `SEARCH_LINE_SHOWN` characters with a count, then how
- * many more there are and how to narrow the search; or that no line holds it.
+ * many more there are and how to narrow the search; or that no line holds it. `capped` says a file had more lines
+ * that hold it than the search read of it, so the counts are at least those given.
  */
-export const searchText = (pattern: string, path: string | null, hits: ReadonlyArray<GrepHit>): string => {
+export const searchText = (pattern: string, path: string | null, hits: ReadonlyArray<GrepHit>, capped: boolean): string => {
   const where = path === null ? "" : ` in ${shownPath(path)}`
   const quoted = JSON.stringify(pattern)
   if (hits.length === 0) return `No line of a tracked file${where} holds ${quoted}.`
   const lines = hits.slice(0, SEARCH_LIMIT).map((hit) => clipTo(`${shownPath(hit.path)}:${hit.line}: ${hit.text.trim()}`, SEARCH_LINE_SHOWN).replace("\n", " "))
   const more = hits.length - SEARCH_LIMIT
+  const atLeast = capped ? "At least " : ""
   return [
-    `${hits.length} ${hits.length === 1 ? "line holds" : "lines hold"} ${quoted}${where}${more > 0 ? `; the first ${SEARCH_LIMIT}` : ""}:`,
+    `${atLeast}${hits.length} ${hits.length === 1 ? "line holds" : "lines hold"} ${quoted}${where}${more > 0 ? `; the first ${SEARCH_LIMIT}` : ""}:`,
     ...lines,
-    ...(more > 0 ? [`${more} more matches: narrow with path.`] : []),
+    ...(more > 0 ? [`${capped ? "at least " : ""}${more} more matches: narrow with path.`] : []),
   ].join("\n")
 }
 
@@ -155,20 +178,32 @@ export const listText = (glob: string, paths: ReadonlyArray<string>): string => 
   ].join("\n")
 }
 
+/** Lines cut into pages, in order: each at most `DIFF_PAGE` lines and `PAGE_CHARS` characters, and at least one line. */
+const pagesOf = (lines: ReadonlyArray<string>): ReadonlyArray<ReadonlyArray<string>> => {
+  const pages: Array<ReadonlyArray<string>> = []
+  let from = 0
+  while (from < lines.length) {
+    const size = fitting(lines.slice(from, from + DIFF_PAGE))
+    pages.push(lines.slice(from, from + size))
+    from += size
+  }
+  return pages.length === 0 ? [[]] : pages
+}
+
 /**
- * A page of one changed file's diff, rendered as the packed diff is (`renderDiff`), `DIFF_PAGE` lines a page, under a
- * line naming the file and the page and over a line saying how to read on; or why there is none: the pull request
- * does not change that path (by its new or old name), or the page is past the last.
+ * A page of one changed file's diff, rendered as the packed diff is (`renderDiff`), each line clipped at `LINE_SHOWN`
+ * with a count, at most `DIFF_PAGE` lines and `PAGE_CHARS` characters a page, under a line naming the file and the
+ * page and over a line saying how to read on; or why there is none: the pull request does not change that path (by its
+ * new or old name), or the page is past the last.
  */
 export const diffPage = (files: ReadonlyArray<FileDiff>, path: string, page: number): Result.Result<string, string> => {
   const shown = shownPath(path)
   const file = files.find((one) => one.path === path) ?? files.find((one) => Option.contains(one.oldPath, path))
   if (file === undefined) return Result.fail(`${shown} is not a file this pull request changes: give a path from a File: line of the diff.`)
-  const lines = renderDiff([file]).split("\n")
-  const pages = Math.max(1, Math.ceil(lines.length / DIFF_PAGE))
-  if (page > pages) return Result.fail(`The diff of ${shown} has ${pages} ${pages === 1 ? "page" : "pages"}: give page between 1 and ${pages}.`)
-  const next = page < pages ? `Call ${READ_DIFF} with page ${page + 1} for the rest.` : "This is the end of this file's diff."
-  return Result.succeed([`The diff of ${shown}, page ${page} of ${pages}:`, ...lines.slice((page - 1) * DIFF_PAGE, page * DIFF_PAGE), next].join("\n"))
+  const pages = pagesOf(renderDiff([file]).split("\n").map(shownLine))
+  if (page > pages.length) return Result.fail(`The diff of ${shown} has ${pages.length} ${pages.length === 1 ? "page" : "pages"}: give page between 1 and ${pages.length}.`)
+  const next = page < pages.length ? `Call ${READ_DIFF} with page ${page + 1} for the rest.` : "This is the end of this file's diff."
+  return Result.succeed([`The diff of ${shown}, page ${page} of ${pages.length}:`, ...(pages[page - 1] ?? []), next].join("\n"))
 }
 
 /** A regular expression git cannot read, in fixed words (git's own may name a host path). */
