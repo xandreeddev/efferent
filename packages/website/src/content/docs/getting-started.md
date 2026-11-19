@@ -20,7 +20,7 @@ the packages and your code share one copy of each. `@xandreed/core` and
 Bun (journals on a disk, model providers, a disk workspace and a shell, a
 media folder, OTLP export) are on `@xandreed/sdk/node`.
 
-This guide follows version `0.23.0`.
+This guide follows version `0.24.0`.
 
 ## A first program
 
