@@ -33,7 +33,7 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
 
     return Memory.of({
       // Nothing is kept between turns: each context is built from the journal as it stands.
-      context: Effect.fn("kernel.window.context")(function* (session: OpenSession) {
+      context: Effect.fn("window_memory.context")(function* (session: OpenSession) {
         const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
         const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget, sent))   // whole turns, oldest dropped first
         if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))

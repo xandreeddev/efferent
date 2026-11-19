@@ -2,12 +2,13 @@
 // 2026-11-16 (DeepSeek V4.1 Flash on Baseten): reasoning deltas, a call's arguments in pieces, two calls by index,
 // the usage and the billed cost in the last chunk. No network.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream } from "effect"
+import { Deferred, Effect, ExecutionPlan, Fiber, Layer, Metric, Redacted, Schema, Stream, Tracer } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
-import { callTool, flatMemory, inProcessJournal, Memory, modelAnswer, sessions } from "../../index.js"
+import { callTool, flatMemory, inProcessJournal, Memory, modelAnswer, planned, retryable, sessions } from "../../index.js"
 import { isSpendRefusal } from "../model-spend/model-spend.entity.functions.js"
+import { modelCalls, modelCost, modelTokens } from "../model-spend/model-spend.entity.js"
 import type { SpendOptions } from "../model-spend/model-spend.entity.js"
 import { openAiCompatibleModel } from "./openai-compatible.adapter.js"
 import type { OpenAiCompatibleOptions } from "./openai-compatible.entity.js"
@@ -252,3 +253,124 @@ const callWith = async (spend: SpendOptions, more: Partial<OpenAiCompatibleOptio
   const { fetch, sent } = fakeFetch(stream(words))
   return { run: await over(fetch, options(spend, more, bounded), streamed), sent }
 }
+
+/** A tracer that keeps every span it opens, as Effect's own native spans. */
+const recording = () => {
+  const spans: Array<Tracer.Span> = []
+  const tracer = Tracer.make({ span: (options) => {
+    const span = new Tracer.NativeSpan(options)
+    spans.push(span)
+    return span
+  } })
+  return { spans, tracer }
+}
+const callSpans = (spans: ReadonlyArray<Tracer.Span>) => spans.filter((span) => span.name === "LanguageModel.streamText")
+
+describe("the OpenAI-compatible provider's span", () => {
+  test("is the call's own span (Effect AI's), given the gen_ai attributes Anthropic's provider sets, and ended with the stream: whole, cut and interrupted", async () => {
+    const asked = { "gen_ai.provider.name": "openai", "gen_ai.operation.name": "chat", "gen_ai.request.model": MODEL, "gen_ai.request.max_tokens": 1000 }
+
+    const whole = recording()
+    await over(fakeFetch(stream(words)).fetch, options(priced), streamed.pipe(Effect.withTracer(whole.tracer)))
+    const [answered] = callSpans(whole.spans)
+    expect(answered?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(answered!.attributes)).toMatchObject({
+      ...asked,
+      "gen_ai.response.model": MODEL,
+      "gen_ai.response.finish_reasons": ["stop"],
+      "gen_ai.usage.input_tokens": 411,
+      "gen_ai.usage.output_tokens": 81,
+      "gen_ai.usage.cache_read.input_tokens": 256,
+    })
+
+    const cut = recording()
+    const early = await over(fakeFetch(stream(sse([delta({ content: "12 × 3" })], false))).fetch, options(priced), streamed.pipe(Effect.withTracer(cut.tracer)))
+    expect(failureOf(early.outcome)).toEqual(["NetworkError", true])
+    const [lost] = callSpans(cut.spans)
+    expect(lost?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(lost!.attributes)).toMatchObject(asked)
+    expect(lost!.attributes.has("gen_ai.usage.input_tokens")).toBe(false)
+
+    const stopped = recording()
+    const started = Effect.runSync(Deferred.make<void>())
+    const hanging = (_: Sent, signal: AbortSignal) => new Response(new ReadableStream({
+      start: (controller) => {
+        controller.enqueue(new TextEncoder().encode(`data: ${JSON.stringify(delta({ content: "12" }))}\n\n`))
+        Effect.runSync(Deferred.succeed(started, undefined))
+        signal.addEventListener("abort", () => controller.error(new Error("aborted")))
+      },
+    }), { status: 200 })
+    await over(fakeFetch(hanging).fetch, options(priced), Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(streamed)
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
+    }).pipe(Effect.withTracer(stopped.tracer)))
+    const [interrupted] = callSpans(stopped.spans)
+    expect(interrupted?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(interrupted!.attributes)).toMatchObject(asked)
+  })
+
+  test("names the provider it is told: Gemini's endpoint as gcp.gemini", async () => {
+    const { spans, tracer } = recording()
+    await over(fakeFetch(stream(words)).fetch, options(priced, { provider: "gcp.gemini" }), streamed.pipe(Effect.withTracer(tracer)))
+    expect(callSpans(spans).map((span) => span.attributes.get("gen_ai.provider.name"))).toEqual(["gcp.gemini"])
+  })
+})
+
+describe("the OpenAI-compatible provider's counts", () => {
+  test("each call is counted by how it ended with the tokens it reported by kind, and its cost with what the ledger settled it from: a bill, usage at the price, the hold", async () => {
+    const registry = new Map()
+    const run = (body: string) => Effect.runPromise(Effect.gen(function* () {
+      yield* Effect.result(streamed)
+      return (yield* (yield* ModelSpend).totals).settled
+    }).pipe(
+      Effect.provide(openAiCompatibleModel(options(priced)).pipe(Layer.provideMerge(modelSpendMemory))),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch(stream(body)).fetch),
+      Effect.provideService(Metric.MetricRegistry, registry),
+    ))
+    const billed = await run(words)
+    const usage = await run(sse([delta({ content: "Hi." }, "stop"), { choices: [], usage: { prompt_tokens: 1000, completion_tokens: 10, prompt_tokens_details: { cached_tokens: 800 } } }]))
+    const held = await run(sse([delta({ content: "12 × 3" })], false))
+    const counts = await Effect.runPromise(Effect.gen(function* () {
+      const count = (metric: typeof modelCalls, attributes: Record<string, string>) => Effect.map(Metric.value(Metric.withAttributes(metric, attributes)), (state) => state.count)
+      return {
+        calls: [yield* count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": "answered" }), yield* count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": "failed" })],
+        tokens: yield* Effect.forEach(["input", "cache_read", "output"], (kind) => count(modelTokens, { "efferent.model": MODEL, "efferent.token.kind": kind })),
+        cost: yield* Effect.forEach(["billed", "usage", "held"], (basis) => count(modelCost, { "efferent.model": MODEL, "efferent.cost.basis": basis })),
+      }
+    }).pipe(Effect.provideService(Metric.MetricRegistry, registry)))
+    expect(counts.calls).toEqual([2, 1])
+    // The cut call reported nothing: the tokens are the two answers' (411 read, 256 of them cached; 1,000, 800 cached).
+    expect(counts.tokens).toEqual([(411 - 256) + (1000 - 800), 256 + 800, 81 + 10])
+    expect(counts.cost).toEqual([billed, usage, held])
+    expect([billed, usage]).toEqual([0.0002205, (200 * 1 + 800 * 0.25 + 10 * 4) / 1_000_000])
+    expect(held).toBeGreaterThan(1000 * 4 / 1_000_000)
+  })
+})
+
+describe("the OpenAI-compatible provider's counts under a plan", () => {
+  test("each attempt a plan sends is a call of its own with its own outcome: one that failed on the server, one the provider refused, the one that answered", async () => {
+    const registry = new Map()
+    // The server fails the first request (retryable), refuses the second as malformed (not), answers the rest.
+    let request = 0
+    const answers = (_: Sent) => {
+      request += 1
+      return request === 1 ? new Response("{\"error\":{\"message\":\"down\"}}", { status: 503, headers: { "content-type": "application/json" } })
+        : request === 2 ? new Response("{\"error\":{\"message\":\"bad\"}}", { status: 400, headers: { "content-type": "application/json" } })
+          : stream(words)()
+    }
+    const plan = ExecutionPlan.make({ provide: openAiCompatibleModel(options(priced)), attempts: 3, while: retryable })
+    const run = Effect.result(LanguageModel.streamText({ prompt, toolkit: tools, disableToolCallResolution: true }).pipe(planned(plan), Stream.runCollect)).pipe(
+      Effect.provide(modelSpendMemory),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch(answers).fetch),
+      Effect.provideService(Metric.MetricRegistry, registry),
+    )
+    // The first run: a 503, retried, then a 400, which no plan retries. The second: it answers.
+    const [first, second] = [await Effect.runPromise(run), await Effect.runPromise(run)]
+    expect([first._tag, second._tag]).toEqual(["Failure", "Success"])
+    const counts = await Effect.runPromise(Effect.forEach(["failed", "refused", "answered", "unsent"], (outcome) =>
+      Effect.map(Metric.value(Metric.withAttributes(modelCalls, { "efferent.model": MODEL, "efferent.outcome": outcome })), (state) => state.count), { concurrency: 1 })
+      .pipe(Effect.provideService(Metric.MetricRegistry, registry)))
+    expect(counts).toEqual([1, 1, 1, 0])
+  })
+})

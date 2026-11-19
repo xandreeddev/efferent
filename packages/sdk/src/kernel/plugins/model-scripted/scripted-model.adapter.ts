@@ -63,7 +63,7 @@ const sent = (prompt: Prompt.Prompt): ScriptedCalls[number] =>
  *
  * @public
  */
-export const scriptedModel = Effect.fn("kernel.scripted_model")(function* (script: ModelScript) {
+export const scriptedModel = Effect.fn("scripted_model.make")(function* (script: ModelScript) {
   const calls = yield* Ref.make<ScriptedCalls>([])
   const model = yield* LanguageModel.make({
     generateText: () => Effect.die("the scripted model only streams"),

@@ -36,7 +36,7 @@ export const ReadResult = Tool.make(READ_RESULT, {
  *
  * @public
  */
-export const readResult = Effect.fn("kernel.readResult")(function* (params: typeof ReadResultParameters.Type) {
+export const readResult = Effect.fn("read_result.read")(function* (params: typeof ReadResultParameters.Type) {
   const turn = yield* CurrentTurn
   return yield* Effect.fromResult(pageOf(yield* turn.journal, params.result, params.from, Math.min(params.length ?? READ_RESULT_PAGE, READ_RESULT_PAGE)))
 })

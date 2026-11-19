@@ -26,6 +26,7 @@ import {
   turnStarted,
 } from "@xandreed/core/kernel"
 import type { AnnouncedEvent, LiveDefinition, OpenSession, JournalStorageError, StoredDraft, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { CONVERSATION_ATTRIBUTE, OUTCOME_ATTRIBUTE, SESSION_ATTRIBUTE, TURN_ATTRIBUTE } from "../../contracts/turn/telemetry.entity.js"
 
 /**
  * How the session plugin is set up.
@@ -176,7 +177,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     yield* core.publish(live(definition, open, data))
   })
 
-  const begin = Effect.fn("kernel.session.begin")(function* (id: SessionId) {
+  const begin = Effect.fn("session.begin")(function* (id: SessionId) {
     yield* claim(id)                                                // one turn at a time here, until its end was announced
     return yield* Effect.gen(function* () {
       const journal = yield* storage.read(id)                       // the store is the truth: the phase and the last place, read now
@@ -225,7 +226,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     Effect.ensuring(release(open.turn.id)),                         // whatever became of the announcement
   )
 
-  const end = Effect.fn("kernel.session.end")(function* (open: Opened, exit: Exit.Exit<unknown, unknown>) {
+  const end = Effect.fn("session.end")(function* (open: Opened, exit: Exit.Exit<unknown, unknown>) {
     const { id, turn } = open.turn
     yield* Ref.set(open.turn.closed, true)                          // nothing is appended to this turn from here on
     // In the journal first, after a write still under way. A turn whose end cannot be stored stays open, as the journal
@@ -250,7 +251,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
    * while this runs, so a turn of this process is refused, and none opens under it. The end is stored after the
    * last place read; another writer's append between the two is a conflict, and that writer is alive: busy.
    */
-  const recover = Effect.fn("kernel.session.recover")(function* (id: SessionId) {
+  const recover = Effect.fn("session.recover")(function* (id: SessionId) {
     yield* claim(id)
     return yield* Effect.gen(function* () {
       const journal = yield* storage.read(id)
@@ -286,7 +287,7 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
     // A branch: the journal as stored, cut at the end of a closed turn, copied by the store in one step. Nothing is
     // claimed or announced: the records it copies were heard when they were stored, and a turn open in the session
     // goes on there, past the cut.
-    fork: Effect.fn("kernel.session.fork")(function* (id: SessionId, forkOptions?: { readonly through?: TurnNumber }) {
+    fork: Effect.fn("session.fork")(function* (id: SessionId, forkOptions?: { readonly through?: TurnNumber }) {
       const journal = yield* storage.read(id)
       yield* Effect.fromResult(currentFormat(journal.header))
       const through = yield* Effect.fromResult(cutOf(id, journal.events, forkOptions?.through))
@@ -299,10 +300,12 @@ export const sessions = (options: SessionsOptions = {}): Layer.Layer<Sessions, n
       Effect.acquireRelease(begin(id), (open, exit) => Effect.orDie(end(open, exit))),   // Free → TurnOpen, or refused; the end stores core.session.turn.ended with the scope's outcome
       announceStart,
     ),
+    // The turn is a span, `session.turn`, around its begin, its body and its end: the session it is of, its number once it
+    // opened, and how it ended. A body's work (its memory, its model calls, its tools) is under it.
     turn: (id, body) => Effect.acquireUseRelease(
       begin(id),                                                    // Free → TurnOpen, or refused; stores core.session.turn.started
-      (open) => Effect.flatMap(announceStart(open), body),           // announced inside the turn, so a listener that fails it still closes it
-      (open, exit) => end(open, exit),                              // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
-    ),
+      (open) => Effect.andThen(Effect.annotateCurrentSpan(TURN_ATTRIBUTE, open.turn.turn), Effect.flatMap(announceStart(open), body)),   // announced inside the turn, so a listener that fails it still closes it
+      (open, exit) => Effect.andThen(Effect.annotateCurrentSpan(OUTCOME_ATTRIBUTE, outcomeOf(exit)._tag.toLowerCase()), end(open, exit)),   // stores core.session.turn.ended with the outcome, announces it, frees the session; always runs
+    ).pipe(Effect.withSpan("session.turn", { attributes: { [SESSION_ATTRIBUTE]: id, [CONVERSATION_ATTRIBUTE]: id } })),
   })
 }))

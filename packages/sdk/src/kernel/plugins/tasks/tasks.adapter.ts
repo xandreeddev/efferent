@@ -7,6 +7,7 @@ import type { TaskId, TaskReport, TasksOptions } from "../../contracts/task/task
 import { cancelledTask, nextTaskId, noTaskRunning, TASK_DIED, taskFrom, taskIdOf, tooMany } from "../../contracts/task/task.entity.functions.js"
 import { TaskReports, Tasks } from "../../contracts/task/task.port.js"
 import { CurrentTurn } from "../../contracts/turn/current-turn.port.js"
+import { ownTrace } from "../../contracts/turn/telemetry.entity.functions.js"
 
 /**
  * The work of one task, the host's (ADR 0018): a turn in the task's own session, from the task's text to its answer.
@@ -66,7 +67,7 @@ export const tasks = <E, R>(run: TaskRun<E, R>, options: TasksOptions = {}): Lay
       )
 
     return Tasks.of({
-      start: Effect.fn("kernel.tasks.start")((parent: SessionId, text: string) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
+      start: Effect.fn("tasks.start")((parent: SessionId, text: string) => Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
         // The slot and the id are taken in one step, so two starts at once never pass the limit together.
         const task = yield* Effect.flatMap(Ref.modify(state, (held): readonly [Option.Option<TaskId>, Running] => {
           if (held.tasks.size >= limit) return [Option.none(), held]
@@ -77,7 +78,8 @@ export const tasks = <E, R>(run: TaskRun<E, R>, options: TasksOptions = {}): Lay
         // is given back; a store that fails is a defect of the call, as it is in the facts tools.
         const session = yield* Effect.orDie(restore(sessions.create({ owner: TASKS_OWNER, parent })).pipe(Effect.onError(() => Ref.update(state, without(task)))))
         // The fiber is forked and recorded before the task can run.
-        const fiber = yield* Effect.forkIn(work(task, parent, session, text), scope, { startImmediately: false })
+        // A trace of its own: the span current here, `tasks.start` inside the tool call that asked, ends before the task does.
+        const fiber = yield* Effect.forkIn(ownTrace(work(task, parent, session, text)), scope, { startImmediately: false })
         yield* Ref.update(state, (held) => {
           const entry = held.tasks.get(task)
           return entry === undefined ? held : { ...held, tasks: new Map([...held.tasks, [task, { ...entry, fiber: Option.some(fiber) }]]) }

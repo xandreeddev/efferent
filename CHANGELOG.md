@@ -10,48 +10,40 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
-- `@xandreed/sdk/kernel`: what is kept can also be found by meaning (ADR 0025).
-  `withKnowledgeByMeaning(options)` is `withKnowledge` with a third list,
-  the memories nearest the last message by an `Embedder`'s cosine, fused by
-  rank with the list about a seed and the words' list; it needs an
-  `Embedder` and a `VectorStore` beside `Sessions`. Its options are
-  `withKnowledge`'s, `pool` (how many texts the list ranks, 50) and
-  `weights` (`{ seed, words, meaning }`, 1, 0.5 and 1.5 unless given, a
-  weight of 0 turning a list off: with meaning off nothing is embedded) and
-  an optional `floor` on the cosine (none by default), refused in words
-  where written. An embedder that fails skips the list by meaning for that
-  request, recall going on by the other two, and the event says why. Vectors are an index of the journal,
-  keyed by the embedder's model and the memory's text (`meaningKey`), what
-  the store lacks embedded 32 a call before the search. `recallKnowledge`
-  takes what a store found (`ByMeaning`) and stays pure;
-  `plugin.knowledge.recalled` now says the weights, the model and the pool,
-  and each memory's place and cosine by meaning. `withKnowledge` is
-  unchanged. On ADR 0023's sets with two more, the third list at 1.5 found
-  189 (e5-small-v2) and 194 (Gemini) of 224 questions against 178 by words
-  alone, and "Who keeps a bird?" now reaches "Ana Silva has parrot Pip.".
-  New: `RecallWeights`, `WORDS_WEIGHTS`, `ByMeaning`, `FoundText`,
-  `MeaningPlace`, `meaningTexts`, `meaningKey`, `MEANING_MODEL_LIMIT`, `SKIPPED_SHOWN`,
-  `checkedMeaningOptions`, `MeaningOptions`, `MeaningRecallOptions`,
-  `KNOWLEDGE_BY_MEANING`.
-
-- Docs site: lesson 20 of the learn track, "Recall by meaning", on the
-  knowledge module. Its program is lesson 18's, and memory.ts wraps the
-  flat memory with `withKnowledgeByMeaning` (limit, walk, pool and the
-  meaning list's weight as controls). The page gives the embedder,
-  e5-small-v2 in a worker on WebAssembly, loaded by "Load the embedder";
-  before it is loaded recall runs by words alone, the turn is answered and
-  the status line says so. Load the world puts the 557 vectors of the
-  world's memories, made ahead by the page's own worker and shipped with the
-  page (about 310 KB, loaded only when the button is pressed), in the
-  page's store, so a request embeds its message alone. The Graph tab's
-  recall panel shows each memory's place and cosine by meaning, and "for
-  what replaced it" where an ended memory took the place. Its steps: the
-  bird question reaching the parrot, fresh and straight after the Orchid
-  question; the three lists side by side; where meaning alone is wrong; an
-  ended memory found by meaning; and a greeting sent eight unrelated
-  memories, with a `floor` experiment that shows what it costs. Echo
-  answers a greeting or thanks sent with a note of memories as one. Lesson
-  18 and lesson 19 link to it.
+- `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
+  calls without writing a span (ADR 0030). `Sessions.turn` is the span
+  `session.turn` (the session, the turn's number, how it ended), `callTool` is
+  `tool.call` (the tool, the call's id, whether its result is a failure), and
+  a model call keeps Effect AI's own `LanguageModel.streamText` span;
+  `planned` marks each attempt on the span it runs under (`model.attempt`).
+  A turn the inbox or a background task runs on a fiber of its own is a
+  trace of its own. `callTool` counts `efferent.tool.calls` by tool and
+  outcome. Every kernel span is named `<part>.<op>` with no `kernel.` prefix
+  (`kernel.session.begin` is now `session.begin`, `kernel.flat.context`
+  `flat_memory.context`, `kernel.approve` `approval.approve`,
+  `knowledge.curateAgain` `knowledge.curate_again`; ADR 0030 lists them).
+- `@xandreed/sdk/kernel/node`: `openAiCompatibleModel` gives each call's span
+  the `gen_ai.*` attributes the Anthropic provider sets (the provider, the
+  model asked and the one that answered, the output cap, why it stopped, the
+  usage with the cache's shares), its new `provider` option naming
+  `gen_ai.provider.name` (`openai` by default). The spend charge counts every
+  call a provider sends, a curator's and a summarizer's too:
+  `efferent.model.calls` by model and outcome (each attempt one),
+  `efferent.model.tokens` by kind, and `efferent.model.cost`, what the ledger
+  settled each call at, with `efferent.cost.basis` (`billed`, `usage` at the
+  host's price, or `held`, the worst case of a call that reported nothing),
+  and nothing for a call whose cost is not known; no metric names a session
+  or a turn. `otlpTelemetry`, `otlpTelemetryOver`, `otlpTelemetryFromEnv`,
+  `otlpTelemetryFromEnvOver` and `flushTelemetry` export the program's traces
+  and metrics over OTLP/HTTP, from options or the standard `OTEL_*`
+  variables, with a span policy (`OtlpSpanPolicy`) that drops spans and
+  redacts attributes: the telemetry plugin's export, ported with its tests.
+  What was said (a prompt, an answer, a tool call's parameters, a failed
+  attempt's reason, a failure's words, a log's text) is not sent unless the
+  host passes `content: true`, which also writes each model call's prompt
+  and answer on its span; with it off, a failed span is sent with its
+  error's type alone. LangSmith takes the same export at its OTLP endpoint;
+  the plugin's LangSmith mapping is not ported.
 
 - Docs site: lesson 18 of the learn track, now "A memory that keeps itself",
   keeps its memory with a curator. Its program offers no tool that remembers
