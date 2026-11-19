@@ -202,7 +202,7 @@ describe("lesson 18 on the page", () => {
     // The Graph tab, after one curated turn and no world: the user, Ana Silva, Acme and Lisbon, the two memories between
     // them, lit as what the latest curation kept.
     const one = tab()
-    expect(one.memory.things.map((thing) => `${thing.label} ${thing.column}`)).toEqual(["the user 0", "Ana Silva 0", "Acme 0", "Lisbon 0"])
+    expect(one.memory.things.map((thing) => `${thing.label} ${thing.column}`)).toEqual(["Ana Silva 0", "the user 0", "Acme 1", "Lisbon 2"])
     expect(one.memory.edges.map((edge) => `${edge.text} ${edge.from}→${edge.to} ${Option.getOrElse(edge.light, () => "-")}`)).toEqual(["Ana Silva works at Acme. n2→n3 curated", "Acme is in Lisbon. n3→n4 curated"])
     expect(Option.map(one.curation, (curation) => [curation.heading, ...curation.lines])).toEqual(Option.some([
       "Source s1 (turn 1 of a conversation): 1 model call, 2 new memories, 0 ended, 0 said again, 0 dropped.", "New: Ana Silva works at Acme.", "New: Acme is in Lisbon.",
@@ -278,7 +278,7 @@ describe("lesson 18 on the page", () => {
     // the user's one neighbour.
     expect(tab().memory.counts).toBe(`The knowledge session holds ${world.entities.length} entities and ${world.memories.length} memories, 4 of them ended.`)
     expect(tab().memory.things.map((thing) => thing.label)).toEqual(["the user", "Porto"])
-    expect(tab().memory.heading).toBe("The user and what the conversation named, on the left, then their neighbours, at most 6 each, the most said first: 2 entities.")
+    expect(tab().memory.heading).toBe("The user and what the conversation named, with their neighbours, at most 6 each, the most said first: 2 entities. The picture starts on the left from what your latest message named, a column for each memory further.")
 
     // The city question again, over the world: Ana Silva's employer now, what it replaced, and Globex's cities.
     await say(QUESTION)

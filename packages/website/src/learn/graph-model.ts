@@ -219,12 +219,14 @@ export const namedBy = (knowledge: Knowledge, chat: string, recalls: ReadonlyArr
 
 /**
  * The picture of the memory: entities and the memories between them, from the knowledge session's records alone, as
- * soon as it holds any. With `named`, the entities the conversation named (`namedBy`) in the first column, then their
- * neighbours, at most `NEIGHBOURS` of each, the most said first; when what was named holds no memory (Load the world,
- * nothing said yet, or a new conversation), the `MOST_SAID` entities said most often, and their neighbours. With
- * `everything`, every entity, each in the column of how many memories away from those it is. The latest recall's seeds
- * and the entities its walk started from are lit, and so is every memory it sent and every memory the latest curation
- * kept; what either reached beyond the picture is drawn too, one column further.
+ * soon as it holds any. With `named`, the entities the conversation named (`namedBy`) and the latest recall's seeds,
+ * with their neighbours, at most `NEIGHBOURS` of each, the most said first; when what was named holds no memory (Load
+ * the world, nothing said yet, or a new conversation), the `MOST_SAID` entities said most often, and their neighbours.
+ * With `everything`, every entity. Every entity a lit memory is about is drawn too. The first column is where the
+ * picture starts (the seeds a memory is about, else the first named one, else the most said), and each other entity
+ * is in the column of how many memories away from it it is; one no memory reaches goes in the first column. The latest
+ * recall's seeds and the entities its walk started from are lit, and so is every memory it sent and every memory the
+ * latest curation kept.
  */
 export const memoryViewOf = (records: ReadonlyArray<StoredEvent>, showing: Showing, named: ReadonlyArray<string>, recall: Option.Option<KnowledgeRecalledData>, curation: Option.Option<CurationView>): MemoryView => {
   const knowledge = knowledgeOf(records)
@@ -243,31 +245,30 @@ export const memoryViewOf = (records: ReadonlyArray<StoredEvent>, showing: Showi
   }
   const heaviest = (ids: Iterable<string>) => [...new Set(ids)].sort((a, b) => (weights.get(b) ?? 0) - (weights.get(a) ?? 0) || (a < b ? -1 : a > b ? 1 : 0))
   const holdsMemory = (id: string) => (neighbours.get(id) ?? []).length > 0 || memories.some((memory) => memory.about.length === 1 && String(memory.about[0]) === id)
-  // Column 0: what is shown from; the rest by how many memories away from it.
+  // Which entities are drawn: what the conversation named and the latest recall's seeds (or, when those hold no
+  // memory, the entities said about most often), at most NEIGHBOURS neighbours of each, and every entity a lit memory
+  // is about; with everything, every entity.
   const fromNamed = [...new Set([...seeds, ...named])].filter((id) => entities.has(id))
   const fallback = showing === "named" && !fromNamed.some(holdsMemory) && memories.length > 0
-  const start = fallback ? [String(USER_ENTITY), ...heaviest(entities.keys()).filter((id) => id !== String(USER_ENTITY)).slice(0, MOST_SAID)] : fromNamed
-  const column = new Map<string, number>(start.map((id) => [id, 0]))
-  if (showing === "everything") {
-    let edge = start
-    for (let depth = 1; edge.length > 0; depth++) {
-      const next = edge.flatMap((id) => neighbours.get(id) ?? []).filter((id) => !column.has(id))
-      for (const id of next) column.set(id, depth)
-      edge = [...new Set(next)]
-    }
-    const far = Math.max(0, ...column.values()) + 1
-    for (const id of entities.keys()) if (!column.has(id)) column.set(id, far)
-  } else {
-    for (const id of start) for (const other of heaviest(neighbours.get(id) ?? []).filter((one) => !column.has(one)).slice(0, NEIGHBOURS)) column.set(other, 1)
-  }
-  // What the latest recall and curation lit is drawn whatever else is: its entities one column past those they meet.
+  const shownFrom = fallback ? [String(USER_ENTITY), ...heaviest(entities.keys()).filter((id) => id !== String(USER_ENTITY)).slice(0, MOST_SAID)] : fromNamed
   const lit = memories.filter((memory) => sent.has(String(memory.id)) || kept.has(String(memory.id)))
-  for (const memory of lit) {
-    const placed = memory.about.map(String).filter((id) => column.has(id))
-    const next = placed.length === 0 ? 0 : Math.min(...placed.map((id) => column.get(id) ?? 0)) + 1
-    for (const id of memory.about.map(String)) if (!column.has(id)) column.set(id, next)
+  const drawn = new Set<string>(showing === "everything" ? entities.keys() : [
+    ...shownFrom, ...shownFrom.flatMap((id) => heaviest(neighbours.get(id) ?? []).slice(0, NEIGHBOURS)),
+    ...lit.flatMap((memory) => memory.about.map(String)), ...bridges.filter((id) => entities.has(id)),
+  ])
+  // Columns: the first column is where the picture starts, the latest recall's seeds when they hold a memory, else the
+  // first entity named that does (or the entities said about most often); the rest by how many memories away from it,
+  // among those drawn. A drawn entity no memory reaches goes in the first column, under the start.
+  const seeded = seeds.filter(holdsMemory)
+  const begin = fallback ? shownFrom : seeded.length > 0 ? seeded : fromNamed.filter(holdsMemory).slice(0, 1)
+  const column = new Map<string, number>(begin.map((id) => [id, 0]))
+  let edge = begin
+  for (let depth = 1; edge.length > 0; depth++) {
+    const next = [...new Set(edge.flatMap((id) => heaviest(neighbours.get(id) ?? [])).filter((id) => drawn.has(id) && !column.has(id)))]
+    for (const id of next) column.set(id, depth)
+    edge = next
   }
-  for (const id of [...seeds, ...bridges]) if (!column.has(id) && entities.has(id)) column.set(id, 1)
+  for (const id of [...shownFrom, ...drawn]) if (!column.has(id)) column.set(id, 0)
   // Rows: each column in the order its entities came, a long column wrapped into the next.
   const byColumn = new Map<number, Array<string>>()
   for (const [id, at] of column) byColumn.set(at, [...(byColumn.get(at) ?? []), id])
@@ -278,8 +279,8 @@ export const memoryViewOf = (records: ReadonlyArray<StoredEvent>, showing: Showi
     ids.forEach((id, index) => placed.set(id, { column: at + shift + Math.floor(index / COLUMN_ROWS), row: index % COLUMN_ROWS }))
     shift += Math.max(0, Math.ceil(ids.length / COLUMN_ROWS) - 1)
   }
-  const drawn = memories.filter((memory) => memory.about.length > 1 && memory.about.every((id) => placed.has(String(id))))
-  const mostSaid = Math.max(1, ...drawn.map((memory) => memory.count))
+  const between = memories.filter((memory) => memory.about.length > 1 && memory.about.every((id) => placed.has(String(id))))
+  const mostSaid = Math.max(1, ...between.map((memory) => memory.count))
   const lightOf = (memory: KnownMemory): Option.Option<EdgeLight> =>
     sent.has(String(memory.id)) ? Option.some("sent") : kept.has(String(memory.id)) ? Option.some("curated") : Option.none()
   const things = [...placed].map(([id, at]): ThingView => {
@@ -293,7 +294,7 @@ export const memoryViewOf = (records: ReadonlyArray<StoredEvent>, showing: Showi
       title: `${id}: ${label} (${entity?.kind ?? "thing"}${aliases})${Option.match(light, { onNone: () => "", onSome: (how) => (how === "seed" ? ". A seed of the latest recall." : ". The walk by subject started from it.") })}`,
     }
   })
-  const edges = drawn.flatMap((memory) => memory.about.slice(1).map((to): EdgeView => ({
+  const edges = between.flatMap((memory) => memory.about.slice(1).map((to): EdgeView => ({
     id: String(memory.id), from: String(memory.about[0]), to: String(to), text: memory.text,
     width: Math.round((1 + (3 * memory.count) / mostSaid) * 10) / 10,
     ended: Option.isSome(memory.ended), light: lightOf(memory),
@@ -301,10 +302,10 @@ export const memoryViewOf = (records: ReadonlyArray<StoredEvent>, showing: Showi
   })))
   const shown = things.length
   const heading = showing === "everything"
-    ? `Everything the knowledge session holds: ${plural(shown, "entity", "entities")}, each in the column of how many memories away it is from what the conversation named.`
+    ? `Everything the knowledge session holds: ${plural(shown, "entity", "entities")}, each in the column of how many memories away it is from where the picture starts.`
     : fallback
-      ? `The conversation has named nothing kept yet, so these are the ${MOST_SAID} entities said about most often, and their neighbours: ${plural(shown, "entity", "entities")}.`
-      : `The user and what the conversation named, on the left, then their neighbours, at most ${NEIGHBOURS} each, the most said first: ${plural(shown, "entity", "entities")}.`
+      ? `The conversation has named nothing kept yet, so these are the ${MOST_SAID} entities said about most often, on the left, and their neighbours: ${plural(shown, "entity", "entities")}.`
+      : `The user and what the conversation named, with their neighbours, at most ${NEIGHBOURS} each, the most said first: ${plural(shown, "entity", "entities")}. The picture starts on the left from ${seeded.length > 0 ? "what your latest message named" : "the first of them a memory is about"}, a column for each memory further.`
   return { heading, counts, things, edges }
 }
 

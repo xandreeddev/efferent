@@ -457,8 +457,10 @@ check` (tsc over the learn code, the build, the link check) and
     ended one dashed, one about a single entity listed under it. By default
     (`named`) it draws the user and what the conversation named (`namedBy`:
     the entities of the memories kept from its own sources, and its recalls'
-    seeds) in the first column, then their neighbours, at most `NEIGHBOURS`
-    (6) each, the most said first; when what was named holds no memory (Load
+    seeds), with their neighbours, at most `NEIGHBOURS` (6) each, the most
+    said first, the first column where the picture starts (the latest
+    recall's seeds a memory is about, else the first named one) and a column
+    for each memory further; when what was named holds no memory (Load
     the world on a fresh page, or a new conversation), the `MOST_SAID` (5)
     entities said about most often and their neighbours, so the picture is
     never empty while anything is kept; `everything` (the "Show everything"
