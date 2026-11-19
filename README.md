@@ -13,6 +13,10 @@ configure: your program is the loop.
 
 ## Install
 
+The kernel is first published with the next release: the packages on npm
+today (0.22.0) are the engine of earlier releases, and none of them exports
+it. Once it is published:
+
 ```sh
 npm install effect @xandreed/core @xandreed/sdk
 ```
@@ -21,10 +25,10 @@ npm install effect @xandreed/core @xandreed/sdk
 packages share one copy of each.
 Workspace packages share version `0.22.0`.
 
-Until the next release moves it to the package roots, the kernel is imported
-from `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and, for the ports that
-need Node or Bun (durable journals, model providers, a disk workspace and a
-shell, OTLP export), `@xandreed/sdk/kernel/node`.
+In this source the kernel is imported from `@xandreed/core/kernel`,
+`@xandreed/sdk/kernel` and, for the ports that need Node or Bun (durable
+journals, model providers, a disk workspace and a shell, OTLP export),
+`@xandreed/sdk/kernel/node`; the next release moves it to the package roots.
 
 ## Learn more
 

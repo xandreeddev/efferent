@@ -14,6 +14,10 @@ knowledge and telemetry among them.
 
 ## Install
 
+The kernel is first published with the next release: the packages on npm
+today are the engine of earlier releases, and none of them exports it. Once
+it is published:
+
 ```sh
 npm install effect @xandreed/core @xandreed/sdk
 ```
@@ -21,10 +25,10 @@ npm install effect @xandreed/core @xandreed/sdk
 Install `effect` (4.0.7 or a later 4.x) and `@xandreed/core` beside the sdk:
 the packages and your code share one copy of each.
 
-This guide follows version `0.22.0`. The next release publishes the kernel at
-the package roots; until then it is imported from `@xandreed/core/kernel`,
-`@xandreed/sdk/kernel` and, for the ports that need Node or Bun,
-`@xandreed/sdk/kernel/node`.
+This guide follows version `0.22.0` of the source, where the kernel is
+imported from `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and, for the
+ports that need Node or Bun, `@xandreed/sdk/kernel/node`; the next release
+moves it to the package roots.
 
 ## Where to go next
 

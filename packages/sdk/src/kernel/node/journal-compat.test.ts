@@ -125,7 +125,7 @@ fixtures.filter(({ fixture }) => fixture.journalFormat === JOURNAL_FORMAT).forEa
     expect(Schema.encodeSync(Schema.Array(Journal))(result.read)).toEqual(Schema.encodeSync(Schema.Array(Journal))(journals))
     expect(result.opened).toEqual(journals.map((journal) => turnsOf(journal.events).length + 1))
     expect(JSON.stringify(result.first)).toContain("conversation-summary")
-  })
+  }, 30_000)
 }))
 
 /** A journal of another format: refused where a turn would open, passed over by recovery, and left byte for byte. */

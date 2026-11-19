@@ -798,7 +798,9 @@ providers share), one per port (`journal-directory/`, `journal-sqlite/`,
 `files-disk/` and `shell-process/`, which import the contract they implement
 from `sdk-kernel-contracts`), which imports core's kernel
 and the folder it shares and never another port's folder, and
-`sdk-kernel-node`, the entry. A new port is a folder
+`sdk-kernel-node`, the entry. `./kernel/node` is a `restricted` subpath of the `sdk-kernel` layer, which holds the
+package's root entry: the browser entry cannot import it by the package's name, and only the eval tests are granted it.
+A new port is a folder
 here with its layer, its name in the entry's `canImport` and in
 `SDK_KERNEL_TESTS`, its exports in `node/index.ts` and, when it has a kit, the
 kit run over it in its tests and in `scripts/kernel-consumer.fixture.mjs` on

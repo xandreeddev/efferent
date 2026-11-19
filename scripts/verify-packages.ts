@@ -162,19 +162,23 @@ await writeFile(join(consumer, "tsconfig.json"), JSON.stringify({ compilerOption
 const typecheck = Bun.spawn(["bun", "node_modules/typescript/bin/tsc", "--noEmit"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await typecheck.exited !== 0) process.exit(1)
 // Every entry of every package loads on Bun, and on Node when the package declares Node: a Bun-only import fails
-// here, not in a consumer's deploy. A file no entry names stays out of reach: a deep import of core is refused.
+// here, not in a consumer's deploy. On Node a file no entry names stays out of reach: a deep import of a file core
+// publishes is refused.
 const entriesOf = (only: (manifest: { readonly engines?: { readonly node?: string } }) => boolean) => artifacts.filter(({ manifest }) => only(manifest)).flatMap(({ manifest }) =>
   Object.keys(manifest.exports ?? { ".": "" }).filter((key) => !key.includes("*")).map((key) => key === "." ? String(manifest.name) : `${manifest.name}/${key.slice(2)}`))
-const entryImports = (entries: ReadonlyArray<string>) => entries.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
-const deepImport = await import("@xandreed/core/kernel/ids.entity.js").then(() => "loaded", (error) => error.code ?? "refused")
-if (deepImport === "loaded") { console.error("A deep import of @xandreed/core was not refused"); process.exit(1) }
-console.log("${entries.length} published entries load on " + (globalThis.Bun === undefined ? "Node" : "Bun") + ", and core refuses a deep import (" + deepImport + ")")
+const entryImports = (entries: ReadonlyArray<string>, runtime: string) => entries.map((name) => `await import(${JSON.stringify(name)})`).join("\n") + `
+console.log("${entries.length} published entries load on ${runtime}")
 `
-await writeFile(join(consumer, "bun-imports.mjs"), entryImports(entriesOf(() => true)))
+await writeFile(join(consumer, "bun-imports.mjs"), entryImports(entriesOf(() => true), "Bun"))
 const bunImports = Bun.spawn(["bun", "bun-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await bunImports.exited !== 0) process.exit(1)
 if (Bun.which("node") !== null) {
-  await writeFile(join(consumer, "node-imports.mjs"), entryImports(entriesOf((manifest) => manifest.engines?.node !== undefined)))
+  if (!existsSync(join(consumer, "node_modules/@xandreed/core/dist/kernel/ids.entity.js"))) { console.error("The packed core holds no dist/kernel/ids.entity.js to try a deep import of"); process.exit(1) }
+  await writeFile(join(consumer, "node-imports.mjs"), entryImports(entriesOf((manifest) => manifest.engines?.node !== undefined), "Node") + `
+const deepImport = await import("@xandreed/core/dist/kernel/ids.entity.js").then(() => "loaded", (error) => error.code)
+if (deepImport !== "ERR_PACKAGE_PATH_NOT_EXPORTED") { console.error("A deep import of @xandreed/core was not refused: " + deepImport); process.exit(1) }
+console.log("core refuses a deep import on Node")
+`)
   const nodeImports = Bun.spawn(["node", "node-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
   if (await nodeImports.exited !== 0) process.exit(1)
 } else console.log("node not on PATH: skipped the Node import check")

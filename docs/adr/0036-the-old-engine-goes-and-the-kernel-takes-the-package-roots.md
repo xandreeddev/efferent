@@ -70,9 +70,10 @@ drops `./kernel`. Service keys are public and never renamed: `Memory` stays `@xa
 While the roots are the kernel's index, the gates read them there:
 
 - The boundaries layers keep their names (`core-kernel`, `sdk-kernel-*`); a package that imports `@xandreed/core` or
-  `@xandreed/core/kernel` names `core-kernel`, and the eval tests that import `@xandreed/sdk/kernel/node` name
-  `sdk-kernel`. The `restricted` subpaths go: they kept the old engine from importing the kernel, and nothing is left
-  for them to keep apart.
+  `@xandreed/core/kernel` names `core-kernel`. Core's `restricted` subpaths (`./kernel`, `./internal`) go: they kept
+  the old engine and the kernel apart, and nothing is left for them to keep apart. The sdk's `./kernel/node` stays
+  restricted, now on the `sdk-kernel` layer that holds the root entry, so the browser entry cannot reach the Node
+  entry by the package's name; the eval tests are granted it (`sdk-kernel/kernel/node`).
 - The registration gate reads `src/kernel/index.ts` for core and the sdk (`KERNEL_ROOTED` in `foundry.config.ts`), in
   place of `src/index.ts`, until the move.
 - The `allow` lists and the boundary that excused only deleted files are deleted with their `allow`, as the gate rules

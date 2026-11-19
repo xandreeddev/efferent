@@ -34,7 +34,8 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 - `foundry` runs the gates (development tooling); `website` is the docs site and the learn track. Neither is published.
 
 The `boundaries` layers in `foundry.config.ts` enforce the direction; inside
-core, layers by role do (`packages/core/AGENTS.md`). Each package's test
+the sdk's kernel, a layer per contract folder, plugin folder and Node port
+does (`packages/sdk/AGENTS.md`). Each package's test
 code (as the build leaves it out: `*.test.ts`, `*.bench.ts`, `testing.ts`,
 `*.testing.ts`, `testing.port.ts`, `testing/`) is its `<name>-tests` layer,
 before its own, which may also import the package and, where its tests
@@ -134,7 +135,7 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 | `x.conformance.ts` | a port's kit, exported and shipped | base except `no-option-unwrap`, `no-error-code-compare` and `no-provider-namespace` |
 | `index.ts`, `main.ts` | the public surface, as explicit named exports; a command line's entry | base (`main.ts` may read `process.env`) |
 | `x.test.ts`, `testing.ts`, `x.testing.ts` | tests beside their source; scaffolding the build does not ship | base except `no-as-never`, `no-unknown-requirements` and the rules from `no-json-parse` to `require-concurrency-option` but `no-instanceof-tagged-error` |
-| any other name (`loop.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
+| any other name (`stats.ts`) | older modules, listed in `ROLELESS_FILES` | base; `role-suffix-required` refuses a new one: give it one of the roles above |
 
 ## Ports, adapters and composition
 

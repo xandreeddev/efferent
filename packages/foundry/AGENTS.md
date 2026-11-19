@@ -112,8 +112,9 @@ crash (`foundry/gate-crashed`, `foundry/verifier-unavailable`) is never
 compared with the baseline: it fails the check, and the update refuses to
 write while one stands, `--allow-grow` or not. Never use
 either flag against this repository's `.foundry/baseline.json`: fix the
-finding, or, where type erasure is the design, add the file to
-`ERASURE_BOUNDARY` in the root `foundry.config.ts` with the reason in the PR.
+finding, or, where type erasure is the design, add the file to a `boundary`
+of `effect/no-as-never`'s entry in the root `foundry.config.ts` with the
+reason in the PR.
 
 A config's `registration` arms the `registration` gate
 (`gates/registrationGate.ts`, findings `quality/package-registered`): every
@@ -139,11 +140,10 @@ drops there, is itself a finding under the rule's id. A rule entry's
 `allow` names exact files the rule skips, a frozen list that only
 shrinks: an entry naming a file the rule does not check, or one it no
 longer flags, is itself a finding under the rule's id
-(`architecture/role-suffix-required`'s `ROLELESS_FILES`,
-`effect/no-option-unwrap`'s `NULLABLE_EDGES`, `effect/no-unknown-json`'s
-`UNKNOWN_JSON_EDGES`, `effect/no-record-cast`'s `RECORD_CAST_EDGES`,
-`effect/no-unknown-requirements`'s `UNKNOWN_REQUIREMENT_EDGES`); a list
-that names nothing more is deleted with its `allow`. A
+(`architecture/role-suffix-required`'s `ROLELESS_FILES` in the root
+profile); a list that names nothing more is deleted with its `allow`, as
+the root profile's other lists were when the files they excused were
+deleted. A
 new rule that needs a per-file exemption uses `exclude`, `allow` for
 today's exceptions, or a boundary when only part of what it flags is the
 design there. A rule with
@@ -175,8 +175,7 @@ an object or a type, destructured or read (`x.openai`, `x["router"]`).
 `Layer` type whose R is `unknown`, or an alias of it) keeps what an effect
 requires in its type. In the root profile each runs over every package
 (`CHECKED`), less the files its entry excludes, but `no-provider-namespace`,
-which runs in the two provider-neutral packages, core and the agent loop
-(`PROVIDER_NEUTRAL`).
+which runs in the provider-neutral package, core (`PROVIDER_NEUTRAL`).
 
 The `quality` pack's `quality/exports-have-consumers` is the one rule
 that reads past the file it checks. Each file its include names is an

@@ -296,7 +296,7 @@ const config: typeof GateSuiteConfig.Encoded = {
     },
     // A kit asserts the codes its port publishes.
     { rule: "effect/no-error-code-compare", include: CHECKED, exclude: ["**/*.conformance.ts", ...TEST_SCAFFOLDING] },
-    // A foreign code is read by `errorCodeOf`, the framework's by `harnessCodeOf`.
+    // A foreign code is read by `errorCodeOf`.
     { rule: "effect/no-code-property-guard", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/prefer-effect-fn", include: CHECKED, exclude: TEST_SCAFFOLDING },
     { rule: "effect/require-concurrency-option", include: CHECKED, exclude: TEST_SCAFFOLDING },
@@ -325,10 +325,10 @@ const config: typeof GateSuiteConfig.Encoded = {
       ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
       // evals reaches core only for the ModelSpend ledger its runs share across their trials.
-      // The eval tests also reach the kernel's Node entry (`@xandreed/sdk/kernel/node`, a devDependency, whose
-      // package's entry is the sdk kernel's): one runs a run's budget over a real model provider of the kernel's
-      // (ADR 0026). The package's own code never imports the sdk.
-      ...testLayer("evals", ["evals", "core-kernel", "sdk-kernel"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
+      // The eval tests also reach the kernel's Node entry (`@xandreed/sdk/kernel/node`, a devDependency, a restricted
+      // subpath of `sdk-kernel`, the layer of the sdk's root entry): one runs a run's budget over a real model provider
+      // of the kernel's (ADR 0026). The package's own code never imports the sdk.
+      ...testLayer("evals", ["evals", "core-kernel", "sdk-kernel/kernel/node"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
       { name: "evals", path: src("evals"), canImport: ["core-kernel"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
       // Core's kernel (`packages/core/src/kernel`), the package's root entry and `./kernel`: one layer for all its
       // roles, which imports no runtime module. A package that imports `@xandreed/core` or `@xandreed/core/kernel`
@@ -338,8 +338,10 @@ const config: typeof GateSuiteConfig.Encoded = {
       ...testLayer("foundry", ["foundry"], ["effect", "effect/testing", "typescript", "node:", "bun:test"]),
       { name: "foundry", path: src("foundry"), canImport: [], externals: ["effect", "typescript", "node:"] },
       // The sdk's kernel (`packages/sdk/src/kernel`, the package's root entry
-      // and `./kernel`; its Node entry `./kernel/node`). It imports core's
-      // kernel and nothing else of the workspace. Inside it the import graph is
+      // and `./kernel`; its Node entry `./kernel/node`, a restricted subpath of
+      // `sdk-kernel`, so the browser entry cannot reach it by the package's
+      // name). It imports core's kernel and nothing else of the workspace.
+      // Inside it the import graph is
       // the one ADR 0002 records: the contracts (`contracts/**`) import core's
       // kernel and one another, never a plugin; each plugin folder is a layer
       // of its own that imports the contracts and core's kernel, never another
@@ -403,7 +405,7 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-plugin-tool-shell", path: "packages/sdk/src/kernel/plugins/tool-shell/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-search-files", path: "packages/sdk/src/kernel/plugins/search-files/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-tool-search", path: "packages/sdk/src/kernel/plugins/tool-search/**", canImport: ["sdk-kernel-contracts", "core-kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [], restricted: ["kernel/node"] },
     ],
   },
 }
