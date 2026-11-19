@@ -42,8 +42,8 @@ that says, `cost`). No encoding is asked for: the wire's default is a list of nu
 - **Timeouts, in seconds.** `timeouts.response` bounds the wait for the headers, as the providers' does (`reaching`);
   the body is read whole, so `timeouts.idle` bounds that read. Both are five seconds by default (`EMBEDDING_TIMEOUTS`),
   not the providers' minute and two: a memory that ranks by meaning embeds before every request it builds and falls
-  back to words when the embedder fails, so a hung endpoint costs each context these seconds and no more. A batch of
-  64 passages answered in about a second on the gateway; a host whose embeddings take longer gives its own (a body that does not come whole in time is a lost connection, settled
+  back to words when the embedder fails, so a hung endpoint costs each context these seconds and no more; a host
+  whose embeddings take longer gives its own (a body that does not come whole in time is a lost connection, settled
   at the hold); a refusal whose body cannot be read in time is the provider's refusal by its status alone.
 
 ### `EmbedAs` means something on every model: prefixes
