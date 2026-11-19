@@ -1,0 +1,31 @@
+---
+// Each button rewrites one line of memory.ts and runs it again (see learn/playground.ts, `data-exp`, and
+// lessons/recall-by-meaning/config-edit.ts). The embedder, the world and its vectors outlive a rebuild: only a reload
+// empties them.
+const experiments = [
+  {
+    exp: "meaning-off", title: "No list by meaning", button: "Set meaning to 0",
+    text: "memory.ts now reads meaning: 0: lesson 18's recall, by the seeds and the words alone, and nothing is turned into numbers. From a reloaded page, press Load the embedder, Load the world and the button, then Who keeps a bird?: the request is sent no memory, and Echo answers You said: \"Who keeps a bird?\". This is the start of the conversation. The Graph tab says The list by meaning is off: its weight is 0, so nothing was turned into numbers.",
+  },
+  {
+    exp: "words-off", title: "No list by your words", button: "Set words to 0",
+    text: "memory.ts now reads words: 0: the list about a seed and the list by meaning alone. From a reloaded page, press Load the embedder, Load the world and the button, then What pet does Rui Reis have?: Echo answers From what I know: Rui Reis works at Virtucon. His work is 2nd about a seed and 3rd by meaning, his parrot 1st about a seed and 4th by meaning; the words list put the parrot first, as step 5 showed.",
+  },
+  {
+    exp: "floor", title: "A floor under the list by meaning", button: "Add a floor of 0.77",
+    text: "memory.ts gains floor: 0.77: a memory less like your message than that is not in the list by meaning. From a reloaded page, press Load the embedder, Load the world and the button, then Thanks!: the request is sent no memory. Then Who once called the Spanish capital home?: Bruno Reis is no longer sent, since his line was 0.755. Then Who keeps a bird?: its five parrots, 0.775 and over, are still sent. The floor that keeps the greeting's memories out keeps step 6's answer out too.",
+  },
+]
+---
+
+<ol class="learn-exp">
+  {
+    experiments.map((one) => (
+      <li>
+        <strong>{one.title}</strong>
+        <p>{one.text}</p>
+        <button class="btn" type="button" data-exp={one.exp}>{one.button}</button>
+      </li>
+    ))
+  }
+</ol>
