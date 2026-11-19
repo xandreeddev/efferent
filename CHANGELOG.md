@@ -44,6 +44,25 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   runs nothing of the pull request's: its commands run only through a
   sandboxed shell a host provides, and none ships yet. It asks no model
   yet. It is private: no release publishes it until its evals pass.
+- `efferent-review review <number> --repo <owner/name>` reviews a pull
+  request with one pass of a model (DeepSeek V4.1 Flash through the Vercel
+  AI Gateway by default, its key read from `VERCEL_API_KEY`), the host's own
+  loop on the kernel: a session in a directory journal per pass, flat
+  memory, a step cap (16) and a spend cap (`--max-cost`, $0.15 by default).
+  The model reads with `readLines`, `searchCode`, `listFiles` and `readDiff`,
+  each bounded and paging itself, over the clone's objects at the reviewed
+  commit (a link, a submodule, a folder, a binary file or a path out of the
+  tree is refused in words; a search pattern is never read as an option),
+  and reports with `reportFinding`. New model-facing texts: the review's
+  system text and prompt (`REVIEW_PROMPT` `review-prompt-1`), the five tools'
+  descriptions and answers (`REVIEW_TOOLS_VERSION` `review-tools-1`). The
+  report shows at most six findings by severity, marks one that only
+  restates a CI failure, and says why a pass that stopped early is
+  incomplete; `--json` prints it whole. `--at first` (both commands)
+  reviews the commit the pull request's earliest `pull_request` CI run
+  tested, against where its history meets the base. Each review keeps its
+  prepared review, its report (each call's tokens, cached tokens and cost)
+  and its pass's journal under its folder in the cache, for offline scoring.
 
 ## 0.23.0 — 2026-11-19
 

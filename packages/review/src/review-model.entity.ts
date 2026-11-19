@@ -38,8 +38,9 @@ export const DEFAULT_REVIEW_MODEL: ReviewModel = {
 }
 
 /**
- * The most a review may spend by default, in USD, the ledger's total cap: a pass of 16 steps over a 24,000-token
- * diff settles about $0.06 at worst (one cold call, the rest read from the cache, each with its full output) and holds
- * about $0.03 for its last call.
+ * The most a review may spend by default, in USD, the ledger's total cap. Measured on the packs of #645, #650, #653 and
+ * #658 at their first heads (130 to 139 KB a request): each call holds about $0.023 at 2 bytes a token; a pass of 16
+ * steps, every one with its full 2,048 tokens of output, settles about $0.06 (one cold call, the rest read from the
+ * cache) and holds about $0.04 for its last, longer request, so $0.10 would refuse a long review near its end.
  */
-export const DEFAULT_MAX_COST = 0.1
+export const DEFAULT_MAX_COST = 0.15
