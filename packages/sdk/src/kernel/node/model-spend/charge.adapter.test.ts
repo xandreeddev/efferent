@@ -2,13 +2,13 @@
 // a call settled at what it reported, a stream cut and a call interrupted settled at the hold, a call that never
 // left released, and every hold closed.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Option, Ref, Stream } from "effect"
+import { Deferred, Effect, Exit, Fiber, Option, Ref, Scope, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
 import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
 import { scriptedModel } from "../../index.js"
 import type { ModelScript } from "../../index.js"
 import { CallReach } from "./call-reach.port.js"
-import { chargedEffect, chargedStream } from "./charge.adapter.js"
+import { chargedEffect, chargedSend, chargedStream } from "./charge.adapter.js"
 import type { Charging } from "./charge.adapter.js"
 import { isSpendRefusal, spendRefusalOf } from "./model-spend.entity.functions.js"
 import type { Charge, Reach, SpendOptions } from "./model-spend.entity.js"
@@ -135,5 +135,43 @@ describe("a call's hold", () => {
     }))
     expect(run.outcome).toMatchObject({ _tag: "Success", success: { reserved: 0.02 } })
     expect(run.totals).toEqual({ settled: 0, reserved: 0 })
+  })
+})
+
+describe("a send whose answer is a stream it gives (the Anthropic client's)", () => {
+  test("leaves nothing behind in a long-lived scope it runs in: each call's own scope is a child that goes when it closes", async () => {
+    const run = await over(answer, Effect.gen(function* () {
+      const spend = yield* ModelSpend
+      const model = yield* LanguageModel.LanguageModel
+      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", module: "Scripted" }
+      // A host's scope that outlives many calls, the one a call finds in its context.
+      const host = yield* Scope.make()
+      const states: Array<string> = []
+      for (let call = 0; call < 3; call++) {
+        const [, stream] = yield* chargedSend(charging, "streamText", hold(0.02), (report) =>
+          Effect.succeed([undefined, model.streamText({ prompt: "Hi" }).pipe(Stream.tap((part) => (part.type === "finish" ? report({ input: 0, output: 0, cacheRead: 0, cacheWrite: 0, billed: BILLED }) : Effect.void)))] as [undefined, Stream.Stream<{ readonly type: string }, unknown>])).pipe(Effect.provideService(Scope.Scope, host))
+        yield* Stream.runDrain(stream)
+        states.push(host.state._tag)
+      }
+      yield* Scope.close(host, Exit.void)
+      return states
+    }))
+    expect(run.outcome).toMatchObject({ _tag: "Success", success: ["Empty", "Empty", "Empty"] })
+    expect(run.totals).toEqual({ settled: 3 * BILLED, reserved: 0 })
+  })
+
+  test("is settled at the hold when the scope it runs in closes before its stream is read", async () => {
+    const run = await over(answer, Effect.gen(function* () {
+      const spend = yield* ModelSpend
+      const charging: Charging = { spend, options: { prices: {} }, model: "scripted", module: "Scripted" }
+      const host = yield* Scope.make()
+      yield* chargedSend(charging, "streamText", hold(0.02), () =>
+        Effect.flatMap(CallReach, (cell) => Ref.set(cell, "Sent")).pipe(Effect.as([undefined, Stream.never] as [undefined, Stream.Stream<never>]))).pipe(Effect.provideService(Scope.Scope, host))
+      const during = yield* spend.totals
+      yield* Scope.close(host, Exit.void)
+      return during
+    }))
+    expect(run.outcome).toMatchObject({ _tag: "Success", success: { reserved: 0.02 } })
+    expect(run.totals).toEqual({ settled: 0.02, reserved: 0 })
   })
 })

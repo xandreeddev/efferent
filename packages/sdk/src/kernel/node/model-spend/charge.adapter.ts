@@ -83,7 +83,8 @@ export const chargedEffect = <A, E, R>(
  * A call that sends its request in an effect and reads its answer from the stream that effect gives (Effect AI's
  * Anthropic client), charged: its hold taken before `send`, in a scope of its own, which closes when the stream
  * ends, fails or is interrupted, when `send` fails, and, as a guard, when the scope this runs in closes (a provider's
- * stream runs it inside one, which ends with the answer), whichever comes first.
+ * stream runs it inside one, which ends with the answer), whichever comes first. That scope is a child of the one
+ * this runs in (`Scope.fork`), which drops it once it closes, so a scope that outlives many calls keeps nothing.
  */
 export const chargedSend = <S, A, E1, E2, R1>(
   charging: Charging,
@@ -92,9 +93,9 @@ export const chargedSend = <S, A, E1, E2, R1>(
   send: (report: Held["report"]) => Effect.Effect<[S, Stream.Stream<A, E2>], E1, R1>,
 ): Effect.Effect<[S, Stream.Stream<A, E2>], E1 | AiError.AiError, Exclude<R1, CallReach>> =>
   Effect.uninterruptibleMask((restore) => Effect.gen(function* () {
-    const own = yield* Scope.make()
-    const outer = yield* Effect.serviceOption(Scope.Scope)
-    yield* Option.match(outer, { onNone: () => Effect.void, onSome: (scope) => Scope.addFinalizerExit(scope, (exit) => Scope.close(own, exit)) })
+    // A child of the scope it runs in, when there is one: the child closes with it, and leaves it when the child
+    // closes first, so a scope that outlives many calls (a host's) keeps nothing of each.
+    const own = yield* Option.match(yield* Effect.serviceOption(Scope.Scope), { onNone: () => Scope.make(), onSome: (scope) => Scope.fork(scope) })
     const held = yield* holdIn(charging, method, charge).pipe(Scope.provide(own), Effect.onError((cause) => Scope.close(own, Exit.failCause(cause))))
     const [sent, stream] = yield* restore(send(held.report).pipe(Effect.provideService(CallReach, held.reach))).pipe(
       Effect.onExit((exit) => (Exit.isFailure(exit) ? Scope.close(own, exit) : Effect.void)),

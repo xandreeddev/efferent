@@ -115,14 +115,30 @@ call recorder's `model.called` facts.
 ## Consequences
 
 - A host on Node or Bun reaches OpenAI, Gemini, the gateway and Anthropic without the old engine, every call charged
-  to the ledger it provides; an eval run's budget caps what a first-party provider sends.
+  to the ledger it provides; an eval run's budget caps what a first-party provider sends. The provider's layer must be
+  built inside the trial (in the runnable's `execute`, where the run provides the trial's account as `ModelSpend`):
+  one built once for the whole run, outside the trials, takes whatever ledger was in context when it was built, and
+  the run's budget caps none of its calls. `packages/evals/src/testing/provider-budget.test.ts` runs a run the right
+  way: the budget refuses the third call before it is sent (`isSpendRefusal`), the run starts no more trials, and what
+  it settled is what the provider reported.
 - The sdk depends on `@effect/ai-anthropic`, and its Anthropic layer is the one outside the models plugin that names
   a provider package. `effect/no-provider-namespace` is unchanged: the provider folders are not in
   `PROVIDER_NEUTRAL`, and neither are the kernel's contracts.
 - A refusal of the charge is an `InvalidRequestError` to a plan: not retried, handed to a plan's next step, which
   charges the same ledger and is refused too when it is over the cap.
-- The worst case counts bytes as tokens, so a long prompt holds about four times what it costs; a host that knows its
-  tokenizer sets `bytesPerToken`.
+- The ledger's totals are an upper bound, not a bill. A hold counts a byte as a token (`bytesPerToken` 1), so it is
+  several times what the input costs (about four for English text), plus every output token the cap allows; and a
+  call that fails after it was sent, or whose stream was cut, settles at its whole hold. Trials that run at once each
+  hold their worst case, so a run can be refused well under its budget while what was billed is far below it. A host
+  tightens it with `bytesPerToken` (the bytes its tokenizer reads a token in, at least) and `maxOutputTokens` (the
+  answer its calls need, which is also sent as the cap).
+- `chargedSend` (the Anthropic client's sends) takes its hold in a scope of its own, a child of the scope it runs in.
+  Effect AI's Anthropic provider runs it inside the stream of one call, whose scope ends with the answer; were it run
+  in a scope that outlives many calls (a host that keeps one layer for hours), each child leaves that scope when it
+  closes (`Scope.fork`), so nothing builds up there. A test holds three calls in one long-lived scope and finds it
+  empty after each.
+- `cache: "1h"` writes the cache at the one-hour price, which is not the five-minute one: the host's `cacheWrite`
+  must be the one-hour price for a model sent with it, or its cache writes are settled low.
 - The real call recorded for this cut went through the gateway with DeepSeek V4.1 Flash, and through the gateway's
   Anthropic-compatible endpoint with Claude Haiku 4.5; Anthropic's own API is tested on recorded shapes only.
 

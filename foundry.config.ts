@@ -464,7 +464,9 @@ const config: typeof GateSuiteConfig.Encoded = {
       ...testLayer("evals-langsmith", ["evals-langsmith", "evals"], ["effect", "effect/testing", "bun:test"]),
       { name: "evals-langsmith", path: src("evals-langsmith"), canImport: ["evals"], externals: ["effect", "langsmith", "node:"] },
       // evals reaches core only for the ModelSpend ledger its runs share across their trials.
-      ...testLayer("evals", ["evals", "core/kernel"], ["effect", "effect/ai", "node:", "bun:test"]),
+      // The eval tests also reach the kernel's Node entry (`sdk/kernel/node`, a devDependency): one runs a run's budget
+      // over a real model provider of the kernel's (ADR 0026). The package's own code never imports the sdk.
+      ...testLayer("evals", ["evals", "core/kernel", "sdk/kernel/node"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
       { name: "evals", path: src("evals"), canImport: ["core/kernel"], externals: ["effect", "effect/ai", "@noble/hashes/"] },
       // Core's kernel (`packages/core/src/kernel`, the entry `./kernel`) comes
       // before core's other layers: one layer for all its roles, which imports
