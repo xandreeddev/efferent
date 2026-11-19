@@ -63,7 +63,7 @@ export const openAiCompatibleEmbedder = (options: OpenAiCompatibleEmbedderOption
     if (Option.isSome(problem)) return yield* Effect.die(new Error(`openAiCompatibleEmbedder: ${problem.value}`))
     const spend = yield* ModelSpend
     const client = reaching(options.timeouts ?? {})(yield* HttpClient.HttpClient)
-    const charging: Charging = { spend, options: options.spend, model: options.model, module: OPENAI_COMPATIBLE_EMBEDDER }
+    const charging: Charging = { spend, options: options.spend, model: options.model, operation: "embeddings", module: OPENAI_COMPATIBLE_EMBEDDER }
     const url = `${options.baseUrl.replace(/\/+$/, "")}/embeddings`
     const idle = Duration.fromInputUnsafe(options.timeouts?.idle ?? DEFAULT_TIMEOUTS.idle)
     const headers = options.apiKey === undefined ? {} : { authorization: `Bearer ${Redacted.value(options.apiKey)}` }

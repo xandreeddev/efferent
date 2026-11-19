@@ -124,7 +124,7 @@ export const openAiCompatibleModel = (options: OpenAiCompatibleOptions): Layer.L
   Layer.effect(LanguageModel.LanguageModel, Effect.gen(function* () {
     const spend = yield* ModelSpend
     const client = reaching(options.timeouts ?? {})(yield* HttpClient.HttpClient)
-    const charging: Charging = { spend, options: options.spend, model: options.model, module: OPENAI_COMPATIBLE }
+    const charging: Charging = { spend, options: options.spend, model: options.model, operation: "chat", module: OPENAI_COMPATIBLE }
     const url = `${options.baseUrl.replace(/\/+$/, "")}/chat/completions`
     const idle = Duration.fromInputUnsafe(options.timeouts?.idle ?? DEFAULT_TIMEOUTS.idle)
     const bound = outputBoundOf(Option.fromNullishOr(options.maxOutputTokens), priceOf(options.spend, options.model))

@@ -4,7 +4,8 @@
 - **Applies to:** `@xandreed/sdk/kernel/node` (new: `openAiCompatibleEmbedder`, `OpenAiCompatibleEmbedderOptions`,
   `EmbedPrefixes`, `EMBEDDER_NAME_LIMIT`; `spendRefusalOf` and `isSpendRefusal` also read an `EmbedFailed`)
 - **Amends:** ADR 0026 (the charge holds a call with an output bound of 0; a refusal also rides in an `EmbedFailed`'s
-  `cause`), ADR 0021 (what `EmbedAs` means on a model that reads no prefix of its own)
+  `cause`), ADR 0021 (what `EmbedAs` means on a model that reads no prefix of its own), ADR 0030 (the charge's
+  metrics carry `gen_ai.operation.name`; the span `openai_compatible_embedder.embed`)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -94,7 +95,11 @@ unless `provider` names another), `gen_ai.request.model`, `gen_ai.embeddings.dim
 `gen_ai.usage.input_tokens`, the tokens its requests reported, summed, set however the call ends. Each request's
 `POST` is Effect's own span under it. No text it embeds is put on a span. The charge counts each request as a model
 call: `efferent.model.calls` by how it ended, `efferent.model.tokens` (`input`, and an `output` of 0), and
-`efferent.model.cost` with its basis. A failure's words can echo the texts (a provider that refuses a request can
+`efferent.model.cost` with its basis. With embeddings among them, a series by model alone would mix two kinds of
+call before the names freeze at the release, so all three metrics now also carry `gen_ai.operation.name`, set by the
+charge from what each provider gives it (`Charging.operation`): `chat` for `openAiCompatibleModel` and
+`anthropicModel`, `embeddings` for the embedder. OpenTelemetry's key is kept because it names the same thing (ADR
+0030's rule), and it is the key its own `gen_ai.client.*` metrics are split by. A failure's words can echo the texts (a provider that refuses a request can
 repeat it): with the export's `content` off, the span's exit reaches the exporter as the failure's type alone
 (`withheldExit`), as for a model call; a test plants markers in the texts, the key and a refusal that echoes the
 request, and finds none posted, and finds the echoed words posted with `content` on.

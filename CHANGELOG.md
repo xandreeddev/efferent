@@ -22,7 +22,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   call; each `embed` is the span `openai_compatible_embedder.embed` with the
   `gen_ai.*` attributes of an embeddings call. A failure is `EmbedFailed`; a
   refusal of the ledger keeps its `ModelSpendExceeded` as the cause, which
-  `spendRefusalOf` and `isSpendRefusal` now read there too.
+  `spendRefusalOf` and `isSpendRefusal` now read there too. The charge's
+  metrics (`efferent.model.calls`, `efferent.model.tokens`,
+  `efferent.model.cost`) carry `gen_ai.operation.name`, `chat` for a model's
+  calls and `embeddings` for an embedder's, so the two are told apart.
 - `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
   calls without writing a span (ADR 0030). `Sessions.turn` is the span
   `session.turn` (the session, the turn's number, how it ended), `callTool` is

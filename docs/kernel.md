@@ -2533,7 +2533,9 @@ it runs under; `callTool` is `tool.call` (the tool, the call's id,
 whether its result is a failure), a tool's own spans under it. A turn the
 inbox or a background task runs on a fiber of its own is a trace of its own.
 The Node entry's providers count every call they send, a curator's and a
-summarizer's too, in the charge: `efferent.model.calls` by model and outcome,
+summarizer's too, and the embedder's requests, in the charge, each by model
+and by what it did (`gen_ai.operation.name`: `chat` or `embeddings`):
+`efferent.model.calls` by outcome,
 `efferent.model.tokens` by kind, and `efferent.model.cost`, what the ledger
 settled each call at, the one source of a cost, with its basis (`billed`,
 `usage` at the price, or `held`, an estimate for a call that reported

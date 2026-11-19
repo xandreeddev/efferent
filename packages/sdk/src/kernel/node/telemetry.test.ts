@@ -217,16 +217,16 @@ describe("a kernel host's turn, exported over OTLP", () => {
   test("the metrics: model calls by model and outcome and tokens by kind, counted by the charge, the cost the ledger settled with its basis, tool calls by tool; none names a session or a turn", async () => {
     const run = await exported({}, askAdd)
     const metrics = metricsOf(run.posts)
-    expect(metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.outcome": "answered" }, value: 2 }])
+    expect(metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.outcome": "answered" }, value: 2 }])
     // 100 then 150 read, 40 of the first from the cache; 10 then 5 written.
     expect(metrics["efferent.model.tokens"]).toEqual([
-      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "input" }, value: 60 + 150 },
-      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "cache_read" }, value: 40 },
-      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "output" }, value: 15 },
+      { attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.token.kind": "input" }, value: 60 + 150 },
+      { attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.token.kind": "cache_read" }, value: 40 },
+      { attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.token.kind": "output" }, value: 15 },
     ])
     // The cost is what the ledger settled, and nothing else: the two calls at the model's price.
     expect(run.result.totals.settled).toBeCloseTo((60 * 1 + 40 * 0.5 + 10 * 4 + 150 * 1 + 5 * 4) / 1_000_000, 12)
-    expect(metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.cost.basis": "usage" }, value: run.result.totals.settled }])
+    expect(metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.cost.basis": "usage" }, value: run.result.totals.settled }])
     expect(metrics["efferent.tool.calls"]).toEqual([{ attributes: { "efferent.tool": "add", "efferent.outcome": "succeeded" }, value: 1 }])
     const keys = Object.values(metrics).flatMap((points) => points.flatMap((point) => Object.keys(point.attributes)))
     expect(keys.filter((key) => ["efferent.session.id", "gen_ai.conversation.id", "efferent.turn"].includes(key))).toEqual([])
@@ -360,12 +360,12 @@ describe("a curation, which runs in no turn", () => {
     expect(childrenOf(alone.spans, root!).filter((name) => name === "session.turn" || name === "LanguageModel.streamText"))
       .toEqual(["session.turn", "LanguageModel.streamText", "LanguageModel.streamText", "session.turn"])
     // Its two calls are counted where the charge counts every call, with what they cost: no loop of the host's ran.
-    expect(alone.metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.outcome": "answered" }, value: 2 }])
+    expect(alone.metrics["efferent.model.calls"]).toEqual([{ attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.outcome": "answered" }, value: 2 }])
     expect(alone.metrics["efferent.model.tokens"]).toEqual([
-      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "input" }, value: 600 },
-      { attributes: { "efferent.model": MODEL, "efferent.token.kind": "output" }, value: 40 },
+      { attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.token.kind": "input" }, value: 600 },
+      { attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.token.kind": "output" }, value: 40 },
     ])
-    expect(alone.metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL, "efferent.cost.basis": "usage" }, value: 2 * (300 * 1 + 20 * 4) / 1_000_000 }])
+    expect(alone.metrics["efferent.model.cost"]).toEqual([{ attributes: { "efferent.model": MODEL, "gen_ai.operation.name": "chat", "efferent.cost.basis": "usage" }, value: 2 * (300 * 1 + 20 * 4) / 1_000_000 }])
 
     const hosted = await curated(keep.pipe(Effect.withSpan("host.after_turn")))
     const [host] = named(hosted.spans, "host.after_turn")

@@ -19,6 +19,11 @@ export const TURN_ATTRIBUTE = "efferent.turn"
 export const OUTCOME_ATTRIBUTE = "efferent.outcome"
 /** The model a call was sent to and priced as (the provider's `model`). */
 export const MODEL_ATTRIBUTE = "efferent.model"
+/**
+ * What a model call did, under OpenTelemetry's key for it (`CallOperation`): a conversation's answer (`chat`) or vectors
+ * (`embeddings`). The charge's metrics carry it, so an embedder's calls are told from a model's.
+ */
+export const OPERATION_ATTRIBUTE = "gen_ai.operation.name"
 /** A count's kind of token (`TokenKind`). */
 export const TOKEN_KIND_ATTRIBUTE = "efferent.token.kind"
 /** The tool a call ran, `unknown` when the toolkit has no tool of the name the model wrote. */
@@ -36,6 +41,9 @@ export const UNKNOWN = "unknown"
  * failed after it was sent (`failed`).
  */
 export type CallOutcome = "answered" | "failed" | "refused" | "unsent" | "interrupted"
+
+/** What a call the charge counts did (`gen_ai.operation.name`): OpenTelemetry's names for the two. */
+export type CallOperation = "chat" | "embeddings"
 
 /** A kind of token a provider reported: apart, as the charge prices them, so they sum to the call's input and output. */
 export type TokenKind = "input" | "cache_read" | "cache_write" | "output"

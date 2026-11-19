@@ -985,7 +985,8 @@ the package roots.
   metrics are the charge's (`model-spend/`, which may import that contract): as it closes a call's hold it counts
   `efferent.model.calls` (by the model asked and `CallOutcome`, one per attempt sent; nothing held, nothing counted)
   and `efferent.model.tokens` (`tokensOf`, apart as `costOf` prices them), and once `settle` took it
-  `efferent.model.cost` with `efferent.cost.basis` (`metredCostOf`: `billed`, `usage` or `held`), never a 0 for an
+  `efferent.model.cost` with `efferent.cost.basis`; each also by `gen_ai.operation.name` (`CallOperation`: `chat`,
+  or `embeddings` for the embedder's, from `Charging.operation`, which each provider sets) (`metredCostOf`: `billed`, `usage` or `held`), never a 0 for an
   unknown cost; `modelAnswer` counts nothing; none names a session or a turn. The export (`telemetry-otlp/`,
   `sdk-kernel-node-telemetry-otlp`, which imports Effect alone) is the old telemetry plugin's OTLP files moved with
   their tests: `otlpTelemetry`, `otlpTelemetryOver` (the host's `HttpClient`), `otlpTelemetryFromEnv`,

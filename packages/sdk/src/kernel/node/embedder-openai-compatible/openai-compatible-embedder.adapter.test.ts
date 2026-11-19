@@ -381,9 +381,9 @@ describe("the embedder's span and counts", () => {
     const count = (metric: typeof modelCalls, attributes: Record<string, string>) => Effect.map(Metric.value(Metric.withAttributes(metric, attributes)), (state) => state.count)
     const counts = await Effect.runPromise(Effect.gen(function* () {
       return {
-        calls: yield* Effect.forEach(["answered", "refused"], (outcome) => count(modelCalls, { "efferent.model": MODEL, "efferent.outcome": outcome })),
-        tokens: yield* Effect.forEach(["input", "output"], (kind) => count(modelTokens, { "efferent.model": MODEL, "efferent.token.kind": kind })),
-        cost: yield* Effect.forEach(["billed", "usage", "held"], (basis) => count(modelCost, { "efferent.model": MODEL, "efferent.cost.basis": basis })),
+        calls: yield* Effect.forEach(["answered", "refused"], (outcome) => count(modelCalls, { "efferent.model": MODEL, "gen_ai.operation.name": "embeddings", "efferent.outcome": outcome })),
+        tokens: yield* Effect.forEach(["input", "output"], (kind) => count(modelTokens, { "efferent.model": MODEL, "gen_ai.operation.name": "embeddings", "efferent.token.kind": kind })),
+        cost: yield* Effect.forEach(["billed", "usage", "held"], (basis) => count(modelCost, { "efferent.model": MODEL, "gen_ai.operation.name": "embeddings", "efferent.cost.basis": basis })),
       }
     }).pipe(Effect.provideService(Metric.MetricRegistry, registry)))
     // Two requests answered in each of the first two embeds; the third embed's first request refused, so it sent no second.

@@ -7,14 +7,16 @@ import { CallReach } from "./call-reach.port.js"
 import { DEFAULT_TIMEOUTS, modelCalls, modelCost, modelTokens } from "./model-spend.entity.js"
 import type { Charge, Reach, Reported, SpendOptions, Timeouts } from "./model-spend.entity.js"
 import { callOutcomeOf, heldBy, isRefusalStatus, ledgerUnavailable, metredCostOf, neverConnected, settlementOf, spendRefused, tokensOf } from "./model-spend.entity.functions.js"
-import { COST_BASIS_ATTRIBUTE, MODEL_ATTRIBUTE, OUTCOME_ATTRIBUTE, TOKEN_KIND_ATTRIBUTE } from "../../contracts/turn/telemetry.entity.js"
-import type { CallOutcome } from "../../contracts/turn/telemetry.entity.js"
+import { COST_BASIS_ATTRIBUTE, MODEL_ATTRIBUTE, OPERATION_ATTRIBUTE, OUTCOME_ATTRIBUTE, TOKEN_KIND_ATTRIBUTE } from "../../contracts/turn/telemetry.entity.js"
+import type { CallOperation, CallOutcome } from "../../contracts/turn/telemetry.entity.js"
 
 /** What charges a provider's calls: the ledger in its context, the host's spend options, and names for its failures. */
 export interface Charging {
   readonly spend: ModelSpend["Service"]
   readonly options: SpendOptions
   readonly model: string
+  /** What its calls do, which the metrics carry (`gen_ai.operation.name`): a model's `chat`, an embedder's `embeddings`. */
+  readonly operation: CallOperation
   /** The `AiError` module its failures name: the provider's. */
   readonly module: string
 }
@@ -31,11 +33,14 @@ const refusedBy = (charging: Charging, method: string) => (error: ModelSpendExce
     ModelSpendUnavailable: (unavailable) => ledgerUnavailable(unavailable, charging.module, method),
   })
 
-/** Count one call the charge held: by the model asked and how it ended, and the tokens its provider reported, by kind. */
-const counted = (model: string, outcome: CallOutcome, usage: Option.Option<Reported>): Effect.Effect<void> => Effect.andThen(
-  Metric.update(Metric.withAttributes(modelCalls, { [MODEL_ATTRIBUTE]: model, [OUTCOME_ATTRIBUTE]: outcome }), 1),
+/**
+ * Count one call the charge held: by the model asked, what it did and how it ended, and the tokens its provider
+ * reported, by kind.
+ */
+const counted = (charging: Charging, outcome: CallOutcome, usage: Option.Option<Reported>): Effect.Effect<void> => Effect.andThen(
+  Metric.update(Metric.withAttributes(modelCalls, { [MODEL_ATTRIBUTE]: charging.model, [OPERATION_ATTRIBUTE]: charging.operation, [OUTCOME_ATTRIBUTE]: outcome }), 1),
   Effect.forEach(Option.match(usage, { onNone: () => [], onSome: tokensOf }), ([kind, count]) =>
-    Metric.update(Metric.withAttributes(modelTokens, { [MODEL_ATTRIBUTE]: model, [TOKEN_KIND_ATTRIBUTE]: kind }), count), { concurrency: 1, discard: true }),
+    Metric.update(Metric.withAttributes(modelTokens, { [MODEL_ATTRIBUTE]: charging.model, [OPERATION_ATTRIBUTE]: charging.operation, [TOKEN_KIND_ATTRIBUTE]: kind }), count), { concurrency: 1, discard: true }),
 )
 
 /**
@@ -56,12 +61,12 @@ export const holdIn = Effect.fnUntraced(function* (charging: Charging, method: s
     (hold, exit) => Effect.all([Ref.get(reported), Ref.get(reach)], { concurrency: 1 }).pipe(
       Effect.flatMap(([usage, at]) => Effect.andThen(
         // Counted whatever the ledger does with the hold: the call was sent, or held, and ended so.
-        counted(charging.model, callOutcomeOf(exit, at), usage),
+        counted(charging, callOutcomeOf(exit, at), usage),
         Option.match(settlementOf(charge, usage, at), {
           // The cost counted once the ledger took it: the ledger is the one source of what a call cost.
           onSome: (cost) => Effect.andThen(charging.spend.settle(hold, cost), Option.match(metredCostOf(charge, usage, at), {
             onNone: () => Effect.void,
-            onSome: (metred) => Metric.update(Metric.withAttributes(modelCost, { [MODEL_ATTRIBUTE]: charging.model, [COST_BASIS_ATTRIBUTE]: metred.basis }), metred.cost),
+            onSome: (metred) => Metric.update(Metric.withAttributes(modelCost, { [MODEL_ATTRIBUTE]: charging.model, [OPERATION_ATTRIBUTE]: charging.operation, [COST_BASIS_ATTRIBUTE]: metred.basis }), metred.cost),
           })),
           onNone: () => charging.spend.release(hold),
         }),
