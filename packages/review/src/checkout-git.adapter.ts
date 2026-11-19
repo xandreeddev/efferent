@@ -50,7 +50,9 @@ const repositoryAbove = (path: string): Option.Option<string> => {
  * base branch and the head's `fetchRef` (into `refs/review/<sha>`), and a commit still missing by its sha; `diff` is
  * `git diff base...head` with
  * `DIFF_FLAGS`, read whole; `show` reads a blob through `ls-tree`, so a link or a folder is none; `worktree` adds a
- * detached worktree under `worktrees/` and removes it, forced, when the scope closes.
+ * detached worktree under `worktrees/` and removes it, forced, when the scope closes; `clone` copies the bare clone into
+ * `clones/` (`git clone --no-hardlinks --no-checkout`: its objects copied, unreachable ones too, no template's hooks),
+ * checks the commit out there, and deletes the folder when the scope closes, with no git command.
  */
 export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, CacheRootRefused, HostShell> => Layer.effect(Checkout, Effect.gen(function* () {
   const host = yield* Effect.context<HostShell>()
@@ -110,7 +112,7 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     )
   }, provided)
 
-  const entry = Effect.fn("checkout.entry")(function* (repo: RepoName, at: CommitSha, path: string) {
+  const entry =Effect.fn("checkout.entry")(function* (repo: RepoName, at: CommitSha, path: string) {
     const listed = yield* runWhole(git(repo, "ls-tree", "-l", "-z", at, "--", path), { bound: "tool" })
     const found = listed.stdout.split("\0").find((line) => line.endsWith(`\t${path}`))
     const match = found === undefined ? null : LS_SIZED_ENTRY.exec(found)
@@ -153,5 +155,18 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     return listed.stdout.split("\0").filter((path) => path.length > 0)
   }, provided)
 
-  return Checkout.of({ fetch, diff, show, worktree, entry, blob, files, grep, mergeBase, changedPaths })
+  const clone = Effect.fn("checkout.clone")(function* (repo: RepoName, at: CommitSha) {
+    const path = join(repoDir(repo), "clones", `${at.slice(0, 12)}-${randomUUID().slice(0, 8)}`)
+    const inClone = (...args: ReadonlyArray<string>) => gitArgv(["file"], path, args)
+    yield* Effect.acquireRelease(Effect.succeed(path), () => Effect.tryPromise(() => rm(path, { recursive: true, force: true })).pipe(
+      Effect.ignore({ log: "Warn", message: "a review's clone could not be deleted" }),
+    ))
+    yield* runWhole(gitArgv(["file"], null, ["clone", "--quiet", "--no-hardlinks", "--no-checkout", "--template=", "--", mirror(repo), path]))
+    const found = yield* runWhole(inClone("cat-file", "-e", `${at}^{commit}`), { exits: [0, 1, 128] })
+    if (found.code !== 0) return yield* Effect.fail(new CommitMissing({ sha: at, message: `the commit ${at} is not in the clone of ${repo}` }))
+    yield* runWhole(inClone("checkout", "--quiet", "--detach", at))
+    return path
+  }, provided)
+
+  return Checkout.of({ fetch, diff, show, worktree, clone, entry, blob, files, grep, mergeBase, changedPaths })
 }))

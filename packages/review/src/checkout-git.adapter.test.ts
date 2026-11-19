@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs"
 import { join } from "node:path"
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect"
 import { gitCheckout } from "./checkout-git.adapter.js"
@@ -163,6 +163,34 @@ describe("gitCheckout", () => {
       return { path, there }
     }), cacheRoot))
     expect([interrupted.there, existsSync(interrupted.path)]).toEqual([true, false])
+  })
+
+  test("a clone holds the commit in a folder that shares nothing with the shared clone, and is deleted with its scope", async () => {
+    const cacheRoot = freshCache()
+    const seen = value(await fetched((checkout) => Effect.scoped(Effect.map(checkout.clone(repo, head.sha), (path) => {
+      const objects = join(path, ".git", "objects")
+      return {
+        path,
+        sum: readFileSync(join(path, "src/sum.ts"), "utf8"),
+        alternates: existsSync(join(objects, "info", "alternates")),
+        hooks: existsSync(join(path, ".git", "hooks")) ? readdirSync(join(path, ".git", "hooks")) : [],
+        linked: readdirSync(objects, { recursive: true }).map(String).filter((name) => /^[0-9a-f]{2}\/[0-9a-f]{38}$/.test(name) || name.endsWith(".pack")).some((name) => statSync(join(objects, name)).nlink > 1),
+        worktrees: existsSync(join(cacheRoot, "owner", "project", "mirror.git", "worktrees")),
+      }
+    })), cacheRoot))
+    expect(seen.sum).toContain("total += value * 1")
+    expect([seen.alternates, seen.hooks, seen.linked, seen.worktrees]).toEqual([false, [], false, false])
+    expect(seen.path.startsWith(join(cacheRoot, "owner", "project", "clones"))).toBe(true)
+    expect(existsSync(seen.path)).toBe(false)
+
+    let failedIn = ""
+    const failed = await run((checkout) => Effect.scoped(Effect.flatMap(checkout.clone(repo, base.sha), (path) => {
+      failedIn = path
+      return Effect.fail("the review failed")
+    })), cacheRoot)
+    expect([Exit.isFailure(failed), failedIn.length > 0, existsSync(failedIn)]).toEqual([true, true, false])
+    expect(failureTag(await run((checkout) => Effect.scoped(checkout.clone(repo, CommitSha.make("0".repeat(40)))), cacheRoot))).toBe("CommitMissing")
+    expect(readdirSync(join(cacheRoot, "owner", "project", "clones"))).toEqual([])
   })
 
   test("fetching again reuses the clone", async () => {
