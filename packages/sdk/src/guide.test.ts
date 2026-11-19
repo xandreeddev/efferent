@@ -136,10 +136,10 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/plugins/session/sessions.adapter.ts#",
       "packages/sdk/src/plugins/session/sessions.adapter.ts#",
       "packages/sdk/src/plugins/memory-flat/flat.adapter.ts#",
-      "packages/sdk/src/plugins/memory-window/window.adapter.ts#",
       "packages/sdk/src/guide.test.ts#memory-plugin",
       "packages/sdk/src/plugins/memory-summary/summary.adapter.ts#",
       "packages/sdk/src/pointers.test.ts#memory",
+      "packages/sdk/src/plugins/memory-flat/flat.adapter.ts#",
       "packages/sdk/src/pointers.test.ts#tools",
       "packages/sdk/src/pointers.test.ts#read",
       "packages/sdk/src/facts.test.ts#tools",
@@ -197,8 +197,6 @@ describe("docs/kernel.md", () => {
       "core.session.turn.ended",
       "core.session.turn.started",
       "plugin.inbox.queued",
-      "plugin.window.dropped",
-      "plugin.window.pressure",
     ])
   })
 })

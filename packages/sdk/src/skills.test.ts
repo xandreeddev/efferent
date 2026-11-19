@@ -213,7 +213,7 @@ describe("skills", () => {
   })
 })
 
-/** A memory that sends the open turn's message and nothing before it: what a window or a compaction leaves of an old load. */
+/** A memory that sends the open turn's message and nothing before it: what a memory that leaves old turns out, or a compaction, leaves of an old load. */
 const lastMessageOnly: Layer.Layer<Memory> = Layer.succeed(Memory, Memory.of({
   context: (session: OpenSession) => Effect.map(session.journal, (journal) =>
     journal.flatMap((record) => Option.toArray(messageOf(record))).filter((message) => message._tag === "User").slice(-1).map(promptMessage)),

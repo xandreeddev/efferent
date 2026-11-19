@@ -25,7 +25,7 @@ This guide follows version `0.23.0`.
 ## A first program
 
 An agent that keeps its conversation in a folder, asks a model that charges a
-ledger capped at ten cents, sends what fits a memory's budget, and runs a
+ledger capped at ten cents, sends it the whole conversation, and runs a
 tool when the model asks for one:
 
 ```ts
@@ -33,7 +33,7 @@ import { Config, Effect, Layer, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel, modelSpendMemory, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId } from "@xandreed/core"
-import { callTool, Memory, modelAnswer, recoverTurns, sessions, windowMemory } from "@xandreed/sdk"
+import { callTool, flatMemory, Memory, modelAnswer, recoverTurns, sessions } from "@xandreed/sdk"
 import { directoryJournal, openAiCompatibleModel } from "@xandreed/sdk/node"
 
 // A tool: what it does, what it takes and what it gives. It is code, offered with every call and never stored.
@@ -85,7 +85,7 @@ const program = (message: string) => Effect.gen(function* () {
 })
 
 // The parts, each a layer whose type says what it needs. The journal is a folder, so the next run remembers.
-const agent = (directory: string) => Layer.mergeAll(windowMemory({ budgetTokens: 8_000 }), toolsLive, model).pipe(
+const agent = (directory: string) => Layer.mergeAll(flatMemory, toolsLive, model).pipe(
   Layer.provideMerge(sessions()),
   Layer.provideMerge(directoryJournal({ directory })),
   Layer.provideMerge(Layer.merge(kernel(), modelSpendMemory)),
@@ -111,16 +111,20 @@ What each part does:
 - **The model** (`openAiCompatibleModel`) is Effect AI's `LanguageModel`. It
   needs `ModelSpend`, the ledger, which `modelSpendMemory` provides: a call
   over the cap, or of a model with no price, is refused before it is sent.
-- **The memory** (`windowMemory`) builds each request's messages from the
-  journal, dropping whole turns, oldest first, past its budget. It stores
-  nothing.
+- **The memory** (`flatMemory`) builds each request's messages from the
+  journal: the whole conversation, unbounded, oldest first. It stores
+  nothing, and each request starts with the one before it, so a provider's
+  prompt cache reuses all of it.
 - **The loop** is `turn`: `modelAnswer` reads the model's stream and stores
   its answer with the tool calls it made; `callTool` runs one call and stores
   its result, a failure included, which the model reads and goes on from.
 
 Each part is replaced by providing another layer: `sqliteJournal` for the
-folder, `anthropicModel` for the endpoint, `summaryMemory` or `withKnowledge`
-for the window, `autoApprove` before a tool that asks with `approve`. A test
+folder, `anthropicModel` for the endpoint, `summaryMemory` for the flat
+memory when a conversation must keep to a budget (past it, the summary memory
+folds old turns into a summary in one batch, so the prefix a provider cached
+holds between folds), `withKnowledge` around either, `autoApprove` before a
+tool that asks with `approve`. A test
 runs the same program over `scriptedModel`, which calls no provider, and reads
 what it did back with `turnsOf`.
 

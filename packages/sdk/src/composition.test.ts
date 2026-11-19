@@ -4,8 +4,8 @@ import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel } from "@xandreed/core"
 import type { Core, JournalStorage, OpenSession, Sessions } from "@xandreed/core"
 import type { Memory } from "./contracts/memory/memory.port.js"
-import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, fileHandlers, fileTools, inbox, inMemoryFiles, inProcessJournal, planned, retryable, sessions, skills, windowMemory } from "./index.js"
-import type { AnswerCut, Files, Inbox, ModelAnswerFailed, InvalidBudget, Skill, ToolNeeds } from "./index.js"
+import { Approval, approve, callTool, CurrentTurn, defineSkill, factHandlers, factTools, fileHandlers, fileTools, inbox, inMemoryFiles, inProcessJournal, planned, retryable, flatMemory, sessions, skills } from "./index.js"
+import type { AnswerCut, Files, Inbox, ModelAnswerFailed, Skill, ToolNeeds } from "./index.js"
 import { runningTurn } from "./contracts/turn/running-turn.entity.functions.js"
 import { testTurn } from "./testing.js"
 
@@ -16,11 +16,11 @@ import { testTurn } from "./testing.js"
  */
 
 /** Everything an agent of the stock parts provides, needing nothing. */
-type Agent = Layer.Layer<Inbox | Memory | Sessions | JournalStorage | Core | LanguageModel.LanguageModel, InvalidBudget>
+type Agent = Layer.Layer<Inbox | Memory | Sessions | JournalStorage | Core | LanguageModel.LanguageModel>
 
 const complete = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
   const AgentLive: Agent = inbox(testTurn("You are a friendly tutor.")).pipe(
-    Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(flatMemory),
     Layer.provideMerge(sessions()),
     Layer.provideMerge(inProcessJournal()),
     Layer.provideMerge(kernel()),
@@ -32,7 +32,7 @@ const complete = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
 const withoutSessions = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
   // @ts-expect-error the stack leaves out `sessions()`: it still needs `Sessions` and does not provide it
   const AgentLive: Agent = inbox(testTurn("You are a friendly tutor.")).pipe(
-    Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(flatMemory),
     Layer.provideMerge(inProcessJournal()),
     Layer.provideMerge(kernel()),
     Layer.provideMerge(model),
@@ -43,7 +43,7 @@ const withoutSessions = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
 const withoutTheModel = () => {
   // @ts-expect-error the stack leaves out the model: the turn the inbox runs still needs `LanguageModel`
   const AgentLive: Agent = inbox(testTurn("You are a friendly tutor.")).pipe(
-    Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(flatMemory),
     Layer.provideMerge(sessions()),
     Layer.provideMerge(inProcessJournal()),
     Layer.provideMerge(kernel()),
@@ -54,7 +54,7 @@ const withoutTheModel = () => {
 const sessionsBelowTheJournal = (model: Layer.Layer<LanguageModel.LanguageModel>) => {
   // @ts-expect-error the session plugin is built before the journal it needs: what a layer needs is provided by the layers below it
   const AgentLive: Agent = inbox(testTurn("You are a friendly tutor.")).pipe(
-    Layer.provideMerge(windowMemory({ budgetTokens: 3000 })),
+    Layer.provideMerge(flatMemory),
     Layer.provideMerge(inProcessJournal()),
     Layer.provideMerge(sessions()),
     Layer.provideMerge(kernel()),

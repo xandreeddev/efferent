@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Ref, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, kernel, Sessions, TurnNumber, userMessage } from "@xandreed/core"
 import type { SessionId } from "@xandreed/core"
-import { Approval, approve, callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, modelAnswer, ReadResult, readResult, scriptedModel, sessions, summarizedEvent, Summarizer, summaryMemory, turnsOf, windowMemory } from "./index.js"
+import { Approval, approve, callTool, CurrentTurn, flatMemory, inProcessJournal, Memory, modelAnswer, ReadResult, readResult, scriptedModel, sessions, summarizedEvent, Summarizer, summaryMemory, turnsOf } from "./index.js"
 import type { Decision, ModelScript } from "./index.js"
 
 /*
@@ -104,7 +104,6 @@ describe("every part reads a branch as it read the conversation at the cut", () 
   const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages folded`) }))
   const memories: ReadonlyArray<readonly [string, Layer.Layer<Memory, unknown>]> = [
     ["flat", flatMemory],
-    ["window", windowMemory({ budgetTokens: 120 })],
     ["summary", summaryMemory({ budgetTokens: 120 }).pipe(Layer.provide(summarizer))],
   ]
 

@@ -5,8 +5,8 @@ import { assistantMessage, Core, inspectionOf, kernel, live, liveEvent, Sessions
 import type { EventDefinition, JournalStorage, KernelEvent, NewSessionInput, SessionId, Usage } from "@xandreed/core"
 import type { InboxTurnFailure } from "./contracts/inbox/inbox.port.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import { inProcessJournal, modelAnswer, sessions, windowMemory } from "./index.js"
-import type { InvalidBudget, SessionsOptions } from "./index.js"
+import { flatMemory, inProcessJournal, modelAnswer, sessions } from "./index.js"
+import type { SessionsOptions } from "./index.js"
 
 /*
  * Scaffolding for the kernel's tests: scripted models (no provider, no
@@ -117,7 +117,7 @@ export const base = (model: Layer.Layer<LanguageModel.LanguageModel>, parts: { r
 
 /** The modules a test turn runs over, composed as a host composes them, with the parts a test replaces. */
 export const stack = <EM = never, EX = never>(model: Layer.Layer<LanguageModel.LanguageModel>, parts: Parts<EM, EX> = {}) => {
-  const memory: Layer.Layer<Memory, EM | InvalidBudget, Below> = parts.memory ?? windowMemory({ budgetTokens: 3000 })
+  const memory: Layer.Layer<Memory, EM, Below> = parts.memory ?? flatMemory
   const extras: Layer.Layer<never, EX, Core> = parts.extras ?? Layer.empty
   return memory.pipe(
     Layer.provideMerge(sessions(parts.sessions)),

@@ -23,7 +23,7 @@ old engine.
 | `@xandreed/runtime` | 0.22.0 | Nothing: each part is an Effect layer, composed with `Layer.provideMerge` or provided to the program; a stack missing a part does not compile |
 | `@xandreed/process-host` | 0.22.0 | None yet |
 | `@xandreed/plugin-agent-loop` | 0.22.0 | The host's own loop over `modelAnswer` and `callTool`; `planned` for retries and fallbacks |
-| `@xandreed/plugin-memory-window` | 0.22.0 | `windowMemory` |
+| `@xandreed/plugin-memory-window` | 0.22.0 | `summaryMemory` over the host's `Summarizer`, for a conversation kept to a budget; `flatMemory` for the whole of it |
 | `@xandreed/plugin-memory-summary` | 0.22.0 | `summaryMemory` over the host's `Summarizer` |
 | `@xandreed/plugin-memory-digest` | 0.22.0 | None yet; a long tool result is sent as its start and a pointer (`pointed`, the `ReadResult` tool) |
 | `@xandreed/plugin-memory` | 0.22.0 | `curate` and `withKnowledge` (memory kept by a curator); `withFacts` with `factTools` (facts the model keeps itself); for its embedding model, an `Embedder`: `openAiCompatibleEmbedder` on `@xandreed/sdk/node` |

@@ -35,7 +35,7 @@ import type { CuratorSubject, EmbedderSubject, FilePath, FilesSubject, KeyValueS
 import { filesSearch, Search, searchConformance } from "./index.js"
 import { CurationFailed, curationOf, Curator, curatorConformance } from "./index.js"
 import { EmbedFailed, Embedder, embedderConformance, inMemoryVectors, recordedEmbedder, VectorsRefused, VectorStore, vectorStoreConformance } from "./index.js"
-import { FileChanged, Files, filesConformance, inMemoryFiles, flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, windowDroppedEvent, windowMemory } from "./index.js"
+import { FileChanged, Files, filesConformance, inMemoryFiles, flatMemory, inProcessJournal, messageText, paired, pointed, promptMessage, sessions, Summarizer, summarizerConformance, SummaryFailed, summaryMemory, webStorageJournal, flatMemoryWith } from "./index.js"
 
 /*
  * The contracts' kits: each passes on its stock plugin, and each
@@ -405,18 +405,13 @@ describe("the memory kit", () => {
     ({ name, ...(budget === null ? {} : { budgetTokens: budget }), open: (core) => built(Memory, layer, onCore(core)) })
   const every = ["turn-message", "conversation", "pairs", "other-uses", "own-records", "prefix", "fits", "over-budget", "unknown-skipped", "unknown-refused", "unknown-conversation-refused", "foreign"]
 
-  test("has the checks its doc comment lists, and passes on the window memory plugin", async () => {
-    expect(ids(memoryConformance(subject("window", windowMemory({ budgetTokens }))))).toEqual(every)
-    expect(await failedChecks(memoryConformance(subject("window", windowMemory({ budgetTokens }))))).toEqual([])
-  })
-
   test("passes on the flat memory plugin, which keeps to no budget and so is not held to one", async () => {
     const flat = subject("flat", flatMemory, null)
     expect(ids(memoryConformance(flat))).toEqual(every.filter((id) => id !== "fits" && id !== "over-budget"))
     expect(await failedChecks(memoryConformance(flat))).toEqual([])
   })
 
-  test("passes on the summary memory plugin, over a summarizer that answers in a few words", async () => {
+  test("has the checks its doc comment lists, and passes on the summary memory plugin, over a summarizer that answers in a few words", async () => {
     const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages about long things`) }))
     const summary = subject("summary", Layer.provide(summaryMemory({ budgetTokens }), summarizer))
     expect(ids(memoryConformance(summary))).toEqual(every)
@@ -433,19 +428,22 @@ describe("the memory kit", () => {
       paired(records.flatMap((record) => Option.toArray(read(record, journal)))).map(promptMessage))),
   }))
 
-  test("a memory that sends long results as pointers is held to it: the window and the summary memory with pointers, and a flat one that points", async () => {
-    const window = { ...subject("window", windowMemory({ budgetTokens, pointers })), pointers }
-    expect(ids(memoryConformance(window))).toEqual(everyWithPointers)
-    expect(await failedChecks(memoryConformance(window))).toEqual([])
+  test("a memory that sends long results as pointers is held to it: the summary memory with pointers, flatMemoryWith, and a flat one that points written by hand", async () => {
     const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages about long things`) }))
     const summary = { ...subject("summary", Layer.provide(summaryMemory({ budgetTokens, pointers }), summarizer)), pointers }
+    expect(ids(memoryConformance(summary))).toEqual(everyWithPointers)
     expect(await failedChecks(memoryConformance(summary))).toEqual([])
+    const unbounded = everyWithPointers.filter((id) => id !== "fits" && id !== "over-budget" && id !== "pointer-budget")
+    const shipped = { ...subject("flat", flatMemoryWith({ pointers }), null), pointers }
+    expect(ids(memoryConformance(shipped))).toEqual(unbounded)
+    expect(await failedChecks(memoryConformance(shipped))).toEqual([])
     const sent = pointed(pointers)
     const flat = { ...subject("flat", flatReading((record) => sent(record)), null), pointers }
-    expect(ids(memoryConformance(flat))).toEqual(everyWithPointers.filter((id) => id !== "fits" && id !== "over-budget" && id !== "pointer-budget"))
+    expect(ids(memoryConformance(flat))).toEqual(unbounded)
     expect(await failedChecks(memoryConformance(flat))).toEqual([])
     // A memory that sends every result whole fails each pointer check, when it says it points.
-    expect(await failedChecks(memoryConformance({ ...subject("window", windowMemory({ budgetTokens })), pointers }))).toEqual(["pointer", "pointer-budget", "pointer-stable"])
+    expect(await failedChecks(memoryConformance({ ...subject("summary", Layer.provide(summaryMemory({ budgetTokens }), summarizer)), pointers }))).toEqual(["pointer", "pointer-budget", "pointer-stable"])
+    expect(await failedChecks(memoryConformance({ ...subject("flat", flatMemory, null), pointers }))).toEqual(["pointer", "pointer-stable"])
   })
 
   test("each careless pointing memory fails the check of what it is careless about, and no other", async () => {
@@ -458,10 +456,11 @@ describe("the memory kit", () => {
     const lateToPoint = { ...subject("flat", flatReading((record, journal) => record.turn === journal.at(-1)?.turn ? messageOf(record) : sent(record)), null), pointers }
     expect(await failedChecks(memoryConformance(lateToPoint))).toEqual(["pointer-stable"])
     // It counts every result whole against its budget, then sends pointers.
-    const countsWhole = { ...subject("window", Layer.effect(Memory, Effect.gen(function* () {
+    const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages about long things`) }))
+    const countsWhole = { ...subject("summary", Layer.effect(Memory, Effect.gen(function* () {
       const core = yield* Core
-      const counting = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), onCore(core)))), Memory)
-      const pointing = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens, pointers }), onCore(core)))), Memory)
+      const counting = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(Layer.provide(summaryMemory({ budgetTokens }), summarizer), onCore(core)))), Memory)
+      const pointing = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(Layer.provide(summaryMemory({ budgetTokens, pointers }), summarizer), onCore(core)))), Memory)
       return Memory.of({ context: (session) => Effect.flatMap(counting.context(session), () => pointing.context(session)) })
     }))), pointers }
     expect(await failedChecks(memoryConformance(countsWhole))).toEqual(["pointer-budget"])
@@ -479,26 +478,26 @@ describe("the memory kit", () => {
   const bearing = (journal: ReadonlyArray<{ readonly message?: Message }>) =>
     journal.flatMap((event) => event.message === undefined ? [] : [{ role: event.message._tag === "User" ? "user" as const : "assistant" as const, content: messageText(event.message) }])
 
-  /** The window memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
-  const strict = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
-    const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), onCore(yield* Core)))), Memory)
-    const known: ReadonlyArray<string> = [...CONVERSATION_VOCABULARY.knows, windowDroppedEvent.name]
+  /** The flat memory, but it refuses every record it does not know, whoever wrote it and whatever the record says. */
+  const strict = () => subject("flat", Layer.effect(Memory, Effect.gen(function* () {
+    const inner = Context.get(yield* Layer.build(Layer.provide(flatMemory, onCore(yield* Core))), Memory)
+    const known: ReadonlyArray<string> = CONVERSATION_VOCABULARY.knows
     return Memory.of({
       context: (session) => Effect.flatMap(session.journal, (journal) => {
         const stranger = journal.find((event) => !known.includes(event.name))
         return stranger === undefined ? inner.context(session) : Effect.fail(new UnknownRecord({ name: stranger.name, seq: stranger.seq, message: "this memory reads nothing it does not know" }))
       }),
     })
-  })))
+  })), null)
 
   /**
-   * The window memory, but it judges unknown records under its own prefix alone: it reads the journal with a vocabulary
-   * over core's (`vocabularyOf("window", own)`), not over the conversation's, so a record of the conversation it does not
-   * know passes as another plugin's, and the window below never sees it.
+   * The flat memory, but it judges unknown records under its own prefix alone: it reads the journal with a vocabulary
+   * over core's (`vocabularyOf("flat", own)`), not over the conversation's, so a record of the conversation it does not
+   * know passes as another plugin's, and the flat memory below never sees it.
    */
-  const ownPrefixOnly = () => subject("window", Layer.effect(Memory, Effect.gen(function* () {
-    const inner = Context.get(yield* Effect.orDie(Layer.build(Layer.provide(windowMemory({ budgetTokens }), onCore(yield* Core)))), Memory)
-    const vocabulary = vocabularyOf("window", [windowDroppedEvent])
+  const ownPrefixOnly = () => subject("flat", Layer.effect(Memory, Effect.gen(function* () {
+    const inner = Context.get(yield* Layer.build(Layer.provide(flatMemory, onCore(yield* Core))), Memory)
+    const vocabulary = vocabularyOf("flat", [])
     const ofTheConversation = (name: string) => name.startsWith("conversation.")
     return Memory.of({
       context: (session) => Effect.flatMap(session.journal, (journal) => Result.match(readJournal(vocabulary)(journal), {
@@ -506,7 +505,7 @@ describe("the memory kit", () => {
         onSuccess: () => inner.context({ ...session, journal: Effect.succeed(journal.filter((event) => !ofTheConversation(event.name) || CONVERSATION_VOCABULARY.knows.includes(event.name))) }),
       })),
     })
-  })))
+  })), null)
 
   test("each careless memory fails the checks of what it is careless about, and between them every check", async () => {
     // It sends every message any record bears, reads no flag and keeps to no budget.

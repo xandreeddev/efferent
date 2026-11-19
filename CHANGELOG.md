@@ -8,6 +8,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Removed
+
+- **Breaking:** `@xandreed/sdk` no longer has the window memory (ADR 0037):
+  `windowMemory`, `WindowOptions`, `windowDroppedEvent`,
+  `windowPressureEvent`, `WindowDroppedData` and `WindowPressureData` are
+  gone, with the `plugin.window.dropped` and `plugin.window.pressure`
+  records and the span `window_memory.context`. Once a conversation filled
+  its budget, it dropped one more turn for every new message, so the start
+  of the context changed and a provider's prompt cache missed on every
+  message. **Migration:** use `summaryMemory({ budgetTokens })` over the
+  host's `Summarizer` for a conversation kept to a budget (it folds old
+  turns into a summary in one batch, so the cached prefix holds between
+  folds), or `flatMemory` for the whole conversation. A journal a 0.23.0
+  host stored under the window memory opens as it is: both memories pass
+  over its `plugin.window.dropped` records as another plugin's, and the
+  turns the window had dropped are sent again in the next request.
+
+### Added
+
+- `@xandreed/sdk`: `flatMemoryWith({ pointers })` (`FlatOptions`), the flat
+  memory with each long tool result sent as its start and a pointer
+  (`pointed`, ADR 0011), the same text the summary memory sends; `flatMemory`
+  is unchanged. The first program in the README and the getting started page
+  uses `flatMemory`.
+
 ## 0.23.0 — 2026-11-19
 
 0.23.0 replaces the engine of earlier releases with the kernel: a small core

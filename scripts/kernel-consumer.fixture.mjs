@@ -7,11 +7,15 @@ import { dirname, join } from "node:path"
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core"
-import { callTool, Embedder, embedderConformance, Files, inMemoryMedia, MediaStore, mediaStoreConformance, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk"
+import { callTool, Embedder, embedderConformance, Files, inMemoryMedia, MediaStore, mediaStoreConformance, filesConformance, filesSearch, flatMemory, flatMemoryWith, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, Summarizer, summaryMemory } from "@xandreed/sdk"
 import { anthropicModel, directoryJournal, directoryMedia, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleEmbedder, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
+/** Long tool results sent as pointers, for the flat memory that points. */
+const pointers = { overTokens: 60, previewTokens: 10 }
+/** A summarizer that answers in a few words, for the summary memory's kit. */
+const shortSummaries = Layer.succeed(Summarizer, Summarizer.of({ summarize: ({ messages }) => Effect.succeed(`${messages.length} messages about long things`) }))
 const onCore = (core) => Layer.succeed(Core, core)
 /** Build a plugin's layer over the services given and take the contract it provides. */
 const built = (key, layer, over) =>
@@ -80,8 +84,9 @@ const kits = {
   }),
   sessions: sessionsConformance({ open: (core) => sessionsOver(core, inProcessJournal()) }),
   sessionsOverWebStorage: sessionsConformance({ open: (core) => sessionsOver(core, webStorageJournal(memoryStore(), { prefix: "consumer:" })) }),
-  memory: memoryConformance({ name: "window", budgetTokens, open: (core) => built(Memory, windowMemory({ budgetTokens }), onCore(core)) }),
+  memory: memoryConformance({ name: "summary", budgetTokens, open: (core) => built(Memory, Layer.provide(summaryMemory({ budgetTokens }), shortSummaries), onCore(core)) }),
   flatMemory: memoryConformance({ name: "flat", open: (core) => built(Memory, flatMemory, onCore(core)) }),
+  pointingMemory: memoryConformance({ name: "flat", pointers, open: (core) => built(Memory, flatMemoryWith({ pointers }), onCore(core)) }),
   files: filesConformance({ open: built(Files, inMemoryFiles(), Layer.empty) }),
   embedder: embedderConformance({
     texts: ["a cat", "a stock price", "a lemon cake"],

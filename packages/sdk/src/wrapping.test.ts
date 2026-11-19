@@ -3,7 +3,7 @@ import { Context, Effect, Layer, Schema } from "effect"
 import { stored, storedEvent } from "@xandreed/core"
 import { Label } from "./testing.port.js"
 import { Memory } from "./contracts/memory/memory.port.js"
-import { windowMemory } from "./index.js"
+import { flatMemory } from "./index.js"
 import { counting, open, stack } from "./testing.js"
 
 // How a wrapper composes, as docs/adr/0001-kernel-plugin-composition.md relies
@@ -67,7 +67,7 @@ describe("wrapping a contract with higher-order plugins", () => {
   })
 
   test("type-level: a wrapper applied to another contract's plugin does not compile", () => {
-    const memory = windowMemory({ budgetTokens: 3000 })
+    const memory = flatMemory
     // @ts-expect-error a wrapper of Label takes a plugin of Label
     const wrong = memory.pipe(wrapping("A"))
     expect(wrong).toBeDefined()
@@ -102,7 +102,7 @@ describe("memory wrappers that record: the last applied is the outermost, and ru
   test("the outermost wrapper's entry lands first in the journal, the innermost's last", async () => {
     const notes = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* counting
-      const memory = windowMemory({ budgetTokens: 3000 }).pipe(noting("inner"), noting("outer"))
+      const memory = flatMemory.pipe(noting("inner"), noting("outer"))
       const agent = yield* open(stack(model, { memory }))
       const session = yield* agent.createSession({ owner: "learner" })
       yield* agent.send(session, "Hello")
