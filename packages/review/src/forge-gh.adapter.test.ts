@@ -3,7 +3,8 @@ import { Effect, Exit, Layer, Option } from "effect"
 import type { Ran } from "@xandreed/sdk"
 import { RunId } from "./forge.entity.js"
 import { Forge } from "./forge.port.js"
-import { ghForge, PULL_FIELDS } from "./forge-gh.adapter.js"
+import { ghForge, PULL_FIELDS, TIMELINE_QUERY } from "./forge-gh.adapter.js"
+import { commandLine } from "./host-command.entity.functions.js"
 import { HostShell } from "./host-shell.port.js"
 import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
 
@@ -154,5 +155,42 @@ describe("ghForge", () => {
     const { exit } = await withForge({ [VIEW]: { ...exited(pull().slice(-100)), stdoutCut: 4096 } }, (forge) => forge.pullRequest(repo, PullNumber.make(7)))
     const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined
     expect(reason?._tag === "Fail" && reason.error._tag).toBe("OutputCut")
+  })
+})
+
+describe("ghForge.firstHead", () => {
+  const FIRST = "3".repeat(40)
+  const BRANCH_RUNS = "gh api --paginate --slurp 'repos/owner/project/actions/runs?event=pull_request&branch=fix-sum&per_page=100'"
+  const twoCommits = () => Effect.flatMap(Forge, (forge) => forge.pullRequest(repo, PullNumber.make(7)))
+  const commits = [
+    { oid: FIRST, messageHeadline: "first", authoredDate: "2026-11-01T09:00:00Z", committedDate: "2026-11-01T09:00:00Z", authors: [] },
+    { oid: HEAD, messageHeadline: "fix the sum", authoredDate: "2026-11-01T10:00:00Z", committedDate: "2026-11-01T10:00:00Z", authors: [] },
+  ]
+
+  const TIMELINE = commandLine(["gh", "api", "graphql", "-f", `query=${TIMELINE_QUERY}`, "-F", "owner=owner", "-F", "name=project", "-F", "number=7"])
+  const timeline = (forcePushes: ReadonlyArray<unknown> = []) => exited(JSON.stringify({ data: { repository: { pullRequest: {
+    createdAt: "2026-11-01T09:00:00Z", closedAt: "2026-11-02T00:00:00Z", timelineItems: { nodes: forcePushes },
+  } } } }))
+  const firstOf = (answers: Readonly<Record<string, Ran>>) =>
+    withForge({ [VIEW]: exited(pull({ commits })), [PERMISSION]: exited(JSON.stringify({ permission: "write" })), ...answers }, (forge) => Effect.flatMap(twoCommits().pipe(Effect.provideService(Forge, forge)), (read) => forge.firstHead(repo, read)))
+
+  test("the commit of the head branch's earliest pull_request run while it was open, from its runs and its timeline; a merged pull request's runs name no pull request", async () => {
+    const runs = JSON.stringify([{ workflow_runs: [
+      { head_sha: HEAD, created_at: "2026-11-01T10:05:00Z", pull_requests: [] },
+      { head_sha: "9".repeat(40), created_at: "2026-10-01T00:00:00Z", pull_requests: [] },
+      { head_sha: FIRST, created_at: "2026-11-01T09:05:00Z", pull_requests: [] },
+    ] }])
+    const { exit, asked } = await firstOf({ [TIMELINE]: timeline(), [BRANCH_RUNS]: exited(runs) })
+    expect<unknown>(Exit.isSuccess(exit) && exit.value).toEqual({ sha: FIRST, source: "first-ci-run" })
+    expect(asked.slice(-2)).toEqual([TIMELINE, BRANCH_RUNS])
+  })
+
+  test("with no run but a force-push, the head it replaced, said so; with neither, the first commit, said so", async () => {
+    const pushed = await firstOf({ [TIMELINE]: timeline([{ createdAt: "2026-11-01T12:00:00Z", beforeCommit: { oid: "6".repeat(40) } }]), [BRANCH_RUNS]: exited(JSON.stringify([{ workflow_runs: [] }])) })
+    const neither = await firstOf({ [TIMELINE]: timeline(), [BRANCH_RUNS]: exited(JSON.stringify([{ workflow_runs: [] }])) })
+    expect<unknown>([pushed.exit, neither.exit].map((exit) => Exit.isSuccess(exit) && exit.value)).toEqual([
+      { sha: "6".repeat(40), source: "before-first-force-push" },
+      { sha: FIRST, source: "first-commit" },
+    ])
   })
 })

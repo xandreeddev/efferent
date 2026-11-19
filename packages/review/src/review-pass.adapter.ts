@@ -1,0 +1,141 @@
+import { Array as Arr, Effect, Layer, Option, Order, Predicate, Result, Schema, Stream } from "effect"
+import { AiError, LanguageModel, Prompt } from "effect/ai"
+import { JournalStorage, kernel, ModelSpend, Sessions, userMessage } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
+import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, sessions } from "@xandreed/sdk"
+import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
+import type { Checkout } from "./checkout.port.js"
+import type { Findings } from "./findings.port.js"
+import { PassJournalFailed, SUMMARY_KEPT } from "./review-pass.entity.js"
+import type { CallUsage, PassEnded, PassResult } from "./review-pass.entity.js"
+import { ReviewPasses } from "./review-pass.port.js"
+import type { PassInput } from "./review-pass.port.js"
+import { reviewToolHandlers, reviewTools } from "./review-tools.adapter.js"
+import { READ_DIFF, READ_LINES } from "./review-tools.entity.js"
+
+/** The owner a pass's session is created under in its journal. */
+export const PASS_OWNER = "efferent-review"
+
+/** The path a `readLines` or `readDiff` call names, when its parameters hold one. */
+const OpenedPath = Schema.Struct({ path: Schema.String })
+
+/** What a failure says, in its own words when it has them. */
+const wordsOf = (error: unknown, otherwise: string): string =>
+  Predicate.hasProperty(error, "message") && Predicate.isString(error.message) && error.message.length > 0 ? error.message : otherwise
+
+/** A failure of the pass's journal (opening, recovering, reading or writing it) as the pass's own failure. */
+const kept = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, PassJournalFailed, R> =>
+  Effect.mapError(effect, (cause) => new PassJournalFailed({ message: wordsOf(cause, "the journal failed"), cause }))
+
+/** Whether a failed answer is the model's (a refused, cut or failed call), not the journal's. */
+const isModels = (error: unknown): boolean => AiError.isAiError(error) || Predicate.isTagged(error, "ModelAnswerFailed")
+
+/**
+ * What a pass runs on, each a part a host may swap: the memory that builds each step's context (`flatMemory` by
+ * default), the tools' handlers over what the pass reviews (`reviewToolHandlers` by default), and the journal kept at
+ * an input's `journalAt` (a `directoryJournal` in that folder by default), whose failure to open is a
+ * `PassJournalFailed`.
+ */
+export interface KernelPassesOptions {
+  readonly memory?: Layer.Layer<Memory>
+  readonly tools?: typeof reviewToolHandlers
+  readonly journal?: (at: string) => Layer.Layer<JournalStorage, PassJournalFailed>
+}
+
+/** The stock journal: a `directoryJournal` in the folder `at`, a refusal to open it a `PassJournalFailed`. */
+const folderJournal = (at: string): Layer.Layer<JournalStorage, PassJournalFailed> =>
+  directoryJournal({ directory: at }).pipe(
+    Layer.catchTag("JournalOpenFailed", (cause) => Layer.effect(JournalStorage, Effect.fail(new PassJournalFailed({ message: wordsOf(cause, "the journal could not be opened"), cause })))),
+  )
+
+/**
+ * One pass over the kernel: a session in the journal at `journalAt` (its turns recovered first), the memory, the
+ * review's tools, and the host's loop with `modelAnswer` and `callTool`. Each step sends the prompt's prefix, then
+ * what the memory gives (the tail message, the calls and their results). The pass ends when the model answers
+ * without a call, at its step cap, when the ledger refuses a call, when a call fails, when an answer is cut at the
+ * output cap (its finish says `length`; the calls it asked for run first, so a finding it reported is kept), or when
+ * the journal fails: each with the findings recorded so far. Each call's cost is what the ledger settled while it
+ * ran, so the passes run one after another.
+ */
+const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Required<KernelPassesOptions>) {
+  const spend = yield* ModelSpend
+  const settled = Effect.map(Effect.orDie(spend.totals), (totals) => totals.settled)
+  const calls: Array<CallUsage> = []
+  const opened = new Set<string>()
+  let made: Option.Option<SessionId> = Option.none()
+
+  const loop = Effect.scoped(Effect.gen(function* () {
+    yield* kept(recoverTurns)
+    const memory = yield* Memory
+    const toolkit = yield* reviewTools
+    const conversations = yield* Sessions
+    const id = yield* kept(conversations.create({ owner: PASS_OWNER }))
+    made = Option.some(id)
+    const session = yield* kept(conversations.open(id))
+    yield* kept(session.append(userMessage(input.prompt.tail)))
+    for (let step = 1; step <= input.options.maxSteps; step++) {
+      const context = yield* kept(memory.context(session))
+      const prompt = Prompt.make([...input.prompt.prefix, ...context])
+      let finish = ""
+      const stream = LanguageModel.streamText({ prompt, toolkit: reviewTools, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
+        Stream.tap((part) => Effect.sync(() => {
+          if (part.type === "finish") finish = part.reason
+        })),
+      )
+      const before = yield* settled
+      const answered = yield* Effect.result(modelAnswer(stream, session))
+      // What the ledger settled while the call ran, rounded past the float noise of a difference.
+      const cost = Math.max(0, Math.round(((yield* settled) - before) * 1e12) / 1e12)
+      if (Result.isFailure(answered)) {
+        calls.push({ step, tokens: Option.none(), cost })
+        const error = answered.failure
+        if (!isModels(error)) return yield* Effect.fail(new PassJournalFailed({ message: wordsOf(error, "the journal failed"), cause: error }))
+        return isSpendRefusal(error)
+          ? { _tag: "SpendRefused", message: wordsOf(error, "the spend cap refused the call") } satisfies PassEnded
+          : { _tag: "ModelFailed", message: wordsOf(error, "the model call failed") } satisfies PassEnded
+      }
+      const answer = answered.success
+      calls.push({ step, tokens: Option.map(answer.usage, (usage) => ({ input: usage.inputTokens, cached: usage.cachedInputTokens ?? 0, output: usage.outputTokens })), cost })
+      if (finish !== "length" && answer.toolCalls.length === 0) return { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) } satisfies PassEnded
+      // Every call the answer asked for runs, also when the answer was cut: a call that did not decode is a failed result.
+      for (const call of answer.toolCalls) {
+        const path = call.name === READ_LINES || call.name === READ_DIFF ? Schema.decodeUnknownOption(OpenedPath)(call.params) : Option.none()
+        if (Option.isSome(path)) opened.add(path.value.path)
+        yield* kept(callTool(toolkit, call, session))
+      }
+      if (finish === "length") return { _tag: "OutputCut" } satisfies PassEnded
+    }
+    return { _tag: "StepCap", steps: input.options.maxSteps } satisfies PassEnded
+  }))
+
+  const stack = Layer.mergeAll(parts.memory, parts.tools(input.reviewed)).pipe(
+    Layer.provideMerge(sessions()),
+    Layer.provideMerge(parts.journal(input.journalAt)),
+    Layer.provideMerge(kernel()),
+  )
+  const ended = yield* loop.pipe(
+    Effect.provide(stack),
+    Effect.catchTag("PassJournalFailed", (failed) => Effect.logWarning("a review pass's journal failed", failed).pipe(
+      Effect.as<PassEnded>({ _tag: "JournalFailed", message: clipTo(failed.message, 300) }),
+    )),
+  )
+  const result: PassResult = { pass: input.reviewed.pass, session: made, ended, calls, opened: Arr.sort(Array.from(opened), Order.String) }
+  return result
+})
+
+/**
+ * The passes over the kernel (`runPass`), each part swappable (`KernelPassesOptions`): the model is the
+ * `LanguageModel` the host provides, charged to its `ModelSpend`; the tools read the host's `Checkout` and record in
+ * its `Findings`.
+ */
+export const kernelPasses = (options: KernelPassesOptions = {}): Layer.Layer<ReviewPasses, never, LanguageModel.LanguageModel | ModelSpend | Checkout | Findings> => {
+  const parts: Required<KernelPassesOptions> = {
+    memory: options.memory ?? flatMemory,
+    tools: options.tools ?? reviewToolHandlers,
+    journal: options.journal ?? folderJournal,
+  }
+  return Layer.effect(ReviewPasses, Effect.gen(function* () {
+    const needs = yield* Effect.context<LanguageModel.LanguageModel | ModelSpend | Checkout | Findings>()
+    return ReviewPasses.of({ run: (input) => runPass(input, parts).pipe(Effect.provide(needs)) })
+  }))
+}

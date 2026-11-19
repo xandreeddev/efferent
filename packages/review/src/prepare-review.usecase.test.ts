@@ -41,6 +41,7 @@ const FAILED_LOG = ["ci\tRun tests\t2026-11-19T11:47:00.5Z error: expect(receive
 
 const forgeOf = (pull: PullRequest) => Layer.succeed(Forge, Forge.of({
   pullRequest: (_repo: RepoName, _number: PullNumber) => Effect.succeed(pull),
+  firstHead: () => Effect.succeed({ sha: pull.head.sha, source: "first-commit" as const }),
   ciRuns: () => Effect.succeed([run(11, "failure"), run(12, "success"), run(13, "timed_out"), run(14, "failure")]),
   failedLog: (_repo, id) => id === 14
     ? Effect.fail(new CommandFailed({ reason: "exited", command: "gh run view 14", message: "exited with 1: HTTP 401: Bad credentials\u001b[0m" }))
@@ -58,7 +59,7 @@ const validationsStub = () => {
   return { layer, asked }
 }
 
-const OPTIONS: PrepareOptions = { budgetTokens: 24_000, run: ["bun test"], workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000 }
+const OPTIONS: PrepareOptions = { at: { _tag: "Head" }, budgetTokens: 24_000, run: ["bun test"], workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000 }
 
 /** The worktrees the checkout made and has not removed. */
 const worktrees = () => {
@@ -123,6 +124,7 @@ describe("prepareReview", () => {
     expect(summaryText(review)).toBe([
       `Pull request #1 in owner/project: fix the sum`,
       `Author: someone, permission read; head fix-sum at ${short} (a fork); base main at ${fixture.left.slice(0, 12)}`,
+      `Reviewed: ${short}, its head; base ${fixture.left.slice(0, 12)}`,
       `Commits: 1, first ${short} at 2026-11-01T10:00:00Z`,
       `Diff: 12 files, 8 kept, 4 left out; about ${review.diff.tokens} tokens`,
       "  left out: bun.lock changed (+1 -0); no manifest changed",

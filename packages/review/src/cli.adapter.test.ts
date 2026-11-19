@@ -23,8 +23,17 @@ describe("cliLine", () => {
 
 describe("reviewCli", () => {
   test.each([
-    [["prepare"], "efferent-review takes the command prepare and a pull request's number"],
-    [["review", "1", "--repo", "a/b"], "efferent-review takes the command prepare and a pull request's number"],
+    [["prepare"], "efferent-review takes the command prepare or review and a pull request's number"],
+    [["merge", "1", "--repo", "a/b"], "efferent-review takes the command prepare or review and a pull request's number"],
+    [["review", "1", "--repo", "a/b"], "review needs the model's key in the environment variable VERCEL_API_KEY"],
+    [["review", "1", "--repo", "a/b", "--max-cost", "-1"], "--max-cost must be a positive number of USD, not \"-1\""],
+    [["prepare", "1", "--repo", "a/b", "--max-cost", "0.1"], "--max-cost is a flag of review, not of prepare"],
+    [["prepare", "1", "--repo", "a/b", "--max-steps", "4"], "--max-steps is a flag of review, not of prepare"],
+    [["review", "1", "--repo", "a/b", "--max-steps", "0"], "--max-steps must be a whole number of at least 1, not \"0\""],
+    [["review", "1", "--repo", "a/b", "--model", "other/model"], "--model other/model needs its --price (input,cached,output, USD per million tokens)"],
+    [["review", "1", "--repo", "a/b", "--model", "other/model", "--price", "1,2"], "--price must be three numbers of USD per million tokens, input,cached,output, not \"1,2\""],
+    [["review", "1", "--repo", "a/b", "--model", "other/model", "--price", "1,0.1,2"], "review needs the model's key in the environment variable VERCEL_API_KEY"],
+    [["prepare", "1", "--repo", "a/b", "--at", "latest"], "--at (head, first or a commit's full sha) is not valid"],
     [["prepare", "1"], "--repo (owner/name) is not valid"],
     [["prepare", "1", "--repo", "a/b; rm -rf x"], "--repo (owner/name) is not valid"],
     [["prepare", "1", "--repo", "../b"], "--repo (owner/name) is not valid"],

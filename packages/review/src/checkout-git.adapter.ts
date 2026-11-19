@@ -2,18 +2,24 @@ import { randomUUID } from "node:crypto"
 import { existsSync } from "node:fs"
 import { mkdir, rm } from "node:fs/promises"
 import { dirname, isAbsolute, join, resolve } from "node:path"
-import { Effect, Layer, Option } from "effect"
-import { CacheRootRefused, CommitMissing } from "./checkout.entity.js"
-import type { Transport } from "./checkout.entity.js"
-import { gitArgv } from "./checkout.entity.functions.js"
+import { Effect, Layer, Option, Schema } from "effect"
+import { CacheRootRefused, CommitMissing, GREP_TIMEOUT_MS, PatternRefused } from "./checkout.entity.js"
+import type { BlobSha, GrepRequest, Transport, TreeEntry } from "./checkout.entity.js"
+import { entryOf, gitArgv, grepHitsOf, LS_ENTRY, LS_SIZED_ENTRY, REGULAR } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
 import { CommandFailed } from "./host-command.entity.js"
 import { runWhole } from "./host-shell.adapter.js"
 import type { HostShell } from "./host-shell.port.js"
-import type { CommitSha, HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
+import { CommitSha } from "./pull-request.entity.js"
+import type { HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
+import { plainText } from "./log-digest.entity.functions.js"
+import { clipTo } from "@xandreed/sdk"
 
 /** The flags every diff is read with, whatever the host's git config says: no colour, no driver, `a/` and `b/`. */
 export const DIFF_FLAGS = ["--no-color", "--no-ext-diff", "--no-textconv", "-U5", "-M", "--src-prefix=a/", "--dst-prefix=b/"] as const
+
+/** The config every search runs with, whatever the host's says: no column, no colour, paths in full, never outside the commit. */
+export const GREP_CONFIG = ["-c", "grep.column=false", "-c", "color.grep=never", "-c", "grep.fullName=true", "-c", "grep.fallbackToNoIndex=false"] as const
 
 /**
  * Where the checkout keeps its clones (`<root>/<owner>/<name>/`, a bare clone in `mirror.git`, worktrees in
@@ -104,5 +110,48 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     )
   }, provided)
 
-  return Checkout.of({ fetch, diff, show, worktree })
+  const entry = Effect.fn("checkout.entry")(function* (repo: RepoName, at: CommitSha, path: string) {
+    const listed = yield* runWhole(git(repo, "ls-tree", "-l", "-z", at, "--", path), { bound: "tool" })
+    const found = listed.stdout.split("\0").find((line) => line.endsWith(`\t${path}`))
+    const match = found === undefined ? null : LS_SIZED_ENTRY.exec(found)
+    return match === null ? { _tag: "Missing" } satisfies TreeEntry : entryOf(match[1] ?? "", match[2] ?? "", match[3] ?? "", Number(match[4]))
+  }, provided)
+
+  const blob = Effect.fn("checkout.blob")(function* (repo: RepoName, id: BlobSha) {
+    return (yield* runWhole(git(repo, "cat-file", "blob", id), { bound: "tool" })).stdout
+  }, provided)
+
+  const files = Effect.fn("checkout.files")(function* (repo: RepoName, at: CommitSha) {
+    const listed = yield* runWhole(git(repo, "ls-tree", "-r", "-z", "--full-tree", at))
+    return listed.stdout.split("\0").flatMap((line) => {
+      const match = LS_ENTRY.exec(line)
+      return match !== null && match[2] === "blob" && REGULAR.includes(match[1] ?? "") ? [line.slice(match[0].length)] : []
+    })
+  }, provided)
+
+  const grep = Effect.fn("checkout.grep")(function* (repo: RepoName, at: CommitSha, request: GrepRequest) {
+    // The pattern always follows -e and the paths --, so a pattern that starts with - is a pattern, never an option.
+    // The host's config never shapes the output: no column, no colour, no full name, no fallback outside the commit.
+    const args = git(repo, ...GREP_CONFIG, "grep", "-z", "-n", "-I", "--no-color", "--no-column", "--no-textconv", `--max-count=${request.maxPerFile}`,
+      request.regex ? "-E" : "-F", "-e", request.pattern, at, "--", ...Option.toArray(request.path))
+    // 128 is git's refusal of a regular expression only when one was asked for; else it is a failure like any other.
+    const whole = yield* runWhole(args, { exits: request.regex ? [0, 1, 128] : [0, 1], timeoutMs: GREP_TIMEOUT_MS, bound: "tool" })
+    if (whole.code === 128) return yield* Effect.fail(new PatternRefused({ message: clipTo(plainText(whole.stderr.trim()), 300) }))
+    return grepHitsOf(whole.stdout, at)
+  }, provided)
+
+  const mergeBase = Effect.fn("checkout.merge_base")(function* (repo: RepoName, one: CommitSha, other: CommitSha) {
+    const args = git(repo, "merge-base", one, other)
+    const sha = (yield* runWhole(args)).stdout.trim()
+    return yield* Schema.decodeUnknownEffect(CommitSha)(sha).pipe(
+      Effect.mapError(() => new CommitMissing({ sha: `${one}...${other}`, message: `${one} and ${other} have no commit in common in ${repo}` })),
+    )
+  }, provided)
+
+  const changedPaths = Effect.fn("checkout.changed_paths")(function* (repo: RepoName, from: CommitSha, to: CommitSha) {
+    const listed = yield* runWhole(git(repo, "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "-M", `${from}...${to}`))
+    return listed.stdout.split("\0").filter((path) => path.length > 0)
+  }, provided)
+
+  return Checkout.of({ fetch, diff, show, worktree, entry, blob, files, grep, mergeBase, changedPaths })
 }))

@@ -37,6 +37,13 @@ describe("runWhole", () => {
     expect(Exit.isSuccess(exit) && exit.value.stdout.length).toBe(20_000)
   })
 
+  test("a command of a model's tool runs under 4 MiB: past it, OutputCut; the same output under the whole bound is read", async () => {
+    const fiveMiB = ["sh", "-c", "head -c 5242880 /dev/zero | tr '\\0' a"]
+    const [tool, whole] = [await run(fiveMiB, { bound: "tool" }), await run(fiveMiB)]
+    const tag = Exit.isFailure(tool) && tool.cause.reasons[0]?._tag === "Fail" ? tool.cause.reasons[0].error._tag : "no failure"
+    expect([tag, Exit.isSuccess(whole) && whole.value.stdout.length]).toEqual(["OutputCut", 5_242_880])
+  })
+
   test("an output the shell cut fails with OutputCut, never parsed", async () => {
     const exit = await run(["sh", "-c", "head -c 9000 /dev/zero | tr '\\0' a"], {}, 1024)
     expect(Exit.isFailure(exit) && JSON.stringify(exit.cause)).toContain("OutputCut")

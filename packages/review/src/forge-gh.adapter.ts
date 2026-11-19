@@ -2,14 +2,15 @@ import { Effect, Layer, Option, Schema } from "effect"
 import { clipTo } from "@xandreed/sdk"
 import { plainText } from "./log-digest.entity.functions.js"
 import { ForgeUnreadable, RunId } from "./forge.entity.js"
-import type { CheckRun, CiRun, FailedLog } from "./forge.entity.js"
+import type { CheckRun, CiRun, FailedLog, PullTimeline } from "./forge.entity.js"
+import { firstHeadOf } from "./forge.entity.functions.js"
 import { Forge } from "./forge.port.js"
 import { CommandFailed } from "./host-command.entity.js"
 import { commandLine } from "./host-command.entity.functions.js"
 import { runWhole } from "./host-shell.adapter.js"
 import type { HostShell } from "./host-shell.port.js"
 import { Permission, PullRequest } from "./pull-request.entity.js"
-import type { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
+import type { CommitSha, PullNumber, PullRequest as Pull, RepoName } from "./pull-request.entity.js"
 
 /** The fields `gh pr view --json` is asked for. */
 export const PULL_FIELDS = "number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,files,commits"
@@ -43,6 +44,30 @@ const GhRuns = Schema.Struct({
     html_url: Schema.String,
     run_attempt: Schema.Int,
   })),
+})
+
+const GhBranchRuns = Schema.Struct({
+  workflow_runs: Schema.Array(Schema.Struct({ head_sha: Schema.String, created_at: Schema.String })),
+})
+
+/**
+ * The GraphQL query for a pull request's timeline: when it was opened and closed, and its first 100 force-pushes with
+ * the head each replaced.
+ */
+export const TIMELINE_QUERY = "query($owner: String!, $name: String!, $number: Int!) { repository(owner: $owner, name: $name) { pullRequest(number: $number) { createdAt closedAt timelineItems(first: 100, itemTypes: [HEAD_REF_FORCE_PUSHED_EVENT]) { nodes { ... on HeadRefForcePushedEvent { createdAt beforeCommit { oid } } } } } } }"
+
+const GhTimeline = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      pullRequest: Schema.Struct({
+        createdAt: Schema.String,
+        closedAt: Schema.NullOr(Schema.String),
+        timelineItems: Schema.Struct({
+          nodes: Schema.Array(Schema.Struct({ createdAt: Schema.String, beforeCommit: Schema.NullOr(Schema.Struct({ oid: Schema.String })) })),
+        }),
+      }),
+    }),
+  }),
 })
 
 const GhJobs = Schema.Struct({
@@ -81,6 +106,9 @@ const permissionOf = (answer: typeof GhPermission.Type): Permission => {
  * its login). Every output it parses is read whole (`runWhole`), every page of a list (`--paginate --slurp`). CI runs
  * are those of the head's sha started by one of `CI_EVENTS`, a run with no job left out. The author's permission is asked of
  * `repos/<repo>/collaborators/<login>/permission`; a bot, and an answer that fails or names no permission, is `none`.
+ * The first head is read from the head branch's `pull_request` runs started while the pull request was open, and its
+ * timeline's force-pushes (`TIMELINE_QUERY`, `firstHeadOf`): GitHub empties a run's `pull_requests` once its pull
+ * request is merged, and a force-push drops the first head from the commit list but never from the runs.
  */
 export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge, Effect.gen(function* () {
   const host = yield* Effect.context<HostShell>()
@@ -157,5 +185,22 @@ export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge,
     return log
   }, provided)
 
-  return Forge.of({ pullRequest, ciRuns, failedLog })
+  const firstHead = Effect.fn("forge.first_head")(function* (repo: RepoName, pull: Pull) {
+    const [owner = "", name = ""] = repo.split("/")
+    const asked = ["gh", "api", "graphql", "-f", `query=${TIMELINE_QUERY}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${pull.number}`]
+    const answer = (yield* decoded(GhTimeline, asked, (yield* runWhole(asked)).stdout)).data.repository.pullRequest
+    const timeline: PullTimeline = {
+      opened: answer.createdAt,
+      closed: Option.fromNullishOr(answer.closedAt),
+      forcePushes: answer.timelineItems.nodes.map((node) => ({ at: node.createdAt, before: Option.fromNullishOr(node.beforeCommit?.oid) })),
+    }
+    const args = ["gh", "api", "--paginate", "--slurp", `repos/${repo}/actions/runs?event=pull_request&branch=${encodeURIComponent(pull.head.ref)}&per_page=100`]
+    const runs = (yield* decoded(Schema.Array(GhBranchRuns), args, (yield* runWhole(args)).stdout)).flatMap((page) => page.workflow_runs)
+    return yield* Option.match(firstHeadOf(runs.map((run) => ({ sha: run.head_sha, createdAt: run.created_at })), timeline, pull.commits), {
+      onSome: Effect.succeed,
+      onNone: () => Effect.fail(new ForgeUnreadable({ command: commandLine(args), message: `pull request #${pull.number} lists no commit, so it has no first head` })),
+    })
+  }, provided)
+
+  return Forge.of({ pullRequest, ciRuns, firstHead, failedLog })
 }))

@@ -23,6 +23,16 @@ export class OutputCut extends Schema.TaggedError<OutputCut>()("OutputCut", {
   message: Schema.String,
 }) {}
 
+/**
+ * Which output bound a host command runs under: `whole`, the host's large bound, for what the reviewer parses whole;
+ * `tool`, `TOOL_OUTPUT_BYTES`, for a command one of the model's tools runs.
+ */
+export const OutputBound = Schema.Literals(["whole", "tool"])
+export type OutputBound = typeof OutputBound.Type
+
+/** How much of each stream a command of a model's tool keeps: 4 MiB, so no tool call holds more. */
+export const TOOL_OUTPUT_BYTES = 4 * 1024 * 1024
+
 /** A host command's whole output and the code it exited with (one the caller allowed). */
 export const Whole = Schema.Struct({
   stdout: Schema.String,
