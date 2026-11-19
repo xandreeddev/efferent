@@ -109,15 +109,35 @@ const lesson = Option.getOrThrowWith(lessonOf(slug), () => new Error(`no lesson 
       </div>
       {lesson.graph !== undefined && (
         <div class="pane-body grp" data-graph hidden>
-          <div class="grp-bar">
-            <label>Walk of <select data-grp-pick aria-label="Which model call's walk to show"></select></label>
-            <code class="grp-options" data-grp-options></code>
-          </div>
           <p class="grp-empty" data-grp-empty></p>
           <div class="grp-body" data-grp-body hidden>
-            <p class="grp-question" data-grp-question></p>
+            <div class="grp-bar">
+              <p class="grp-heading" data-grp-heading></p>
+              <button class="btn" type="button" data-grp-all aria-pressed="false">Show everything</button>
+            </div>
+            <p class="grp-counts" data-grp-counts></p>
+            <p class="grp-legend">
+              <span class="grp-key" data-key="seed">a seed of the latest recall</span>
+              <span class="grp-key" data-key="bridge">where the walk by subject started</span>
+              <span class="grp-key" data-key="sent">a memory sent with the latest request</span>
+              <span class="grp-key" data-key="curated">kept by the latest curation</span>
+              <span class="grp-key" data-key="ended">a memory that ended</span>
+            </p>
             <div class="grp-picture" data-grp-picture></div>
-            <ol class="grp-steps" data-grp-steps aria-label="What the walk did, step by step"></ol>
+            <section class="grp-section" aria-label="What the latest curation did">
+              <h3>The latest curation</h3>
+              <p class="grp-question" data-grp-curation-head></p>
+              <ul class="grp-named" data-grp-curation></ul>
+            </section>
+            <section class="grp-section" aria-label="What the latest recall sent">
+              <div class="grp-bar">
+                <h3>Recall</h3>
+                <label>of <select data-grp-pick aria-label="Which model call's recall to show"></select></label>
+                <code class="grp-options" data-grp-options></code>
+              </div>
+              <p class="grp-question" data-grp-question></p>
+              <ol class="grp-steps" data-grp-steps aria-label="What recall did, step by step"></ol>
+            </section>
           </div>
         </div>
       )}

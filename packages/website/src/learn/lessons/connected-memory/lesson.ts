@@ -18,7 +18,7 @@ import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
-import { CONTROLS, reviewOff, walkZero } from "./config-edit.ts"
+import { CONTROLS, reviewOn, walkZero } from "./config-edit.ts"
 import { CURATOR_HEADER, CURATOR_IMPORTS, curatorBodyOf, curatorDocumentOf, DEFAULT_CURATOR } from "./curator.source.ts"
 import { loadWorld } from "./load-world.ts"
 import { DEFAULT_MEMORY, MEMORY_HEADER, MEMORY_IMPORTS, memoryBodyOf, memoryDocumentOf } from "./memory.source.ts"
@@ -33,10 +33,22 @@ const memoryNames = (parts: PageParts) => ({ flatMemory: parts.watchMemory(flatM
 const toolsNames = { Effect, Schema, Tool, Toolkit }
 const curatorNames = { Clock, Effect, Layer, Option, Stream, LanguageModel, Sessions, curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf, Chat }
 
+/** What the status line adds to a curation's line when the page's Echo curated in place of the model picked. */
+export const BY_RULE = "Echo's rules curated it: a model that runs on this page is too small to curate."
+
+/**
+ * The chat agent.ts is handed: the page's, but when the page's Echo curates in place of a model that runs in the browser,
+ * a status line that says what a curation did ("Curated turn 2: …", "s1: …") also says who curated.
+ */
+const chatFor = (parts: PageParts) => (pane: unknown): Layer.Layer<Chat, never, Sessions> =>
+  parts.curatesByRule
+    ? Layer.effect(Chat, Effect.map(Effect.gen(function* () { return yield* Chat }), (chat) => Chat.of({ ...chat, status: (text) => chat.status(/^(?:Curated turn \d+|s\d+): /.test(text) ? `${text} ${BY_RULE}` : text) }))).pipe(Layer.provide(parts.chatOn(pane)))
+    : parts.chatOn(pane)
+
 const agentNames = (parts: PageParts, memory: unknown, tools: unknown, toolsLive: unknown, curatorOn: unknown, keep: unknown) => ({
   Effect, Stream, LanguageModel, Prompt,
   Core, Sessions, turnStartedEvent, userMessage, callTool, Memory, modelAnswer, Chat,
-  kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: parts.chatOn,
+  kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: chatFor(parts),
   memory, tools, toolsLive, curatorOn, keep, pane: parts.pane, model: parts.model, curatorModel: parts.curatorModel,
 })
 
@@ -134,7 +146,7 @@ export const connectedMemory: Lesson = {
   controls: CONTROLS,
   experiments: {
     "walk-zero": { file: "memory", apply: walkZero },
-    "review-off": { file: "curator", apply: reviewOff },
+    "review-on": { file: "curator", apply: reviewOn },
   },
   evaluate: evaluateLesson,
   // The Graph tab, and the world "Load the world" writes into the knowledge session.

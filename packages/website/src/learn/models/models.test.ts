@@ -7,7 +7,7 @@ import {
   promptMessage, Relation, reportText, reviewPrompt, sessions, TaskId, ThingName,
 } from "@xandreed/sdk/kernel"
 import type { CurationOutcome, Knowledge } from "@xandreed/sdk/kernel"
-import { CURATION_HEAD, MEMORY_RELATIONS } from "./echo-curation.ts"
+import { answerFromNote, CURATION_HEAD, MEMORY_RELATIONS, memoriesIn, namesIn } from "./echo-curation.ts"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
 import type { PromptApi } from "./chrome-prompt.ts"
@@ -1840,11 +1840,26 @@ describe("Echo as the curator, and Echo reading the note of memories (lesson 18)
     expect(knowledge.memories[1]?.ended.pipe(Option.map((ended) => ended.why))).toEqual(Option.some("asked"))
   })
 
-  test("Echo reads the User: lines alone: a question, the assistant's words and a sentence of another form are kept as nothing", async () => {
+  test("Echo keeps what the User: lines say: a question, a sentence of another form, and the assistant's guess about things not stored are kept as nothing, and no entity is made for them", async () => {
     const { outcomes, knowledge } = await curated([["Where does Bo work? Ana knows Bo.", "Bo works at Globex, I think."]])
     expect(droppedOf(outcomes)).toEqual([])
     expect(knowledge.memories).toEqual([])
     expect(knowledge.entities.map((entity) => String(entity.id))).toEqual(["n1"])
+  })
+
+  test("after a question, Echo over-reaches: the first sentence of the assistant's answer about two stored things is proposed as a memory, quoting the assistant, and the kernel's checks drop it; a statement's answer is not read", async () => {
+    const asked = ["Where does Ana Silva work?", "From what I know: Ana Silva works at Acme. Acme is in Lisbon."] as const
+    const { outcomes, knowledge } = await curated(["Ana Silva works at Acme. Acme is in Lisbon.", asked, ["Ana Silva likes tea.", "From what I know: Ana Silva works at Acme."]])
+    // The reply proposes it, quoting the assistant's first sentence whole.
+    const prompt = curationPrompt({ said: [{ by: "user", text: asked[0] }, { by: "assistant", text: asked[1] }], at: MONDAY }, { entities: knowledge.entities.slice(0, 4), memories: knowledge.memories.slice(0, 2) })
+    expect(JSON.parse(echoReply([{ role: "user", content: prompt }])).memories).toEqual([
+      { kind: "fact", text: "Ana Silva works at Acme.", about: ["n2", "n3"], quote: "From what I know: Ana Silva works at Acme.", by: "user", on: null, ends: [], why: null },
+    ])
+    // The checks drop it, in the kernel's words; the turn after a statement drops nothing.
+    expect(outcomes.map((one) => (one._tag === "Curated" ? one.dropped : []))).toEqual([
+      [], [{ what: 'memory "Ana Silva works at Acme."', why: "Its quote is not in what the user said, a tool returned or the host wrote." }], [],
+    ])
+    expect(memoriesOf(knowledge)).toEqual(["m1: Ana Silva works at Acme. [about n2, n3; said 1]", "m2: Acme is in Lisbon. [about n3, n4; said 1]", "m3: Ana Silva likes tea. [about n2, n5; said 1]"])
   })
 
   test("the review prompt is answered with the proposal unchanged; the rules are asleep unless the prompt's first line is the kernel's, word for word", () => {
@@ -1869,7 +1884,7 @@ describe("Echo as the curator, and Echo reading the note of memories (lesson 18)
     expect(noteOf().split("\n")[0]).toBe(knowledgeNote([]).split("\n")[0])
   })
 
-  test("a question sent with the note of memories is answered from its first two lines, each without when it was said; a \"before that:\" line is one of the two, read as \"Before that: …\"", () => {
+  test("a question sent with the note of memories is answered from its first memory and what the note says of a thing it brings in, each without when it was said; a \"before that:\" line follows its memory, read as \"Before that: …\"", () => {
     expect(askedWith("In what city does Ana Silva work?", ["Ana Silva works at Acme. (said on 2026-11-16)", "Acme is in Lisbon. (said 3 times, last 2026-11-17)", "Ana Silva likes tea. (said on 2026-11-16)"]))
       .toEqual({ text: "From what I know: Ana Silva works at Acme. Acme is in Lisbon.", calls: [] })
     expect(askedWith("Where does Ana Silva work now?", [
@@ -1879,6 +1894,48 @@ describe("Echo as the curator, and Echo reading the note of memories (lesson 18)
     // No question mark, or a note that is not the kernel's: as before.
     expect(askedWith("Tell me where Ana works.", ["Ana Silva works at Acme. (said on 2026-11-16)"]).text).toStartWith("You said: ")
     expect(echoStep(Prompt.make([{ role: "user", content: "Where does Ana work?" }, { role: "user", content: noteOf("Ana Silva works at Acme. (said on 2026-11-16)").replace("were kept", "are kept") }]), ["calculator"]).text).not.toStartWith("From what I know")
+  })
+
+  test("the names a line of the note says are its runs of words with a capital, and the user: Ana Silva is not Ana Costa, and Project Pebble is not Project Pebble III", () => {
+    expect(namesIn("Ana Silva works at Globex.")).toEqual(["ana silva", "globex"])
+    expect(namesIn("Ana Costa works at Initech.")).toEqual(["ana costa", "initech"])
+    expect(namesIn("Diego Gomes leads Project Pebble III.")).toEqual(["diego gomes", "project pebble iii"])
+    expect(namesIn("Nina Moreau leads Project Pebble.")).toEqual(["nina moreau", "project pebble"])
+    expect(namesIn("The user lives in Porto.")).toEqual(["the user", "porto"])
+    expect(namesIn("João Reis enjoys pottery.")).toEqual(["joao reis"])
+    // A line about Project Pebble is no line about Project Pebble III: names are compared whole.
+    const pebble = memoriesIn([noteOf("Nina Moreau leads Project Pebble. (said on 2024-05-24)", "Diego Gomes leads Project Pebble III. (said on 2026-09-15)", "Project Pebble belongs to Initech. (said on 2024-05-25)")])
+    expect(answerFromNote("Who leads it?", pebble)).toEqual(["Nina Moreau leads Project Pebble.", "Project Pebble belongs to Initech."])
+  })
+
+  /** The note the page sent for "In what city does Ana Silva work?" after the steps and Load the world (probed on Echo). */
+  const CITY_AFTER_WORLD = [
+    "Ana Silva works at Globex. (said on 2026-11-18)", "  before that: Ana Silva works at Acme. (said on 2026-11-18, until 2026-11-18)", "Ana Silva enjoys hiking. (said on 2024-07-31)",
+    "Ana Silva speaks French. (said on 2024-07-25)", "Ana Silva likes espresso. (said on 2024-02-06)", "Ana Silva has parrot Pip. (said on 2024-01-27)", "Ana Silva lives in Porto. (said on 2024-01-21)",
+    "Ana Silva plans trip to Oslo. (said on 2026-10-05)", "Ana Silva met Carla Mendes. (said on 2026-01-02)", "Globex has office in Porto. (said on 2026-09-21)", "Globex is in Madrid. (said on 2024-01-31)",
+  ]
+  /** The note the page sent for "Where does the person who leads Project Orchid live?" after Load the world (probed on Echo). */
+  const ORCHID_NOTE = [
+    "João Reis leads Project Orchid. (said on 2024-02-12)", "Project Orchid belongs to Initech. (said on 2024-02-16)", "Paula Haas leads Project Juniper. (said on 2025-01-01)",
+    "Nina Moreau leads Project Pebble. (said on 2024-05-24)", "Farid Haddad leads Project Atlas. (said on 2024-03-05)", "Bruno Reis leads Project Falcon. (said on 2024-01-17)",
+    "Diego Gomes leads Project Pebble III. (said on 2026-09-15)", "Rosa Quinn leads Project Harbor III. (said on 2026-09-01)", "João Reis lives in Porto. (said on 2024-03-11)",
+    "João Reis enjoys pottery. (said on 2025-05-29)", "João Reis works at Initech. (said on 2024-03-13)",
+  ]
+
+  test("after the first memory, two more about a thing it names and the question does not, those that share a word with the question first: the city's question names Globex's city, the Orchid question where its leader lives, and with no walk it cannot", () => {
+    // Ana Silva is asked about; Globex is what the first memory brings in. Ana's other lines are about her, whom the
+    // question names, and are passed over.
+    expect(askedWith("In what city does Ana Silva work?", CITY_AFTER_WORLD).text)
+      .toBe("From what I know: Ana Silva works at Globex. Before that: Ana Silva works at Acme. Globex has office in Porto. Globex is in Madrid.")
+    // Project Orchid is asked about; João Reis is brought in. "lives" meets "live", so it comes first.
+    expect(askedWith("Where does the person who leads Project Orchid live?", ORCHID_NOTE).text)
+      .toBe("From what I know: João Reis leads Project Orchid. João Reis lives in Porto. João Reis enjoys pottery.")
+    // The same note without the walk's three places (the walk-zero experiment): nothing says where he lives.
+    expect(askedWith("Where does the person who leads Project Orchid live?", ORCHID_NOTE.slice(0, 8)).text)
+      .toBe("From what I know: João Reis leads Project Orchid.")
+    // Without the order by shared words, "João Reis enjoys pottery." would come before where he lives: the order is the rule's.
+    expect(askedWith("Where does the person who leads Project Orchid live?", [ORCHID_NOTE[0]!, ORCHID_NOTE[9]!, ORCHID_NOTE[10]!, ORCHID_NOTE[8]!]).text)
+      .toBe("From what I know: João Reis leads Project Orchid. João Reis lives in Porto. João Reis enjoys pottery.")
   })
 
   test("Echo reads past the note of memories: it is no message of the conversation, and no note of condensed turns", () => {

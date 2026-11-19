@@ -12,7 +12,7 @@ import type { ChatMessage } from "../prompt-map.ts"
 import { reportIn } from "../reports.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"
 import { callIds } from "./call-ids.ts"
-import { echoCuration, echoReview, isCurationPrompt, isMemoriesNote, isReviewPrompt, memoriesIn } from "./echo-curation.ts"
+import { answerFromNote, echoCuration, echoReview, isCurationPrompt, isMemoriesNote, isReviewPrompt, memoriesIn } from "./echo-curation.ts"
 import { makeBrowserModel } from "./make.ts"
 import type { LoadedModel, ModelChoice } from "./types.ts"
 
@@ -870,10 +870,11 @@ export const echoStep = (sent: Prompt.Prompt, offered: ReadonlyArray<string>): {
   // best, in fixed words that quote them. Whatever the question asks, these two lines are the answer.
   const linked = linksIn(sent.content)
   if (question !== undefined && linked.length > 0) return { text: `From what I know: ${linked.slice(0, 2).join(" ")}`, calls: [] }
-  // One question, with memories sent for this request (lesson 18, withKnowledge): answered from the note's first two
-  // lines in the same words, a line of what a memory replaced read as "Before that: …".
+  // One question, with memories sent for this request (lesson 18, withKnowledge): answered from the note's first
+  // memory and up to two more about what it brings in (answerFromNote), a line of what a memory replaced read as
+  // "Before that: …".
   const remembered = memoriesIn(sent.content.flatMap((message) => (message.role === "user" ? [message.content.map((part) => (part.type === "text" ? part.text : "")).join("")] : [])))
-  if (question !== undefined && remembered.length > 0) return { text: `From what I know: ${remembered.slice(0, 2).join(" ")}`, calls: [] }
+  if (question !== undefined && remembered.length > 0) return { text: `From what I know: ${answerFromNote(question, remembered).join(" ")}`, calls: [] }
   // An answer of Echo's own, with no tool to call and no result to pass on: in the haiku skill's form while it is loaded.
   if (loaded.includes(HAIKU_SKILL)) return { text: HAIKU, calls: [] }
   return { text: echoReply(toChatMessages(sent)), calls: [] }

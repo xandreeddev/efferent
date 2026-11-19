@@ -669,6 +669,14 @@ const keptLabel = (record: StoredEvent): string =>
 /** The labels of the knowledge session's records (lesson 18). */
 const KNOWLEDGE_LABELS: ReadonlyArray<string> = ["Source stored", "Entity stored", "Name added", "Memory stored", "Memory said again", "Memory ended", "Curated", "Curation failed"]
 
+/** What the checks dropped of a curator's reply, from the records that say a source was curated (lesson 18). */
+const droppedIn = (stored: ReadonlyArray<StoredEvent>): ReadonlyArray<{ readonly what: string; readonly why: string }> =>
+  stored.flatMap((one) => Option.match(dataOf(curatedEvent, one), { onNone: () => [], onSome: (curated) => curated.dropped }))
+
+/** The dropped items in words, for a step's detail: each with why. */
+const droppedWords = (dropped: ReadonlyArray<{ readonly what: string; readonly why: string }>): string =>
+  dropped.length === 0 ? "" : ` The checks dropped ${dropped.map((one) => `${one.what}: ${one.why}`).join("; ")}`
+
 /**
  * The one step of a turn that stored many records at once: how many of each kind, by what each says ("Links stored:
  * 557 links, 97 said again"), and the places of the first and the last.
@@ -687,6 +695,8 @@ const batchStep = (stored: ReadonlyArray<StoredEvent>): StepView => {
     ...said("Entity stored", "entity", "entities"), ...said("Name added", "other name", "other names"), ...said("Source stored", "source", "sources"),
     ...said("Curated", "curated", "curated"), ...said("Curation failed", "failed try", "failed tries"), ...said("Record stored", "other record", "other records"),
   ]
+  const dropped = droppedIn(stored)
+  if (dropped.length > 0) parts.push(`${dropped.length} dropped`)
   const heading = counts.has("Fact learned") || counts.has("Fact forgotten") ? "Facts stored"
     : [...counts.keys()].some((label) => KNOWLEDGE_LABELS.includes(label)) ? "Kept" : "Links stored"
   const first = stored[0]!
@@ -694,7 +704,7 @@ const batchStep = (stored: ReadonlyArray<StoredEvent>): StepView => {
   return {
     id: "stored-records", kind: "stored-record", call: 0, column: "journal", state: "done", seqs: stored.map((one) => one.seq), code: "session.append(…), once for each",
     label: `${heading}: ${parts.join(", ")}`,
-    detail: `Records #${first.seq} to #${last.seq}: ${plural(stored.length, "record")} stored in this one turn. Open any of them in the Journal column. The first, in short: ${summaryOf(first)}`,
+    detail: `Records #${first.seq} to #${last.seq}: ${plural(stored.length, "record")} stored in this one turn. Open any of them in the Journal column. The first, in short: ${summaryOf(first)}${droppedWords(dropped)}`,
   }
 }
 
@@ -721,8 +731,8 @@ const memoryTurnOf = (board: Board, turn: number, words: (typeof KEPT_WORDS)[key
     // them, so the track stays readable; a tool's turn, which stores one, is a step for its record.
     ...(stored.length > 1 ? [batchStep(stored)] : stored.map((one, index): StepView => ({
       id: `stored-record-${index + 1}`, kind: "stored-record", call: 0, column: "journal", state: "done", seqs: [one.seq], code: "session.append(…)",
-      label: keptLabel(one),
-      detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}`,
+      label: droppedIn([one]).length === 0 ? keptLabel(one) : `${keptLabel(one)}: ${droppedIn([one]).length} dropped`,
+      detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}${droppedWords(droppedIn([one]))}`,
     }))),
     {
       id: "closed", kind: "closed", call: 0, label: "Turn closed", code: "the scope ends", column: "journal",

@@ -7,7 +7,7 @@
 import { Option, Result } from "effect"
 import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
 import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { attemptEvent, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
+import { attemptEvent, knowledgeOf, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
 import { attemptLine, branchPoints, drawsAnew, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import { ignoredLine } from "./chats.ts"
 import type { KeyValueStore } from "@xandreed/sdk/kernel"
@@ -30,8 +30,8 @@ import { mountGraders } from "./panes/graders.ts"
 import type { GradersPane } from "./panes/graders.ts"
 import { mountFiles } from "./panes/files.ts"
 import { LATEST, mountGraph } from "./panes/graph.ts"
-import { emptyRecalls, graphViewOf, heardRecall, NO_WALK, pickedRecall, recallLabel, recallsStartedOver } from "./graph-model.ts"
-import type { GraphView, HeardRecall, RecallBoard, RecallPick } from "./graph-model.ts"
+import { emptyRecalls, heardRecall, latestCuration, memoryViewOf, namedBy, NO_RECALL, NOTHING_KEPT, pickedRecall, recallLabel, recallsStartedOver, recallViewOf } from "./graph-model.ts"
+import type { CurationView, MemoryView, RecallBoard, RecallPick, RecallView, Showing } from "./graph-model.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
 import type { BuildResult, LessonRuntime, Trace } from "./runtime.ts"
@@ -124,16 +124,24 @@ function boot(root: HTMLElement, lesson: Lesson) {
     save: () => void workspacePane?.save(),
   })
 
-  // Lesson 18: the Graph tab, drawn from the walks the page heard (graph-model.ts). The latest is shown unless one is
-  // picked; a walk's view is worked out once, and again only when the graph session's records change.
+  // Lesson 18: the Graph tab, drawn from the knowledge session's records and the recalls the page heard
+  // (graph-model.ts): the memory always, and the latest curation and the recall picked (the latest unless one is
+  // picked) lit on top. The views are worked out again only when what they are drawn from changes.
   let recalls: RecallBoard = emptyRecalls("")
   let recallPick: RecallPick = { _tag: "Latest" }
-  let graphCache: { readonly heard: HeardRecall; readonly records: number; readonly view: GraphView } | undefined
-  const viewOfHeard = (heard: HeardRecall): GraphView => {
-    if (graphCache?.heard === heard && graphCache.records === recalls.records.length) return graphCache.view
-    const view = graphViewOf(heard.recalled, recalls.records)
-    graphCache = { heard, records: recalls.records.length, view }
-    return view
+  let showing: Showing = "named"
+  let graphCache: { readonly key: string; readonly memory: Option.Option<MemoryView>; readonly curation: Option.Option<CurationView>; readonly recall: Option.Option<RecallView> } | undefined
+  const graphViews = () => {
+    const heard = pickedRecall(recalls, recallPick)
+    const key = [recalls.chat, recalls.records.length, recalls.recalls.length, showing, Option.match(heard, { onNone: () => "", onSome: (one) => `${one.turn}:${one.call}` })].join("|")
+    if (graphCache?.key === key) return graphCache
+    const knowledge = knowledgeOf(recalls.records)
+    const curation = latestCuration(recalls.records)
+    const recalled = Option.map(heard, (one) => one.recalled)
+    const memory = knowledge.memories.length === 0 ? Option.none()
+      : Option.some(memoryViewOf(recalls.records, showing, namedBy(knowledge, recalls.chat, recalls.recalls), recalled, curation))
+    graphCache = { key, memory, curation, recall: Option.map(recalled, (one) => recallViewOf(one, recalls.records)) }
+    return graphCache
   }
   const graphPane = graphHost === null ? undefined : mountGraph(graphHost, {
     pick: (value) => {
@@ -141,22 +149,31 @@ function boot(root: HTMLElement, lesson: Lesson) {
       recallPick = value === LATEST || turn === undefined || call === undefined ? { _tag: "Latest" } : { _tag: "Call", turn, call }
       paintGraph()
     },
+    everything: (on) => {
+      showing = on ? "everything" : "named"
+      paintGraph()
+    },
   })
   let graphFrame = 0
   function paintGraph() {
     graphFrame = 0
     if (graphPane === undefined || graphHost === null || graphHost.hidden) return
+    const views = graphViews()
     graphPane.render({
+      memory: views.memory,
+      empty: NOTHING_KEPT,
+      everything: showing === "everything",
+      curation: views.curation,
       choices: recalls.recalls.map((one) => ({ value: `${one.turn}:${one.call}`, label: recallLabel(recalls, one) })),
       picked: recallPick._tag === "Latest" ? LATEST : `${recallPick.turn}:${recallPick.call}`,
-      // The walk drawn is named whichever way it was picked: "The latest" alone says no turn.
+      // The recall drawn is named whichever way it was picked: "the latest request" alone says no turn.
       shown: Option.match(pickedRecall(recalls, recallPick), { onNone: () => "", onSome: (one) => recallLabel(recalls, one) }),
-      view: Option.map(pickedRecall(recalls, recallPick), viewOfHeard),
-      empty: NO_WALK,
+      recall: views.recall,
+      noRecall: NO_RECALL,
     })
   }
   const paintGraphSoon = () => { if (graphFrame === 0) graphFrame = requestAnimationFrame(paintGraph) }
-  /** A new conversation: its walks start over, and the graph's records stay. */
+  /** A new conversation: its recalls start over, and the knowledge session's records stay. */
   const graphStartedOver = (chat: string) => {
     recalls = recallsStartedOver(recalls, chat)
     recallPick = { _tag: "Latest" }
@@ -297,7 +314,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
       trace.reset(event.session)
     }
     trace.hear(event)
-    // Lesson 18: a walk said for a request, or a record of the graph session's, redraws the Graph tab.
+    // Lesson 18: a recall said for a request, or a record of the knowledge session's, redraws the Graph tab.
     if (graphPane !== undefined) {
       const before = recalls
       recalls = heardRecall(recalls, event)

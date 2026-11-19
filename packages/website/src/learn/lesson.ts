@@ -106,6 +106,8 @@ export interface PageParts {
    * Echo, which curates by rule: a model that runs in the browser cannot read the curation prompt in one request.
    */
   readonly curatorModel: Layer.Layer<LanguageModel.LanguageModel>
+  /** Whether `curatorModel` is the page's Echo standing in for the model picked, one that runs in the browser (lesson 18). */
+  readonly curatesByRule: boolean
   /**
    * A wrapper around the learner's curator (lesson 18), so the page files its model calls as the curator's, on the
    * knowledge session and the turn that stored their source, and hears each reply.

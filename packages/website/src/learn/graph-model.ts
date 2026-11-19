@@ -1,27 +1,31 @@
-// What lesson 18's Graph tab shows, worked out from what the page heard: for
-// one model call, what the walk of `withGraph` did. The kernel says it live
-// for every request as `plugin.graph.recalled`, which the runtime forwards
-// as every kernel event is (the `Event` trace); this file folds those, and
-// the graph session's records, and draws one of them as a picture of the
-// links the walk reached and a panel of its steps in words. Pure: no DOM,
-// no clock. `panes/graph.ts` draws what these functions give.
+// What lesson 18's Graph tab shows, worked out from what the page heard: the
+// memory the knowledge session holds, drawn as entities and the memories
+// between them, as soon as it holds any and with no question asked; and on
+// top of it, lit, what the latest curation did and what the latest recall
+// sent. The page hears the knowledge session's records as every kernel event
+// (the `Event` trace), and `withKnowledge` says what it did for each request
+// as `plugin.knowledge.recalled`; this file folds both, with no listener of
+// its own. Pure: no DOM, no clock. `panes/graph.ts` draws what it gives.
 import { Option } from "effect"
 import { dataOf } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, linkedEvent, linksNote, normalName, RECALL_SHOWN, recalledEvent, restatedEvent, saidOf, saidText, unlinkedEvent, weightOf } from "@xandreed/sdk/kernel"
-import type { Link, RecalledData, SaidLink } from "@xandreed/sdk/kernel"
+import {
+  aliasedEvent, curatedEvent, curationFailedEvent, entityEvent, estimateTokens, keptFrom, knowledgeNote, knowledgeOf, knowledgeRecalledEvent, memoryEndedEvent, memoryEvent,
+  memoryRestatedEvent, sourceEvent, standing, USER_ENTITY,
+} from "@xandreed/sdk/kernel"
+import type { Knowledge, KnowledgeRecalledData, KnownMemory } from "@xandreed/sdk/kernel"
 import type { Trace } from "./runtime.ts"
 
-/** One request's walk, as the page heard it: the turn of the conversation, and which of its model calls (from 1). */
+/** One request's recall, as the page heard it: the turn of the conversation, and which of its model calls (from 1). */
 export interface HeardRecall {
   readonly turn: number
   readonly call: number
-  readonly recalled: RecalledData
+  readonly recalled: KnowledgeRecalledData
 }
 
 /**
- * Everything the Graph tab draws from: each walk heard in the conversation shown, in order, and the graph session's
- * records (its links, each saying again and each removal), whichever conversation stored them.
+ * Everything the Graph tab draws from: each recall heard in the conversation shown, in order, and the knowledge
+ * session's records, whichever conversation stored them.
  */
 export interface RecallBoard {
   readonly chat: string
@@ -31,24 +35,23 @@ export interface RecallBoard {
 
 export const emptyRecalls = (chat: string): RecallBoard => ({ chat, recalls: [], records: [] })
 
-/** Whether a record is one of the graph's: a link stored, said again, or removed. */
-const ofGraph = (record: StoredEvent): boolean =>
-  Option.isSome(dataOf(linkedEvent, record)) || Option.isSome(dataOf(restatedEvent, record)) || Option.isSome(dataOf(unlinkedEvent, record))
+/** The knowledge session's records, by their names: what `knowledgeOf` reads. */
+const KEPT = [sourceEvent, entityEvent, aliasedEvent, memoryEvent, memoryRestatedEvent, memoryEndedEvent, curatedEvent, curationFailedEvent].map((event) => event.name)
 
 /**
- * The board after one more trace: a walk said in the conversation shown is the next model call of its turn (memory
- * builds one context, and the walk runs once, for each call); a record of the graph's is kept, from any session. Any
- * other trace changes nothing, and the board is returned as it was.
+ * The board after one more trace: a recall said in the conversation shown is the next model call of its turn (memory
+ * builds one context, and recall runs once, for each call); a record of the knowledge session's is kept, from any
+ * session. Any other trace changes nothing, and the board is returned as it was.
  */
 export const heardRecall = (board: RecallBoard, trace: Trace): RecallBoard => {
   if (trace._tag !== "Event") return board
   const event = trace.event
   if (event._tag === "Stored") {
     const { session: _session, _tag: _stored, ...record } = event
-    return ofGraph(record) ? { ...board, records: [...board.records, record] } : board
+    return KEPT.includes(record.name) ? { ...board, records: [...board.records, record] } : board
   }
   if (event.session !== board.chat) return board
-  return Option.match(dataOf(recalledEvent, event), {
+  return Option.match(dataOf(knowledgeRecalledEvent, event), {
     onNone: () => board,
     onSome: (recalled) => {
       const turn = event.turn ?? 0
@@ -58,98 +61,126 @@ export const heardRecall = (board: RecallBoard, trace: Trace): RecallBoard => {
   })
 }
 
-/** The board as a new conversation starts (Clear context): its walks are the old conversation's, the graph's records stay. */
+/** The board as a new conversation starts (Clear context): its recalls are the old conversation's; the records stay. */
 export const recallsStartedOver = (board: RecallBoard, chat: string): RecallBoard => ({ chat, recalls: [], records: board.records })
 
-/** Which walk the tab shows: the latest, or one picked by its turn and call. */
+/** Which recall the tab shows: the latest, or one picked by its turn and call. */
 export type RecallPick = { readonly _tag: "Latest" } | { readonly _tag: "Call"; readonly turn: number; readonly call: number }
 
-/** The walk picked, when the board holds it; the latest, when it holds none picked. */
+/** The recall picked, when the board holds it; the latest, when it holds none picked. */
 export const pickedRecall = (board: RecallBoard, pick: RecallPick): Option.Option<HeardRecall> =>
   pick._tag === "Call"
     ? Option.orElse(Option.fromNullishOr(board.recalls.find((one) => one.turn === pick.turn && one.call === pick.call)), () => Option.fromNullishOr(board.recalls.at(-1)))
     : Option.fromNullishOr(board.recalls.at(-1))
 
-/** How many model calls a turn has a walk for. */
+/** How many model calls a turn has a recall for. */
 const callsOf = (board: RecallBoard, turn: number): number => board.recalls.filter((one) => one.turn === turn).length
 
-/** A walk's name in the tab's picker: its turn, and its model call when the turn made more than one. */
+/** A recall's name in the tab's picker: its turn, and its model call when the turn made more than one. */
 export const recallLabel = (board: RecallBoard, heard: HeardRecall): string => {
   const calls = callsOf(board, heard.turn)
   return calls > 1 ? `Turn ${heard.turn}, model call ${heard.call} of ${calls}` : `Turn ${heard.turn}`
 }
 
-/** What the tab says while it has no walk to draw. */
-export const NO_WALK = "No request of this conversation has been walked yet. Send a message: withGraph walks the graph for each model call, and the walk shows here. A memory.ts without withGraph walks nothing, and nothing shows."
+/** What the tab says while the knowledge session holds no memory. */
+export const NOTHING_KEPT = "Nothing is kept yet. Send a message that says something, such as the first button under the chat: once the chat has answered, the curator keeps what the turn said, and it is drawn here. Or press Load the world."
 
-/** What the panel says of a question that named nothing. */
-export const NAMED_NOTHING = "The question named nothing the graph holds: no links were sent."
+/** What the recall's panel says while no request of this conversation has been sent: nothing was recalled yet. */
+export const NO_RECALL = "No request of this conversation has been sent yet. Send a message: withKnowledge chooses what each request is sent, and why shows here."
 
-/** How a thing was named, in words. */
-export type NamedHow = "words" | "loose" | "speaker"
+/** Which entities the picture draws: those the conversation named, with their neighbours, or every one. */
+export type Showing = "named" | "everything"
 
-/** A thing the picture draws: its name as the graph tells things apart, as a link writes it, and where it goes. */
+/** How many neighbours of one entity the picture draws at most, the most said first, unless everything is shown. */
+export const NEIGHBOURS = 6
+
+/** How many entities the most-said fallback starts from. */
+export const MOST_SAID = 5
+
+/** How many entities one column holds before the next column takes the rest. */
+export const COLUMN_ROWS = 24
+
+/** How an entity is lit: a seed of the latest recall, an entity its walk by subject started from, or neither. */
+export type ThingLight = "seed" | "bridge"
+
+/** An entity the picture draws, and where. */
 export interface ThingView {
   readonly key: string
   readonly label: string
-  /** How many links away from a thing the question named: 0 for a named thing. */
+  readonly kind: string
   readonly column: number
-  /** Its place in its column, from 0, the best ranked first. */
   readonly row: number
-  readonly named: Option.Option<NamedHow>
-}
-
-/** A link the picture draws, from the thing the walk reached it from to its other end. */
-export interface EdgeView {
-  readonly id: string
-  readonly from: string
-  readonly to: string
-  readonly relation: string
-  /** Its place among the links reached, best first, from 1. */
-  readonly rank: number
-  readonly sent: boolean
-  /** How thick it is drawn: by how many turns said it, against the link reached that was said most. From 1 to 4. */
-  readonly width: number
+  readonly light: Option.Option<ThingLight>
+  /** The memories about this entity alone, listed under it: their sentences. */
+  readonly alone: ReadonlyArray<string>
   /** What it says when pointed at. */
   readonly title: string
 }
 
-/** One link of the walk as the panel lists it. */
-export interface RankedRow {
-  readonly rank: number
+/** How a memory is lit: sent with the latest request, kept by the latest curation, or neither. */
+export type EdgeLight = "sent" | "curated"
+
+/** A memory the picture draws between two entities: from its subject, its first `about`, to another it is about. */
+export interface EdgeView {
   readonly id: string
-  readonly sentence: string
-  /** How many links away, and from what. */
-  readonly reached: string
-  /** The question's words its path met, each once. */
-  readonly met: ReadonlyArray<string>
-  /** How many turns said it, and when it was last said, in the words the note sends beside it (`saidText`). */
-  readonly said: string
-  /** Its weight, when the walk weighed links. */
-  readonly weight: Option.Option<string>
-  readonly sent: boolean
-  /** Why it was not sent, for a link that was not. */
-  readonly why: Option.Option<string>
+  readonly from: string
+  readonly to: string
+  readonly text: string
+  /** From 1 to 4: thicker the more often said, against the most said memory drawn. */
+  readonly width: number
+  /** Drawn dashed: a memory that ended. */
+  readonly ended: boolean
+  readonly light: Option.Option<EdgeLight>
+  readonly title: string
 }
 
-/** What the tab draws of one walk. */
-export interface GraphView {
-  readonly question: string
-  /** The options the walk ran with, as memory.ts writes them. */
-  readonly options: string
-  /** Step 1: each thing the question named, and how. */
-  readonly named: ReadonlyArray<string>
-  /** Said when the question named nothing. */
-  readonly nothing: Option.Option<string>
-  /** Step 2: how far the walk went, and how many links it reached. */
-  readonly walk: string
-  readonly rows: ReadonlyArray<RankedRow>
-  /** The links reached past the event's list, counted. */
-  readonly more: Option.Option<string>
-  /** Step 3: the note sent, its size, and the size of sending every link. */
-  readonly sent: string
+/** The picture of the memory, and what it shows in words. */
+export interface MemoryView {
+  /** What the picture shows, and why those entities. */
+  readonly heading: string
+  /** What the knowledge session holds, counted as `knowledgeOf` counts it. */
+  readonly counts: string
   readonly things: ReadonlyArray<ThingView>
   readonly edges: ReadonlyArray<EdgeView>
+}
+
+/** What the latest curation of a turn did, in words: kept, ended, said again, dropped and why, or why it failed. */
+export interface CurationView {
+  readonly heading: string
+  readonly lines: ReadonlyArray<string>
+  /** The memories it stored, ended or said again: lit in the picture. */
+  readonly memories: ReadonlyArray<string>
+}
+
+/** One memory of a recall, as the panel lists it. */
+export interface RecallRow {
+  readonly id: string
+  readonly text: string
+  readonly sent: boolean
+  /** Its places in the lists, and how each was reached. */
+  readonly how: ReadonlyArray<string>
+  /** Why it was sent, or why not. */
+  readonly why: string
+  /** What it replaced, sent under it as "before that". */
+  readonly before: ReadonlyArray<string>
+}
+
+/** What the tab says of one recall: the three steps, and what was sent. */
+export interface RecallView {
+  readonly question: string
+  /** The options it ran with, as memory.ts writes them. */
+  readonly options: string
+  /** Step 1: each seed and how it was named, or why there was none. */
+  readonly seeds: ReadonlyArray<string>
+  /** Step 2: the memories about the seeds, and those the message's words reach, fused by rank. */
+  readonly ranked: ReadonlyArray<RecallRow>
+  /** Step 3: the entities the walk by subject started from, and what it found. */
+  readonly bridges: ReadonlyArray<string>
+  readonly walked: ReadonlyArray<RecallRow>
+  /** The memories past the event's list, counted. */
+  readonly more: Option.Option<string>
+  /** What was sent, its size, and the size of sending every standing memory. */
+  readonly sent: string
 }
 
 /** A rank in words: 1st, 2nd, 3rd, 11th, 21st. */
@@ -159,109 +190,199 @@ export const ordinal = (n: number): string => {
   return `${n}${suffix}`
 }
 
-/** A number of tokens as the panel writes it: 4,400. */
-const tokens = (n: number): string => n.toLocaleString("en-US")
+/** A number as the panel writes it: 4,400. */
+const counted = (n: number): string => n.toLocaleString("en-US")
+const plural = (n: number, one: string, many: string): string => `${counted(n)} ${n === 1 ? one : many}`
 
-/** A name with its accent marks taken off, as loose naming reads one. */
-const withoutMarks = (text: string): string => text.normalize("NFD").replace(/[̀-ͯ]/g, "").normalize("NFC")
+/** The UTC day of a time, as the note writes it. */
+const dayOf = (at: number): string => new Date(at).toISOString().slice(0, 10)
 
-/** Whether a name a link writes is the thing an event names: by the graph's own rule, or with accent marks off (loose naming). */
-const isThing = (written: string, key: string): boolean => normalName(written) === key || withoutMarks(normalName(written)) === withoutMarks(key)
+/** How often and when a memory was said, as the note says it. */
+const saidWords = (memory: KnownMemory): string => (memory.count === 1 ? `said on ${dayOf(memory.first)}` : `said ${memory.count} times, last ${dayOf(memory.last)}`)
 
-/** The options a walk ran with, as memory.ts writes them. */
-const optionsOf = (recalled: RecalledData): string => {
-  const weights = recalled.weights === null ? "none" : recalled.weights === "count" ? '"count"' : `{ halfLifeDays: ${recalled.weights.halfLifeDays} }`
-  return `hops: ${recalled.hops} · limit: ${recalled.limit} · names: "${recalled.names}" · weights: ${weights}`
+/** How much a memory was said, all its sayings together, for the entities it is about. */
+const weightOf = (knowledge: Knowledge): ReadonlyMap<string, number> => {
+  const weights = new Map<string, number>()
+  for (const memory of standing(knowledge)) for (const id of memory.about) weights.set(id, (weights.get(id) ?? 0) + memory.count)
+  return weights
 }
 
-/** How a thing was named, in words. */
-const namedWords = (one: RecalledData["named"][number]): string =>
-  one.by === "words" ? `${one.thing}, by its own words in the question: "${one.words.join(" ")}"`
-    : one.by === "loose" ? `${one.thing}, loosely: the question's "${one.words.join(" ")}" is a letter away from it, or the same without accent marks`
-      : `${one.thing}, the speaker: the question holds "${one.words.join(" ")}"`
+/**
+ * The entities the conversation named: the user, those the memories kept from its own turns are about, and the seeds
+ * of its recalls; in that order, each once.
+ */
+export const namedBy = (knowledge: Knowledge, chat: string, recalls: ReadonlyArray<HeardRecall>): ReadonlyArray<string> => {
+  const own = new Set(knowledge.sources.filter((one) => one.source.from?.session === chat).map((one) => String(one.source.id)))
+  const kept = knowledge.memories.filter((memory) => memory.sources.some((source) => own.has(String(source)))).flatMap((memory) => memory.about.map(String))
+  return [...new Set([String(USER_ENTITY), ...kept, ...recalls.flatMap((one) => one.recalled.seeds.map((seed) => String(seed.id)))])]
+}
 
 /**
- * What the tab draws of one walk: the things named and how, every link reached (at most `RECALL_SHOWN`), ranked, with
- * the words its path met, how often and when it was said, its weight when links were weighed, and whether it was sent
- * and why not; the note's size in tokens against the size of sending every link the graph holds; and the picture,
- * each thing in a column by how many links away from a named thing it is. `records` are the graph session's, as
- * heard: what every link says, its count and its last day, for the weights and the sizes. Nothing here reads a clock.
+ * The picture of the memory: entities and the memories between them, from the knowledge session's records alone, as
+ * soon as it holds any. With `named`, the entities the conversation named (`namedBy`) in the first column, then their
+ * neighbours, at most `NEIGHBOURS` of each, the most said first; when what was named holds no memory (Load the world,
+ * nothing said yet, or a new conversation), the `MOST_SAID` entities said most often, and their neighbours. With
+ * `everything`, every entity, each in the column of how many memories away from those it is. The latest recall's seeds
+ * and the entities its walk started from are lit, and so is every memory it sent and every memory the latest curation
+ * kept; what either reached beyond the picture is drawn too, one column further.
  */
-export const graphViewOf = (recalled: RecalledData, records: ReadonlyArray<StoredEvent>): GraphView => {
-  const everStored = new Map<string, Link>(records.flatMap((record) => Option.toArray(dataOf(linkedEvent, record))).map((link) => [link.id, link]))
-  const standing = saidOf(records)
-  const reached = recalled.reached
-  const total = reached.length + recalled.more
-  // Each link reached as the note was given it: the link, and how often and when it was said at that request.
-  const saying = reached.map((one): Option.Option<SaidLink> => Option.map(Option.fromNullishOr(everStored.get(one.id)), (link) => ({ link, count: one.count, last: one.last })))
-  const sentLinks = reached.flatMap((one, at) => (one.sent ? Option.toArray(saying[at] ?? Option.none()) : []))
-  const weights = recalled.weights
-  // A weight is shown as the kernel orders by it: by count, ln(1 + count); by a half-life, against the heaviest link
-  // reached, which needs no clock (each weight decays by the same factor at any moment).
-  const weightsOf = saying.map((said) => Option.map(said, (one) => (weights === null ? 0 : weightOf(one, weights))))
-  const heaviest = Math.max(...weightsOf.flatMap(Option.toArray))
-  const mostSaid = Math.max(1, ...reached.map((one) => one.count))
-  const rows = reached.map((one, at): RankedRow => {
-    const rank = at + 1
-    const fromLabel = one.via === null ? `named ${one.from}` : `${one.from}, reached by ${one.via}`
+export const memoryViewOf = (records: ReadonlyArray<StoredEvent>, showing: Showing, named: ReadonlyArray<string>, recall: Option.Option<KnowledgeRecalledData>, curation: Option.Option<CurationView>): MemoryView => {
+  const knowledge = knowledgeOf(records)
+  const entities = new Map(knowledge.entities.map((entity) => [String(entity.id), entity]))
+  const weights = weightOf(knowledge)
+  const memories = knowledge.memories
+  const standingCount = standing(knowledge).length
+  const counts = `The knowledge session holds ${plural(knowledge.entities.length, "entity", "entities")} and ${plural(memories.length, "memory", "memories")}, ${counted(memories.length - standingCount)} of them ended.`
+  const sent = new Set<string>(Option.match(recall, { onNone: () => [], onSome: (one) => [...one.sent.map(String), ...one.memories.filter((memory) => memory.sent).flatMap((memory) => memory.before.map(String))] }))
+  const kept = new Set<string>(Option.match(curation, { onNone: () => [], onSome: (one) => one.memories }))
+  const seeds: ReadonlyArray<string> = Option.match(recall, { onNone: () => [], onSome: (one) => one.seeds.map((seed) => String(seed.id)) })
+  const bridges: ReadonlyArray<string> = Option.match(recall, { onNone: () => [], onSome: (one) => one.bridges.map((bridge) => String(bridge.id)) })
+  const neighbours = new Map<string, Array<string>>()
+  for (const memory of memories) {
+    for (const one of memory.about) for (const other of memory.about) if (one !== other) neighbours.set(String(one), [...(neighbours.get(String(one)) ?? []), String(other)])
+  }
+  const heaviest = (ids: Iterable<string>) => [...new Set(ids)].sort((a, b) => (weights.get(b) ?? 0) - (weights.get(a) ?? 0) || (a < b ? -1 : a > b ? 1 : 0))
+  const holdsMemory = (id: string) => (neighbours.get(id) ?? []).length > 0 || memories.some((memory) => memory.about.length === 1 && String(memory.about[0]) === id)
+  // Column 0: what is shown from; the rest by how many memories away from it.
+  const fromNamed = [...new Set([...seeds, ...named])].filter((id) => entities.has(id))
+  const fallback = showing === "named" && !fromNamed.some(holdsMemory) && memories.length > 0
+  const start = fallback ? [String(USER_ENTITY), ...heaviest(entities.keys()).filter((id) => id !== String(USER_ENTITY)).slice(0, MOST_SAID)] : fromNamed
+  const column = new Map<string, number>(start.map((id) => [id, 0]))
+  if (showing === "everything") {
+    let edge = start
+    for (let depth = 1; edge.length > 0; depth++) {
+      const next = edge.flatMap((id) => neighbours.get(id) ?? []).filter((id) => !column.has(id))
+      for (const id of next) column.set(id, depth)
+      edge = [...new Set(next)]
+    }
+    const far = Math.max(0, ...column.values()) + 1
+    for (const id of entities.keys()) if (!column.has(id)) column.set(id, far)
+  } else {
+    for (const id of start) for (const other of heaviest(neighbours.get(id) ?? []).filter((one) => !column.has(one)).slice(0, NEIGHBOURS)) column.set(other, 1)
+  }
+  // What the latest recall and curation lit is drawn whatever else is: its entities one column past those they meet.
+  const lit = memories.filter((memory) => sent.has(String(memory.id)) || kept.has(String(memory.id)))
+  for (const memory of lit) {
+    const placed = memory.about.map(String).filter((id) => column.has(id))
+    const next = placed.length === 0 ? 0 : Math.min(...placed.map((id) => column.get(id) ?? 0)) + 1
+    for (const id of memory.about.map(String)) if (!column.has(id)) column.set(id, next)
+  }
+  for (const id of [...seeds, ...bridges]) if (!column.has(id) && entities.has(id)) column.set(id, 1)
+  // Rows: each column in the order its entities came, a long column wrapped into the next.
+  const byColumn = new Map<number, Array<string>>()
+  for (const [id, at] of column) byColumn.set(at, [...(byColumn.get(at) ?? []), id])
+  const placed = new Map<string, { readonly column: number; readonly row: number }>()
+  let shift = 0
+  for (const at of [...byColumn.keys()].sort((a, b) => a - b)) {
+    const ids = byColumn.get(at) ?? []
+    ids.forEach((id, index) => placed.set(id, { column: at + shift + Math.floor(index / COLUMN_ROWS), row: index % COLUMN_ROWS }))
+    shift += Math.max(0, Math.ceil(ids.length / COLUMN_ROWS) - 1)
+  }
+  const drawn = memories.filter((memory) => memory.about.length > 1 && memory.about.every((id) => placed.has(String(id))))
+  const mostSaid = Math.max(1, ...drawn.map((memory) => memory.count))
+  const lightOf = (memory: KnownMemory): Option.Option<EdgeLight> =>
+    sent.has(String(memory.id)) ? Option.some("sent") : kept.has(String(memory.id)) ? Option.some("curated") : Option.none()
+  const things = [...placed].map(([id, at]): ThingView => {
+    const entity = entities.get(id)
+    const label = entity?.name ?? id
+    const alone = memories.filter((memory) => memory.about.length === 1 && String(memory.about[0]) === id).map((memory) => memory.text)
+    const light: Option.Option<ThingLight> = seeds.includes(id) ? Option.some("seed") : bridges.includes(id) ? Option.some("bridge") : Option.none()
+    const aliases = entity === undefined || entity.aliases.length === 0 ? "" : `, also called ${entity.aliases.join(", ")}`
     return {
-      rank, id: one.id, sentence: `${one.subject} ${one.relation} ${one.object}`,
-      reached: `${one.hops} link${one.hops === 1 ? "" : "s"} away, from ${fromLabel}`,
-      met: [...new Set(one.met)],
-      // The note's own words for it, so the panel and what the model read never disagree about a day.
-      said: Option.match(saying[at] ?? Option.none(), { onNone: () => "how often it was said is not known here", onSome: saidText }),
-      weight: weights === null ? Option.none() : Option.map(Option.flatten(Option.fromNullishOr(weightsOf[at])), (weight) =>
-        weights === "count" ? `weight ${weight.toFixed(2)}` : `weight ${Math.exp(weight - heaviest).toFixed(2)} of the heaviest reached`),
-      sent: one.sent,
-      why: one.sent ? Option.none() : Option.some(`${one.met.length === 0 ? "met no word of the question, and " : ""}ranked ${ordinal(rank)}, past the limit of ${recalled.limit}`),
+      key: id, label, kind: entity?.kind ?? "thing", column: at.column, row: at.row, light, alone,
+      title: `${id}: ${label} (${entity?.kind ?? "thing"}${aliases})${Option.match(light, { onNone: () => "", onSome: (how) => (how === "seed" ? ". A seed of the latest recall." : ". The walk by subject started from it.") })}`,
     }
   })
+  const edges = drawn.flatMap((memory) => memory.about.slice(1).map((to): EdgeView => ({
+    id: String(memory.id), from: String(memory.about[0]), to: String(to), text: memory.text,
+    width: Math.round((1 + (3 * memory.count) / mostSaid) * 10) / 10,
+    ended: Option.isSome(memory.ended), light: lightOf(memory),
+    title: `${memory.id}: ${memory.text} (${saidWords(memory)}${Option.match(memory.ended, { onNone: () => "", onSome: (ended) => `; ended on ${dayOf(ended.at)}, ${ended.why}` })})`,
+  })))
+  const shown = things.length
+  const heading = showing === "everything"
+    ? `Everything the knowledge session holds: ${plural(shown, "entity", "entities")}, each in the column of how many memories away it is from what the conversation named.`
+    : fallback
+      ? `The conversation has named nothing kept yet, so these are the ${MOST_SAID} entities said about most often, and their neighbours: ${plural(shown, "entity", "entities")}.`
+      : `The user and what the conversation named, on the left, then their neighbours, at most ${NEIGHBOURS} each, the most said first: ${plural(shown, "entity", "entities")}.`
+  return { heading, counts, things, edges }
+}
 
-  // The picture: a named thing in the first column, each other thing in the column of how many links away it is.
-  const columns = new Map<string, number>(recalled.named.map((one) => [one.thing, 0]))
-  const labels = new Map<string, string>()
-  const ends = reached.map((one) => {
-    const to = isThing(one.subject, one.from) ? one.object : one.subject
-    const toKey = normalName(to)
-    labels.set(toKey, labels.get(toKey) ?? to)
-    const fromWritten = isThing(one.subject, one.from) ? one.subject : one.object
-    labels.set(one.from, labels.get(one.from) ?? fromWritten)
-    columns.set(one.from, Math.min(columns.get(one.from) ?? Infinity, one.hops - 1))
-    columns.set(toKey, Math.min(columns.get(toKey) ?? Infinity, one.hops))
-    return { from: one.from, to: toKey }
+/**
+ * What the latest curation of a turn did, read from the knowledge session's records: the last source whose curation
+ * a curator answered (Load the world's, which no model curated, are passed over), what it kept, ended and said again,
+ * and what the checks dropped, each with why; or that its last try failed, and why.
+ */
+export const latestCuration = (records: ReadonlyArray<StoredEvent>): Option.Option<CurationView> => {
+  const outcome = records.findLast((record) =>
+    Option.exists(dataOf(curatedEvent, record), (curated) => curated.calls > 0) || Option.isSome(dataOf(curationFailedEvent, record)))
+  if (outcome === undefined) return Option.none()
+  const knowledge = knowledgeOf(records)
+  const textOf = (id: string) => knowledge.memories.find((memory) => String(memory.id) === id)?.text ?? id
+  return Option.match(dataOf(curationFailedEvent, outcome), {
+    onSome: (failed) => Option.some({ heading: `Source ${failed.source}: try ${failed.attempt} failed.`, lines: [failed.reason, "The program's next turn takes it up again."], memories: [] }),
+    onNone: () => Option.map(dataOf(curatedEvent, outcome), (curated): CurationView => {
+      const kept = keptFrom(records, curated.source)
+      const source = knowledge.sources.find((one) => one.source.id === curated.source)
+      const turn = Option.match(Option.fromNullishOr(source?.source.from), { onNone: () => "", onSome: (from) => ` (turn ${from.turn} of a conversation)` })
+      const lines = [
+        ...kept.memories.map((memory) => `New: ${memory.text}`),
+        ...kept.ended.map((ended) => `Ended (${ended.why}): ${textOf(String(ended.id))}${ended.by === undefined ? "" : `, replaced by ${textOf(String(ended.by))}`}`),
+        ...kept.restated.map((again) => `Said again: ${textOf(String(again.id))}`),
+        ...curated.dropped.map((dropped) => `Dropped: ${dropped.what}. ${dropped.why}`),
+      ]
+      return {
+        heading: `Source ${curated.source}${turn}: ${plural(curated.calls, "model call", "model calls")}, ${plural(kept.memories.length, "new memory", "new memories")}, ${counted(kept.ended.length)} ended, ${counted(kept.restated.length)} said again, ${counted(curated.dropped.length)} dropped.`,
+        lines: lines.length === 0 ? ["Nothing to keep: the turn said nothing the curator kept."] : lines,
+        memories: [...kept.memories.map((memory) => String(memory.id)), ...kept.ended.map((ended) => String(ended.id)), ...kept.restated.map((again) => String(again.id))],
+      }
+    }),
   })
-  // Rows: each column's things in the order the links best ranked first name them, the named things first of all.
-  const order = [...recalled.named.map((one) => one.thing), ...ends.flatMap((end) => [end.from, end.to])]
-  const placed = new Map<string, number>()
-  const filled = new Map<number, number>()
-  for (const key of order) {
-    if (placed.has(key)) continue
-    const column = columns.get(key) ?? 0
-    placed.set(key, filled.get(column) ?? 0)
-    filled.set(column, (filled.get(column) ?? 0) + 1)
+}
+
+/** How a seed was named, in words. */
+const seedWords = (seed: KnowledgeRecalledData["seeds"][number]): string =>
+  seed.by === "name" ? `${seed.name}, by its name in your message: "${seed.word}"`
+    : seed.by === "speaker" ? `${seed.name}, by a word with which you name yourself: "${seed.word}"`
+      : seed.by === "first-name" ? `${seed.name}, by a first name in your message, which named nobody in full: "${seed.word}"`
+        : `${seed.name}, named in the turn before: your message named nobody`
+
+/**
+ * What the tab says of one recall: the seeds and how each was named; the memories ranked, each with its place in the
+ * list about a seed and in the list the message's words reach (with those words), "for what replaced it" where an
+ * ended memory took the place; what the walk by subject started from and found; whether each was sent and why or why
+ * not; and the note's size in tokens against the size of sending every standing memory. `records` are the knowledge
+ * session's, as heard.
+ */
+export const recallViewOf = (recalled: KnowledgeRecalledData, records: ReadonlyArray<StoredEvent>): RecallView => {
+  const knowledge = knowledgeOf(records)
+  const names = new Map(knowledge.entities.map((entity) => [String(entity.id), entity.name]))
+  const textOf = (id: string) => knowledge.memories.find((memory) => String(memory.id) === id)?.text ?? id
+  const rowOf = (memory: KnowledgeRecalledData["memories"][number]): RecallRow => {
+    const replaced = (via: string | null) => (via === null ? "" : `, for what replaced it (${textOf(via)} ranked there)`)
+    const how = [
+      ...(memory.seed === null ? [] : [`${ordinal(memory.seed.place)} about a seed (${memory.seed.seeds.map((id) => names.get(String(id)) ?? id).join(", ")})${replaced(memory.seed.via)}`]),
+      ...(memory.words === null ? [] : [`${ordinal(memory.words.place)} by your words (${memory.words.terms.join(", ")})${replaced(memory.words.via)}`]),
+      ...(memory.walk === null ? [] : [`${ordinal(memory.walk.place)} of the walk, from ${names.get(String(memory.walk.from)) ?? memory.walk.from}`]),
+    ]
+    const why = memory.why === "ranked" ? `sent: among the first ${recalled.limit} of the fused list`
+      : memory.why === "walked" ? "sent: one of the walk's places"
+        : memory.why === "past-limit" ? `not sent: past the limit of ${recalled.limit}`
+          : `not sent: past the walk's ${recalled.walk} places`
+    return { id: String(memory.id), text: memory.text, sent: memory.sent, how, why, before: memory.before.map((id) => textOf(String(id))) }
   }
-  const things = [...placed].map(([key, row]): ThingView => ({
-    key, label: labels.get(key) ?? key, column: columns.get(key) ?? 0, row,
-    named: Option.map(Option.fromNullishOr(recalled.named.find((one) => one.thing === key)), (one) => one.by),
-  }))
-  const edges = reached.map((one, at): EdgeView => ({
-    id: one.id, from: ends[at]!.from, to: ends[at]!.to, relation: one.relation, rank: at + 1, sent: one.sent,
-    width: Math.round((1 + (3 * one.count) / mostSaid) * 10) / 10,
-    title: `${one.id}: ${one.subject} ${one.relation} ${one.object}. Ranked ${ordinal(at + 1)}, ${one.sent ? "sent" : "not sent"}; ${rows[at]!.said}.`,
-  }))
+  const all = standing(knowledge)
+  const everyTokens = Number(estimateTokens(knowledgeNote(all.map((memory) => ({ memory, why: "ranked" as const, before: [] })))))
   return {
-    question: recalled.question,
-    options: optionsOf(recalled),
-    named: recalled.named.map(namedWords),
-    nothing: recalled.named.length === 0 ? Option.some(NAMED_NOTHING) : Option.none(),
-    walk: recalled.named.length === 0 ? "The walk did not start: there was nothing to start from."
-      : `The walk reached ${total} link${total === 1 ? "" : "s"}, up to ${recalled.hops} link${recalled.hops === 1 ? "" : "s"} away from what was named, ranked best first: by the question's words their path met, then fewer links away${weights === null ? "" : ", then the heavier"}, then the newer.`,
-    rows,
-    more: recalled.more > 0 ? Option.some(`And ${recalled.more} more link${recalled.more === 1 ? "" : "s"} reached, ranked after these: the panel lists the first ${RECALL_SHOWN}.`) : Option.none(),
-    sent: sentLinks.length === 0
-      ? `Sent no link. Sending every link the graph holds, all ${tokens(standing.length)}, would take about ${tokens(Number(estimateTokens(linksNote(standing))))} tokens.`
-      : `Sent ${sentLinks.length} of the ${tokens(total)} links reached, in a note of about ${tokens(Number(estimateTokens(linksNote(sentLinks))))} tokens. Sending every link the graph holds, all ${tokens(standing.length)}, would take about ${tokens(Number(estimateTokens(linksNote(standing))))} tokens.`,
-    things,
-    edges,
+    question: recalled.last,
+    options: `limit: ${recalled.limit} · walk: ${recalled.walk}`,
+    seeds: recalled.seeds.length === 0 ? ["Nothing: your message and the turn before it named no entity kept, and held none of your words for yourself."] : recalled.seeds.map(seedWords),
+    ranked: recalled.memories.filter((memory) => memory.walk === null).map(rowOf),
+    bridges: recalled.bridges.map((bridge) => `${bridge.name}, brought in by "${textOf(String(bridge.from))}"`),
+    walked: recalled.memories.filter((memory) => memory.walk !== null).map(rowOf),
+    more: recalled.more > 0 ? Option.some(`And ${plural(recalled.more, "more memory", "more memories")} ranked after these.`) : Option.none(),
+    sent: recalled.sent.length === 0
+      ? `Sent no memory. Sending every standing memory, all ${counted(all.length)}, would take about ${counted(everyTokens)} tokens.`
+      : `Sent ${plural(recalled.sent.length, "memory", "memories")}, in a note of about ${counted(recalled.tokens)} tokens. Sending every standing memory, all ${counted(all.length)}, would take about ${counted(everyTokens)} tokens.`,
   }
 }

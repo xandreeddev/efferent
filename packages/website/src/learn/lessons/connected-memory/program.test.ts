@@ -22,7 +22,7 @@ import { DEFAULT_TOOLS as FACT_TOOLS } from "../remember/tools.source.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { TOOLS_IMPORTS as NOTE_IMPORTS } from "../tools/tools.source.ts"
 import { CHAT_HOOK, CURATOR_LINE, DEFAULT_AGENT, documentOf, EACH_KEPT, IMPORTS, MEMORY_LINE, moduleOf, REPLACED, REPLACED_IMPORTS } from "./agent.source.ts"
-import { CONTROLS, REVIEW_OFF, reviewOff, WALK_ZERO, walkZero } from "./config-edit.ts"
+import { CONTROLS, REVIEW_ON, reviewOn, WALK_ZERO, walkZero } from "./config-edit.ts"
 import { CURATOR_IMPORTS, curatorDocumentOf, curatorModuleOf, DEFAULT_CURATOR, REVIEW_LINE } from "./curator.source.ts"
 import { ANA, connectedMemory, QUESTION } from "./lesson.ts"
 import { DEFAULT_MEMORY, INTRO, MEMORY_IMPORTS, memoryDocumentOf, memoryModuleOf, STOP_WORDS, WALK_LINE, WRAPPED } from "./memory.source.ts"
@@ -258,7 +258,7 @@ describe("lesson 18's displayed program", () => {
     expect([STARTERS.memory, STARTERS.curator, STARTERS.tools, STARTERS.agent]).toEqual([DEFAULT_MEMORY, DEFAULT_CURATOR, DEFAULT_TOOLS, DEFAULT_AGENT])
   })
 
-  test("curator.ts holds the curator, one model call a job, and keep: sources left by an earlier turn first, then the turn just answered, with review on", () => {
+  test("curator.ts holds the curator, one model call a job, and keep: sources left by an earlier turn first, then the turn just answered, with review off on this page", () => {
     expect(CURATOR_IMPORTS.split("\n")).toEqual([
       'import { Clock, Effect, Layer, Option, Stream } from "effect"',
       'import { LanguageModel } from "effect/ai"',
@@ -267,7 +267,7 @@ describe("lesson 18's displayed program", () => {
       'import { Chat } from "./chat.ts"',
     ])
     expect(DEFAULT_CURATOR.startsWith(REVIEW_LINE)).toBe(true)
-    expect(DEFAULT_CURATOR).toContain("const options = { review: true }\n")
+    expect(DEFAULT_CURATOR).toContain("const options = { review: false }\n")
     expect(DEFAULT_CURATOR).toContain("    const again = yield* curateAgain(knowledge, source.id, options)\n")
     expect(DEFAULT_CURATOR).toContain("  const outcome = yield* curate(\n")
     expect(curatorDocumentOf(DEFAULT_CURATOR)).toBe(`${CURATOR_IMPORTS}\n\n${DEFAULT_CURATOR}\n`)
@@ -278,17 +278,17 @@ describe("lesson 18's displayed program", () => {
   test("each experiment changes one line and nothing else; a line the learner rewrote is left alone", () => {
     expect(changed(DEFAULT_MEMORY, Option.getOrThrow(walkZero(DEFAULT_MEMORY)))).toEqual({ gone: ["  walk: 3,"], come: ["  walk: 0,"] })
     expect(Option.getOrThrow(walkZero(DEFAULT_MEMORY))).toBe(DEFAULT_MEMORY.replace(WALK_LINE, WALK_ZERO))
-    expect(changed(DEFAULT_CURATOR, Option.getOrThrow(reviewOff(DEFAULT_CURATOR)))).toEqual({ gone: ["const options = { review: true }"], come: ["const options = { review: false }"] })
-    expect(Option.getOrThrow(reviewOff(DEFAULT_CURATOR))).toBe(DEFAULT_CURATOR.replace(REVIEW_LINE, REVIEW_OFF))
-    expect([walkZero(DEFAULT_MEMORY.replace("walk: 3", "walk: 2")), reviewOff(DEFAULT_CURATOR.replace("review: true", "review: !true"))]).toEqual([Option.none(), Option.none()])
-    expect(Object.keys(connectedMemory.experiments)).toEqual(["walk-zero", "review-off"])
+    expect(changed(DEFAULT_CURATOR, Option.getOrThrow(reviewOn(DEFAULT_CURATOR)))).toEqual({ gone: ["const options = { review: false }"], come: ["const options = { review: true }"] })
+    expect(Option.getOrThrow(reviewOn(DEFAULT_CURATOR))).toBe(DEFAULT_CURATOR.replace(REVIEW_LINE, REVIEW_ON))
+    expect([walkZero(DEFAULT_MEMORY.replace("walk: 3", "walk: 2")), reviewOn(DEFAULT_CURATOR.replace("review: false", "review: !false"))]).toEqual([Option.none(), Option.none()])
+    expect(Object.keys(connectedMemory.experiments)).toEqual(["walk-zero", "review-on"])
     // The controls read and write their lines, and leave every other line as it is.
     expect([CONTROLS.limit!.read(DEFAULT_MEMORY), CONTROLS.walk!.read(DEFAULT_MEMORY)]).toEqual([Option.some(8), Option.some(3)])
     expect(changed(DEFAULT_MEMORY, controlled(["limit", 1], ["walk", 0]).memory ?? "")).toEqual({ gone: ["  limit: 8,", "  walk: 3,"], come: ["  limit: 1,", "  walk: 0,"] })
   })
 
-  test("each answered turn is kept by the curator before the next message is taken: the curator is asked to curate, then to review, and the next question is sent what was kept about what it names, last, with no tool call", async () => {
-    const result = await Effect.runPromise(runMain(write("keep"), [ANA, QUESTION], [says("Noted."), says("Lisbon.")], [says(KEPT), says(KEPT), says(NOTHING), says(NOTHING)]))
+  test("each answered turn is kept by the curator before the next message is taken: the curator is asked once, review being off on this page, and the next question is sent what was kept about what it names, last, with no tool call", async () => {
+    const result = await Effect.runPromise(runMain(write("keep"), [ANA, QUESTION], [says("Noted."), says("Lisbon.")], [says(KEPT), says(NOTHING)]))
     expect(result.shown.errors).toEqual([])
     expect(result.shown.replies).toEqual(["Noted.", "Lisbon."])
     // The first request holds no memory: nothing was kept yet.
@@ -296,11 +296,11 @@ describe("lesson 18's displayed program", () => {
     // The next: the conversation so far, the question, then the note: the memory about Ana Silva, whom it names, then
     // the one the walk by subject reaches from Acme. No tool was called to store or to read them.
     expect(result.calls[1]).toEqual([SYSTEM, user(ANA), assistant("Noted."), user(QUESTION), noteOf(WORKS, CITY)])
-    // The curator was sent the kernel's prompt for the turn, as one message, then the review of its reply.
+    // The curator was sent the kernel's prompt for the turn, as one message, and nothing more: no review.
     const source = { said: [{ by: "user" as const, text: ANA }, { by: "assistant" as const, text: "Noted." }], context: "", at: AT }
     const prompt = curationPrompt(source, shownFor(knowledgeOf([]), source))
-    expect(result.curated.slice(0, 2)).toEqual([[user(prompt)], [user(reviewPrompt(prompt, KEPT))]])
-    expect(result.curated).toHaveLength(4)
+    expect(result.curated[0]).toEqual([user(prompt)])
+    expect(result.curated).toHaveLength(2)
     // The status line names the conversation's turns, says while the curator works, and what it kept.
     expect(result.shown.status).toEqual([
       "turn 1", "Curating…", "Curated turn 1: 2 new, 0 said again, 0 ended; 0 dropped",
@@ -310,7 +310,7 @@ describe("lesson 18's displayed program", () => {
 
   test("a try that fails is said, kept as failed, and taken up again by the next turn before that turn is curated", async () => {
     const fails = { _tag: "Fails" as const, retryable: false }
-    const result = await Effect.runPromise(runMain(write("again"), [ANA, "Thanks."], [says("Noted."), says("You are welcome.")], [fails, says(KEPT), says(KEPT), says(NOTHING), says(NOTHING)]))
+    const result = await Effect.runPromise(runMain(write("again"), [ANA, "Thanks."], [says("Noted."), says("You are welcome.")], [fails, says(KEPT), says(NOTHING)]))
     expect(result.shown.errors).toEqual([])
     expect(result.shown.status[1]).toBe("Curating…")
     expect(result.shown.status[2]).toStartWith("Curated turn 1: failed: the model could not curate: ")
@@ -321,20 +321,23 @@ describe("lesson 18's displayed program", () => {
   })
 
   test("with no walk by subject (an experiment), the question is sent the memory about Ana Silva alone", async () => {
-    const result = await Effect.runPromise(runMain(write("walk-zero", applied("walk-zero")), [ANA, QUESTION], [says("Noted."), says("Acme?")], [says(KEPT), says(KEPT), says(NOTHING), says(NOTHING)]))
+    const result = await Effect.runPromise(runMain(write("walk-zero", applied("walk-zero")), [ANA, QUESTION], [says("Noted."), says("Acme?")], [says(KEPT), says(NOTHING)]))
     expect(result.shown.errors).toEqual([])
     expect(result.calls[1]?.at(-1)).toEqual(noteOf(WORKS))
   })
 
-  test("with review off (an experiment), the curator is asked once for each turn", async () => {
-    const result = await Effect.runPromise(runMain(write("review-off", applied("review-off")), [ANA, QUESTION], [says("Noted."), says("Lisbon.")], [says(KEPT), says(NOTHING)]))
+  test("with review on (an experiment), the curator is asked to curate, then to review its reply, for each turn", async () => {
+    const result = await Effect.runPromise(runMain(write("review-on", applied("review-on")), [ANA, QUESTION], [says("Noted."), says("Lisbon.")], [says(KEPT), says(KEPT), says(NOTHING), says(NOTHING)]))
     expect(result.shown.errors).toEqual([])
-    expect(result.curated).toHaveLength(2)
+    const source = { said: [{ by: "user" as const, text: ANA }, { by: "assistant" as const, text: "Noted." }], context: "", at: AT }
+    const prompt = curationPrompt(source, shownFor(knowledgeOf([]), source))
+    expect(result.curated.slice(0, 2)).toEqual([[user(prompt)], [user(reviewPrompt(prompt, KEPT))]])
+    expect(result.curated).toHaveLength(4)
     expect(result.calls[1]?.at(-1)).toEqual(noteOf(WORKS, CITY))
   })
 
   test("memory.ts as the controls leave it runs: a limit of 1 and no walk send one memory", async () => {
-    const result = await Effect.runPromise(runMain(write("controlled", controlled(["limit", 1], ["walk", 0])), [ANA, QUESTION], [says("Noted."), says("Acme?")], [says(KEPT), says(KEPT), says(NOTHING), says(NOTHING)]))
+    const result = await Effect.runPromise(runMain(write("controlled", controlled(["limit", 1], ["walk", 0])), [ANA, QUESTION], [says("Noted."), says("Acme?")], [says(KEPT), says(NOTHING)]))
     expect(result.shown.errors).toEqual([])
     expect(result.calls[1]?.at(-1)).toEqual(noteOf(WORKS))
   })
@@ -361,9 +364,9 @@ describe("lesson 18's displayed program", () => {
     const chat = prompts.filter((one) => one.purpose === undefined)
     expect(chat.map((one) => one.model)).toEqual(["scripted", "scripted"])
     expect(chat[1]?.messages.map((message) => ({ role: message.role, text: message.text }))).toEqual([SYSTEM, user(QUESTION), noteOf(`Ana Silva works at Acme. (said on ${new Date().toISOString().slice(0, 10)})`, `Acme is in Lisbon. (said on ${new Date().toISOString().slice(0, 10)})`)])
-    // The curator's calls went to Echo, each filed as the curator's, on the knowledge session: two for each turn.
+    // The curator's calls went to Echo, each filed as the curator's, on the knowledge session: one for each turn.
     const curations = prompts.filter((one) => one.purpose === "curation")
-    expect(curations.map((one) => one.model)).toEqual(["echo", "echo", "echo", "echo"])
+    expect(curations.map((one) => one.model)).toEqual(["echo", "echo"])
     expect(new Set(curations.map((one) => one.session)).size).toBe(1)
     expect((await runtime.list()).map((header) => header.owner).toSorted()).toEqual(["learner", "learner", "plugin.knowledge"])
   })
@@ -388,7 +391,7 @@ describe("lesson 18's displayed program", () => {
   test("type-checks as TypeScript, all five files, as shown, as each experiment leaves them, and as the controls leave memory.ts", () => {
     write("typed")
     write("typed-walk-zero", applied("walk-zero"))
-    write("typed-review-off", applied("review-off"))
+    write("typed-review-on", applied("review-on"))
     write("typed-limit-50-walk-10", controlled(["limit", 50], ["walk", 10]))
     writeFileSync(tsconfig, JSON.stringify({ extends: "../../../../../tsconfig.learn.json", include: ["./*/*.ts"], exclude: [] }))
     const checked = Bun.spawnSync(["bunx", "tsc", "-p", fileURLToPath(tsconfig)], { cwd: fileURLToPath(new URL("../../../../", import.meta.url)) })

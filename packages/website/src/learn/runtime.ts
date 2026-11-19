@@ -227,6 +227,9 @@ const Summarizing = Context.Reference<boolean>("learn/Summarizing", { defaultVal
  */
 const Curating = Context.Reference<Option.Option<{ readonly session: string; readonly turn: number }>>("learn/Curating", { defaultValue: () => Option.none() })
 
+/** Whether a model can curate (lesson 18): Echo by its rules, a gateway's model by reading the prompt. A model that runs in the browser cannot read the curation prompt in one request. */
+const curatesItself = (model: LoadedModel): boolean => model.choice.kind === "echo" || model.choice.kind === "gateway"
+
 const count = (value: unknown, key: string): Option.Option<number> =>
   typeof value === "object" && value !== null && key in value && typeof (value as Record<string, unknown>)[key] === "number"
     ? Option.some((value as Record<string, number>)[key]!)
@@ -712,7 +715,8 @@ export class LessonRuntime {
       }))).pipe(Layer.provide(layer)),
       // Lesson 18: the model the curator asks. The model picked when it is Echo or the gateway's; a model that runs in
       // the browser cannot read the curation prompt in one request, so the page's Echo curates by rule in its place.
-      curatorModel: Layer.succeed(LanguageModel.LanguageModel, model.choice.kind === "echo" || model.choice.kind === "gateway" ? watch(model.model, picked) : watch(this.curatorEcho.model, this.curatorEcho.choice.id)),
+      curatorModel: Layer.succeed(LanguageModel.LanguageModel, curatesItself(model) ? watch(model.model, picked) : watch(this.curatorEcho.model, this.curatorEcho.choice.id)),
+      curatesByRule: !curatesItself(model),
       // A model call made inside `curate` is the curator's: it runs with `Curating` set to the knowledge session and the
       // turn that stored its source, which the model watcher reads. Its reply is traced too: nothing of it is stored.
       // The source counts as being kept from the curator's first call, so a source taken up again counts too.

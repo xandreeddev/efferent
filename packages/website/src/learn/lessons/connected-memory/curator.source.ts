@@ -21,11 +21,12 @@ import { Chat } from "./chat.ts"`
 /** Everything before the editable part. */
 export const CURATOR_HEADER = `${CURATOR_IMPORTS}\n\n`
 
-/** The review option with its comment: a second call checks the first one's reply. */
-export const REVIEW_LINE = `// Whether a second call checks the curator's reply against the turn before anything is stored:
-// on, as the kernel has it. Measured on a real model: 39 of 40 turns kept right with it, 36
-// without.
-const options = { review: true }`
+/** The review option with its comment: a second call checks the first one's reply. Off on this page, for time. */
+export const REVIEW_LINE = `// Whether a second call checks the curator's reply against the turn before anything is stored.
+// The kernel has it on: measured on a real model, 39 of 40 turns were kept right with it, 36
+// without. This page has it off: on the gateway's DeepSeek, a turn with something to keep took
+// about 18 seconds to curate with it, and about 8 to 12 without.
+const options = { review: false }`
 
 /** The curator: the model call the curation step makes for each job. */
 export const CURATOR = `// The curator: the kernel writes the prompt (the turn, what is stored about what it names, and

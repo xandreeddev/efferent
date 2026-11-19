@@ -1579,44 +1579,95 @@ body.app {
   stroke-width: 4px;
   stroke-linejoin: round;
 }
-.grp-thing[data-named] .grp-name {
+.grp-heading,
+.grp-counts {
+  margin: 0;
+  flex: 1 1 16rem;
+  font-size: 0.82rem;
+  color: var(--text-dim);
+}
+.grp-counts {
+  font-size: 0.76rem;
+  color: var(--text-faint);
+}
+.grp-legend {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.3rem 0.9rem;
+  margin: 0;
+  font-size: 0.74rem;
+  color: var(--text-faint);
+}
+.grp-key::before {
+  content: "";
+  display: inline-block;
+  width: 1.4em;
+  height: 0;
+  margin-right: 0.35em;
+  vertical-align: middle;
+  border-top: 3px solid var(--border);
+}
+.grp-key[data-key="seed"]::before,
+.grp-key[data-key="bridge"]::before {
+  width: 0.7em;
+  height: 0.7em;
+  border: none;
+  border-radius: 50%;
+  background: var(--accent);
+}
+.grp-key[data-key="bridge"]::before {
+  background: var(--accent-3);
+}
+.grp-key[data-key="sent"]::before {
+  border-top-color: var(--accent);
+}
+.grp-key[data-key="curated"]::before {
+  border-top-color: var(--accent-2);
+}
+.grp-key[data-key="ended"]::before {
+  border-top-style: dashed;
+}
+.grp-section {
+  display: grid;
+  gap: 0.35rem;
+}
+.grp-section h3 {
+  margin: 0;
+  font-size: 0.86rem;
+  color: var(--text);
+}
+.grp-thing[data-light] .grp-name {
   fill: var(--text);
   font-weight: 600;
+}
+.grp-svg .grp-alone {
+  font-size: 10px;
+  fill: var(--text-faint);
 }
 .grp-dot {
   fill: var(--bg-soft);
   stroke: var(--text-faint);
   stroke-width: 1.5;
 }
-.grp-thing[data-named] .grp-dot {
+.grp-thing[data-light="seed"] .grp-dot {
   fill: var(--accent);
   stroke: var(--accent);
 }
-.grp-thing[data-named="loose"] .grp-dot {
-  fill: #d6a24a;
-  stroke: #d6a24a;
-}
-.grp-thing[data-named="speaker"] .grp-dot {
+.grp-thing[data-light="bridge"] .grp-dot {
   fill: var(--accent-3);
   stroke: var(--accent-3);
 }
 .grp-edge {
-  stroke: var(--border);
-  opacity: 0.55;
+  stroke: var(--text-faint);
+  opacity: 0.45;
 }
-.grp-head {
-  fill: var(--border);
-}
-.grp-head-sent {
-  fill: var(--accent);
-}
-.grp-link[data-sent] .grp-edge {
+.grp-link[data-light="sent"] .grp-edge {
   stroke: var(--accent);
   opacity: 1;
 }
-.grp-svg .grp-relation {
-  fill: var(--accent);
-  font-size: 10px;
+.grp-link[data-light="curated"] .grp-edge {
+  stroke: var(--accent-2);
+  opacity: 1;
 }
 .grp-steps {
   margin: 0;

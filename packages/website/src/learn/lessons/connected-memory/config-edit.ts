@@ -49,8 +49,8 @@ export const WALK_ZERO = WALK_LINE.replace("walk: 3,", "walk: 0,")
 /** The `walk-zero` experiment: the memories ranked first alone, and none the walk by subject would add. */
 export const walkZero = swap(WALK_LINE, WALK_ZERO)
 
-/** curator.ts with no second call: the curator's first reply is checked and stored as it is. */
-export const REVIEW_OFF = REVIEW_LINE.replace("const options = { review: true }", "const options = { review: false }")
+/** curator.ts with the second call: the curator's reply is checked by a review before it is stored. */
+export const REVIEW_ON = REVIEW_LINE.replace("const options = { review: false }", "const options = { review: true }")
 
-/** The `review-off` experiment: one model call for each turn, not two. */
-export const reviewOff = swap(REVIEW_LINE, REVIEW_OFF)
+/** The `review-on` experiment: two model calls for each turn, not one. */
+export const reviewOn = swap(REVIEW_LINE, REVIEW_ON)
