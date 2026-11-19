@@ -16,8 +16,7 @@ const NO_PROGRAM = "agent.ts did not run: main is not an Effect. It should be th
 const NO_EXPORTED_PROGRAM = "agent.ts did not run: program is not an Effect. It should be the program main runs, exported so that checks.ts runs the same one."
 const NO_CHECKS = "checks.ts did not run: checks is not a list of checks. It should be an array, each entry made with check(id, name, script, messages, holds)."
 const NO_FAILURES = "failures.ts did not run: failures is not a list of failures. It should be an array, each entry { retryable, pieces } or {}."
-const NO_GRAPH_MEMORY = "memory.ts did not run: memory is not a layer. It should be withGraph({ hops, limit, speaker })(flatMemory)."
-const NO_HOPS = "memory.ts did not run: withGraph needs hops, a whole number from 1 to 3: how many links away from what a question names it walks. It was given"
+const NO_KNOWLEDGE_MEMORY = "memory.ts did not run: memory is not a layer. It should be withKnowledge({ limit, walk, speaker, stopWords })(flatMemory)."
 const NO_DATASET = "evals.ts did not run: dataset is not a dataset. It should be { id, version, input, reference, cases }, with input and reference schemas and cases a list."
 const NO_LABELS = "labels.ts did not run: labels is not a list of labelled answers. It should be an array, each entry { id, question, reference, answer, label }, with label true or false."
 const NO_GRADERS = 'graders.ts did not run: graders is not a list of graders. It should be an array, each entry { id, version, kind, metrics, run }, kind "code" or "model".'
@@ -159,24 +158,21 @@ const WRONG: Record<string, ReadonlyArray<readonly [string, string, string]>> = 
     ["helper", "const helper = Effect.succeed(\"done\")", "helper.ts did not run: helper is not a function. It should take the task's session and its text, and give the task's answer."],
   ],
   "connected-memory": [
-    ["memory", "const memory = 42", NO_GRAPH_MEMORY],
+    ["memory", "const memory = 42", NO_KNOWLEDGE_MEMORY],
     // The wrapper made and never given a memory is a function, not a layer.
-    ["memory", "const memory = withGraph({ hops: 2, limit: 5 })", NO_GRAPH_MEMORY],
-    // Options the kernel refuses are refused as the file runs, in the kernel's words: a walk too long, no limit, a
-    // speaker's word of two words, and a memory where the options go.
-    ["memory", "const memory = withGraph({ hops: 4, limit: 5 })(flatMemory)", `${NO_HOPS} 4`],
-    ["memory", "const memory = withGraph({ hops: 2, limit: 0 })(flatMemory)", "memory.ts did not run: withGraph needs a limit, a whole number from 1 to 50: the most links a request is sent. It was given 0"],
-    [
-      "memory", 'const memory = withGraph({ hops: 2, limit: 5, speaker: { name: "user", words: ["my name"] } })(flatMemory)',
-      'memory.ts did not run: withGraph\'s speaker needs a name with a letter or a digit, and words that are each one word, such as "me"',
-    ],
-    ["memory", "const memory = withGraph(flatMemory)", `${NO_HOPS} undefined`],
-    // A way of naming the kernel does not know, and weights that are neither "count" nor a half-life above 0.
-    ["memory", 'const memory = withGraph({ hops: 2, limit: 5, names: "fuzzy" })(flatMemory)', 'memory.ts did not run: withGraph\'s names is "exact" or "loose": how a question names a thing. It was given "fuzzy"'],
-    ["memory", 'const memory = withGraph({ hops: 2, limit: 5, weights: "often" })(flatMemory)', 'memory.ts did not run: withGraph\'s weights is "count" or { halfLifeDays }, a number of days above 0: how links are weighed. It was given "often"'],
-    ["memory", "const memory = withGraph({ hops: 2, limit: 5, weights: { halfLifeDays: 0 } })(flatMemory)", 'memory.ts did not run: withGraph\'s weights is "count" or { halfLifeDays }, a number of days above 0: how links are weighed. It was given {"halfLifeDays":0}'],
-    ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.merge(Toolkit.make(calculator), graphTools)."],
-    ["tools", "const tools = graphTools\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be Toolkit.make(calculator).toLayer({ … })."],
+    ["memory", "const memory = withKnowledge({ limit: 8 })", NO_KNOWLEDGE_MEMORY],
+    // Options the kernel refuses are refused as the file runs, in the kernel's words: no place for a memory, a walk
+    // too long, a speaker's word of two words, and stop words that are no list.
+    ["memory", "const memory = withKnowledge({ limit: 0 })(flatMemory)", "memory.ts did not run: withKnowledge's limit is a whole number from 1 to 50: the places for the memories ranked first. It was given 0"],
+    ["memory", "const memory = withKnowledge({ walk: 11 })(flatMemory)", "memory.ts did not run: withKnowledge's walk is a whole number from 0 to 10: how many more places the walk by subject may add. It was given 11"],
+    ["memory", 'const memory = withKnowledge({ speaker: ["my name"] })(flatMemory)', 'memory.ts did not run: withKnowledge\'s speaker is a list of words, each one word such as "me": the words with which a person names themself'],
+    ["memory", 'const memory = withKnowledge({ stopWords: "the a" })(flatMemory)', 'memory.ts did not run: withKnowledge\'s stopWords is a list of words, each one word such as "the": the words the keyword ranking passes over'],
+    // curator.ts makes the curator, over the page's curator model, and keep: each the wrong kind of thing is refused.
+    ["curator", "const curatorOn = 42\nconst keep = Effect.void", "curator.ts did not run: curatorOn is not a function. It should be (model) => Layer.effect(Curator, …).pipe(Layer.provide(model))."],
+    ["curator", "const curatorOn = (model) => model.name\nconst keep = Effect.void", "curator.ts did not run: curatorOn(model) is not a layer. It should be Layer.effect(Curator, …).pipe(Layer.provide(model))."],
+    ["curator", "const curatorOn = (model) => model\nconst keep = () => 1", "curator.ts did not run: keep is not an Effect. It should be Effect.gen(function* () { … })."],
+    ["tools", TWO_NUMBERS, "tools.ts did not run: tools is not a toolkit. It should be Toolkit.make(calculator)."],
+    ["tools", "const tools = Toolkit.make()\nconst toolsLive = 2", "tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … })."],
     ["agent", "const main = 42", NO_PROGRAM],
   ],
   "grade-the-grader": [

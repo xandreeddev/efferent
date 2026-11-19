@@ -5,7 +5,7 @@ import {
   aliasedEvent, curatedEvent, curationFailedEvent, EntityId, entityEvent, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, SourceId, sourceEvent, SourceState,
   USER_ALIASES, USER_ENTITY, USER_NAME,
 } from "./knowledge.entity.js"
-import type { Knowledge, KnownEntity, KnownMemory, KnownSource, NextIds, SaidBy, SourcePart } from "./knowledge.entity.js"
+import type { KeptRecords, Knowledge, KnownEntity, KnownMemory, KnownSource, NextIds, SaidBy, SourcePart } from "./knowledge.entity.js"
 
 /**
  * A text as names and quotes are compared: its words in lower case, one space between them. Case, accent marks
@@ -182,3 +182,24 @@ export const nextIds = (knowledge: Knowledge): NextIds => ({
   entity: EntityId.make(`n${numberAfter(knowledge.entities.map((one) => one.id))}`),
   memory: MemoryId.make(`m${numberAfter(knowledge.memories.map((one) => one.id))}`),
 })
+
+/**
+ * What a curation stored for one source, read back from the knowledge session's journal: every record that names the
+ * source, by kind, in the order stored (`KeptRecords`). Pure, and it refuses no journal: what it does not know it
+ * passes over. A client draws what a curation did from it, the same after a reload.
+ *
+ * @public
+ */
+export const keptFrom = (journal: ReadonlyArray<StoredEvent>, source: SourceId): KeptRecords => {
+  const of = <D extends { readonly source: SourceId }>(read: (event: StoredEvent) => Option.Option<D>): ReadonlyArray<D> =>
+    journal.flatMap((event) => Option.toArray(Option.filter(read(event), (data) => data.source === source)))
+  return {
+    entities: of((event) => dataOf(entityEvent, event)),
+    aliases: of((event) => dataOf(aliasedEvent, event)),
+    memories: of((event) => dataOf(memoryEvent, event)),
+    restated: of((event) => dataOf(memoryRestatedEvent, event)),
+    ended: of((event) => dataOf(memoryEndedEvent, event)),
+    curated: Option.fromNullishOr(of((event) => dataOf(curatedEvent, event))[0]),
+    failed: of((event) => dataOf(curationFailedEvent, event)),
+  }
+}

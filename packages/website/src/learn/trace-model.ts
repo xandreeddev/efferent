@@ -7,7 +7,10 @@
 import { Option, Predicate } from "effect"
 import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
 import type { Message, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, FACTS_OWNER, forgottenEvent, GRAPH_OWNER, learnedEvent, linkedEvent, restatedEvent, resultText, TASKS_OWNER, turnsOf, unlinkedEvent } from "@xandreed/sdk/kernel"
+import {
+  aliasedEvent, curatedEvent, curationFailedEvent, entityEvent, estimateTokens, FACTS_OWNER, forgottenEvent, GRAPH_OWNER, KNOWLEDGE_OWNER, knowledgeOf, learnedEvent, linkedEvent,
+  memoryEndedEvent, memoryEvent, memoryRestatedEvent, restatedEvent, resultText, sourceEvent, TASKS_OWNER, turnsOf, unlinkedEvent,
+} from "@xandreed/sdk/kernel"
 import type { ClosedRead, TurnRead } from "@xandreed/sdk/kernel"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
@@ -34,9 +37,11 @@ interface ContextSeen {
  * What a session is, read from its header and never guessed from its place in a list: the chat's conversation; a
  * helper's (lesson 4: it has a parent); a background task's (lesson 17: the tasks plugin owns it, and it has a
  * parent); the memory session (lesson 11: the facts plugin owns it, and it continues no other); the graph session
- * (lesson 18: the graph plugin owns it, and it continues no other); or another session of the program's own making.
+ * (lesson 18 before its curator: the graph plugin owns it, and it continues no other); the knowledge session (lesson
+ * 18: a curator's journal, owned by `KNOWLEDGE_OWNER`, which continues no other); or another session of the program's
+ * own making.
  */
-export type SessionKind = "chat" | "helper" | "task" | "memory" | "graph" | "other"
+export type SessionKind = "chat" | "helper" | "task" | "memory" | "graph" | "knowledge" | "other"
 
 /** What the page heard of a session's header: who owns it, and the session it was created under, if any. */
 export interface SessionSeen {
@@ -52,7 +57,9 @@ export interface SessionSeen {
 export const kindOf = (session: string, chat: string, header: Option.Option<SessionSeen>): SessionKind =>
   session === chat ? "chat" : Option.match(header, {
     onNone: (): SessionKind => "other",
-    onSome: ({ owner, parent }): SessionKind => Option.isSome(parent) ? (owner === TASKS_OWNER ? "task" : "helper") : owner === FACTS_OWNER ? "memory" : owner === GRAPH_OWNER ? "graph" : "other",
+    onSome: ({ owner, parent }): SessionKind =>
+      Option.isSome(parent) ? (owner === TASKS_OWNER ? "task" : "helper")
+        : owner === FACTS_OWNER ? "memory" : owner === GRAPH_OWNER ? "graph" : owner === KNOWLEDGE_OWNER ? "knowledge" : "other",
   })
 
 /**
@@ -87,6 +94,11 @@ export interface Board {
   readonly attempts: ReadonlyMap<number, ReadonlyArray<AttemptSeen>>
   /** What a summarizer was sent while memory compacted, by turn: model calls of their own, not the turn's. */
   readonly summaries: ReadonlyMap<number, ReadonlyArray<ReadonlyArray<Said>>>
+  /**
+   * The curator's model calls (lesson 18), by the turn of the knowledge session that stored their source: what each
+   * was sent, and its reply or why it failed. They run in no turn: the source's turn is closed when they are made.
+   */
+  readonly curations: ReadonlyMap<number, ReadonlyArray<CuratorCallSeen>>
   /** Pieces streamed, by turn, per prompt. */
   readonly pieces: ReadonlyMap<number, ReadonlyArray<number>>
   /** The newest entries of the events log, at most LOG_LIMIT. */
@@ -111,6 +123,18 @@ export interface Board {
   readonly readBack: ReadBack
 }
 
+/** One call of the curator (lesson 18): the model it was sent to, what it was sent, and its reply or why it failed. */
+export interface CuratorCallSeen {
+  readonly model: string
+  readonly messages: ReadonlyArray<Said>
+  /** What the call was for, said with its reply: `extract` or `review`; none while it has not answered. */
+  readonly job: Option.Option<"extract" | "review">
+  readonly reply: Option.Option<string>
+  readonly failed: Option.Option<string>
+  /** The program stopped while it waited for this call's reply: Stop, a rebuild or Clear context cut it short. */
+  readonly cut: boolean
+}
+
 /** How a board's restored records came to be read: see `Board.readBack`. */
 export interface ReadBack {
   readonly how: "page" | "again"
@@ -118,7 +142,7 @@ export interface ReadBack {
 }
 
 export const emptyBoard = (session: string, kind: SessionKind = "chat"): Board => ({
-  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), attempts: new Map(), summaries: new Map(), pieces: new Map(), log: [], logged: 0, kind, restored: 0,
+  session, records: [], contexts: new Map(), prompts: new Map(), offered: new Map(), given: new Map(), usage: new Map(), attempts: new Map(), summaries: new Map(), curations: new Map(), pieces: new Map(), log: [], logged: 0, kind, restored: 0,
   readBack: { how: "page", copied: Option.none() },
 })
 
@@ -156,6 +180,23 @@ export const summaryOf = (record: Pick<StoredEvent, "name" | "data" | "tags" | "
       if (Option.isSome(unlinked)) return `link ${unlinked.value.id} no longer stands`
       const restated = dataOf(restatedEvent, record)
       if (Option.isSome(restated)) return `link ${restated.value.id} said again, in turn ${restated.value.from.turn} of conversation ${restated.value.from.session.slice(0, 8)}`
+      // The knowledge session's records (lesson 18): each with the source it came from.
+      const source = dataOf(sourceEvent, record)
+      if (Option.isSome(source)) return clip(`source ${source.value.id}: ${source.value.said.map((part) => `${part.by}: ${part.text}`).join(" ")}`)
+      const entity = dataOf(entityEvent, record)
+      if (Option.isSome(entity)) return clip(`entity ${entity.value.id}, ${entity.value.name} (${entity.value.kind}), from ${entity.value.source}`)
+      const aliased = dataOf(aliasedEvent, record)
+      if (Option.isSome(aliased)) return clip(`entity ${aliased.value.id} is also called ${aliased.value.alias}, from ${aliased.value.source}`)
+      const memory = dataOf(memoryEvent, record)
+      if (Option.isSome(memory)) return clip(`memory ${memory.value.id}, from ${memory.value.source}: ${memory.value.text}`)
+      const again = dataOf(memoryRestatedEvent, record)
+      if (Option.isSome(again)) return clip(`memory ${again.value.id} said again, in ${again.value.source}: "${again.value.quote}"`)
+      const ended = dataOf(memoryEndedEvent, record)
+      if (Option.isSome(ended)) return `memory ${ended.value.id} ended (${ended.value.why}${ended.value.by === undefined ? "" : `, replaced by ${ended.value.by}`}), in ${ended.value.source}`
+      const curated = dataOf(curatedEvent, record)
+      if (Option.isSome(curated)) return `${curated.value.source} curated: ${curated.value.calls} model call${curated.value.calls === 1 ? "" : "s"}, ${curated.value.kept} kept, ${curated.value.dropped.length} dropped`
+      const failed = dataOf(curationFailedEvent, record)
+      if (Option.isSome(failed)) return clip(`${failed.value.source}: try ${failed.value.attempt} failed: ${failed.value.reason}`)
       if (record.name === turnStartedEvent.name && typeof data === "object" && data !== null && "turn" in data) return `turn ${String(data.turn)} opened`
       if (record.name === turnEndedEvent.name && typeof data === "object" && data !== null && "outcome" in data) {
         const outcome = data.outcome
@@ -206,6 +247,14 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       })
     case "Prompt": {
       if (trace.session !== board.session) return board
+      if (trace.purpose === "curation") {
+        const call: CuratorCallSeen = { model: trace.model, messages: trace.messages, job: Option.none(), reply: Option.none(), failed: Option.none(), cut: false }
+        return withEntry({ ...board, curations: append(board.curations, trace.turn, call) }, {
+          ...base, kind: "prompt", turn: trace.turn,
+          title: `curator prompt sent to ${trace.model}: ~${tokensOf(trace.messages)} tokens (a model call of the curator's, in no turn)`,
+          detail: json(trace.messages),
+        })
+      }
       if (trace.purpose === "summary") {
         return withEntry({ ...board, summaries: append(board.summaries, trace.turn, trace.messages) }, {
           ...base, kind: "prompt", turn: trace.turn,
@@ -228,6 +277,11 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       // The turn's last prompt is an attempt with no answer: its stream failed. A summarizer's is no try of the turn's call.
       if (trace.session !== board.session) return board
       if (trace.purpose === "summary") return withEntry(board, { ...base, kind: "prompt", turn: trace.turn, title: "the summarizer's stream failed", detail: trace.reason })
+      if (trace.purpose === "curation") {
+        return withEntry({ ...board, curations: changeLast(board.curations, trace.turn, (call) => ({ ...call, failed: Option.some(trace.reason) })) }, {
+          ...base, kind: "prompt", turn: trace.turn, title: "the curator's stream failed", detail: trace.reason,
+        })
+      }
       return withEntry({ ...board, attempts: changeLast(board.attempts, trace.turn, (attempt) => ({ ...attempt, failed: Option.some(trace.reason) })) }, {
         ...base, kind: "prompt", turn: trace.turn, title: "the prompt's stream failed: that attempt has no answer", detail: trace.reason,
       })
@@ -235,6 +289,7 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
       // Another session's (a helper's): this board shows the chat's.
       if (trace.session !== board.session) return board
       if (trace.purpose === "summary") return withEntry(board, { ...base, kind: "usage", turn: trace.turn, title: "the provider reported the summarizer's usage", detail: json(trace.usage) })
+      if (trace.purpose === "curation") return withEntry(board, { ...base, kind: "usage", turn: trace.turn, title: "the provider reported the curator's usage", detail: json(trace.usage) })
       // The usage of the turn's last prompt: its stream reports it as it ends.
       return withEntry({ ...board, usage: changeLast(board.usage, trace.turn, () => Option.some(trace.usage)) }, {
         ...base, kind: "usage", turn: trace.turn, title: "the provider reported its usage", detail: json(trace.usage),
@@ -271,6 +326,18 @@ export const record = (board: Board, trace: Trace, at: number): Board => {
     case "Session":
       // A session's header: what the row of sessions is built from (`heardBy`), and nothing of a board's own.
       return board
+    case "CurationCut":
+      // Lesson 18: the program stopped while the curator worked: a call still waiting for its reply was cut short.
+      if (trace.session !== board.session) return board
+      return withEntry({ ...board, curations: changeLast(board.curations, trace.turn, (call) => (Option.isNone(call.reply) && Option.isNone(call.failed) ? { ...call, cut: true } : call)) }, {
+        ...base, kind: "program", turn: trace.turn, title: `the curation of ${trace.source} was cut short as the program stopped`, detail: trace.source,
+      })
+    case "CuratorAnswered":
+      // Lesson 18: the curator's reply, for the call it answered: the last one filed under its source's turn.
+      if (trace.session !== board.session) return board
+      return withEntry({ ...board, curations: changeLast(board.curations, trace.turn, (call) => ({ ...call, job: Option.some(trace.job), reply: Option.some(trace.reply) })) }, {
+        ...base, kind: "prompt", turn: trace.turn, title: `the curator answered (${trace.job}, try ${trace.attempt} of ${trace.source})`, detail: trace.reply,
+      })
     case "Showing":
       // The conversation as its store holds it, read when the program named it: each record is taken as one announced is.
       if (trace.session !== board.session) return board
@@ -309,7 +376,7 @@ export interface StepView {
 }
 
 /** How a record stands for the model call shown. */
-export type RecordUse = "in-context" | "left-out" | "later" | "not-conversation" | "fact" | "link"
+export type RecordUse = "in-context" | "left-out" | "later" | "not-conversation" | "fact" | "link" | "kept"
 
 export interface JournalRow {
   readonly seq: number
@@ -497,8 +564,11 @@ const journalFor = (board: Board, turn: number, context: Option.Option<ContextSe
     // builds a context from either journal.
     const ofFact = board.kind === "memory" && (Option.isSome(dataOf(learnedEvent, record)) || Option.isSome(dataOf(forgottenEvent, record)))
     const ofLink = board.kind === "graph" && (Option.isSome(dataOf(linkedEvent, record)) || Option.isSome(dataOf(unlinkedEvent, record)))
+    // In the knowledge session (lesson 18) every record but a turn's start and end is what the session keeps.
+    const ofKnowledge = board.kind === "knowledge" && record.name !== turnStartedEvent.name && record.name !== turnEndedEvent.name
     const use: RecordUse = ofFact ? "fact"
       : ofLink ? "link"
+      : ofKnowledge ? "kept"
       : Option.isNone(role) ? "not-conversation"
       : record.seq > upTo ? "later"
         : Option.isNone(context) || inContext.has(record.seq) ? "in-context" : "left-out"
@@ -563,7 +633,7 @@ const callViewOf = (board: Board, turn: number, index: number, tried: ReadonlyAr
   }
 }
 
-/** What a turn of the memory session (lesson 11) or the graph session (lesson 18) says of itself, by the session's kind. */
+/** What a turn of the memory session (lesson 11), the graph session or the knowledge session (lesson 18) says of itself, by the session's kind. */
 const KEPT_WORDS = {
   memory: {
     code: "sessions.turn(yield* memorySession, …)", opened: "A call of rememberFact or forgetFact is one turn on the memory session, opened while the conversation's own turn is open.",
@@ -572,6 +642,10 @@ const KEPT_WORDS = {
   graph: {
     code: "sessions.turn(yield* graphSession, …)", opened: "A call of linkThings or unlinkThings is one turn on the graph session, opened while the conversation's own turn is open.",
     batch: "This turn stored many records at once, with no tool call and no model: the page's Load the world writes the world's sentences straight into the graph session, one record each.",
+  },
+  knowledge: {
+    code: "sessions.turn(knowledge, …), in curate", opened: "The curation step (curate, called by curator.ts's keep after the chat's turn is answered) opens a turn on the knowledge session to store the source, and another to store what the checks kept. The curator's model calls run between the two, in no turn.",
+    batch: "This turn stored many records at once: what the checks kept of the curator's reply, then the record that the source was curated; or, with no model, the page's Load the world, a source for each day the world says something and what a curator that made no mistake would keep.",
   },
 } as const
 
@@ -582,7 +656,26 @@ const keptLabel = (record: StoredEvent): string =>
       : Option.isSome(dataOf(linkedEvent, record)) ? "Link stored"
         : Option.isSome(dataOf(unlinkedEvent, record)) ? "Link removed"
           : Option.isSome(dataOf(restatedEvent, record)) ? "Link said again"
-            : "Record stored"
+            : Option.isSome(dataOf(sourceEvent, record)) ? "Source stored"
+              : Option.isSome(dataOf(entityEvent, record)) ? "Entity stored"
+                : Option.isSome(dataOf(aliasedEvent, record)) ? "Name added"
+                  : Option.isSome(dataOf(memoryEvent, record)) ? "Memory stored"
+                    : Option.isSome(dataOf(memoryRestatedEvent, record)) ? "Memory said again"
+                      : Option.isSome(dataOf(memoryEndedEvent, record)) ? "Memory ended"
+                        : Option.isSome(dataOf(curatedEvent, record)) ? "Curated"
+                          : Option.isSome(dataOf(curationFailedEvent, record)) ? "Curation failed"
+                            : "Record stored"
+
+/** The labels of the knowledge session's records (lesson 18). */
+const KNOWLEDGE_LABELS: ReadonlyArray<string> = ["Source stored", "Entity stored", "Name added", "Memory stored", "Memory said again", "Memory ended", "Curated", "Curation failed"]
+
+/** What the checks dropped of a curator's reply, from the records that say a source was curated (lesson 18). */
+const droppedIn = (stored: ReadonlyArray<StoredEvent>): ReadonlyArray<{ readonly what: string; readonly why: string }> =>
+  stored.flatMap((one) => Option.match(dataOf(curatedEvent, one), { onNone: () => [], onSome: (curated) => curated.dropped }))
+
+/** The dropped items in words, for a step's detail: each with why. */
+const droppedWords = (dropped: ReadonlyArray<{ readonly what: string; readonly why: string }>): string =>
+  dropped.length === 0 ? "" : ` The checks dropped ${dropped.map((one) => `${one.what}: ${one.why}`).join("; ")}`
 
 /**
  * The one step of a turn that stored many records at once: how many of each kind, by what each says ("Links stored:
@@ -597,14 +690,21 @@ const batchStep = (stored: ReadonlyArray<StoredEvent>): StepView => {
   }
   const parts = [
     ...said("Link stored", "link", "links"), ...said("Link said again", "said again", "said again"), ...said("Link removed", "removed", "removed"),
-    ...said("Fact learned", "fact", "facts"), ...said("Fact forgotten", "forgotten", "forgotten"), ...said("Record stored", "other record", "other records"),
+    ...said("Fact learned", "fact", "facts"), ...said("Fact forgotten", "forgotten", "forgotten"),
+    ...said("Memory stored", "memory", "memories"), ...said("Memory said again", "said again", "said again"), ...said("Memory ended", "ended", "ended"),
+    ...said("Entity stored", "entity", "entities"), ...said("Name added", "other name", "other names"), ...said("Source stored", "source", "sources"),
+    ...said("Curated", "curated", "curated"), ...said("Curation failed", "failed try", "failed tries"), ...said("Record stored", "other record", "other records"),
   ]
+  const dropped = droppedIn(stored)
+  if (dropped.length > 0) parts.push(`${dropped.length} dropped`)
+  const heading = counts.has("Fact learned") || counts.has("Fact forgotten") ? "Facts stored"
+    : [...counts.keys()].some((label) => KNOWLEDGE_LABELS.includes(label)) ? "Kept" : "Links stored"
   const first = stored[0]!
   const last = stored.at(-1)!
   return {
     id: "stored-records", kind: "stored-record", call: 0, column: "journal", state: "done", seqs: stored.map((one) => one.seq), code: "session.append(…), once for each",
-    label: `${counts.has("Fact learned") || counts.has("Fact forgotten") ? "Facts" : "Links"} stored: ${parts.join(", ")}`,
-    detail: `Records #${first.seq} to #${last.seq}: ${plural(stored.length, "record")} stored in this one turn. Open any of them in the Journal column. The first, in short: ${summaryOf(first)}`,
+    label: `${heading}: ${parts.join(", ")}`,
+    detail: `Records #${first.seq} to #${last.seq}: ${plural(stored.length, "record")} stored in this one turn. Open any of them in the Journal column. The first, in short: ${summaryOf(first)}${droppedWords(dropped)}`,
   }
 }
 
@@ -631,8 +731,8 @@ const memoryTurnOf = (board: Board, turn: number, words: (typeof KEPT_WORDS)[key
     // them, so the track stays readable; a tool's turn, which stores one, is a step for its record.
     ...(stored.length > 1 ? [batchStep(stored)] : stored.map((one, index): StepView => ({
       id: `stored-record-${index + 1}`, kind: "stored-record", call: 0, column: "journal", state: "done", seqs: [one.seq], code: "session.append(…)",
-      label: keptLabel(one),
-      detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}`,
+      label: droppedIn([one]).length === 0 ? keptLabel(one) : `${keptLabel(one)}: ${droppedIn([one]).length} dropped`,
+      detail: `Record #${one.seq}, ${one.name}. Open it in the Journal column to read all of it. In short: ${summaryOf(one)}${droppedWords(droppedIn([one]))}`,
     }))),
     {
       id: "closed", kind: "closed", call: 0, label: "Turn closed", code: "the scope ends", column: "journal",
@@ -641,7 +741,55 @@ const memoryTurnOf = (board: Board, turn: number, words: (typeof KEPT_WORDS)[key
     },
   ]
   const journal = journalFor(board, turn, Option.none(), new Set())
-  return { turn, restored: false, readBack: restoredWords(board.readBack, 0), closed, steps, calls: [{ call: 1, memory: Option.none(), prompt: Option.none(), promptTokens: 0, reusedTokens: 0, usage: Option.none(), tools: [], journal, attempts: [], answeredBy: Option.none() }] }
+  const quiet: CallView = { call: 1, memory: Option.none(), prompt: Option.none(), promptTokens: 0, reusedTokens: 0, usage: Option.none(), tools: [], journal, attempts: [], answeredBy: Option.none() }
+  if (board.kind !== "knowledge") return { turn, restored: false, readBack: restoredWords(board.readBack, 0), closed, steps, calls: [quiet] }
+  const curations = board.curations.get(turn) ?? []
+  const calls = curations.map((call, index): CallView => {
+    const rows = call.messages.map((message): PromptRow => ({ role: message.role, text: message.text, tokens: estimateTokens(message.text), source: "added", seq: Option.none(), reused: false, pointer: Option.none() }))
+    return { ...quiet, call: index + 1, prompt: Option.some(rows), promptTokens: rows.reduce((sum, row) => sum + row.tokens, 0) }
+  })
+  return { turn, restored: false, readBack: restoredWords(board.readBack, 0), closed, steps: [...steps, ...curatorSteps(board, stored, curations)], calls: calls.length > 0 ? calls : [quiet] }
+}
+
+/**
+ * The steps of the curator's calls for the source a knowledge session's turn stored (lesson 18), after the turn's
+ * own: each call's prompt and its reply, made in no turn; then, while no curation has kept the source, that it waits,
+ * or that its tries failed, for the program's next turn to take up.
+ */
+const curatorSteps = (board: Board, stored: ReadonlyArray<StoredEvent>, curations: ReadonlyArray<CuratorCallSeen>): ReadonlyArray<StepView> => {
+  const source = stored.flatMap((record) => Option.toArray(dataOf(sourceEvent, record)))[0]
+  if (source === undefined) return []
+  const calls = curations.flatMap((call, index): ReadonlyArray<StepView> => {
+    const what = Option.match(call.job, { onNone: () => "", onSome: (job) => ` (${job})` })
+    const asked: StepView = {
+      id: `curator-asked-${index + 1}`, kind: "prompt", call: index + 1, column: "prompt", state: "done", seqs: [], code: "curator.curate({ prompt, job })",
+      label: `Curator asked${what}`,
+      detail: `The kernel's ${Option.contains(call.job, "review") ? "review prompt: the first prompt and the curator's reply, to check against the turn" : "curation prompt: the turn, what is stored about what it names, and the rules"}, sent to ${call.model} as one message, ~${tokensOf(call.messages)} tokens. It runs in no turn: the source's turn above is closed, and nothing of it is stored.`,
+    }
+    const answered: StepView = {
+      id: `curator-answered-${index + 1}`, kind: "streamed", call: index + 1, column: "prompt", seqs: [], code: "the curator's reply",
+      state: Option.isSome(call.failed) ? "failed" : Option.isSome(call.reply) ? "done" : call.cut ? "skipped" : "now",
+      label: Option.isSome(call.failed) ? "Curator failed" : Option.isSome(call.reply) ? "Curator answered" : call.cut ? "Curator cut short" : "Curator answering",
+      detail: Option.match(call.failed, {
+        onSome: (reason) => `The call failed: ${reason}`,
+        onNone: () => Option.match(call.reply, {
+          onNone: () => call.cut ? "The program stopped (Stop, Rebuild or Clear context) before the curator answered: nothing of this curation was stored." : "Waiting for the curator's reply.",
+          onSome: (reply) => `Its reply, which the kernel reads and checks before anything is stored: ${clip(reply, 600)}`,
+        }),
+      }),
+    }
+    return [asked, answered]
+  })
+  const state = knowledgeOf(board.records).sources.find((one) => one.source.id === source.id)?.state
+  const waits: ReadonlyArray<StepView> = state === undefined || state._tag === "Curated" || (state._tag === "Pending" && curations.some((call) => Option.isNone(call.reply) && Option.isNone(call.failed) && !call.cut)) ? [] : [{
+    id: "not-curated", kind: "stored-record", call: 0, column: "journal", seqs: [], code: "curateAgain(knowledge, source, options)",
+    state: state._tag === "Failed" ? "failed" : "todo",
+    label: state._tag === "Failed" ? `Not curated: ${state.attempts === 1 ? "its try" : `${state.attempts} tries`} failed` : "Not curated yet",
+    detail: state._tag === "Failed"
+      ? `${source.id} was not kept: ${state.reason} The program's next turn tries it again (curateAgain in curator.ts), up to three tries.`
+      : `No curation has kept ${source.id} yet: Stop, Rebuild or Clear context cut its curation short, or it is under way. The program's next turn takes it up (curateAgain in curator.ts): nothing else does.`,
+  }]
+  return [...calls, ...waits]
 }
 
 /**
@@ -665,7 +813,7 @@ export const storedAfter = (view: TurnView, call: CallView): ReadonlyArray<Journ
     : []
 
 export const viewOf = (board: Board, turn: number): TurnView => {
-  if (board.kind === "memory" || board.kind === "graph") return memoryTurnOf(board, turn, KEPT_WORDS[board.kind])
+  if (board.kind === "memory" || board.kind === "graph" || board.kind === "knowledge") return memoryTurnOf(board, turn, KEPT_WORDS[board.kind])
   // A session that is not the chat's (a helper's, or another of the program's own): its words stay out of the chat.
   const quiet = board.kind !== "chat"
   // The turn as the kernel reads it from the records: its start, its messages, its steps and how it closed.
@@ -858,10 +1006,10 @@ export interface Boards {
 
 export const emptyBoards = (chat: string): Boards => ({ chat, boards: new Map([[chat, emptyBoard(chat)]]), headers: new Map(), retired: new Set() })
 
-/** The session a trace is about: an event's, a context's, a prompt's and its failure's, a usage's and a header's own; anything the program told the chat is the chat's. */
+/** The session a trace is about: an event's, a context's, a prompt's and its failure's, a usage's, a header's and a curator's call's own; anything the program told the chat is the chat's. */
 export const sessionOfTrace = (trace: Trace, chat: string): string =>
   trace._tag === "Event" ? trace.event.session
-    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "PromptFailed" || trace._tag === "Usage" || trace._tag === "Session" ? trace.session
+    : trace._tag === "Context" || trace._tag === "Prompt" || trace._tag === "PromptFailed" || trace._tag === "Usage" || trace._tag === "Session" || trace._tag === "CuratorAnswered" || trace._tag === "CurationCut" ? trace.session
       : chat
 
 /**
@@ -886,12 +1034,12 @@ export const heardBy = (all: Boards, trace: Trace, at: number): Boards => {
 
 /**
  * The boards as a new conversation starts (Clear context, or a durable lesson's program naming another one): an
- * empty board for the new chat, and every other session retired with its board, but the memory session's and the
- * graph session's. Neither is a conversation's: each board stays, with the records heard so far, and goes on being
+ * empty board for the new chat, and every other session retired with its board, but the memory session's, the
+ * graph session's and the knowledge session's. None is a conversation's: each board stays, with the records heard so far, and goes on being
  * heard.
  */
 export const startedOver = (all: Boards, chat: string): Boards => {
-  const kept = [...all.boards].filter(([session, board]) => session !== chat && (board.kind === "memory" || board.kind === "graph"))
+  const kept = [...all.boards].filter(([session, board]) => session !== chat && (board.kind === "memory" || board.kind === "graph" || board.kind === "knowledge"))
   const gone = [...all.boards.keys()].filter((session) => session !== chat && !kept.some(([id]) => id === session))
   return {
     chat,
@@ -931,6 +1079,7 @@ export const sessionRow = (all: Boards): ReadonlyArray<SessionTab> => {
     if (kind === "chat") return { session, kind, label: "Chat", title: "The chat's session" }
     if (kind === "memory") return { session, kind, label: "Memory", title: `The memory session: it holds the facts the agent remembers, in a journal of its own, for every conversation: ${session}` }
     if (kind === "graph") return { session, kind, label: "Graph", title: `The graph session: it holds the links between things the agent knows, in a journal of its own, for every conversation: ${session}` }
+    if (kind === "knowledge") return { session, kind, label: "Memory", title: `The knowledge session: what the curator kept of each turn, in a journal of its own, for every conversation: ${session}` }
     const task = taskOf(board)
     const named = task.length > 0 ? `: ${task}` : ""
     const under = Option.exists(header, ({ parent }) => Option.contains(parent, all.chat)) ? "the chat's" : "another session's"

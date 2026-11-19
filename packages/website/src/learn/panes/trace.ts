@@ -220,6 +220,7 @@ export const mountTrace = (root: HTMLElement): TracePane => {
     "not-conversation": "not conversation: memory skips it",
     fact: "a fact's record: what withFacts reads for each request, in every conversation",
     link: "a link's record: what withGraph reads for each request, in every conversation",
+    kept: "a record the curator's work kept: what withKnowledge reads for each request, in every conversation",
   }
   /**
    * The session a stored result names: a delegate's, the helper's (ADR 0006: the link from the call to the helper's
@@ -274,10 +275,12 @@ export const mountTrace = (root: HTMLElement): TracePane => {
       onNone: () => {
         // A turn on the memory session stores a fact's record, and one on the graph session a link's: no memory builds
         // a context from either journal.
-        const quiet = board.kind === "memory" || board.kind === "graph"
-        memoryHead.textContent = quiet ? "none: no model is called" : Option.match(restored, { onNone: () => "not asked yet", onSome: (words) => words.head })
+        const quiet = board.kind === "memory" || board.kind === "graph" || board.kind === "knowledge"
+        memoryHead.textContent = quiet ? (board.kind === "knowledge" ? "none: no memory builds this" : "none: no model is called") : Option.match(restored, { onNone: () => "not asked yet", onSome: (words) => words.head })
         patch(memoryBox, [[quiet ? `${board.kind}-session` : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
-          quiet ? (board.kind === "graph"
+          quiet ? (board.kind === "knowledge"
+            ? "A turn on the knowledge session stores records and calls no model: the curator's calls are made between its turns, from a prompt the kernel writes. No memory builds a context from this journal: withKnowledge reads it, for each request of a conversation."
+            : board.kind === "graph"
             ? "A turn on the graph session stores one record and calls no model: no memory builds a context from this journal. The links it holds are read by withGraph, for each request of a conversation."
             : "A turn on the memory session stores one record and calls no model: no memory builds a context from this journal. The facts it holds are read by withFacts, for each request of a conversation.")
             : Option.match(restored, { onNone: () => "Memory has not been asked for this turn's context yet.", onSome: (words) => words.detail }))]])
@@ -315,10 +318,12 @@ export const mountTrace = (root: HTMLElement): TracePane => {
   const renderPrompt = (view: CallView, lit: ReadonlySet<number>, restored: Option.Option<RestoredWords>) => {
     Option.match(view.prompt, {
       onNone: () => {
-        const quiet = board.kind === "memory" || board.kind === "graph"
+        const quiet = board.kind === "memory" || board.kind === "graph" || board.kind === "knowledge"
         promptHead.textContent = quiet ? "none: no model is called" : Option.match(restored, { onNone: () => "not sent yet", onSome: (words) => words.head })
         patch(promptBox, [[quiet ? `${board.kind}-session` : Option.match(restored, { onNone: () => "none", onSome: (words) => `restored ${words.head}` }), () => el("li", { class: "tr-none" },
-          quiet ? (board.kind === "graph"
+          quiet ? (board.kind === "knowledge"
+            ? "No prompt is sent in this turn. The curator's prompts are under the turn that stored their source; open the Chat session to read the prompt that was sent the memories."
+            : board.kind === "graph"
             ? "No prompt is sent in a turn on the graph session. Open the Chat session to read the prompt that was sent the links."
             : "No prompt is sent in a turn on the memory session. Open the Chat session to read the prompt that was sent the facts.")
             : Option.match(restored, { onNone: () => "No prompt has been sent in this turn yet.", onSome: (words) => words.detail }))]])

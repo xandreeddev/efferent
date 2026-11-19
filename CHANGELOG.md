@@ -10,6 +10,68 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- Docs site: lesson 18 of the learn track, now "A memory that keeps itself",
+  keeps its memory with a curator. Its program offers no tool that remembers
+  (tools.ts is the calculator alone); after each turn's answer agent.ts runs
+  curator.ts's `keep`, which takes up any source an earlier turn left (Stop
+  cut it short, or a try failed) with `curateAgain`, then stores the turn as a
+  source and curates it with the kernel's `curate`, before the next message
+  is taken; the page leaves review off (`review: false`, an experiment turns
+  it on), since on DeepSeek a turn with something to keep took 18 and 19 seconds
+  to curate with it (2 runs), and 5 to 25, most near 10, without (6 runs). memory.ts is `withKnowledge({ limit: 8, walk: 3, speaker,
+  stopWords })(flatMemory)`, the speaker's words and the stop words written
+  out in the file. The curator asks the page's curator model: the model
+  picked when it is Echo or a gateway model, else the page's own Echo, which
+  curates by rule (a local model cannot read the curation prompt in one
+  request), and the status line says so. Echo answers the kernel's curation
+  prompt by rule, read by its first line word for word, and its review prompt
+  with the proposal unchanged; after a question it over-reaches on purpose,
+  proposing the first sentence of the chat's answer as a memory, which the
+  kernel's checks drop (the assistant's words are no evidence). Echo answers
+  a question sent with the note of memories from the note's first memory and
+  up to two more about what it names and the question does not, a line of
+  what a memory replaced read as "Before that: …". The Graph tab draws the
+  knowledge session's memory always, from its records, with no question
+  asked (the user and what the conversation named with their neighbours, or
+  the entities said about most often, or everything), and lights what the
+  latest curation kept and what the latest recall sent, with the curation's
+  and the recall's steps in words. The curator's calls are traced as the
+  curator's, on the knowledge session under the turn that stored their
+  source; the Context tab has a board for the knowledge session, "Memory",
+  which counts what a curation dropped; a curation counts as busy for Load
+  the world, and Stop, Rebuild and Clear context cut it short, its source
+  left pending and said so. Load the world writes the 654 sentences into the
+  knowledge session in one turn, with no model: 554 sources (one a day, each
+  curated), 374 entities, 2 other names, 557 memories, 97 restatements and 3
+  ended.
+- `@xandreed/sdk/kernel`: knowledge curated after the turn and recalled from
+  what the conversation names (ADR 0023). `curate(session, source, { review?,
+  prompt? })` is the curation step a host's program calls after a turn: it
+  stores the source, asks the host's `Curator` (and, unless `review: false`,
+  asks it again to review its reply) outside any turn of the knowledge
+  session, checks the reply and stores what passed with
+  `plugin.knowledge.curated`, or `plugin.knowledge.failed` with the try and
+  the reason (`NOT_CURATED` when a reply holds no JSON object). It answers a
+  `CurationOutcome`; an interrupted curation leaves its source `Pending`, and
+  `curateAgain(session, id)` takes it up. Each of its turns waits while
+  another turn holds the knowledge session, every 25 ms for up to 10 seconds. `knowledgeSession` finds or makes
+  the knowledge session, `knowledgeJournal` reads it, and `keptFrom(journal,
+  source)` reads back what a curation stored. `withKnowledge({ limit?, walk?,
+  speaker?, stopWords? })` is a memory wrapper that sends each request what
+  is kept about what the conversation names, with no model and no embedder:
+  the entities the last message names (the user's by the host's speaker
+  words, people by a first name when nobody is named in full), else the turn
+  before's; the memories about them and those the message's words reach by
+  the kernel's BM25 ("work" meeting "works"), fused by rank, an ended memory
+  ranking for what replaced it; 8 places, then a walk by subject of up to 3
+  more; what a memory replaced sent under it. Its
+  note, `knowledgeNote`, is new model-facing text: `[Host note: these memories
+  were kept from earlier conversations, …]` and the memories framed in
+  `<known-memories>`, a sentence each with when it was said, no ids. What
+  recall did is said live, `plugin.knowledge.recalled`
+  (`knowledgeRecalledEvent`, tagged `trace`). The pure parts are exported:
+  `askedOf`, `seedsOf`, `keywordScores`, `recallKnowledge`,
+  `knowledgeRecalledOf`, `checkedKnowledgeOptions`.
 - `@xandreed/sdk/kernel`: memory kept by a curator, its pure core (ADR 0022,
   which supersedes ADR 0019; the graph and facts contracts stay as they are
   until their lessons move). Long-term memory is written after the turn by a

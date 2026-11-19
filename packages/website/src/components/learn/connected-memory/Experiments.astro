@@ -1,18 +1,15 @@
 ---
-// Step 15: each button rewrites the learner's memory.ts and runs it again (see learn/playground.ts, `data-exp`). Each
-// starts from a page with no link: the links outlive a rebuild, and only a reload empties the graph session.
+// Each button rewrites one line of the learner's code and runs it again (see learn/playground.ts, `data-exp`, and
+// lessons/connected-memory/config-edit.ts). What is kept outlives a rebuild: only a reload empties the knowledge
+// session.
 const experiments = [
   {
-    exp: "hops-one", title: "One link away", button: "Set hops to 1",
-    text: "Reload the page first, so that no link stands. memory.ts now reads withGraph({ hops: 1, … }). Press the first two buttons under the chat, the seven sentences and In what city does Ana work?. The walk stops at Ana's own links: the note lists e1: Ana works at Acme., then e7, e6, e4 and e3, and not e2: Acme is in Lisbon., which is two links away. Echo answers From what I know: Ana works at Acme. Ana drives a red car. There is no city in it.",
+    exp: "walk-zero", title: "No walk by subject", button: "Set walk to 0",
+    text: "memory.ts now reads walk: 0: a request is sent the memories ranked first, and none the walk by subject would add. From a reloaded page, press the button, then the first two buttons under the chat: Echo answers From what I know: Ana Silva works at Acme., and Lisbon is not sent. Press Load the world, then Where does the person who leads Project Orchid live?: Echo answers From what I know: João Reis leads Project Orchid., and nothing says where he lives.",
   },
   {
-    exp: "by-distance", title: "By distance alone", button: "Rank by distance",
-    text: "Reload the page first. memory.ts now holds a wrapper of your own, byDistance, written over the kernel's parts: saidLinks reads the links that stand, each with how often it was said; questionOf gives your last message; namedIn the things it names; walked is the walk withGraph takes (step 5), asked here with the names of those things and none of the question's other words; recalledOf and recalledEvent say what the walk did, for the Graph tab, as withGraph does; and linksNote writes the note. With no word left to rank by, the links are ranked by how many links away they are, then the newest first. Press the first two buttons under the chat. The note lists e7, e6, e4, e3 and e1: Ana's own links, the newest first, and not Acme is in Lisbon. Echo answers From what I know: Ana drives a red car. Ana is the sister of Eva. The Graph tab shows the walk asked with ana alone: every link met no word. These are the five sentences lesson 11's ranking sends when the seven are facts. The words of the path are what put the city second.",
-  },
-  {
-    exp: "follow-only", title: "No wrapper", button: "Take the wrapper away",
-    text: "Reload the page first. memory.ts now provides the flat memory with no wrapper. Press the first two buttons under the chat. The seven links are stored, and the question is sent none of them: Echo answers You said: \"In what city does Ana work?\". I can also see 3 earlier messages. Press What is Acme linked to?. Echo calls followThings, which reads the graph session whenever it is called, and answers Following Acme: Acme is in Lisbon. Ana works at Acme. Without the wrapper no request is sent a note of links, not even this question's: the links reach the model through the tool's result. No walk runs, so the Graph tab has nothing to draw, and says so.",
+    exp: "review-on", title: "A review of each curation", button: "Turn review on",
+    text: "curator.ts now reads const options = { review: true }, as the kernel has it: the curator is asked a second time, to check its first reply against the turn, before anything is stored. From a reloaded page, press the button, then the first button under the chat: in Context, Memory, turn 1 now has Curator asked (review) and its answer. Echo's review changes nothing; a real model's can, and takes longer: on the gateway's DeepSeek a turn with something to keep took 18 and 19 seconds to curate with review (2 runs), and 5 to 25 seconds, most near 10, without (6 runs).",
   },
 ]
 ---
