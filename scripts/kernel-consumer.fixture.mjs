@@ -267,15 +267,15 @@ for (const kind of Object.keys(durable)) {
   assert.ok(typeof line.session === "string", `the ${kind} holder said ${JSON.stringify(line)}`)
   await kill(child)
   crashes[kind] = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const closed = yield* recoverTurns
+    const { closed, unreadable } = yield* recoverTurns
     const sessionsOf = yield* Sessions
     const turn = yield* sessionsOf.turn(line.session, (open) => Effect.succeed(open.turn))
     const second = yield* Effect.promise(() => spawnHolder(kind, path))
     yield* Effect.promise(() => kill(second.child))
     const journal = yield* sessionsOf.read(line.session)
-    return { closed: closed.map((one) => [one.session === line.session, one.turn]), turn, refused: second.line.refused, outcomes: journal.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data.outcome._tag) }
+    return { closed: closed.map((one) => [one.session === line.session, one.turn]), unreadable, turn, refused: second.line.refused, outcomes: journal.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data.outcome._tag) }
   }).pipe(Effect.provide(sessions().pipe(Layer.provideMerge(durable[kind].layer(path)), Layer.provideMerge(kernel()))))).pipe(Effect.timeout("30 seconds")))
-  assert.deepEqual(crashes[kind], { closed: [[true, 1]], turn: 2, refused: "Held", outcomes: ["Abandoned", "Completed"] }, `the ${kind} journal after a crash`)
+  assert.deepEqual(crashes[kind], { closed: [[true, 1]], unreadable: [], turn: 2, refused: "Held", outcomes: ["Abandoned", "Completed"] }, `the ${kind} journal after a crash`)
 }
 
 class Notes extends Context.Service()("consumer/Notes") {}

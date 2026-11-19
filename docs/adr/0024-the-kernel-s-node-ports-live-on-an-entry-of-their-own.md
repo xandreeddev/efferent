@@ -144,6 +144,14 @@ knowledge) included.
   or its own host name.
 - One session `recoverTurns` cannot read (`Unreadable`) fails the whole step, and no turn after it in the listing is
   closed: a host repairs or removes that session first.
+  - *Amended 19 November 2026 (ADR 0028's change):* no longer. A session whose journal the store cannot read
+    (`Unreadable`, from `Sessions.recover`) is passed over, logged and named in the step's result, and the turns of
+    the sessions after it are closed: `recoverTurns` gives a `Recovery`, `{ closed, unreadable }`, the turns it closed
+    (`RecoveredTurn`) and the sessions it passed over (`UnreadableSession`: the id and the store's words). Beside the
+    closed turns rather than mixed into them, so a host that reads `closed` reads what it read before, and one that
+    must not start over a damaged store sees the list it has to act on. Any other failure of the store
+    (`Unavailable`) still fails the step. Still a limit: a session whose *header* line is damaged fails the store's
+    `list`, so the step cannot begin; `list` is the storage contract's, unchanged here.
 - Listing reads each session file's first line; `recoverTurns` reads every journal of the store once. A store of
   many long journals makes a slow start: an index of open turns would be the store's, and is not kept.
 

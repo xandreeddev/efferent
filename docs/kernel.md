@@ -1906,7 +1906,8 @@ it over from one whose process is gone, and lets it go when its scope
 closes. So a host that has built the layer knows what `Sessions.recover`
 asks it to know: every turn the store holds open was a dead writer's.
 `recoverTurns` closes them all, in every session of the store, the facts,
-graph and knowledge sessions included, and gives the turns it closed:
+graph and knowledge sessions included, and gives the turns it closed and the
+sessions it could not read:
 
 <!-- pinned: packages/sdk/src/kernel/node/durable.test.ts#durable -->
 
@@ -1931,13 +1932,15 @@ const over = (directory: string) => sessions().pipe(
 /**
  * Go on with a conversation of the store. First, before any turn: every turn
  * the store holds open was a writer's that is gone, since no other process can
- * hold the store, so `recoverTurns` closes each as `Abandoned`.
+ * hold the store, so `recoverTurns` closes each as `Abandoned`. A session the
+ * store cannot read (a damaged line) is passed over and named in `unreadable`:
+ * the host repairs or removes it, and the others are recovered all the same.
  */
 const goOn = (directory: string, conversation: SessionId) => Effect.gen(function* () {
-  const closed = yield* recoverTurns
+  const { closed, unreadable } = yield* recoverTurns
   const turns = yield* Sessions
   const turn = yield* turns.turn(conversation, (session) => Effect.succeed(session.turn))
-  return { closed: closed.length, turn }
+  return { closed: closed.length, unreadable: unreadable.map((one) => one.session), turn }
 }).pipe(Effect.provide(over(directory)))
 ```
 

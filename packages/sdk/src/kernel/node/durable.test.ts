@@ -1,7 +1,8 @@
 import { describe, expect, test } from "bun:test"
+import { readFile, writeFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Layer, Option } from "effect"
-import { dataOf, kernel, SessionId, Sessions, turnEndedEvent } from "@xandreed/core/kernel"
+import { dataOf, JOURNAL_FORMAT, JournalStorage, kernel, Owner, Seq, SessionId, Sessions, turnEndedEvent, turnStarted, TurnNumber } from "@xandreed/core/kernel"
 import { flatMemory, recoverTurns, sessions, turnsOf } from "../index.js"
 import { counting, testTurn } from "../testing.js"
 import { directoryJournal, sqliteJournal } from "./index.js"
@@ -30,13 +31,15 @@ const over = (directory: string) => sessions().pipe(
 /**
  * Go on with a conversation of the store. First, before any turn: every turn
  * the store holds open was a writer's that is gone, since no other process can
- * hold the store, so `recoverTurns` closes each as `Abandoned`.
+ * hold the store, so `recoverTurns` closes each as `Abandoned`. A session the
+ * store cannot read (a damaged line) is passed over and named in `unreadable`:
+ * the host repairs or removes it, and the others are recovered all the same.
  */
 const goOn = (directory: string, conversation: SessionId) => Effect.gen(function* () {
-  const closed = yield* recoverTurns
+  const { closed, unreadable } = yield* recoverTurns
   const turns = yield* Sessions
   const turn = yield* turns.turn(conversation, (session) => Effect.succeed(session.turn))
-  return { closed: closed.length, turn }
+  return { closed: closed.length, unreadable: unreadable.map((one) => one.session), turn }
 }).pipe(Effect.provide(over(directory)))
 // #endregion durable
 
@@ -65,7 +68,30 @@ describe("the guide's stack over a directory", () => {
       const journal = yield* Effect.provide(Effect.flatMap(Sessions, (all) => all.read(session)), over(directory))
       return { ...went, turn: Number(went.turn), outcomes: outcomesOf(journal.events) }
     })))
-    expect(result).toEqual({ closed: 1, turn: 2, outcomes: ["Abandoned", "Completed"] })
+    expect(result).toEqual({ closed: 1, unreadable: [], turn: 2, outcomes: ["Abandoned", "Completed"] })
+  }, 30_000)
+
+  test("a session with a damaged line is passed over and named; the turn left open in the session after it is closed", async () => {
+    const result = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const directory = join(yield* scratch, "journal")
+      // Two sessions, the damaged one first in the listing, each with a turn its writer left open.
+      const [damaged, open] = yield* Effect.scoped(Effect.gen(function* () {
+        const storage = yield* JournalStorage
+        const ids = [SessionId.make("a-damaged"), SessionId.make("b-open")] as const
+        yield* Effect.forEach(ids, (id, index) => Effect.andThen(
+          storage.create({ id, owner: Owner.make("learner"), createdAt: index, format: JOURNAL_FORMAT }),
+          storage.append(id, Seq.make(0), TurnNumber.make(1), turnStarted(TurnNumber.make(1))),
+        ), { concurrency: 1, discard: true })
+        return ids
+      }).pipe(Effect.provide(over(directory))))
+      // A byte of the damaged session's event line changed on the disk: its CRC-32 no longer matches.
+      const file = join(directory, "sessions", `${damaged}.jsonl`)
+      const text = yield* Effect.promise(() => readFile(file, "utf8"))
+      yield* Effect.promise(() => writeFile(file, text.replace("turn.started", "turn.storted")))
+      const went = yield* goOn(directory, open)
+      return { ...went, turn: Number(went.turn) }
+    })))
+    expect<unknown>(result).toEqual({ closed: 1, unreadable: ["a-damaged"], turn: 2 })
   }, 30_000)
 })
 
@@ -86,7 +112,7 @@ for (const { kind, file, store } of stores) describe(`the ${kind} journal under 
         const journal = yield* all.read(session)
         return {
           busy: busy.message,
-          closed: closed.map((one) => [one.session === session, Number(one.turn)]),
+          closed: closed.closed.map((one) => [one.session === session, Number(one.turn)]),
           again,
           answer,
           outcomes: outcomesOf(journal.events),
@@ -98,7 +124,7 @@ for (const { kind, file, store } of stores) describe(`the ${kind} journal under 
     expect(result).toEqual({
       busy: "turn 1 is still open: if the writer that opened it is gone, close it with `Sessions.recover`",
       closed: [[true, 1]],
-      again: [],
+      again: { closed: [], unreadable: [] },
       answer: "Reply 1.",
       outcomes: ["Abandoned", "Completed"],
       said: [["Are you there?"], ["Hello again."]],
@@ -127,7 +153,7 @@ for (const { kind, file, store } of stores) describe(`the ${kind} journal under 
       }).pipe(Effect.provide(second.layer))
     })))
     expect(result).toEqual({
-      closed: [],
+      closed: { closed: [], unreadable: [] },
       before: [[["My name is Ana."], "Reply 1."], [["What is my name?"], "Reply 2."]],
       sent: ["You are a friendly tutor.", "My name is Ana.", "Reply 1.", "What is my name?", "Reply 2.", "And now?"],
       listed: 1,
