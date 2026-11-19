@@ -74,6 +74,18 @@
         "typescript": "^5.9.3",
       },
     },
+    "packages/review": {
+      "name": "@xandreed/review",
+      "version": "0.0.0",
+      "bin": {
+        "efferent-review": "./src/main.ts",
+      },
+      "dependencies": {
+        "@xandreed/core": "workspace:*",
+        "@xandreed/sdk": "workspace:*",
+        "effect": "4.0.7",
+      },
+    },
     "packages/sdk": {
       "name": "@xandreed/sdk",
       "version": "0.23.0",
@@ -494,6 +506,8 @@
     "@xandreed/evals-langsmith": ["@xandreed/evals-langsmith@workspace:packages/evals-langsmith"],
 
     "@xandreed/foundry": ["@xandreed/foundry@workspace:packages/foundry"],
+
+    "@xandreed/review": ["@xandreed/review@workspace:packages/review"],
 
     "@xandreed/sdk": ["@xandreed/sdk@workspace:packages/sdk"],
 

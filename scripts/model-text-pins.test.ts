@@ -37,7 +37,7 @@ const pinReferences = (evidence: string) => [...evidence.matchAll(/`([^`#]+\.tes
 test("each known model-text package retains its inventory and table header", () => {
   // This is a reviewed source inventory. Add a package when it introduces model text.
   expect(inventories.filter((entry) => entry.header && entry.rows.length > 0).map((entry) => entry.name)).toEqual([
-    "evals", "foundry", "sdk",
+    "evals", "foundry", "review", "sdk",
   ])
 })
 

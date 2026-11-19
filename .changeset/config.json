@@ -12,5 +12,5 @@
   "format": false,
   "privatePackages": { "version": true, "tag": false },
   "updateInternalDependencies": "patch",
-  "ignore": ["@xandreed/foundry", "@xandreed/website"]
+  "ignore": ["@xandreed/foundry", "@xandreed/review", "@xandreed/website"]
 }

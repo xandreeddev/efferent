@@ -33,6 +33,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   is unchanged. The first program in the README and the getting started page
   uses `flatMemory`.
 
+- A new package, `@xandreed/review`, is the start of a pull request
+  reviewer: `efferent-review prepare <number> --repo <owner/name>` reads a
+  pull request through `gh`, fetches it into a clone kept outside any
+  repository, drops lockfiles, generated, vendored, binary and
+  deletion-only files from its diff and packs the rest under a token
+  budget with new-side line numbers, reads the repository's instruction
+  files at the base commit, digests the logs of its failed CI runs, and,
+  with `--run`, runs commands in a worktree of the head for a same-repository
+  author with write access, with only `PATH` and a throwaway `HOME`. It asks
+  no model yet. It is private: no release publishes it until its evals pass.
+
 ## 0.23.0 — 2026-11-19
 
 0.23.0 replaces the engine of earlier releases with the kernel: a small core
