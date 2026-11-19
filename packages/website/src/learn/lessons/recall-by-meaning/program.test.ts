@@ -144,6 +144,9 @@ const KEPT = JSON.stringify({
 })
 const NOTHING = JSON.stringify({ entities: [], aliases: [], memories: [], restates: [], forget: [] })
 
+/** The last line of a text. */
+const lastLine = (text: string): string => text.split("\n").at(-1) ?? ""
+
 /** The lines of `after` that `before` has not, and the lines of `before` that `after` has not. */
 const changed = (before: string, after: string) => ({
   gone: before.split("\n").filter((line) => !after.split("\n").includes(line)),
@@ -198,9 +201,9 @@ describe("lesson 20's displayed program", () => {
   })
 
   test("each experiment changes one line or adds one option and nothing else; the controls read and write their lines; a line the learner rewrote is left alone", () => {
-    expect(changed(DEFAULT_MEMORY, Option.getOrThrow(meaningOff(DEFAULT_MEMORY)))).toEqual({ gone: [WEIGHTS_LINE.split("\n").at(-1)], come: [MEANING_OFF.split("\n").at(-1)] })
+    expect(changed(DEFAULT_MEMORY, Option.getOrThrow(meaningOff(DEFAULT_MEMORY)))).toEqual({ gone: [lastLine(WEIGHTS_LINE)], come: [lastLine(MEANING_OFF)] })
     expect(MEANING_OFF.split("\n").at(-1)).toBe("  weights: { seed: 1, words: 0.5, meaning: 0 },")
-    expect(changed(DEFAULT_MEMORY, Option.getOrThrow(wordsOff(DEFAULT_MEMORY)))).toEqual({ gone: [WEIGHTS_LINE.split("\n").at(-1)], come: [WORDS_OFF.split("\n").at(-1)] })
+    expect(changed(DEFAULT_MEMORY, Option.getOrThrow(wordsOff(DEFAULT_MEMORY)))).toEqual({ gone: [lastLine(WEIGHTS_LINE)], come: [lastLine(WORDS_OFF)] })
     expect(WORDS_OFF.split("\n").at(-1)).toBe("  weights: { seed: 1, words: 0, meaning: 1.5 },")
     expect(changed(DEFAULT_MEMORY, Option.getOrThrow(floorOn(DEFAULT_MEMORY))).come).toEqual(FLOOR_LINE.split("\n").slice(-3))
     expect(FLOOR_LINE.split("\n").at(-1)).toBe("  floor: 0.77,")

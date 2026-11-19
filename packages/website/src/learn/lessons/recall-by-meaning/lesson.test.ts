@@ -8,7 +8,7 @@
 // steps are one walk on one runtime, press by press in the page's order, and
 // each experiment starts from a reloaded page, as its text says. Every claim
 // of the mdx is pinned here as it is worded.
-import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
+import { afterEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test"
 import { Option, Result } from "effect"
 import { SessionId } from "@xandreed/core/kernel"
 import { knowledgeOf, KNOWLEDGE_OWNER, meaningKey, meaningTexts } from "@xandreed/sdk/kernel"
@@ -71,12 +71,14 @@ const page = async (sources: Record<string, string> = SOURCES) => {
     const last = prompt?._tag === "Prompt" ? prompt.messages.at(-1)?.text ?? "" : ""
     return last.includes("<known-memories>") ? last.slice(last.indexOf("<known-memories>\n") + 17, last.indexOf("\n</known-memories>")).split("\n").map((line) => line.replace(/ \(said .*\)$/, "")) : []
   }
+  /** The cosines of the eight memories nearest the latest message, by meaning. */
+  const nearest = () => recalled().memories.flatMap((memory) => (memory.meaning !== null && memory.meaning.place <= 8 ? [memory.meaning.cosine] : []))
   const clear = async () => {
     const built = await runtime.clear()
     graph = recallsStartedOver(graph, runtime.conversation)
     return built
   }
-  return { runtime, heard, result, say, replies, statuses, embedded, recalled, panel, note, clear }
+  return { runtime, heard, result, say, replies, statuses, embedded, recalled, panel, note, clear, nearest }
 }
 
 /** A panel's row as the tests read it: whether it was sent, its text, and its places in the lists. */
@@ -122,18 +124,25 @@ describe("lesson 20 on the page", () => {
     expect(byWords).toEqual(lesson18.note())
     expect(byWords).toHaveLength(11)
     // Loaded: nothing is rebuilt, and the next question is ranked by meaning, its message the one text embedded.
+    const started = spyOn(runtime, "start")
     expect(Result.getOrThrow(await runtime.loadEmbedder())).toBe(EMBEDDER_LOADED)
     expect(runtime.embedderLoaded).toBe(true)
     const from = heard.length
     await say(BIRD)
-    expect(heard.slice(from).some((trace) => trace._tag === "Built" || trace._tag === "Ended")).toBe(false)
+    expect(started).not.toHaveBeenCalled()
+    expect(heard.slice(from).some((trace) => trace._tag === "Ended")).toBe(false)
     expect(recalled().meaning?.skipped).toBe(null)
     expect(embedded(from)).toEqual(["query 1"])
     expect(statuses().at(-1)).toBe("Curated turn 2: 0 new, 0 said again, 0 ended; 0 dropped")
   })
 
   test("the page's steps 3 to 7 on one runtime: the bird question reaches the parrot by meaning, fresh and straight after the Orchid question; the three lists side by side; meaning alone would be wrong about Rui Reis's pet; an ended memory gives its place to what replaced it; a greeting is sent eight memories it has nothing to do with", async () => {
-    const { runtime, say, replies, statuses, recalled, panel, note, embedded, heard, clear } = await page()
+    const { runtime, say: send, replies, statuses, recalled, panel, note, embedded, heard, clear, nearest } = await page()
+    // Step 2's "for each message of this lesson, the eight memories nearest it are between 0.74 and 0.84", checked after each.
+    const say = async (text: string) => {
+      await send(text)
+      expect({ text, all: nearest().length === 8 && nearest().every((cosine) => cosine >= 0.74 && cosine <= 0.84) }).toEqual({ text, all: true })
+    }
     // Step 2: the embedder; step 3: the world, its vectors first.
     expect(Result.getOrThrow(await runtime.loadEmbedder())).toBe(EMBEDDER_LOADED)
     expect(Result.getOrThrow(await runtime.loadWorld())).toBe(LOADED)
@@ -309,11 +318,13 @@ describe("lesson 20 on the page", () => {
   })
 
   test("the kernel's event names the model and the pool, and the list by meaning ranks no more than the pool", async () => {
-    const { runtime, say, recalled } = await page(controlled("pool", 3))
+    const { runtime, say, recalled, note } = await page(controlled("pool", 3))
     await runtime.loadEmbedder()
     await runtime.loadWorld()
     await say(BIRD)
     expect(recalled().meaning).toEqual({ model: EMBEDDER_MODEL, pool: 3, floor: null, skipped: null })
     expect(recalled().memories.filter((memory) => memory.meaning !== null).map((memory) => memory.meaning?.place)).toEqual([1, 2, 3])
+    // "the note holds those three alone": three parrots.
+    expect(note()).toEqual(["Ana Silva has parrot Pip.", "Sven Tavares has parrot Rex.", "Omar Moreau has parrot Pepper."])
   })
 })

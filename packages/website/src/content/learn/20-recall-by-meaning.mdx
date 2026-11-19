@@ -32,15 +32,15 @@ export const memory = withKnowledgeByMeaning({
 })(flatMemory)
 ```
 
-`limit`, `walk`, the speaker's words and the stop words are lesson 18's. agent.ts gives the memory two more things, as it gives the model: `embedder`, the page's model that turns a text into numbers, and `vectors`, where those numbers are kept.
+`limit`, `walk`, the speaker's words and the stop words are lesson 18's, and so are the first two weights: lesson 18's recall weighed the list about a seed 1 and the words' list 0.5, without showing it. agent.ts gives the memory two more things, as `main` gives the program the model: `embedder`, the page's model that turns a text into numbers, and `vectors`, the page's **store of vectors**, where those numbers are kept: another store than lesson 7's store of journals.
 
 </Step>
 
 <Step n={2} id="model" title="The model and the embedder" focus="model">
 
-This lesson runs on **Echo**, with lesson 18's rules: as the curator, and answering a question sent with the note of memories from the note's first memory. One rule is new. A message that only greets or thanks ("Thanks!", "Hello"), sent with a note, is answered as one: *You're welcome.* Step 7 shows why it needs one.
+This lesson runs on **Echo**, with lesson 18's rules: as the curator, and answering a question sent with the note of memories from the note's first memory. One rule is new. A message that only greets or thanks, sent with a note, is answered as a greeting or a thanks is, never from the note: "Thanks!" with *You're welcome.*, "Hello" with a hello. Step 7 shows the note such a message is sent.
 
-The model that turns a text into numbers is an **embedder**. The numbers it gives for a text are its **vector**: 384 numbers, whatever the length of the text. It was trained so that texts that mean nearly the same get vectors that point nearly the same way. How alike two vectors are is one number, their **cosine**: 1 when they point the same way, less the more they differ. On this page the cosines of a message and the world's memories are between about 0.74 and 0.84: close together, so their order says more than their size.
+The model that turns a text into numbers is an **embedder**. The numbers it gives for a text are its **vector**: 384 numbers, whatever the length of the text. It was trained so that texts that mean nearly the same get vectors whose numbers rise and fall together, as two arrows point the same way. How alike two vectors are is one number, their **cosine**: 1 when their numbers keep the same proportions, less the more they differ. On this page they are close together: for each message of this lesson, the eight memories nearest it are between 0.74 and 0.84, so their order says more than their size.
 
 This page's embedder is e5-small-v2, made by others, small enough to run in your browser. It runs in a **worker**, a part of the page that works on its own, so the page stays responsive while it does. Press **Load the embedder**:
 
@@ -48,9 +48,9 @@ This page's embedder is e5-small-v2, made by others, small enough to run in your
 
 The first time, it downloads about 35 MB, and says how far under the button; after that, the browser keeps it, and it loads in about two seconds. Then it says *The embedder is loaded: each message is now turned into numbers here, in the page, one text at a time.*, and how long it took.
 
-Before it is loaded, nothing fails. Recall makes its list by meaning with the embedder, which says it is not loaded; recall leaves that list out for the request and runs by the other two, as lesson 18's did. After the curation's line, the status line says so: *The embedder is not loaded: recall used words alone.*, and the Graph tab says why: *Nothing was ranked by meaning. The embedder is not loaded: press Load the embedder to turn your messages into numbers. Recall used the other lists.* Nothing is built again when it loads: the next request uses it.
+Before it is loaded, nothing fails. Recall makes its list by meaning with the embedder, which says it is not loaded; recall leaves that list out for the request and runs by the other two, the list about a seed and the words' list: lesson 18's recall, by words alone. After the curation's line, the status line says so: *The embedder is not loaded: recall used words alone.*, and the Graph tab says why: *Nothing was ranked by meaning. The embedder is not loaded: press Load the embedder to turn your messages into numbers. Recall used the other lists.* Nothing is built again when it loads: the next request uses it.
 
-DeepSeek V4.1 Flash, through the gateway, was run once through steps 3 to 7 on 19 November 2026, on this page in Chrome, with the embedder loaded and this page's settings, the model left to think before it answers, as the gateway's card does for every lesson; it curated as well as chatted. Sent the same notes Echo was, it answered **Who keeps a bird?** with "Ana Silva, Sven Tavares, Omar Moreau, Rui Reis, and Paula Zimmer each keep a parrot.", on a fresh conversation and again straight after the Orchid question, which it answered "João Reis leads Project Orchid, and he lives in Porto.". It answered **What pet does Rui Reis have?** with "Rui Reis has a parrot named Coco.", passing over the dogs of João Reis and Bruno Reis that the note held; **Who once called the Spanish capital home?** with "Bruno Reis once called Madrid home, before moving to Lisbon.", read from the note's "before that" line; and **Thanks!** with "You're welcome!", passing over the eight memories. Lesson 18's DeepSeek, asked about the bird, said none of its memories mentioned one. The run cost under a cent.
+DeepSeek V4.1 Flash, through the gateway, was run once through steps 3 to 7 on 19 November 2026, on this page in Chrome, with the embedder loaded and this page's settings, the model left to think before it answers, as the gateway's card does for every lesson; it curated as well as chatted. Its requests were sent the memories Echo's were (the Graph tab's lists were the same at each step), and it answered **Who keeps a bird?** with "Ana Silva, Sven Tavares, Omar Moreau, Rui Reis, and Paula Zimmer each keep a parrot.", on a fresh conversation and again straight after the Orchid question, which it answered "João Reis leads Project Orchid, and he lives in Porto.". It answered **What pet does Rui Reis have?** with "Rui Reis has a parrot named Coco.", passing over the dogs of João Reis and Bruno Reis that the note held; **Who once called the Spanish capital home?** with "Bruno Reis once called Madrid home, before moving to Lisbon.", read from the note's "before that" line; and **Thanks!** with "You're welcome!", passing over the eight memories. Lesson 18's DeepSeek, asked about the bird, said none of its memories mentioned one. The run cost under a cent.
 
 </Step>
 
@@ -60,12 +60,12 @@ Press **Load the world**:
 
 <World />
 
-It is lesson 18's world of 654 sentences, kept the same way, and one thing more. Under the button: *… Put 557 vectors in the page's store, made ahead by the page's embedder, one for each memory's text: a message is the only text turned into numbers when you ask.* The vectors of the world's 557 memories were made ahead, by this page's embedder in the same way, and come with the page, about 310 KB of them. They are an **index**: a quicker way to find what the knowledge session holds, never what it says. Each is kept under the embedder's name and its memory's text, so a vector made by another embedder is never compared with these, and a lost one is made again from the text.
+It is lesson 18's world of 654 sentences, kept the same way, and one thing more. Under the button: *… Put 557 vectors in the page's store, made ahead by the page's embedder, one for each memory's text: a message is the only text turned into numbers when you ask.* The vectors of the world's 557 memories were made ahead, by this page's embedder in the same way, and come with the page, about 310 KB of them. They are an **index**: a quicker way to find memories, never the memories themselves: what stands is what the knowledge session's records say. Each is kept under the embedder's name and its memory's text, so a vector made by another embedder is never compared with these, and a lost one is made again from the text.
 
-Press **Who keeps a bird?** Echo answers *From what I know: Ana Silva has parrot Pip.* Open the Graph tab's recall, step 2, *Memories about the seeds, those your words reach, and those nearest your message in meaning, fused*:
+Press **Who keeps a bird?** Echo answers *From what I know: Ana Silva has parrot Pip.* Open the Graph tab's recall, step 2, *Memories about the seeds, those your words reach, and those nearest your message in meaning, fused*, fused meaning put in one order:
 
-- The message names nobody, and no memory holds its words: the first two lists are empty, as in lesson 18.
-- The list by meaning ranks every memory that stands by its cosine to your message. *Ana Silva has parrot Pip.* is *1st by meaning (cosine 0.787)*, then four more parrots, from 0.781 to 0.775, then *Marco Alves leads Project Sparrow II.*, a sparrow being a bird too, a hamster, and a goal to learn the piano.
+- The message names nobody, no turn came before it, and no memory holds its words: the first two lists are empty.
+- The list by meaning compares your message with every memory that stands, and ranks the 50 nearest (`pool`) by their cosines. *Ana Silva has parrot Pip.* is *1st by meaning (cosine 0.787)*, then four more parrots, from 0.781 to 0.775, then *Marco Alves leads Project Sparrow II.*, a sparrow being a bird too, a hamster, and a goal to learn the piano.
 - The first 8 are sent: *Sent 8 memories, in a note of about 179 tokens.* Sending all 554 that stand would take about 7,374.
 
 Only your message was turned into numbers for it, the memories' vectors being in the store already: on the machine this page was tried on, Echo's answer was there under half a second after the press, and Load the world took about half a second, the vectors included.
@@ -78,7 +78,7 @@ Press **Where does the person who leads Project Orchid live?** Echo answers *Fro
 
 Press **Who keeps a bird?** again. Now the turn before named Porto, João Reis and Project Orchid, and your message names nobody, so the seeds come from the turn before, as in lesson 18: *Carla Novak lives in Porto.* is *1st about a seed (Porto)*. Lesson 18 sent memories about Porto here and no parrot.
 
-The three lists are put in one order by their places: a memory first in a list adds that list's weight / 10, second its weight / 11, and so on, and its score is what its lists add. *Ana Silva has parrot Pip.*, 1st by meaning, scores 1.5 / 10 = 0.150; *Carla Novak lives in Porto.*, 1st about a seed, 1 / 10 = 0.100. So the five parrots come first, then Carla Novak, and Echo answers *From what I know: Ana Silva has parrot Pip.*
+The three lists are put in one order by their places: a memory first in a list adds that list's weight / 10, second its weight / 11, and so on, and its score is what its lists add. *Ana Silva has parrot Pip.*, 1st by meaning, scores 1.5 / 10 = 0.150; *Carla Novak lives in Porto.*, 1st about a seed, 1 / 10 = 0.100. So the five parrots come first; Carla Novak's 0.100 ties with the sixth by meaning, *Marco Alves leads Project Sparrow II.* (1.5 / 15 = 0.100), and the panel lists her first. Echo answers *From what I know: Ana Silva has parrot Pip.*
 
 The weight 1.5 was measured, and is written down with what was not, in [ADR 0025](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0025-what-is-recalled-can-also-be-found-by-meaning.md). At 0.5, this question, asked straight after the Orchid one, is sent no parrot (step 8 lets you try it).
 
@@ -88,7 +88,7 @@ The weight 1.5 was measured, and is written down with what was not, in [ADR 0025
 
 Press **What pet does Rui Reis have?** Echo answers *From what I know: Rui Reis has parrot Coco.*
 
-Read where each list put it. By meaning alone, two other people's dogs come first: *João Reis has dog Luna.* (*1st by meaning (cosine 0.816)*) and *Bruno Reis has dog Rex.* (0.815). A pet is near "pet", and Reis is near Reis, whoever's it is. Rui Reis's parrot is *4th by meaning (cosine 0.807)*.
+Read where each list put it. By meaning alone, two other people's dogs come first: *João Reis has dog Luna.* (*1st by meaning (cosine 0.816)*) and *Bruno Reis has dog Rex.* (0.815). A dog is near "pet", and one Reis is near another, whoever the dog is. Rui Reis's parrot is *4th by meaning (cosine 0.807)*.
 
 The other two lists know whose it is: *Rui Reis has parrot Coco.* is *1st about a seed (Rui Reis) · 1st by your words (rui, reis)*, so it comes first. The two dogs are still sent, after Rui Reis's three memories: a model that reads the note reads the names.
 
@@ -98,14 +98,14 @@ The other two lists know whose it is: *Rui Reis has parrot Coco.* is *1st about 
 
 Press **Clear context**: a new conversation, so the turn before gives no seeds. Then press **Who once called the Spanish capital home?**
 
-The world says *Bruno Reis lives in Madrid.*, and later *Bruno Reis lives in Lisbon.*, which ended it, as lesson 18's step 5 did Ana Silva's work. Your question names nobody, and shares no word with the memory that ended: only the list by meaning can reach it. It does: the Graph tab says *Bruno Reis lives in Lisbon.* is *5th by meaning (cosine 0.755), for what replaced it (Bruno Reis lives in Madrid. ranked there)*. As in the other two lists, a memory that ended is never sent alone: it gives its place to what replaced it, and the note holds both:
+The world says *Bruno Reis lives in Madrid.*, and later *Bruno Reis lives in Lisbon.*, which ended it, as lesson 18's step 5 did Ana Silva's work. Your question names nobody, and shares no word with the memory that ended: only the list by meaning can reach it. It does: the Graph tab says *Bruno Reis lives in Lisbon.* is *5th by meaning (cosine 0.755), for what replaced it (Bruno Reis lives in Madrid. ranked there)*: the 5th place was the Madrid memory's, and the Lisbon memory, what replaced it, takes it. As in the other two lists, a memory that ended is never sent alone: it gives its place to what replaced it, and the note holds both:
 
 ```
 Bruno Reis lives in Lisbon. (said on …)
   before that: Bruno Reis lives in Madrid. (said on …, until …)
 ```
 
-Echo answers from the note's first lines, *From what I know: Rosa Zimmer lives in Madrid. Jonas Jansen lives in Madrid. Sven Santos lives in Madrid.*: it does not read "before that". A model can.
+Echo answers *From what I know: Rosa Zimmer lives in Madrid. Jonas Jansen lives in Madrid. Sven Santos lives in Madrid.*: the note's first memory, and two more about the Madrid it names. Bruno Reis's line is the note's sixth, and Echo's rule never reaches it. A model that reads the whole note can.
 
 </Step>
 
@@ -113,21 +113,23 @@ Echo answers from the note's first lines, *From what I know: Rosa Zimmer lives i
 
 Press **Clear context** again, then **Thanks!**
 
-Your message names nothing, and no memory holds its word. The list by meaning still ranks every memory, and 8 are sent: *Eva Kowalski met Wen Dias.* (*1st by meaning (cosine 0.761)*), *Jonas Lopes plays go.*, *Farid Haddad works at Initech.*, down to *Wen Dias met Yusuf Gomes.* (0.757). None has anything to do with thanks. Something is always nearest.
+Your message names nothing, and no memory holds its word. The list by meaning still ranks its 50 nearest, and 8 are sent: *Eva Kowalski met Wen Dias.* (*1st by meaning (cosine 0.761)*), *Jonas Lopes plays go.*, *Farid Haddad works at Initech.*, down to *Wen Dias met Yusuf Gomes.* (0.757). None has anything to do with thanks. Something is always nearest.
 
-Echo answers *You're welcome.* That is the new rule of step 2: without it, a greeting that ends with a question mark ("Hi, are you there?") would be answered from the note's first memory.
+Echo answers *You're welcome.*, by the new rule of step 2. Lesson 18's rule answers a question from the note, and "Thanks!" is none; but a greeting that ends with a question mark, such as "Hi, are you there?", is, and without the new rule it would be answered from the note's first memory.
 
-Could recall tell that nothing fits? The seed and words lists cannot: they add places, and never take one away, so they cannot stop the list by meaning from filling the note. A least cosine could: `withKnowledgeByMeaning` takes a `floor`, and leaves out of the list by meaning every memory less like your message than it. But compare the numbers. The greeting's best is 0.761. The parrot was 0.787 for the bird question, and that is high enough. Step 6's answer was 0.755: lower than eight memories that have nothing to do with "Thanks!". No floor keeps the greeting's memories out and step 6's answer in. The last experiment shows it. A floor is a number of one embedder's: another embedder's cosines are of other sizes, and the kernel sets none.
+Could recall tell that nothing fits? The seed and words lists cannot: they only add to a memory's score, and never take a memory out, so they cannot stop the list by meaning from filling the note. A least cosine could: `withKnowledgeByMeaning` takes a `floor`, and leaves out of the list by meaning every memory less like your message than it. But compare the numbers. The greeting's best is 0.761. The parrot was 0.787 for the bird question, and that is high enough. The memory step 6 was after was at 0.755: lower than eight memories that have nothing to do with "Thanks!". No floor keeps the greeting's memories out and step 6's memory in. The last experiment shows it. A floor is a number of one embedder's: another embedder's cosines are of other sizes, and the kernel sets none.
 
 </Step>
 
 <Step n={8} id="experiments" title="Experiments" focus="code" file="memory">
 
-The controls below each write one line of memory.ts's `withKnowledgeByMeaning` call, or one number of its weights, and build the page again. The embedder, the world and its vectors stay: only a reload empties them.
+The controls below each write one line of memory.ts's `withKnowledgeByMeaning` call, or one number of its weights, and build the page again. The embedder, the world and its vectors stay: only a reload empties them, and then the embedder is loaded again from the browser's copy.
 
 <Controls />
 
-Set **meaning** to 0.5, press **Where does the person who leads Project Orchid live?**, then **Who keeps a bird?**: the note's first line is *Carla Novak lives in Porto.*, and no parrot is sent. At 1, the parrot is sent second. Put 1.5 back.
+Set **pool** to 3, press **Clear context**, then **Who keeps a bird?**: the list by meaning ranks three memories, three parrots, and the note holds those three alone. Put 50 back.
+
+Set **meaning** to 0.5, press **Where does the person who leads Project Orchid live?**, then **Who keeps a bird?**: the note's first memory is *Carla Novak lives in Porto.*, and no parrot is sent. At 1, the parrot's 1 / 10 ties with Carla Novak's, and it is sent second. Put 1.5 back.
 
 Each experiment edits memory.ts and builds it again; press **Reset** in the Code pane before the next. Each says the state it starts from.
 
