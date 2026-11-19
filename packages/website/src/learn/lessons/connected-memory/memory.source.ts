@@ -25,12 +25,12 @@ const common = \`a an and are as at be by do does for from has have how i in is 
 that the their they this to was what when where which who whose will with you your did s\``
 
 /** The `limit` option with its comment: how many memories ranked first a request is sent. */
-export const LIMIT_LINE = `  // The most memories ranked first that a request is sent, from 1 to 50.
+export const LIMIT_LINE = `  // How many memories a request is sent, the best ranked first, from 1 to 50.
   limit: 8,`
 
 /** The `walk` option with its comment: how many more places the walk by subject adds. */
-export const WALK_LINE = `  // How many more places the walk by subject may add, from 0 to 10: memories about what the best
-  // of them bring in ("Acme", from "Ana Silva works at Acme.").
+export const WALK_LINE = `  // How many more memories the walk by subject may add, from 0 to 10: memories whose subject is
+  // an entity the best of them name, such as Acme in "Ana Silva works at Acme.".
   walk: 3,`
 
 /** The `speaker` option with its comment: the words that name the person. */
