@@ -716,7 +716,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - The `Search` contract (`@xandreed/sdk/kernel`): `find({ pattern, regex?,
     folder?, glob?, limit })` gives the lines that hold a text or match a
     JavaScript regular expression, by path then line, with `more` and the
-    files it could not read counted; its kit is `searchConformance`.
+    files it could not read counted; a pattern that repeats a repeating
+    group (`(a+)+`) is refused; its kit is `searchConformance`.
     `filesSearch` implements it over any `Files`, in a page as on a disk;
     the tool `searchFiles` (`SearchFiles`, `searchTools`, `searchHandlers`)
     gives at most 50 matches.

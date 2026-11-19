@@ -18,7 +18,8 @@ export type RunRequest = typeof RunRequest.Type
 
 /**
  * How a command ended: it exited with a code (`Exited`); it ran past its time and was stopped, with every process it
- * started (`TimedOut`); or a signal the shell did not send ended it (`Killed`).
+ * started (`TimedOut`); or a signal ended it (`Killed`): one the shell did not send, or the shell's own when its scope
+ * closed while the command ran.
  *
  * @public
  */

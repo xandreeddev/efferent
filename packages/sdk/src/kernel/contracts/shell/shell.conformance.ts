@@ -8,8 +8,9 @@ import type { Shell } from "./shell.port.js"
 type ShellShape = Context.Service.Shape<typeof Shell>
 
 /**
- * A shell as the kit opens it: a fresh one per check, closed with its scope. `folder` is a folder the kit's commands
- * start in and write small files to (an absolute path, as `pwd -P` prints it); `env` is every variable the shell was
+ * A shell as the kit opens it: a fresh one per check, closed with its scope. `folder` is the subject's own folder, which
+ * no other kit run uses at the same time, where the kit's commands start and write small files (an absolute path, as
+ * `pwd -P` prints it); `env` is every variable the shell was
  * built to give a command, and nothing else may reach one; `outputBytes` is how much of each stream it keeps.
  *
  * @public
@@ -56,6 +57,9 @@ const gone = (check: string, shell: ShellShape, pid: number) =>
 
 /** A command that starts `sleep 30` in the background, writes its pid to `file`, and waits for it. */
 const sleeper = (file: string, wait = true) => `sleep 30 & echo $! > ${quoted(file)}${wait ? "; wait" : ""}`
+
+/** Remove a pid file a run before this one left, so a check never reads a pid that is not its command's. */
+const cleared = (check: string, shell: ShellShape, folder: string, file: string) => Effect.asVoid(ran(check, shell, `rm -f ${quoted(file)}`, { cwd: folder }))
 
 /** Wait for the pid in `file`, then for its process to be gone. */
 const reaped = (check: string, shell: ShellShape, folder: string, file: string, what: string) => Effect.gen(function* () {
@@ -111,16 +115,19 @@ const checks = (subject: ShellSubject): ReadonlyArray<readonly [string, string, 
     yield* ended("timeout", "sleep 30 with a timeout of 300 ms", got, "TimedOut")
   })],
   ["timeout-kills", "a timeout stops every process the command started", (shell) => Effect.gen(function* () {
+    yield* cleared("timeout-kills", shell, subject.folder, "timeout.pid")
     const got = yield* ran("timeout-kills", shell, sleeper("timeout.pid"), { cwd: subject.folder, timeoutMs: 1000 }).pipe(bounded("timeout-kills", "a command with a timeout of 1 s"))
     yield* ended("timeout-kills", "a command that waits for its background process", got, "TimedOut")
     yield* reaped("timeout-kills", shell, subject.folder, "timeout.pid", "after the timeout")
   })],
   ["return-kills", "a command that returns leaves no process it started running", (shell) => Effect.gen(function* () {
+    yield* cleared("return-kills", shell, subject.folder, "return.pid")
     const got = yield* ran("return-kills", shell, sleeper("return.pid", false), { cwd: subject.folder }).pipe(bounded("return-kills", "a command that leaves a process in the background"))
     yield* ended("return-kills", "a command that returns at once", got, "Exited")
     yield* reaped("return-kills", shell, subject.folder, "return.pid", "after the command returned")
   })],
   ["interrupt-kills", "an interrupted run stops every process the command started", (shell) => Effect.gen(function* () {
+    yield* cleared("interrupt-kills", shell, subject.folder, "interrupt.pid")
     const running = yield* Effect.forkChild(shell.run({ command: sleeper("interrupt.pid"), cwd: subject.folder }))
     let pid = 0
     yield* until("interrupt-kills", "the background process's pid in interrupt.pid", Effect.map(pidIn("interrupt-kills", shell, subject.folder, "interrupt.pid"), (found) => { pid = found; return found > 0 }))
@@ -128,6 +135,7 @@ const checks = (subject: ShellSubject): ReadonlyArray<readonly [string, string, 
     yield* until("interrupt-kills", `after the interruption: the background process ${pid} the command started is gone`, gone("interrupt-kills", shell, pid))
   })],
   ["close-kills", "the close of the shell's scope stops every process its commands started", (shell) => Effect.gen(function* () {
+    yield* cleared("close-kills", shell, subject.folder, "close.pid")
     const inner = yield* Scope.make()
     const closing = yield* Scope.provide(subject.open, inner)
     const running = yield* Effect.forkDetach(closing.run({ command: sleeper("close.pid"), cwd: subject.folder }))

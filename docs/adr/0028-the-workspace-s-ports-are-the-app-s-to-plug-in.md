@@ -107,8 +107,9 @@ It passes `filesConformance`, and every case the kit in memory never meets is de
   with its path, line and column (from 1) and its text, a line over 200 characters shown as 200 around the match;
   ordered by path in code-unit order, then line, which the kit pins; at most `limit`, with `more`; `skipped`, the
   files that could not be read as text. A pattern is found as it is written, or with `regex` as a JavaScript regular
-  expression with no flags; one that is empty, holds a line break, is over 1,000 characters or does not compile
-  fails with `PatternInvalid`, which the tool words without the engine's own words (they differ between runtimes). A
+  expression with no flags; one that is empty, holds a line break, is over 1,000 characters, does not compile, or
+  repeats without bound a group that itself repeats without bound (`(a+)+`, `NestedRepeat`) fails with
+  `PatternInvalid`, which the tool words without the engine's own words (they differ between runtimes). A
   glob with no `/` keeps files by name, one with a `/` by path; `*` and `?` stay within a name, `**` crosses folders.
   Its kit, `searchConformance`, has nine checks.
 - **One adapter, pure, over `Files`:** `filesSearch` lists the folder, keeps what the glob keeps, and reads each
@@ -121,8 +122,15 @@ It passes `filesConformance`, and every case the kit in memory never meets is de
   otherwise depending on the adapter a host plugged in, and the model reads one description. The search keeps one
   syntax, the engine's the model is told of.
 - **A regular expression has no time bound.** It runs on the process's own engine; a pattern that backtracks
-  without end over a long line holds the search and the process. The old engine ran its regex search in a worker it
-  could stop; a pure adapter has none. The bound on a file (`maxBytes`) bounds the input, not the time.
+  without end over a long line holds the search and the process. The old engine had two guards, and this cut keeps
+  one: it refused nested repetition, the usual exponential form, as this search does (`NestedRepeat`, ported as an
+  idea and written again), and it ran other regular expressions in a worker it could stop, which a pure adapter has
+  not. Overlapping alternatives (`(a|a)*`) still pass. The bound on a file (`maxBytes`) bounds the input, not the
+  time. Nor does it cut a line before matching, as the old engine did to bound a line's time: a match past the cut
+  would not be found, and the search says it found every line it did not skip.
+- **No cap per file.** The old engine took at most a quarter of its limit from one file of a folder's search, so one
+  file could not fill the answer. This search keeps the contract's order and lets `more` mean one thing (there were
+  more lines, in that order); a model that sees one file fill its answer narrows with `folder` or `glob`.
 
 ### Recovery passes over a session it cannot read
 

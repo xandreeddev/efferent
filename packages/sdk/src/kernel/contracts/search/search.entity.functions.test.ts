@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
 import type { FilePath } from "../files/files.entity.js"
-import { finderOf, globOf, matchesIn, shownLine } from "./search.entity.functions.js"
+import { finderOf, globOf, matchesIn, nestsRepetition, shownLine } from "./search.entity.functions.js"
 
 const keeps = (glob: string, paths: ReadonlyArray<string>) =>
   Result.match(globOf(glob), { onFailure: () => ["refused"], onSuccess: (keep) => paths.filter((path) => keep(path as FilePath)) })
@@ -12,6 +12,11 @@ describe("the search's rules", () => {
     expect(keeps("src/**/x.ts", ["src/x.ts", "src/a/b/x.ts", "srcx.ts"])).toEqual(["src/x.ts", "src/a/b/x.ts"])
     expect(keeps("*", ["a", "b/c"])).toEqual(["a", "b/c"])
     expect(keeps("", ["a"])).toEqual(["a"])
+  })
+
+  test("a repetition of a group that itself repeats without bound is told apart from one repeated a bounded number of times", () => {
+    expect(["(a+)+", "(x*)*", "(?:\\w+\\s?)*", "((ab)+)+", "(a+){2,}", "(?<w>a+)*"].map(nestsRepetition)).toEqual([true, true, true, true, true, true])
+    expect(["a+b+", "(\\d+\\.){3}", "(ab)+", "[(a+)]+", "\\(a+\\)+", "(a|b)*", "(a+)?"].map(nestsRepetition)).toEqual([false, false, false, false, false, false, false])
   })
 
   test("a long line is cut around its match, never inside a character", () => {

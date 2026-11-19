@@ -19,10 +19,43 @@ export const finderOf = (query: Pick<SearchQuery, "pattern" | "regex">): Result.
   if (/[\n\r]/.test(pattern)) return Result.fail(refused("pattern", "LineBreak", pattern, "the pattern holds a line break: a search matches one line at a time"))
   if (pattern.length > PATTERN_LIMIT) return Result.fail(refused("pattern", "TooLong", pattern, `the pattern is ${pattern.length} characters long, more than ${PATTERN_LIMIT}`))
   if (query.regex !== true) return Result.succeed((line) => line.indexOf(pattern))
-  return Result.map(
+  return Result.flatMap(
     Result.try({ try: () => new RegExp(pattern), catch: (cause) => refused("pattern", "NotRegex", pattern, cause instanceof Error ? cause.message : "it does not compile") }),
-    (compiled): Finder => (line) => compiled.exec(line)?.index ?? -1,
+    (compiled): Result.Result<Finder, PatternInvalid> => nestsRepetition(pattern)
+      ? Result.fail(refused("pattern", "NestedRepeat", pattern, "the pattern repeats a group that itself repeats, which can take exponential time on some lines"))
+      : Result.succeed((line) => compiled.exec(line)?.index ?? -1),
   )
+}
+
+/** A regular expression's source as tokens: an escape, a class, a group's opening (with `?:`, a look-around or a name), `)`, a quantifier, or one character. */
+const TOKENS = /\\[\s\S]|\[(?:\\[\s\S]|[^\]\\])*\]|\((?:\?(?::|=|!|<=|<!|<[A-Za-z_$][\w$]*>))?|\)|\{\d+(?:,\d*)?\}\??|[*+?]\??|[\s\S]/g
+
+/**
+ * Whether a regular expression repeats without bound (`*`, `+`, `{n,}`) a group that itself holds a repetition without
+ * bound: `(a+)+`, `(?:\w+\s?)*`, `((ab)*)+`. A group repeated a bounded number of times (`(\d+\.){3}`) is not
+ * counted. Not every slow pattern is caught (overlapping alternatives, `(a|a)*`, are not).
+ */
+export const nestsRepetition = (source: string): boolean => {
+  // For each open group, outermost first, whether it holds a repetition without bound so far.
+  const open: Array<boolean> = [false]
+  let closedRepeating = false
+  for (const token of source.match(TOKENS) ?? []) {
+    if (token.startsWith("(")) {
+      open.push(false)
+      closedRepeating = false
+    } else if (token === ")") {
+      const inner = open.pop() ?? false
+      if (open.length === 0) open.push(false)
+      open[open.length - 1] = (open[open.length - 1] ?? false) || inner
+      closedRepeating = inner
+    } else if (/^(?:[*+]|\{\d+,\})\??$/.test(token)) {
+      if (closedRepeating) return true
+      open[open.length - 1] = true
+    } else {
+      closedRepeating = false
+    }
+  }
+  return false
 }
 
 /** A glob's text as a regular expression's: `**` across folders, `*` and `?` within a name, every other character as it is. */
@@ -84,6 +117,7 @@ const PATTERN_WORDS: Record<PatternProblem, (pattern: string) => string> = {
   LineBreak: (pattern) => `The pattern ${shown(pattern, 80)} holds a line break, and a search matches one line at a time: search for one line of it.`,
   TooLong: (pattern) => `The pattern is ${pattern.length} characters long, and a search takes at most ${PATTERN_LIMIT}: search for a shorter part of it.`,
   NotRegex: (pattern) => `The pattern ${shown(pattern, 80)} is not a JavaScript regular expression. Fix it, or call ${SEARCH_FILES} with regex left out to find the text as it is written.`,
+  NestedRepeat: (pattern) => `The pattern ${shown(pattern, 80)} repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines: write it without the nested repetition.`,
 }
 
 /** What `searchFiles` answers for a pattern or a glob it cannot use. */

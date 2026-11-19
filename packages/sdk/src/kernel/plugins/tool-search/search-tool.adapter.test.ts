@@ -62,6 +62,7 @@ describe("searchFiles", () => {
       { pattern: "one\ntwo" },
       { pattern: "x".repeat(1001) },
       { pattern: "(unclosed", regex: true },
+      { pattern: "(\\w+\\s?)*$", regex: true },
       { pattern: "x", glob: "*".repeat(1001) },
       { pattern: "x", folder: "../up" },
     ], { "a.txt": "x" })
@@ -70,6 +71,7 @@ describe("searchFiles", () => {
       ["The pattern \"one\\ntwo\" holds a line break, and a search matches one line at a time: search for one line of it.", true],
       ["The pattern is 1001 characters long, and a search takes at most 1000: search for a shorter part of it.", true],
       ["The pattern \"(unclosed\" is not a JavaScript regular expression. Fix it, or call searchFiles with regex left out to find the text as it is written.", true],
+      ["The pattern \"(\\\\w+\\\\s?)*$\" repeats a group that itself repeats (as in (a+)+), which can take exponential time on some lines: write it without the nested repetition.", true],
       ["The glob is 1001 characters long, and a search takes at most 1000: give a shorter one, such as *.ts or src/**.", true],
       ["The path \"../up\" is not a path in the workspace. Give a path relative to the workspace, with / between folders and no \"..\", such as notes/todo.md.", true],
     ])
