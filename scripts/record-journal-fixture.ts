@@ -10,6 +10,7 @@ import {
 } from "@xandreed/sdk/kernel"
 import type { ModelScript } from "@xandreed/sdk/kernel"
 import { directoryJournal } from "@xandreed/sdk/kernel/node"
+import { missingRecords, summaryPressure } from "./journal-fixture-coverage.js"
 
 /*
  * Records the journals a kernel host stores, for the journal compatibility
@@ -31,14 +32,20 @@ import { directoryJournal } from "@xandreed/sdk/kernel/node"
  * only `--unreleased --force` may replace that development fixture. The
  * compatibility test reads every fixture in that folder.
  *
- * Coverage: four turns of one conversation, each a host's loop of
+ * Coverage: five turns of one conversation, each a host's loop of
  * `modelAnswer` and `callTool` over a summary memory wrapped by `withFacts`:
  * a tool call and its result; a fact remembered (`rememberFact`, stored in
  * the memory session); a tool that asks first, approved for good
- * (`plugin.approval.decided`); and a long message after which the memory
- * folds the earlier turns into a summary (`plugin.summary.summarized`). Each
- * turn is then kept by the curation step (`curate`) in the knowledge session:
- * a source curated into entities and memories, one memory ending another.
+ * (`plugin.approval.decided`); and, as the turns grow past the memory's
+ * budget, the earlier turns folded into a summary
+ * (`plugin.summary.summarized`). Each turn is then kept by the curation step
+ * (`curate`) in the knowledge session: a source curated into entities and
+ * memories, one memory ending another.
+ *
+ * The recorder refuses to write a recording that misses any kind of record
+ * of `REQUIRED` (scripts/journal-fixture-coverage.ts), naming each, or whose
+ * conversation holds under `SUMMARY_PRESSURE` times the memory's budget, so
+ * a reworded note or prompt cannot drop the summary unnoticed.
  */
 
 const root = join(import.meta.dir, "..")
@@ -87,7 +94,7 @@ const ClearNotes = Tool.make("clearNotes", {
 const tools = Toolkit.merge(Toolkit.make(Lookup, ClearNotes), factTools)
 const toolsLive = Layer.mergeAll(
   Toolkit.make(Lookup, ClearNotes).toLayer({
-    lookup: ({ name }) => Effect.succeed(`${name}: a teapot, kept on the second shelf.`),
+    lookup: ({ name }) => Effect.succeed(`${name}: a teapot of green glaze with a bamboo handle, bought in Porto in 2024, kept on the second shelf of the kitchen beside the tins of green tea; it holds four cups and its lid is chipped at the rim.`),
     clearNotes: () => Effect.as(approve({ action: "notes.clear", detail: "Delete all 3 notes." }), "Deleted 3 notes."),
   }),
   factHandlers,
@@ -103,16 +110,18 @@ const script: ModelScript = [
   { _tag: "Calls", pieces: [], calls: [{ name: "clearNotes", params: {} }] },
   { _tag: "Answers", pieces: ["Your notes are cleared."] },
   { _tag: "Answers", pieces: ["Enjoy the trip to Porto."] },
+  { _tag: "Answers", pieces: ["Alpha is on the second shelf, beside the tins of green tea."] },
 ]
 const approval = Layer.succeed(Approval, Approval.of({ ask: () => Effect.succeed({ _tag: "ApprovedAlways" as const }) }))
 const summarizer = Layer.succeed(Summarizer, Summarizer.of({
-  summarize: ({ earlier, messages }) => Effect.succeed(`${Option.getOrElse(earlier, () => "")}The user looked up alpha, said they prefer green tea and cleared their notes (${messages.length} messages).`),
+  summarize: ({ earlier, messages }) => Effect.succeed(`${Option.getOrElse(earlier, () => "")}Folded ${messages.length} messages.`),
 }))
 /** What a model would answer for each source, by its id, asked to extract or to review. */
 const replies: Readonly<Record<string, string>> = {
   s1: `{"entities":[{"key":"a","name":"alpha","kind":"thing"}],"aliases":[],"memories":[{"kind":"fact","text":"alpha is a teapot.","about":["a"],"quote":"Look up alpha","by":"user","on":null,"ends":[],"why":null}],"restates":[],"forget":[]}`,
   s2: `{"entities":[],"aliases":[],"memories":[{"kind":"preference","text":"The user prefers green tea.","about":["n1"],"quote":"I prefer green tea","by":"user","on":null,"ends":[],"why":null}],"restates":[],"forget":[]}`,
   s3: `{"entities":[],"aliases":[],"memories":[],"restates":[],"forget":[]}`,
+  s5: `{"entities":[],"aliases":[],"memories":[],"restates":[],"forget":[]}`,
   s4: `{"entities":[{"key":"p","name":"Porto","kind":"place"}],"aliases":[],"memories":[{"kind":"fact","text":"The user travels to Porto next week.","about":["n1","p"],"quote":"I travel to Porto next week","by":"user","on":null,"ends":[],"why":null},{"kind":"preference","text":"The user prefers black tea now.","about":["n1"],"quote":"I prefer black tea now","by":"user","on":null,"ends":["m2"],"why":"changed"}],"restates":[],"forget":[]}`,
 }
 const curator = Layer.succeed(Curator, Curator.of({
@@ -148,18 +157,28 @@ const keep = (conversation: SessionId, turn: TurnNumber) => Effect.gen(function*
 })
 
 const messages = [
-  "Look up alpha for me.",
-  "Remember that I prefer green tea.",
-  "Clear my notes, please.",
-  `I travel to Porto next week, and I prefer black tea now. ${"Here is the plan for each day of the trip, in order. ".repeat(12)}`,
+  "Look up alpha for me: I want to know where it is and what it is like.",
+  "Remember that I prefer green tea, the kind in the tins on the second shelf, over any other.",
+  "Clear my notes, please: the list of what to buy and the reminders, all of them.",
+  "I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister.",
+  "Which shelf was alpha on again? I want to pack it for the trip.",
 ]
+
+/**
+ * The summary memory's budget: well under what the turns hold together, so its summary is asked for whatever a note
+ * or a prompt's words add or take (the recording refuses a margin under `SUMMARY_PRESSURE`), and well over any one
+ * turn with a summary beside it, so the open turn always fits.
+ */
+const SUMMARY_BUDGET = 150
+/** The least the conversation's messages may hold, as a multiple of `SUMMARY_BUDGET`. */
+const SUMMARY_PRESSURE = 1.4
 
 const record = (directory: string) => Effect.gen(function* () {
   const minted = yield* Ref.make(0)
   const mintId = Effect.map(Ref.updateAndGet(minted, (count) => count + 1), (count) => SessionId.make(`00000000-0000-4000-8000-${count.toString(16).padStart(12, "0")}`))
   const { model } = yield* scriptedModel(script)
   const store = sessions({ mintId }).pipe(Layer.provideMerge(directoryJournal({ directory })), Layer.provideMerge(kernel()))
-  const memory = withFacts({ limit: 5 })(summaryMemory({ budgetTokens: 250, keepTurns: 0 }).pipe(Layer.provide(summarizer)))
+  const memory = withFacts({ limit: 5 })(summaryMemory({ budgetTokens: SUMMARY_BUDGET, keepTurns: 0 }).pipe(Layer.provide(summarizer)))
   return yield* Effect.gen(function* () {
     const all = yield* Sessions
     const conversation = yield* all.create({ owner: "fixture" })
@@ -174,6 +193,16 @@ const scratchRoot = join(root, ".artifacts")
 await mkdir(scratchRoot, { recursive: true })
 const scratch = await mkdtemp(join(scratchRoot, "record-journal-"))
 const journals = await Effect.runPromise(record(join(scratch, "journal"))).finally(() => rm(scratch, { recursive: true, force: true }))
+// A fixture that misses a kind of record it is meant to hold, or whose summary came by a narrow margin, is not written.
+const missing = missingRecords(journals)
+const pressure = summaryPressure(journals, SUMMARY_BUDGET)
+if (missing.length > 0 || pressure < SUMMARY_PRESSURE) {
+  console.error([
+    ...(missing.length > 0 ? [`The recording holds no ${missing.join(", no ")}; nothing was written.`] : []),
+    ...(pressure < SUMMARY_PRESSURE ? [`The conversation holds ${pressure.toFixed(2)} times the summary memory's budget, under ${SUMMARY_PRESSURE}: its summary rests on too narrow a margin; nothing was written.`] : []),
+  ].join("\n"))
+  process.exit(1)
+}
 const fixture = {
   format: 2,
   version,

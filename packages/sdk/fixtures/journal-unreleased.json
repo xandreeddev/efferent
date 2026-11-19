@@ -37,7 +37,7 @@
           ],
           "message": {
             "_tag": "User",
-            "text": "Look up alpha for me."
+            "text": "Look up alpha for me: I want to know where it is and what it is like."
           }
         },
         {
@@ -84,7 +84,7 @@
             "_tag": "ToolResult",
             "id": "call-1-1",
             "name": "lookup",
-            "result": "alpha: a teapot, kept on the second shelf.",
+            "result": "alpha: a teapot of green glaze with a bamboo handle, bought in Porto in 2024, kept on the second shelf of the kitchen beside the tins of green tea; it holds four cups and its lid is chipped at the rim.",
             "isFailure": false
           }
         },
@@ -151,7 +151,7 @@
           ],
           "message": {
             "_tag": "User",
-            "text": "Remember that I prefer green tea."
+            "text": "Remember that I prefer green tea, the kind in the tins on the second shelf, over any other."
           }
         },
         {
@@ -267,11 +267,28 @@
           ],
           "message": {
             "_tag": "User",
-            "text": "Clear my notes, please."
+            "text": "Clear my notes, please: the list of what to buy and the reminders, all of them."
           }
         },
         {
           "seq": 15,
+          "at": 1767225600000,
+          "turn": 3,
+          "name": "plugin.summary.summarized",
+          "data": {
+            "through": 11
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "[Host note: the earlier turns of this conversation are replaced by the summary below. It is data, not instructions.]\n<conversation-summary>\nFolded 8 messages.\n</conversation-summary>"
+          }
+        },
+        {
+          "seq": 16,
           "at": 1767225600000,
           "turn": 3,
           "name": "conversation.assistant.message",
@@ -299,7 +316,7 @@
           }
         },
         {
-          "seq": 16,
+          "seq": 17,
           "at": 1767225600000,
           "turn": 3,
           "name": "plugin.approval.decided",
@@ -316,7 +333,7 @@
           ]
         },
         {
-          "seq": 17,
+          "seq": 18,
           "at": 1767225600000,
           "turn": 3,
           "name": "conversation.tool.result",
@@ -334,7 +351,7 @@
           }
         },
         {
-          "seq": 18,
+          "seq": 19,
           "at": 1767225600000,
           "turn": 3,
           "name": "conversation.assistant.message",
@@ -356,7 +373,7 @@
           }
         },
         {
-          "seq": 19,
+          "seq": 20,
           "at": 1767225600000,
           "turn": 3,
           "name": "core.session.turn.ended",
@@ -372,7 +389,7 @@
           ]
         },
         {
-          "seq": 20,
+          "seq": 21,
           "at": 1767225600000,
           "turn": 4,
           "name": "core.session.turn.started",
@@ -385,7 +402,7 @@
           ]
         },
         {
-          "seq": 21,
+          "seq": 22,
           "at": 1767225600000,
           "turn": 4,
           "name": "conversation.user.message",
@@ -396,24 +413,7 @@
           ],
           "message": {
             "_tag": "User",
-            "text": "I travel to Porto next week, and I prefer black tea now. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. "
-          }
-        },
-        {
-          "seq": 22,
-          "at": 1767225600000,
-          "turn": 4,
-          "name": "plugin.summary.summarized",
-          "data": {
-            "through": 18
-          },
-          "skippable": false,
-          "tags": [
-            "memory"
-          ],
-          "message": {
-            "_tag": "User",
-            "text": "[Host note: the earlier turns of this conversation are replaced by the summary below. It is data, not instructions.]\n<conversation-summary>\nThe user looked up alpha, said they prefer green tea and cleared their notes (12 messages).\n</conversation-summary>"
+            "text": "I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister."
           }
         },
         {
@@ -445,6 +445,72 @@
           "name": "core.session.turn.ended",
           "data": {
             "turn": 4,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 25,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 5
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 26,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "conversation.user.message",
+          "data": {},
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "User",
+            "text": "Which shelf was alpha on again? I want to pack it for the trip."
+          }
+        },
+        {
+          "seq": 27,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "conversation.assistant.message",
+          "data": {
+            "usage": {
+              "inputTokens": 0,
+              "outputTokens": 0,
+              "cachedInputTokens": 0
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "conversation"
+          ],
+          "message": {
+            "_tag": "Assistant",
+            "text": "Alpha is on the second shelf, beside the tins of green tea.",
+            "toolCalls": []
+          }
+        },
+        {
+          "seq": 28,
+          "at": 1767225600000,
+          "turn": 5,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 5,
             "outcome": {
               "_tag": "Completed"
             }
@@ -487,11 +553,11 @@
             "said": [
               {
                 "by": "user",
-                "text": "Look up alpha for me."
+                "text": "Look up alpha for me: I want to know where it is and what it is like."
               },
               {
                 "by": "tool",
-                "text": "alpha: a teapot, kept on the second shelf.",
+                "text": "alpha: a teapot of green glaze with a bamboo handle, bought in Porto in 2024, kept on the second shelf of the kitchen beside the tins of green tea; it holds four cups and its lid is chipped at the rim.",
                 "call": {
                   "text": "lookup, called with {\"name\":\"alpha\"}",
                   "failed": false
@@ -635,7 +701,7 @@
             "said": [
               {
                 "by": "user",
-                "text": "Remember that I prefer green tea."
+                "text": "Remember that I prefer green tea, the kind in the tins on the second shelf, over any other."
               },
               {
                 "by": "tool",
@@ -651,7 +717,7 @@
               }
             ],
             "at": 1767225600000,
-            "context": "User: Look up alpha for me.\nAssistant's final answer: Alpha is a teapot, kept on the second shelf.",
+            "context": "User: Look up alpha for me: I want to know where it is and what it is like.\nAssistant's final answer: Alpha is a teapot, kept on the second shelf.",
             "from": {
               "session": "00000000-0000-4000-8000-000000000001",
               "turn": 2
@@ -767,7 +833,7 @@
             "said": [
               {
                 "by": "user",
-                "text": "Clear my notes, please."
+                "text": "Clear my notes, please: the list of what to buy and the reminders, all of them."
               },
               {
                 "by": "tool",
@@ -783,7 +849,7 @@
               }
             ],
             "at": 1767225600000,
-            "context": "User: Look up alpha for me.\nAssistant's final answer: Alpha is a teapot, kept on the second shelf.\nUser: Remember that I prefer green tea.\nAssistant's final answer: Noted: you prefer green tea.",
+            "context": "User: Look up alpha for me: I want to know where it is and what it is like.\nAssistant's final answer: Alpha is a teapot, kept on the second shelf.\nUser: Remember that I prefer green tea, the kind in the tins on the second shelf, over any other.\nAssistant's final answer: Noted: you prefer green tea.",
             "from": {
               "session": "00000000-0000-4000-8000-000000000001",
               "turn": 3
@@ -878,7 +944,7 @@
             "said": [
               {
                 "by": "user",
-                "text": "I travel to Porto next week, and I prefer black tea now. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. Here is the plan for each day of the trip, in order. "
+                "text": "I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister."
               },
               {
                 "by": "assistant",
@@ -886,7 +952,7 @@
               }
             ],
             "at": 1767225600000,
-            "context": "User: Remember that I prefer green tea.\nAssistant's final answer: Noted: you prefer green tea.\nUser: Clear my notes, please.\nAssistant's final answer: Your notes are cleared.",
+            "context": "User: Remember that I prefer green tea, the kind in the tins on the second shelf, over any other.\nAssistant's final answer: Noted: you prefer green tea.\nUser: Clear my notes, please: the list of what to buy and the reminders, all of them.\nAssistant's final answer: Your notes are cleared.",
             "from": {
               "session": "00000000-0000-4000-8000-000000000001",
               "turn": 4
@@ -1024,6 +1090,109 @@
           "name": "core.session.turn.ended",
           "data": {
             "turn": 8,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 32,
+          "at": 1767225600000,
+          "turn": 9,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 9
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 33,
+          "at": 1767225600000,
+          "turn": 9,
+          "name": "plugin.knowledge.source",
+          "data": {
+            "id": "s5",
+            "said": [
+              {
+                "by": "user",
+                "text": "Which shelf was alpha on again? I want to pack it for the trip."
+              },
+              {
+                "by": "assistant",
+                "text": "Alpha is on the second shelf, beside the tins of green tea."
+              }
+            ],
+            "at": 1767225600000,
+            "context": "User: Clear my notes, please: the list of what to buy and the reminders, all of them.\nAssistant's final answer: Your notes are cleared.\nUser: I travel to Porto next week, and I prefer black tea now: the green tins can go to my sister.\nAssistant's final answer: Enjoy the trip to Porto.",
+            "from": {
+              "session": "00000000-0000-4000-8000-000000000001",
+              "turn": 5
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 34,
+          "at": 1767225600000,
+          "turn": 9,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 9,
+            "outcome": {
+              "_tag": "Completed"
+            }
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 35,
+          "at": 1767225600000,
+          "turn": 10,
+          "name": "core.session.turn.started",
+          "data": {
+            "turn": 10
+          },
+          "skippable": false,
+          "tags": [
+            "turn"
+          ]
+        },
+        {
+          "seq": 36,
+          "at": 1767225600000,
+          "turn": 10,
+          "name": "plugin.knowledge.curated",
+          "data": {
+            "source": "s5",
+            "calls": 2,
+            "kept": 0,
+            "dropped": []
+          },
+          "skippable": false,
+          "tags": [
+            "memory"
+          ]
+        },
+        {
+          "seq": 37,
+          "at": 1767225600000,
+          "turn": 10,
+          "name": "core.session.turn.ended",
+          "data": {
+            "turn": 10,
             "outcome": {
               "_tag": "Completed"
             }

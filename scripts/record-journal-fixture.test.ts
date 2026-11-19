@@ -20,6 +20,7 @@ const isolated = async <A>(body: (directory: string) => Promise<A>): Promise<A> 
     await writeFile(join(directory, "packages/sdk/fixtures/journal-unreleased.json"), development)
     await symlink(join(root, "node_modules"), join(directory, "node_modules"), "dir")
     await copyFile(join(root, "scripts/record-journal-fixture.ts"), join(directory, "scripts/record-journal-fixture.ts"))
+    await copyFile(join(root, "scripts/journal-fixture-coverage.ts"), join(directory, "scripts/journal-fixture-coverage.ts"))
     return body(directory)
   }).finally(() => rm(directory, { recursive: true, force: true }))
 }
@@ -79,5 +80,21 @@ test("concurrent normal recordings publish one complete release fixture exclusiv
   expect(fixture.version).toBe("0.14.0")
   expect(fixture.journalFormat).toBe(JOURNAL_FORMAT)
   expect(fixture.sessions.flatMap((session: { events: { name: string }[] }) => session.events).some((event: { name: string }) => event.name === "plugin.summary.summarized")).toBe(true)
+  expect(await readFile(join(directory, "packages/sdk/fixtures/journal-unreleased.json"), "utf8")).toBe(development)
+}), 30_000)
+
+test("a recording that misses a kind of record the fixture must hold is refused, naming it, and writes nothing", async () => isolated(async directory => {
+  // The isolated copy asks for one kind more than the host records.
+  const coverage = join(directory, "scripts/journal-fixture-coverage.ts")
+  const source = await readFile(coverage, "utf8")
+  const asked = source.replace('  named("plugin.knowledge.curated"),\n]', '  named("plugin.knowledge.curated"),\n  named("plugin.never.recorded"),\n]')
+  expect(asked).not.toBe(source)
+  await writeFile(coverage, asked)
+  const target = join(directory, "packages/sdk/fixtures/journal-0.14.0.json")
+  await rm(target)
+  const report = await invoke(directory, [])
+  expect(report.code).toBe(1)
+  expect(report.stderr).toContain("The recording holds no plugin.never.recorded; nothing was written.")
+  expect(await Bun.file(target).exists()).toBe(false)
   expect(await readFile(join(directory, "packages/sdk/fixtures/journal-unreleased.json"), "utf8")).toBe(development)
 }), 30_000)

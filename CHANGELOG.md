@@ -773,8 +773,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   final registry audit checks those seven names and no longer expects the
   eighteen retired ones. The release's journal fixture is a kernel host's
   journals, recorded over `directoryJournal` by
-  `scripts/record-journal-fixture.ts` (four turns with a tool call, a fact,
-  an approval for good and a summary, each curated into knowledge), and
+  `scripts/record-journal-fixture.ts` (five turns with a tool call, a fact,
+  an approval for good and a summary, each curated into knowledge; it
+  refuses to write a recording that misses any of those kinds of record,
+  naming them, or whose turns hold under 1.4 times the summary memory's
+  budget), and
   `packages/sdk/src/kernel/node/journal-compat.test.ts` replays every
   fixture of `JOURNAL_FORMAT` through a directory journal and refuses one of
   another format without changing it. The old engine's journals
