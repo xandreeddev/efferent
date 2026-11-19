@@ -103,14 +103,16 @@ export const QUESTION = "In what city does Ana Silva work?"
 
 /** Step 5's change: the old memory is ended, not deleted. */
 export const CHANGE = "Ana Silva now works at Globex."
+/** Step 5's question after the change: the note says what the memory sent replaced. */
+export const NOW = "Where does Ana Silva work now?"
 
 /** Step 6's: the speaker's words. */
 export const HOME = "I live in Porto."
 export const WHERE_I_LIVE = "Where do I live?"
 
-/** The questions of the world's steps, each asked of the world once it is loaded. */
+/** The questions of the world's step, each asked of the world once it is loaded: one two memories away, and one that names nobody. */
 export const ORCHID = "Where does the person who leads Project Orchid live?"
-export const EMPLOYS = "Who employs Ana Silva?"
+export const BIRD = "Who keeps a bird?"
 
 /** Two messages and a sum, which one turn takes together: one step with a call, then one answer. */
 const THREE = ["My friend Ana Silva works at Acme.", "Acme is in Lisbon.", "What is 2 + 3?"]
@@ -137,7 +139,7 @@ export const connectedMemory: Lesson = {
     { id: "chat", label: "chat.ts", defaultText: "", documentOf: () => CHAT, editableFrom: CHAT.length, formatPrefix: "", sections: [], folded: [], readOnly: true },
   ],
   mainFile: "memory",
-  chips: [ANA, QUESTION, CHANGE, "Where does Ana Silva work now?", HOME, WHERE_I_LIVE, ORCHID, EMPLOYS],
+  chips: [ANA, QUESTION, CHANGE, NOW, HOME, WHERE_I_LIVE, ORCHID, BIRD],
   // Sent at once, one turn takes all three: a sum worked out, and what the turn said kept once it is answered.
   three: THREE,
   // No button of the page sends a fill: the type asks for one, and it is the same three.

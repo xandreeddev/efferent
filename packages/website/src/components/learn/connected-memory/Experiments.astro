@@ -5,11 +5,11 @@
 const experiments = [
   {
     exp: "walk-zero", title: "No walk by subject", button: "Set walk to 0",
-    text: "memory.ts now reads withKnowledge({ walk: 0, … }): a request is sent the memories ranked first, and none the walk by subject would add.",
+    text: "memory.ts now reads walk: 0: a request is sent the memories ranked first, and none the walk by subject would add. From a reloaded page, press the button, then the first two buttons under the chat: Echo answers From what I know: Ana Silva works at Acme., and Lisbon is not sent. Press Load the world, then Where does the person who leads Project Orchid live?: Echo answers From what I know: João Reis leads Project Orchid., and nothing says where he lives.",
   },
   {
-    exp: "review-off", title: "No review", button: "Turn review off",
-    text: "curator.ts now reads const options = { review: false }: the curator is asked once for each turn, and its first reply is checked and stored as it is.",
+    exp: "review-on", title: "A review of each curation", button: "Turn review on",
+    text: "curator.ts now reads const options = { review: true }, as the kernel has it: the curator is asked a second time, to check its first reply against the turn, before anything is stored. From a reloaded page, press the button, then the first button under the chat: in Context, Memory, turn 1 now has Curator asked (review) and its answer. Echo's review changes nothing; a real model's can, and takes longer: on the gateway's DeepSeek a turn with something to keep took about 18 seconds to curate with review, and 8 to 12 without.",
   },
 ]
 ---

@@ -419,14 +419,13 @@ describe("the Context tab's row of sessions", () => {
       ["closed", "Turn closed", "done", "the scope ends", [3], 0],
       ["curator-asked-1", "Curator asked (extract)", "done", "curator.curate({ prompt, job })", [], 1],
       ["curator-answered-1", "Curator answered", "done", "the curator's reply", [], 1],
-      ["curator-asked-2", "Curator asked (review)", "done", "curator.curate({ prompt, job })", [], 2],
-      ["curator-answered-2", "Curator answered", "done", "the curator's reply", [], 2],
     ])
     expect(first.steps[0]?.detail).toBe("Record #1, core.session.turn.started. The curation step (curate, called by curator.ts's keep after the chat's turn is answered) opens a turn on the knowledge session to store the source, and another to store what the checks kept. The curator's model calls run between the two, in no turn.")
     expect(first.steps[1]?.detail).toBe("Record #2, plugin.knowledge.source. Open it in the Journal column to read all of it. In short: source s1: user: My friend Ana Silva works at Acme. Acme is in Lisbon. assistan…")
-    // Each call's prompt is the one message the curator was sent, in the Prompt column; no memory built it.
+    // The call's prompt is the one message the curator was sent, in the Prompt column; no memory built it. Review is
+    // off on this page, so there is one call.
     expect(first.calls.map((call) => [call.call, Option.isNone(call.memory), Option.map(call.prompt, (rows) => rows.map((row) => [row.role, row.source]))])).toEqual([
-      [1, true, Option.some([["user", "added"]])], [2, true, Option.some([["user", "added"]])],
+      [1, true, Option.some([["user", "added"]])],
     ])
     expect(first.calls[0]?.journal.map((row) => [row.seq, row.use])).toEqual([[1, "not-conversation"], [2, "kept"], [3, "not-conversation"], [4, "not-conversation"], [5, "kept"], [6, "kept"], [7, "kept"], [8, "kept"], [9, "kept"], [10, "kept"], [11, "not-conversation"]])
     const second = viewOf(board, 2)
