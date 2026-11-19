@@ -87,11 +87,16 @@ export {
 export { endedBy, folded, keptFrom, knowledgeOf, nextIds, sourceText, standing } from "./contracts/knowledge/knowledge.entity.functions.js"
 export { curate, curateAgain, knowledgeJournal, knowledgeSession } from "./contracts/knowledge/knowledge.usecase.js"
 export type {
-  Asked, Bridge, FusedMemory, KnowledgeOptions, KnowledgeRecall, KnowledgeRecallOptions, ListPlace, ScoredMemory, Seed, SentMemory, WalkedMemory,
+  Asked, Bridge, ByMeaning, FoundText, FusedMemory, KnowledgeOptions, KnowledgeRecall, KnowledgeRecallOptions, ListPlace, MeaningOptions, MeaningPlace, MeaningRecallOptions, RecallWeights, ScoredMemory, Seed,
+  SentMemory, WalkedMemory,
 } from "./contracts/knowledge/knowledge-recall.entity.js"
-export { ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, KnowledgeRecalledData, knowledgeRecalledEvent, RecalledWhy, SeedWay } from "./contracts/knowledge/knowledge-recall.entity.js"
-export { askedOf, checkedKnowledgeOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, recallKnowledge, seedsOf } from "./contracts/knowledge/knowledge-recall.entity.functions.js"
-export { withKnowledge } from "./plugins/knowledge/knowledge.adapter.js"
+export {
+  ASKED_SHOWN, BEFORE_SHOWN, KNOWLEDGE_BY_MEANING, KNOWLEDGE_RECALL, KNOWLEDGE_SHOWN, KnowledgeRecalledData, knowledgeRecalledEvent, MEANING_MODEL_LIMIT, RecalledWhy, SeedWay, SKIPPED_SHOWN, WORDS_WEIGHTS,
+} from "./contracts/knowledge/knowledge-recall.entity.js"
+export {
+  askedOf, checkedKnowledgeOptions, checkedMeaningOptions, keywordScores, knowledgeNote, knowledgeRecalledOf, meaningKey, meaningTexts, recallKnowledge, seedsOf,
+} from "./contracts/knowledge/knowledge-recall.entity.functions.js"
+export { withKnowledge, withKnowledgeByMeaning } from "./plugins/knowledge/knowledge.adapter.js"
 export { turnSource } from "./contracts/knowledge/knowledge-source.entity.functions.js"
 export { shownFor } from "./contracts/knowledge/knowledge-shown.entity.functions.js"
 export { curationPrompt, reviewPrompt } from "./contracts/knowledge/knowledge-prompt.entity.functions.js"

@@ -30,8 +30,8 @@ import { DEFAULT_TOOLS, TOOLS_HEADER, TOOLS_IMPORTS, toolsBodyOf, toolsDocumentO
  * memories the wrapper added after it as the code's, never as something the user said.
  */
 const memoryNames = (parts: PageParts) => ({ flatMemory: parts.watchMemory(flatMemory), withKnowledge })
-const toolsNames = { Effect, Schema, Tool, Toolkit }
-const curatorNames = { Clock, Effect, Layer, Option, Stream, LanguageModel, Sessions, curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf, Chat }
+export const toolsNames = { Effect, Schema, Tool, Toolkit }
+export const curatorNames = { Clock, Effect, Layer, Option, Stream, LanguageModel, Sessions, curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf, Chat }
 
 /** What the status line adds to a curation's line when the page's Echo curated in place of the model picked. */
 export const BY_RULE = "Echo's rules curated it: a model that runs on this page is too small to curate."
@@ -40,17 +40,31 @@ export const BY_RULE = "Echo's rules curated it: a model that runs on this page 
  * The chat agent.ts is handed: the page's, but when the page's Echo curates in place of a model that runs in the browser,
  * a status line that says what a curation did ("Curated turn 2: …", "s1: …") also says who curated.
  */
-const chatFor = (parts: PageParts) => (pane: unknown): Layer.Layer<Chat, never, Sessions> =>
+export const chatFor = (parts: PageParts) => (pane: unknown): Layer.Layer<Chat, never, Sessions> =>
   parts.curatesByRule
-    ? Layer.effect(Chat, Effect.map(Effect.gen(function* () { return yield* Chat }), (chat) => Chat.of({ ...chat, status: (text) => chat.status(/^(?:Curated turn \d+|s\d+): /.test(text) ? `${text} ${BY_RULE}` : text) }))).pipe(Layer.provide(parts.chatOn(pane)))
+    ? Layer.effect(Chat, Effect.map(Effect.gen(function* () { return yield* Chat }), (chat) => Chat.of({ ...chat, status: (text) => chat.status(isCurationLine(text) ? `${text} ${BY_RULE}` : text) }))).pipe(Layer.provide(parts.chatOn(pane)))
     : parts.chatOn(pane)
 
-const agentNames = (parts: PageParts, memory: unknown, tools: unknown, toolsLive: unknown, curatorOn: unknown, keep: unknown) => ({
+/** Whether a status line says what a curation did: "Curated turn 2: …", or "s1: …" for a source taken up again. */
+export const isCurationLine = (text: string): boolean => /^(?:Curated turn \d+|s\d+): /.test(text)
+
+export const agentNames = (parts: PageParts, memory: unknown, tools: unknown, toolsLive: unknown, curatorOn: unknown, keep: unknown) => ({
   Effect, Stream, LanguageModel, Prompt,
   Core, Sessions, turnStartedEvent, userMessage, callTool, Memory, modelAnswer, Chat,
   kernel: parts.kernel, inProcessJournal: parts.inProcessJournal, sessions: parts.sessions, chatOn: chatFor(parts),
   memory, tools, toolsLive, curatorOn, keep, pane: parts.pane, model: parts.model, curatorModel: parts.curatorModel,
 })
+
+/**
+ * How a lesson on this program differs where the page runs it (lesson 20 reuses it): the names memory.ts is handed,
+ * what the build says when memory.ts makes no layer, the names agent.ts is handed (from the page and the files made),
+ * and the chat agent.ts is handed.
+ */
+export interface KnowledgeProgram {
+  readonly memoryNames: (parts: PageParts) => Readonly<Record<string, unknown>>
+  readonly memoryShould: string
+  readonly agentNames: (parts: PageParts, memory: unknown, tools: unknown, toolsLive: unknown, curatorOn: unknown, keep: unknown) => Readonly<Record<string, unknown>>
+}
 
 /** Whether a value is a toolkit as agent.ts reads one: it is yielded for its handlers, and it holds its tools by name. */
 const isToolkit = (value: unknown): boolean => Effect.isEffect(value) && Predicate.hasProperty(value, "tools") && Predicate.isObject(value.tools)
@@ -60,7 +74,7 @@ const isToolkit = (value: unknown): boolean => Effect.isEffect(value) && Predica
  * refuses the build in words that name the file; and `keep`. agent.ts is handed a `curatorOn` that gives the
  * learner's curator watched by the page, so its model calls are filed as the curator's.
  */
-const curatorOf = (sources: Sources, parts: PageParts): Result.Result<{ readonly curatorOn: (model: unknown) => unknown; readonly keep: unknown }, string> =>
+export const curatorOf = (sources: Sources, parts: PageParts): Result.Result<{ readonly curatorOn: (model: unknown) => unknown; readonly keep: unknown }, string> =>
   Result.flatMap(runStatements("curator.ts did not run: ", curatorBodyOf(sources.curator ?? ""), "{ curatorOn, keep }", curatorNames), (made) => {
     const curatorOn = named(made, "curatorOn")
     const keep = named(made, "keep")
@@ -78,10 +92,10 @@ const curatorOf = (sources: Sources, parts: PageParts): Result.Result<{ readonly
   })
 
 /** memory.ts, tools.ts, curator.ts, then agent.ts, as the page runs them: main, ready to run. */
-export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Result<Effect.Effect<unknown, unknown>, string> =>
-  // memory.ts is statements: the wrapper is made as the file runs, so options `withKnowledge` refuses are refused here, as the build.
-  Result.flatMap(runStatements("memory.ts did not run: ", memoryBodyOf(sources.memory ?? ""), "memory", memoryNames(parts)), (memory) => {
-    if (!Layer.isLayer(memory)) return Result.fail("memory.ts did not run: memory is not a layer. It should be withKnowledge({ limit, walk, speaker, stopWords })(flatMemory).")
+export const evaluateKnowledge = (program: KnowledgeProgram) => (sources: Sources, parts: PageParts): Result.Result<Effect.Effect<unknown, unknown>, string> =>
+  // memory.ts is statements: the wrapper is made as the file runs, so options the wrapper refuses are refused here, as the build.
+  Result.flatMap(runStatements("memory.ts did not run: ", memoryBodyOf(sources.memory ?? ""), "memory", program.memoryNames(parts)), (memory) => {
+    if (!Layer.isLayer(memory)) return Result.fail(`memory.ts did not run: memory is not a layer. It should be ${program.memoryShould}.`)
     return Result.flatMap(runStatements("tools.ts did not run: ", toolsBodyOf(sources.tools ?? ""), "{ tools, toolsLive }", toolsNames), (made) => {
       const tools = named(made, "tools")
       const toolsLive = named(made, "toolsLive")
@@ -89,11 +103,14 @@ export const evaluateLesson = (sources: Sources, parts: PageParts): Result.Resul
       if (!Layer.isLayer(toolsLive)) return Result.fail("tools.ts did not run: toolsLive is not a layer. It should be tools.toLayer({ … }).")
       return Result.flatMap(curatorOf(sources, parts), ({ curatorOn, keep }) =>
         // The memory is handed on as the file made it: the page watches the flat memory under the wrapper, not the wrapper.
-        Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", agentNames(parts, memory, tools, toolsLive, curatorOn, keep)), (main) =>
+        Result.flatMap(runStatements("agent.ts did not run: ", sources.agent ?? "", "main", program.agentNames(parts, memory, tools, toolsLive, curatorOn, keep)), (main) =>
           // The learner's code is untyped JavaScript: what main needs is checked when it runs, a missing module as a defect the page reports.
           programOf(main)))
     })
   })
+
+/** Lesson 18's program as the page runs it. */
+export const evaluateLesson = evaluateKnowledge({ memoryNames, memoryShould: "withKnowledge({ limit, walk, speaker, stopWords })(flatMemory)", agentNames })
 
 /** Step 3's message: two memories, about Ana Silva, Acme and Lisbon. */
 export const ANA = "My friend Ana Silva works at Acme. Acme is in Lisbon."

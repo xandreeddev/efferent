@@ -178,7 +178,14 @@ export interface RecallView {
   readonly options: string
   /** Step 1: each seed and how it was named, or why there was none. */
   readonly seeds: ReadonlyArray<string>
-  /** Step 2: the memories about the seeds, and those the message's words reach, fused by rank. */
+  /** Step 2's heading: the lists it fused, the list by meaning among them when it ran (lesson 20). */
+  readonly lists: string
+  /**
+   * Step 2's word on the list by meaning, when the recall had one (lesson 20) and it found nothing to rank: why it was
+   * skipped (the embedder's words), or that its weight turned it off.
+   */
+  readonly byMeaning: Option.Option<string>
+  /** Step 2: the memories about the seeds, those the message's words reach, and those nearest it in meaning, fused by rank. */
   readonly ranked: ReadonlyArray<RecallRow>
   /** Step 3: the entities the walk by subject started from, and what it found. */
   readonly bridges: ReadonlyArray<string>
@@ -370,6 +377,7 @@ export const recallViewOf = (recalled: KnowledgeRecalledData, records: ReadonlyA
     const how = [
       ...(memory.seed === null ? [] : [`${ordinal(memory.seed.place)} about a seed (${memory.seed.seeds.map((id) => names.get(String(id)) ?? id).join(", ")})${replaced(memory.seed.via)}`]),
       ...(memory.words === null ? [] : [`${ordinal(memory.words.place)} by your words (${memory.words.terms.join(", ")})${replaced(memory.words.via)}`]),
+      ...(memory.meaning === null ? [] : [`${ordinal(memory.meaning.place)} by meaning (cosine ${memory.meaning.cosine.toFixed(3)})${replaced(memory.meaning.via)}`]),
       ...(memory.walk === null ? [] : [`${ordinal(memory.walk.place)} of the walk, from ${names.get(String(memory.walk.from)) ?? memory.walk.from}`]),
     ]
     const why = memory.why === "ranked" ? `sent: among the first ${recalled.limit} of the fused list`
@@ -382,8 +390,15 @@ export const recallViewOf = (recalled: KnowledgeRecalledData, records: ReadonlyA
   const everyTokens = Number(estimateTokens(knowledgeNote(all.map((memory) => ({ memory, why: "ranked" as const, before: [] })))))
   return {
     question: recalled.last,
-    options: `limit: ${recalled.limit} · walk: ${recalled.walk}`,
+    options: recalled.meaning === null
+      ? `limit: ${recalled.limit} · walk: ${recalled.walk}`
+      : `limit: ${recalled.limit} · walk: ${recalled.walk} · pool: ${recalled.meaning.pool} · weights: seed ${recalled.weights.seed}, words ${recalled.weights.words}, meaning ${recalled.weights.meaning}${recalled.meaning.floor === null ? "" : ` · floor: ${recalled.meaning.floor}`} · vectors of ${recalled.meaning.model}`,
     seeds: recalled.seeds.length === 0 ? ["Nothing: your message and the turn before it named no entity kept, and held none of your words for yourself."] : recalled.seeds.map(seedWords),
+    lists: recalled.meaning === null ? "Memories about the seeds, and those your words reach, fused" : "Memories about the seeds, those your words reach, and those nearest your message in meaning, fused",
+    byMeaning: recalled.meaning === null ? Option.none()
+      : recalled.meaning.skipped !== null ? Option.some(`Nothing was ranked by meaning. ${recalled.meaning.skipped} Recall used the other lists.`)
+        : recalled.weights.meaning === 0 ? Option.some("The list by meaning is off: its weight is 0, so nothing was turned into numbers.")
+          : Option.none(),
     ranked: recalled.memories.filter((memory) => memory.walk === null).map(rowOf),
     bridges: recalled.bridges.map((bridge) => `${bridge.name}, brought in by "${textOf(String(bridge.from))}"`),
     walked: recalled.memories.filter((memory) => memory.walk !== null).map(rowOf),

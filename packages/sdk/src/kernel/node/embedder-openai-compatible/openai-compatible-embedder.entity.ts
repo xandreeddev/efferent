@@ -1,4 +1,4 @@
-import { Schema } from "effect"
+import { Duration, Schema } from "effect"
 import type { Redacted } from "effect"
 import type { SpendOptions, Timeouts } from "../model-spend/model-spend.entity.js"
 
@@ -29,7 +29,8 @@ export interface EmbedPrefixes {
  * - `name`: the embedder's name (`Embedder.model`), which vectors are kept under. By default it is made of the model,
  *   the dimensions and the prefixes (`embedderNameOf`), so two configurations of one model never share vectors; a
  *   host that gives its own promises the same. 1 to `EMBEDDER_NAME_LIMIT` characters, no line break.
- * - `timeouts`: how long to wait for the headers (`response`) and then for the whole body (`idle`).
+ * - `timeouts`: how long to wait for the headers (`response`) and then for the whole body (`idle`): five seconds
+ *   each by default (`EMBEDDING_TIMEOUTS`), since a memory waits for its embeddings before every request it builds.
  * - `spend`: how each request charges the `ModelSpend` ledger in context (ADR 0026).
  * - `provider`: the name a call's span gives the provider (`gen_ai.provider.name`): `openai` by default.
  *
@@ -47,6 +48,16 @@ export interface OpenAiCompatibleEmbedderOptions {
   readonly spend: SpendOptions
   readonly provider?: string
 }
+
+/**
+ * The waits an embedder gives up after when its options name none: five seconds for the headers, five for the whole
+ * body. A memory that ranks by meaning asks before every request it builds, and falls back to words when the embedder
+ * fails, so a hung endpoint costs each context these seconds and no more; a host whose embeddings take longer gives
+ * its own.
+ *
+ * @public
+ */
+export const EMBEDDING_TIMEOUTS = { response: Duration.seconds(5), idle: Duration.seconds(5) } as const
 
 /** The most texts one request carries when the options name no `batch`: what Gemini's embeddings took on the gateway. */
 export const DEFAULT_BATCH = 64

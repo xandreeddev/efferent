@@ -878,6 +878,32 @@ function boot(root: HTMLElement, lesson: Lesson) {
       result.hidden = false
     }
   }))
+  // Lesson 20: load the embedder in its worker, saying how far the download is under the button, then that it is loaded
+  // and how long it took. Nothing is rebuilt: the program's embedder answers with it from its next call.
+  document.querySelectorAll<HTMLButtonElement>("[data-embedder]").forEach((button) => button.addEventListener("click", async () => {
+    const result = (button.closest("[data-step]") ?? document).querySelector<HTMLElement>("[data-embedder-result]")
+    const say = (text: string, state: string) => {
+      if (result === null) return
+      result.textContent = text
+      result.dataset.state = state
+      result.hidden = false
+    }
+    button.disabled = true
+    say("Loading the embedder…", "busy")
+    const started = performance.now()
+    const loaded = await (await ensureRuntime()).loadEmbedder((text) => say(text, "busy"))
+    const seconds = (performance.now() - started) / 1000
+    Result.match(loaded, {
+      onSuccess: (words) => {
+        say(`${words} It took ${seconds.toFixed(1)} seconds.`, "ok")
+        if (result !== null) result.dataset.seconds = seconds.toFixed(1)
+      },
+      onFailure: (why) => {
+        say(`The embedder was not loaded: ${why}`, "error")
+        button.disabled = false
+      },
+    })
+  }))
   // Lesson 7: reload the page as it stands, a turn in progress included.
   document.querySelectorAll<HTMLButtonElement>("[data-reload]").forEach((button) => button.addEventListener("click", () => window.location.reload()))
   // Lesson 7: forget everything this lesson stored (its journals and the edits kept for a reload), and start again.

@@ -11,26 +11,32 @@ import { REVIEW_LINE } from "./curator.source.ts"
 import { WALK_LINE } from "./memory.source.ts"
 
 /** Replace one exact piece of code, or None when it is not there. */
-const swap = (from: string, to: string) => (source: string): Option.Option<string> =>
+export const swap = (from: string, to: string) => (source: string): Option.Option<string> =>
   source.includes(from) ? Option.some(source.replace(from, () => to)) : Option.none()
 
-/** The one call of memory.ts, its options a line each between `withKnowledge({` and `})(flatMemory)`. */
-const CALL = /^export const memory = withKnowledge\(\{\n((?:.*\n)*?)\}\)\(flatMemory\)$/m
+/**
+ * The one call of memory.ts, its options a line each between `<wrapper>({` and `})(flatMemory)`: lesson 18's
+ * `withKnowledge`, lesson 20's `withKnowledgeByMeaning`.
+ */
+const callOf = (wrapper: string) => new RegExp(`^export const memory = ${wrapper}\\(\\{\\n((?:.*\\n)*?)\\}\\)\\(flatMemory\\)$`, "m")
 
 /** The call's option lines, comments included, and how to write the file with other ones; None when the call is not there. */
-const optionsOf = (source: string): Option.Option<{ readonly lines: ReadonlyArray<string>; readonly with: (lines: ReadonlyArray<string>) => string }> =>
-  Option.map(Option.fromNullishOr(CALL.exec(source)), (found) => ({
+export const optionsOf = (wrapper: string) => (source: string): Option.Option<{ readonly lines: ReadonlyArray<string>; readonly with: (lines: ReadonlyArray<string>) => string }> => {
+  const call = callOf(wrapper)
+  return Option.map(Option.fromNullishOr(call.exec(source)), (found) => ({
     lines: (found[1] ?? "").split("\n").slice(0, -1),
-    with: (lines) => source.replace(CALL, () => `export const memory = withKnowledge({\n${lines.map((line) => `${line}\n`).join("")}})(flatMemory)`),
+    with: (lines) => source.replace(call, () => `export const memory = ${wrapper}({\n${lines.map((line) => `${line}\n`).join("")}})(flatMemory)`),
   }))
+}
 
-/** A whole number's option (`  limit: 8,`), read and written in place. */
-const numberControl = (name: string): LessonControl => {
+/** A whole number's option (`  limit: 8,`) of the wrapper's call, read and written in place. */
+export const numberControl = (name: string, wrapper = "withKnowledge"): LessonControl => {
   const line = new RegExp(`^  ${name}: (\\d+),$`)
+  const options = optionsOf(wrapper)
   return {
     file: "memory",
-    read: (source) => Option.flatMap(optionsOf(source), ({ lines }) => Option.firstSomeOf(lines.map((one) => Option.map(Option.fromNullishOr(line.exec(one)), (found) => Number(found[1]))))),
-    write: (source, value) => Option.flatMap(optionsOf(source), (call) => {
+    read: (source) => Option.flatMap(options(source), ({ lines }) => Option.firstSomeOf(lines.map((one) => Option.map(Option.fromNullishOr(line.exec(one)), (found) => Number(found[1]))))),
+    write: (source, value) => Option.flatMap(options(source), (call) => {
       const at = call.lines.findIndex((one) => line.test(one))
       return at < 0 ? Option.none() : Option.some(call.with(call.lines.map((one, index) => (index === at ? `  ${name}: ${String(value)},` : one))))
     }),

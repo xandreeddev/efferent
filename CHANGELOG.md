@@ -43,7 +43,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `spendRefusalOf` and `isSpendRefusal` now read there too. The charge's
   metrics (`efferent.model.calls`, `efferent.model.tokens`,
   `efferent.model.cost`) carry `gen_ai.operation.name`, `chat` for a model's
-  calls and `embeddings` for an embedder's, so the two are told apart.
+  calls and `embeddings` for an embedder's, so the two are told apart. Its waits
+  are five seconds each by default (`EMBEDDING_TIMEOUTS`). Under it,
+  `withKnowledgeByMeaning` keeps the last message's vector while the message
+  is the same, so a turn's steps embed it once, and logs a warning the first
+  time each reason fails its embedder, so one that never works is seen.
 - `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
   calls without writing a span (ADR 0030). `Sessions.turn` is the span
   `session.turn` (the session, the turn's number, how it ended), `callTool` is

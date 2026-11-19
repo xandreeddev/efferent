@@ -9,10 +9,9 @@ import { chargedEffect, reaching } from "../model-spend/charge.adapter.js"
 import type { Charging } from "../model-spend/charge.adapter.js"
 import type { CallReach } from "../model-spend/call-reach.port.js"
 import { chargeOf, unchargeable } from "../model-spend/model-spend.entity.functions.js"
-import { DEFAULT_TIMEOUTS } from "../model-spend/model-spend.entity.js"
 import type { Reported } from "../model-spend/model-spend.entity.js"
 import { answeredWith, batchesOf, bodyOf, embedderNameOf, embedFailedOf, failedWith, optionsProblem, reportedOf, vectorsOf } from "./openai-compatible-embedder.entity.functions.js"
-import { EmbeddingsResponse, OPENAI_COMPATIBLE_EMBEDDER } from "./openai-compatible-embedder.entity.js"
+import { EMBEDDING_TIMEOUTS, EmbeddingsResponse, OPENAI_COMPATIBLE_EMBEDDER } from "./openai-compatible-embedder.entity.js"
 import type { OpenAiCompatibleEmbedderOptions } from "./openai-compatible-embedder.entity.js"
 
 const METHOD = "embed"
@@ -62,10 +61,10 @@ export const openAiCompatibleEmbedder = (options: OpenAiCompatibleEmbedderOption
     const problem = optionsProblem(options)
     if (Option.isSome(problem)) return yield* Effect.die(new Error(`openAiCompatibleEmbedder: ${problem.value}`))
     const spend = yield* ModelSpend
-    const client = reaching(options.timeouts ?? {})(yield* HttpClient.HttpClient)
+    const client = reaching({ response: options.timeouts?.response ?? EMBEDDING_TIMEOUTS.response })(yield* HttpClient.HttpClient)
     const charging: Charging = { spend, options: options.spend, model: options.model, operation: "embeddings", module: OPENAI_COMPATIBLE_EMBEDDER }
     const url = `${options.baseUrl.replace(/\/+$/, "")}/embeddings`
-    const idle = Duration.fromInputUnsafe(options.timeouts?.idle ?? DEFAULT_TIMEOUTS.idle)
+    const idle = Duration.fromInputUnsafe(options.timeouts?.idle ?? EMBEDDING_TIMEOUTS.idle)
     const headers = options.apiKey === undefined ? {} : { authorization: `Bearer ${Redacted.value(options.apiKey)}` }
     const name = embedderNameOf(options)
     const failed = embedFailedOf(name)

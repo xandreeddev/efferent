@@ -1,0 +1,32 @@
+---
+// Controls bound to memory.ts's withKnowledgeByMeaning call (see learn/playground.ts, `data-control`, and
+// lessons/recall-by-meaning/config-edit.ts). Each writes one line of the call, or one number of its weights, and runs
+// the code again. A value the kernel does not take is written as given, and withKnowledgeByMeaning refuses it in its
+// own words.
+---
+
+<div class="learn-controls">
+  <label>
+    <span>limit</span>
+    <input type="number" min="1" max="50" step="1" data-control="limit" />
+    <small>How many memories a request is sent, the best of the three lists first. The kernel takes 1 to 50.</small>
+  </label>
+  <label>
+    <span>walk</span>
+    <input type="number" min="0" max="10" step="1" data-control="walk" />
+    <small>How many more memories the walk by subject may add. The kernel takes 0 to 10.</small>
+  </label>
+  <label>
+    <span>pool</span>
+    <input type="number" min="1" max="100" step="1" data-control="pool" />
+    <small>How many memories the list by meaning ranks, the nearest first. The kernel takes 1 to 100.</small>
+  </label>
+  <label>
+    <span>meaning</span>
+    <input type="number" min="0" max="10" step="0.5" data-control="meaning" />
+    <small>The weight of the list by meaning: 0 turns it off. The kernel takes 0 to 10.</small>
+  </label>
+</div>
+<p class="learn-note" data-controls-note hidden>
+  A control is greyed out when its line is missing from your code. Press Reset in the Code pane to bring it back.
+</p>
