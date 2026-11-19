@@ -21,6 +21,17 @@ describe("cliLine", () => {
   })
 })
 
+test("reads --run whole and again for more, and --validate", async () => {
+  const line = await Effect.runPromise(cliLine(["prepare", "1", "--run", "bun run typecheck", "--run=bun test packages/review", "--validate"]))
+  expect([line.values.get("--run"), [...line.switches]]).toEqual([["bun run typecheck", "bun test packages/review"], ["--validate"]])
+})
+
+test("asked to run commands on a host with no bwrap, the command line fails with SandboxUnavailable before anything is read", async () => {
+  const exit = await Effect.runPromiseExit(reviewCli(["prepare", "1", "--repo", "a/b", "--validate", "--cache", "/nonexistent/cache"], { ...host, env: { PATH: "/nonexistent" } }))
+  const reason = Exit.isFailure(exit) ? exit.cause.reasons[0] : undefined
+  expect(reason?._tag === "Fail" ? [reason.error._tag, reason.error.message] : "no failure").toEqual(["SandboxUnavailable", "bwrap (bubblewrap) is not installed on this host, so nothing of a pull request's runs"])
+})
+
 describe("reviewCli", () => {
   test.each([
     [["prepare"], "efferent-review takes the command prepare or review and a pull request's number"],
@@ -44,7 +55,7 @@ describe("reviewCli", () => {
     [["prepare", "1", "--repo", "a/b", "--repo", "c/d"], "--repo is given more than once"],
     [["prepare", "1", "--repo"], "--repo needs a value"],
     [["prepare", "1", "--repo", "a/b", "--fast"], "--fast is not a flag of efferent-review"],
-    [["prepare", "1", "--repo", "a/b", "--run", "bun test"], "--run is not a flag of efferent-review"],
+    [["prepare", "1", "--repo", "a/b", "--validate=yes"], "--validate=yes is not a flag of efferent-review"],
   ] as const)("%j is a usage error", async (args, message) => {
     expect(await usageOf(args)).toBe(message)
   })

@@ -73,13 +73,13 @@ const bwrapOnce = (bwrap: string, args: ReadonlyArray<string>) => Effect.callbac
 })
 
 /**
- * This host's side of a sandbox, checked: `bwrap` (`/usr/bin/bwrap`, else the first on `path`), the system's top
+ * This host's side of a sandbox, checked: `bwrap` (the first on `path`, the host's), the system's top
  * folders, the `/etc` files there are, and the toolchain (`TOOLS`) found on `path` by real path. Then one probe:
  * `bwrap --unshare-all` running `true`. No `bwrap`, or a probe the system refuses (user namespaces off, or AppArmor
  * restricting them), is `SandboxUnavailable` with the reason.
  */
 export const bwrapHost = Effect.fn("bwrap.host")(function* (path: string) {
-  const bwrap = (yield* exists("/usr/bin/bwrap")) ? Option.some("/usr/bin/bwrap") : yield* onPath("bwrap", path)
+  const bwrap = yield* onPath("bwrap", path)
   if (Option.isNone(bwrap)) return yield* Effect.fail(new SandboxUnavailable({ reason: "no-bwrap", message: "bwrap (bubblewrap) is not installed on this host, so nothing of a pull request's runs" }))
   const top = (yield* Effect.forEach(SYSTEM_TOP, topOf, { concurrency: 1 })).flatMap(Option.toArray)
   const etc = (yield* Effect.forEach([...ETC_ALWAYS, ...ETC_NETWORK], etcOf, { concurrency: 1 })).flatMap(Option.toArray)
@@ -208,6 +208,7 @@ export interface BwrapSandboxesOptions {
 export const bwrapSandboxes = (options: BwrapSandboxesOptions): Layer.Layer<Sandboxes, SandboxUnavailable> => Layer.effect(Sandboxes, Effect.gen(function* () {
   const layout = yield* bwrapHost(options.path)
   return Sandboxes.of({
+    tools: layout.tools.map((tool) => tool.name),
     shell: (plan) => bwrapShell({ layout, plan, ...(options.limits === undefined ? {} : { limits: options.limits }), ...(options.outputBytes === undefined ? {} : { outputBytes: options.outputBytes }) }),
   })
 }))

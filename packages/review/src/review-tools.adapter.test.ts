@@ -276,7 +276,7 @@ describe("reportFinding", () => {
 describe("a git command of a tool's that fails", () => {
   /** A checkout whose every read fails as `failure` says, and whose clone path its failures name. */
   const failing = (failure: CheckoutError) => Layer.succeed(Checkout, Checkout.of({
-    fetch: () => Effect.fail(failure), diff: () => Effect.fail(failure), show: () => Effect.fail(failure), worktree: () => Effect.fail(failure),
+    fetch: () => Effect.fail(failure), diff: () => Effect.fail(failure), show: () => Effect.fail(failure), worktree: () => Effect.fail(failure), clone: () => Effect.fail(failure),
     entry: () => Effect.fail(failure), blob: () => Effect.fail(failure), files: () => Effect.fail(failure), grep: () => Effect.fail(failure),
     mergeBase: () => Effect.fail(failure), changedPaths: () => Effect.fail(failure),
   }))
@@ -312,7 +312,7 @@ describe("a git command of a tool's that fails", () => {
   test("a file over 1 MiB is refused by its size, in its own words, before a byte of it is read", async () => {
     const read: Array<string> = []
     const huge = Layer.succeed(Checkout, Checkout.of({
-      fetch: () => Effect.void, diff: () => Effect.succeed(""), show: () => Effect.succeed(Option.none()), worktree: () => Effect.succeed(""),
+      fetch: () => Effect.void, diff: () => Effect.succeed(""), show: () => Effect.succeed(Option.none()), worktree: () => Effect.succeed(""), clone: () => Effect.succeed(""),
       entry: () => Effect.succeed({ _tag: "File" as const, blob: BlobSha.make("a".repeat(40)), bytes: 5_000_000 }),
       blob: (_repo, blob) => Effect.sync(() => {
         read.push(blob)

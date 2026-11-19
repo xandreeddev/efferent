@@ -27,8 +27,9 @@ const UNAVAILABLE_SHOWN = 300
  * reviewer reads (`verdict`, with `.gitattributes` at the base) and pack the rest under the budget (`pack`); read the instruction files along the changed paths at the base, a text
  * met twice kept once; list the head's CI runs and digest each failed one's log, the whole log kept (a log that cannot be read is
  * that run's `Unavailable` entry and fails nothing else; the runs are those of the commit under review); and run the
- * commands asked for in a worktree of the head, only for a head in the base repository whose author may write to it
- * and only through the `Validations` the host provides (a sandbox; with none, nothing runs and no worktree is made).
+ * commands asked for (by hand, and the repository's profile with `validate`) on the commit under review and its base,
+ * only for a head in the base repository whose author may write to it and only through the `Validations` the host
+ * provides (sandboxes over throwaway clones; with none, nothing runs and no clone is made).
  */
 export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoName, number: PullNumber, options: PrepareOptions, policies: ReviewPolicies = STOCK_POLICIES) {
   const forge = yield* Forge
@@ -90,25 +91,33 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
   }), { concurrency: 2 })
 
   const validations = yield* Effect.serviceOption(Validations)
-  const skipped: Option.Option<SkipReason> = options.run.length === 0
+  const asked = options.run.length > 0 || options.validate
+  const skipped: Option.Option<SkipReason> = !asked
     ? Option.none()
     : !pull.sameRepo
       ? Option.some("fork")
       : !policies.mayRun(pull)
         ? Option.some("permission")
         : Option.isNone(validations) ? Option.some("no-sandbox") : Option.none()
-  const validation: Validation = options.run.length === 0
+  const validation: Validation = !asked
     ? { _tag: "NotAsked" }
     : yield* Option.match(skipped, {
       onSome: (reason) => Effect.succeed<Validation>({ _tag: "Skipped", reason }),
-      onNone: () => Effect.scoped(Effect.gen(function* () {
-        const cwd = yield* checkout.worktree(repo, at.sha)
-        const digests = yield* Option.match(validations, {
-          onNone: () => Effect.succeed([]),
-          onSome: (service) => service.run({ commands: options.run, cwd, logFolder: folder, changedPaths, limits: options.limits, timeoutMs: options.timeoutMs }),
-        })
-        return { _tag: "Ran", digests } satisfies Validation
-      })),
+      onNone: () => Option.match(validations, {
+        onNone: () => Effect.succeed<Validation>({ _tag: "Skipped", reason: "no-sandbox" }),
+        onSome: (service) => service.run({
+          repo,
+          base: at.base,
+          head: at.sha,
+          run: options.run,
+          profile: options.validate,
+          changedPaths,
+          limits: options.limits,
+          logFolder: folder,
+          commandTimeoutMs: options.timeoutMs,
+          budgetMs: options.budgetMs,
+        }),
+      }),
     })
 
   const prepared: PreparedReview = { pullRequest: pull, at, files, later, verdicts, diff, rules, ci, failing, validation }

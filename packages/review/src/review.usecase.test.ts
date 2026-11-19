@@ -46,7 +46,7 @@ const forge = Layer.succeed(Forge, Forge.of({
 const layers = Layer.mergeAll(forge, gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot), findingsInMemory)
   .pipe(Layer.provide(hostShell({ cwd: fixture.root, env: fixture.env })))
 
-const OPTIONS: PrepareOptions = { at: { _tag: "First" }, budgetTokens: 24_000, run: [], workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000 }
+const OPTIONS: PrepareOptions = { at: { _tag: "First" }, budgetTokens: 24_000, run: [], validate: false, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
 
 describe("at the first head", () => {
   test("the commit the first run tested, its diff and rules from where its history meets the base, its own CI", async () => {

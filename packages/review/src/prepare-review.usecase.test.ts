@@ -17,7 +17,7 @@ import { prepareReview } from "./prepare-review.usecase.js"
 import { PullRequest, RepoName } from "./pull-request.entity.js"
 import type { Permission, PullNumber } from "./pull-request.entity.js"
 import { directoryLogs } from "./review-logs.adapter.js"
-import type { ValidationRequest } from "./validations.entity.js"
+import type { ValidationRequest, ValidationRun } from "./validations.entity.js"
 import { Validations } from "./validations.port.js"
 
 const fixture = gitFixture()
@@ -48,24 +48,37 @@ const forgeOf = (pull: PullRequest) => Layer.succeed(Forge, Forge.of({
     : Effect.succeed(id === 11 ? { _tag: "Log" as const, text: FAILED_LOG } : { _tag: "NoLog" as const, reason: "log not found" }),
 }))
 
+const RAN: ValidationRun = {
+  _tag: "Ran",
+  manager: "bun",
+  profile: [
+    { command: "bun run typecheck", from: "instructions", kept: true, reason: "passed on the base" },
+    { command: "bun test", from: "by-hand", kept: true, reason: "asked for by hand" },
+    { command: "test -z \"$(git status)\"", from: "instructions", kept: false, reason: "it holds shell syntax (quotes, pipes, ;, $, redirections), so it is not run" },
+  ],
+  install: Option.some({ source: { _tag: "Command", command: "bun install" }, exit: Option.some(0), ended: "exited with 0", digest: { failures: [], failuresCut: 0, summary: Option.none(), lines: [], linesCut: 0, logLines: 1, onChangedPath: false }, logPath: "/logs/head-install.log" }),
+  digests: [{ source: { _tag: "Command", command: "bun run typecheck" }, exit: Option.some(2), ended: "exited with 2", digest: { failures: [{ text: "src/sum.ts(4,3): error TS2322: no", detail: [], count: 1, onChangedPath: true }], failuresCut: 0, summary: Option.some("1 error"), lines: [], linesCut: 0, logLines: 2, onChangedPath: true }, logPath: "/logs/head-1.log" }],
+  unrun: [{ command: "bun test", reason: "the clone's time budget ran out before it ran" }],
+}
+
 const validationsStub = () => {
-  const asked: Array<ValidationRequest & { readonly present: boolean }> = []
+  const asked: Array<ValidationRequest> = []
   const layer = Layer.succeed(Validations, Validations.of({
     run: (request) => Effect.sync(() => {
-      asked.push({ ...request, present: existsSync(join(request.cwd, "src/big.ts")) })
-      return []
+      asked.push(request)
+      return RAN
     }),
   }))
   return { layer, asked }
 }
 
-const OPTIONS: PrepareOptions = { at: { _tag: "Head" }, budgetTokens: 24_000, run: ["bun test"], workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000 }
+const OPTIONS: PrepareOptions = { at: { _tag: "Head" }, budgetTokens: 24_000, run: ["bun test"], validate: true, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
 
-/** The worktrees the checkout made and has not removed. */
-const worktrees = () => {
-  const folder = join(fixture.cacheRoot, "owner", "project", "worktrees")
+/** The worktrees and clones the checkout made and has not removed. */
+const worktrees = () => ["worktrees", "clones"].flatMap((name) => {
+  const folder = join(fixture.cacheRoot, "owner", "project", name)
   return existsSync(folder) ? readdirSync(folder) : []
-}
+})
 
 const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox = true, policies: ReviewPolicies = STOCK_POLICIES) => {
   const validations = validationsStub()
@@ -101,8 +114,9 @@ describe("prepareReview", () => {
     ])
     expect(digested?._tag === "Digested" && digested.digest.digest.onChangedPath).toBe(true)
     expect(readFileSync(join(logsRoot, `1-${short}`, "ci-11.log"), "utf8")).toBe(FAILED_LOG)
-    expect(asked.map((request) => [request.commands, request.logFolder, request.present])).toEqual([[["bun test"], `1-${short}`, true]])
-    expect(review.validation).toEqual({ _tag: "Ran", digests: [] })
+    expect(asked.map((request) => [request.repo, request.base, request.head, request.run, request.profile, request.logFolder, request.commandTimeoutMs, request.budgetMs])).toEqual([[repo, fixture.left, fixture.head, ["bun test"], true, `1-${short}`, 60_000, 600_000]])
+    expect(asked[0]?.changedPaths).toContain("src/sum.ts")
+    expect(review.validation).toEqual(RAN)
   })
 
   test("a fork's commands are skipped, and so are those of an author who may not write (read or triage) or with no sandbox given; no worktree is made", async () => {
@@ -114,7 +128,7 @@ describe("prepareReview", () => {
     expect([triage.review.validation, triage.asked.length]).toEqual([{ _tag: "Skipped", reason: "permission" }, 0])
     const unsandboxed = await prepared(pullOf(true, "admin"), OPTIONS, false)
     expect(unsandboxed.review.validation).toEqual({ _tag: "Skipped", reason: "no-sandbox" })
-    const none = await prepared(pullOf(true, "admin"), { ...OPTIONS, run: [] })
+    const none = await prepared(pullOf(true, "admin"), { ...OPTIONS, run: [], validate: false })
     expect([none.review.validation, none.asked.length]).toEqual([{ _tag: "NotAsked" }, 0])
     expect(worktrees()).toEqual([])
   })
@@ -141,6 +155,21 @@ describe("prepareReview", () => {
       "  check 14 (.github/workflows/ci.yml): failure, log unavailable: exited with 1: HTTP 401: Bad credentials",
       "Commands: skipped, the head branch is not in the base repository, so its scripts are not run",
     ].join("\n"))
+  })
+
+  test("the summary of commands run: the manager, what was dropped and why, the install, each digest, and what did not run", async () => {
+    const { review } = await prepared(pullOf(true, "write"))
+    expect(summaryText(review).split("\n").slice(-8)).toEqual([
+      "Commands (installed with bun):",
+      "  dropped \"test -z \\\"$(git status)\\\"\": it holds shell syntax (quotes, pipes, ;, $, redirections), so it is not run",
+      "  install: exited with 0",
+      "    failures: 0; log: /logs/head-install.log",
+      "  bun run typecheck: exited with 2; 1 error",
+      "    failures: 1, some on changed paths; log: /logs/head-1.log",
+      "    - src/sum.ts(4,3): error TS2322: no",
+      "  not run bun test: the clone's time budget ran out before it ran",
+    ])
+    expect(summaryText({ ...review, validation: { _tag: "Refused", reason: "the base has no lockfile" } }).split("\n").at(-1)).toBe("Commands: not run, the base has no lockfile")
   })
 
   test("each policy is the host's to swap: a verdict that keeps every file, CI that counts nothing failed, commands that never run", async () => {
