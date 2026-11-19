@@ -41,9 +41,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   binary and deleted files out of its diff and packs the rest under a token
   budget, manifests and CI files first, with new-side line numbers, reads the repository's instruction
   files at the base commit, and digests the logs of its failed CI runs. It
-  runs nothing of the pull request's: its commands run only through a
-  sandboxed shell a host provides, and none ships yet. It asks no model
-  yet. It is private: no release publishes it until its evals pass.
+  runs nothing of the pull request's unless asked: its commands run only in
+  a sandbox. It is private: no release publishes it until its evals pass.
 - `efferent-review review <number> --repo <owner/name>` reviews a pull
   request with one pass of a model (DeepSeek V4.1 Flash through the Vercel
   AI Gateway by default, its key read from `VERCEL_API_KEY`), the host's own
@@ -73,6 +72,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   review keeps, in a folder of its own, its prepared review, its report (its
   sessions, each call's tokens, cached tokens and cost) and its pass's
   journal, for offline scoring.
+
+- `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
+  `--run <command>` and `--validate` (the repository's profile: the base's
+  definition of done and check scripts, each kept only when it is a known
+  tool or a script with no shell syntax and passes on the base) for a
+  same-repository pull request whose author may write. Each run gets a
+  throwaway clone; `bwrap` starts with an empty environment, every namespace
+  unshared, `/usr` and the toolchain read-only, the clone the only writable
+  folder. The install runs first with the network and `--ignore-scripts`
+  from the lockfile into the bot's own package cache, then each check runs
+  offline, within five minutes a command and fifteen a clone. A host
+  without bwrap or unprivileged user namespaces fails with
+  `SandboxUnavailable` and runs nothing. CI installs bubblewrap and allows
+  user namespaces so the isolation probe runs there.
 
 ## 0.23.0 — 2026-11-19
 
