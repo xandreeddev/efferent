@@ -2,11 +2,11 @@
 // 2026-11-16 (DeepSeek V4.1 Flash on Baseten): reasoning deltas, a call's arguments in pieces, two calls by index,
 // the usage and the billed cost in the last chunk. No network.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Metric, Redacted, Schema, Stream, Tracer } from "effect"
+import { Deferred, Effect, ExecutionPlan, Fiber, Layer, Metric, Redacted, Schema, Stream, Tracer } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
-import { callTool, flatMemory, inProcessJournal, Memory, modelAnswer, sessions } from "../../index.js"
+import { callTool, flatMemory, inProcessJournal, Memory, modelAnswer, planned, retryable, sessions } from "../../index.js"
 import { isSpendRefusal } from "../model-spend/model-spend.entity.functions.js"
 import { modelCalls, modelCost, modelTokens } from "../model-spend/model-spend.entity.js"
 import type { SpendOptions } from "../model-spend/model-spend.entity.js"
@@ -345,5 +345,32 @@ describe("the OpenAI-compatible provider's counts", () => {
     expect(counts.cost).toEqual([billed, usage, held])
     expect([billed, usage]).toEqual([0.0002205, (200 * 1 + 800 * 0.25 + 10 * 4) / 1_000_000])
     expect(held).toBeGreaterThan(1000 * 4 / 1_000_000)
+  })
+})
+
+describe("the OpenAI-compatible provider's counts under a plan", () => {
+  test("each attempt a plan sends is a call of its own with its own outcome: one that failed on the server, one the provider refused, the one that answered", async () => {
+    const registry = new Map()
+    // The server fails the first request (retryable), refuses the second as malformed (not), answers the rest.
+    let request = 0
+    const answers = (_: Sent) => {
+      request += 1
+      return request === 1 ? new Response("{\"error\":{\"message\":\"down\"}}", { status: 503, headers: { "content-type": "application/json" } })
+        : request === 2 ? new Response("{\"error\":{\"message\":\"bad\"}}", { status: 400, headers: { "content-type": "application/json" } })
+          : stream(words)()
+    }
+    const plan = ExecutionPlan.make({ provide: openAiCompatibleModel(options(priced)), attempts: 3, while: retryable })
+    const run = Effect.result(LanguageModel.streamText({ prompt, toolkit: tools, disableToolCallResolution: true }).pipe(planned(plan), Stream.runCollect)).pipe(
+      Effect.provide(modelSpendMemory),
+      Effect.provideService(FetchHttpClient.Fetch, fakeFetch(answers).fetch),
+      Effect.provideService(Metric.MetricRegistry, registry),
+    )
+    // The first run: a 503, retried, then a 400, which no plan retries. The second: it answers.
+    const [first, second] = [await Effect.runPromise(run), await Effect.runPromise(run)]
+    expect([first._tag, second._tag]).toEqual(["Failure", "Success"])
+    const counts = await Effect.runPromise(Effect.forEach(["failed", "refused", "answered", "unsent"], (outcome) =>
+      Effect.map(Metric.value(Metric.withAttributes(modelCalls, { "efferent.model": MODEL, "efferent.outcome": outcome })), (state) => state.count), { concurrency: 1 })
+      .pipe(Effect.provideService(Metric.MetricRegistry, registry)))
+    expect(counts).toEqual([1, 1, 1, 0])
   })
 })

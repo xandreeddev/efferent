@@ -94,7 +94,7 @@ const exported = (refuses: boolean, content: boolean) => Effect.runPromise(Effec
     Effect.provide(otlpTelemetry({ baseUrl: `http://127.0.0.1:${collector.port}`, protocol: "http/json", exportInterval: "1 hour", content })),
     Effect.provideService(Metric.MetricRegistry, new Map()),
   )
-  return { exit, posted: posts.join("\n"), bytes: posts.reduce((sum, post) => sum + post.length, 0) }
+  return { exit, posted: posts.join("\n") }
 })))
 
 const found = (posted: string) => Object.entries(MARK).filter(([, marker]) => posted.includes(marker)).map(([name]) => name)
@@ -103,14 +103,15 @@ describe("with content off, no word of the conversation leaves the process", () 
   test("a turn that goes well: the system text, the messages, a tool's text, command and unknown name, a missing path, the key and the host's logs stay in", async () => {
     const run = await exported(false, false)
     expect(run.exit._tag).toBe("Success")
-    expect(run.bytes).toBeGreaterThan(0)
+    // What was searched holds both signals: the traces and the metrics, the counts of the calls among them.
+    for (const part of ["resourceSpans", "resourceMetrics", "efferent.model.calls", "efferent.model.tokens", "efferent.model.cost", "efferent.tool.calls"]) expect(run.posted).toContain(part)
     expect(found(run.posted)).toEqual([])
   }, 30_000)
 
   test("a model that refuses the request and echoes it back: the failure's words reach no span's status, exception or attempt event", async () => {
     const run = await exported(true, false)
     expect(run.exit._tag).toBe("Failure")
-    expect(run.posted).toContain("\"exception\"")
+    for (const part of ["resourceSpans", "resourceMetrics", "\"exception\"", "model.attempt", "efferent.model.calls", "\"refused\""]) expect(run.posted).toContain(part)
     expect(found(run.posted)).toEqual([])
   }, 30_000)
 
