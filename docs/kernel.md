@@ -1688,11 +1688,12 @@ expect<unknown>([parrot?.seed, parrot?.words, parrot?.meaning?.place, parrot?.me
 weights, and each memory's place and cosine in the list by meaning, with
 the memory that took the place when one it replaced did. An embedder that
 fails (`EmbedFailed`) and a store that refuses (`VectorsRefused`) fail the
-context as they are. There is no floor on the cosine: every message with a
-word in it, a greeting too, is sent the memories nearest it. On the sets of
-the section above, with e5-small-v2 and with Gemini's embedder, the third
-list found 189 and 194 of 224 questions against 178 by words alone; ADR
-0025 has the table and what it leaves out.
+context as they are. There is no floor on the cosine: every message that is
+not blank, a greeting too, is sent the memories nearest it. On the sets of
+the section above, with questions that hold an identifier and questions
+about what a curator kept, the third list found 189 (e5-small-v2) and 194
+(Gemini's embedder) of 224 questions against 178 by words alone, losing
+none; ADR 0025 has the table and what it leaves out.
 
 A host proves its own curator with `curatorConformance`: asked for a first
 call and for a review, it answers with text that is not blank or fails with

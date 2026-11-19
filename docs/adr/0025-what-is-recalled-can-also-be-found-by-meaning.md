@@ -123,8 +123,8 @@ standing memories only.
   Orchid question on Gemini (0.5 not on e5 either).
 - **A floor on the cosine.** Not measured here; the fusion by rank needs none, and any floor is a number of one
   embedder's.
-- **The last message with the turn before as the query.** The earlier spike measured the last message alone; the
-  turn before already seeds a follow-up.
+- **The last message with the turn before as the query.** Not measured in this cut: the earlier spike measured the
+  last message alone, and the turn before already seeds a follow-up through the list about a seed.
 - **Changing `withKnowledge`.** A host without an embedder keeps ADR 0023's recall and type; the third list is a
   wrapper that asks for what it needs.
 - **Vectors in the journal, or keyed by a memory's id.** ADR 0021's reasons: an index of one model, and ids of one
@@ -132,12 +132,13 @@ standing memories only.
 
 ## Consequences
 
-- **Every message with a word in it is sent memories.** The list by meaning ranks something for any text, so a
+- **Every message that is not blank is sent memories.** The list by meaning ranks something for any text, so a
   greeting is sent the `limit` memories nearest it, where `withKnowledge` sent none. A host that wants less lowers
   `limit`, or the list's weight.
 - **Each request asks the store for every key** of what can be ranked, and embeds the message: one query, and
-  passages only for what is new. The first request over a knowledge embeds all of it: at ADR 0021's measured 14.8 ms a
-  text in a batch, about eight seconds for the lesson world's 557 memories in a page, unless the vectors are shipped.
+  passages only for what is new. The first request over a knowledge embeds all of it: at ADR 0021's measured 17.4 ms a
+  text in batches of 32, about ten seconds for the lesson world's 557 memories in a page, unless the vectors are
+  shipped.
 - **The note is no longer**: the places are still `limit` and `walk`, whichever lists fill them.
 
 What was not measured:
