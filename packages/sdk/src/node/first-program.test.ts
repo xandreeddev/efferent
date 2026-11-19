@@ -30,6 +30,8 @@ const model = Layer.unwrap(Effect.map(Config.Redacted("OPENAI_API_KEY"), (apiKey
   baseUrl: "https://api.openai.com/v1",
   apiKey,
   maxOutputTokens: 1024,
+  // OpenAI's reasoning models take the cap as max_completion_tokens and refuse the older max_tokens.
+  outputField: "max_completion_tokens",
   spend: { prices: { [MODEL]: { input: 0.25, output: 2 } }, caps: { total: 0.1 } },
 })))
 
