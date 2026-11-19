@@ -184,8 +184,7 @@ check` (tsc over the learn code, the build, the link check) and
     its task, lesson 4); a background task's, a child the tasks plugin
     owns (`plugin.tasks`, "Task N" and its task, lesson 17), drawn as a
     helper's is; the memory session, which the facts plugin owns
-    and which has no parent ("Memory", lesson 11); the graph session,
-    which the graph plugin owns and which has no parent ("Graph"); the
+    and which has no parent ("Memory", lesson 11); the
     knowledge session, owned by `KNOWLEDGE_OWNER` with no parent
     ("Memory", kind `knowledge`, lesson 18); any other session of the
     program's own ("Session N"). The
@@ -196,11 +195,11 @@ check` (tsc over the learn code, the build, the link check) and
     "another", not a helper. A new conversation (`startedOver`: Clear
     context, or a durable lesson's program naming another one) retires
     every other session with the old chat's, but the memory session's
-    board, the graph session's and the knowledge session's, which are no
-    conversation's and keep their records. A turn on either is three steps (opened, the fact's
-    or the link's record, closed) and no model call; a fact's or a
-    link's record is summed up with where it came from, and its row says
-    what it is. A turn that stored many records at once (lesson 18's
+    board and the knowledge session's, which are no conversation's and
+    keep their records. A turn on the memory session is three steps
+    (opened, the fact's record, closed) and no model call; a fact's
+    record is summed up with where it came from, and its row says what
+    it is. A turn that stored many records at once (lesson 18's
     Load the world, 2,141 in one turn) is one step that counts them by
     kind ("Kept: 557 memories, 97 said again, 3 ended, 374 entities, 2
     other names, 554 sources, 554 curated"), not one step each. A turn of
@@ -412,8 +411,8 @@ check` (tsc over the learn code, the build, the link check) and
     `plugin.knowledge.source` per day the world says something (a host part
     listing that day's sentences, at noon UTC that day, `meta` naming Load
     the world) and a `plugin.knowledge.curated` of no model call closing
-    each, so no program takes one up; an entity per name as `normalName`
-    compares names, reused when the knowledge holds it by a name or another
+    each, so no program takes one up; an entity per name as the knowledge
+    contract's `folded` compares names, reused when the knowledge holds it by a name or another
     name, Lisboa and Lisbon one entity under Lisbon and Acme and Acme Labs
     one under Acme Labs (another name is a `plugin.knowledge.aliased`), a
     pet `pet` (one Rex), a place `place`, a company `organization`, a
@@ -887,7 +886,8 @@ check` (tsc over the learn code, the build, the link check) and
     curation prompt is answered from its `<this-turn>` block's `User:` lines
     for what to keep: each
     sentence "<thing> <relation> <thing>." with a relation of
-    `MEMORY_RELATIONS` (the links' list) is a memory about the two, the
+    `MEMORY_RELATIONS` (works at, is in, lives in, likes, drives, sells, is
+    the sister of) is a memory about the two, the
     subject first in `about`, quoting the sentence ("My friend Ana Silva" is
     Ana Silva); a thing `<stored-entities>` holds by a name or another name
     is that entity, any other a new one under a key of its own, its kind
@@ -920,34 +920,7 @@ check` (tsc over the learn code, the build, the link check) and
     after it as "Before that: <sentence>", taking no place ("From what I
     know: Ana Silva works at Globex. Before that: Ana Silva works at Acme.
     Globex has office in Porto. Globex is in Madrid."); the note is read
-    past as the links' is (`isAdded`).
-  - Lesson 18's rules, for links, each asleep where its tool is not
-    offered, placed after lesson 11's rules and before lesson 16's. In a
-    message that does not end with a question mark, each sentence
-    "<thing> <relation> <thing>." whose relation is one of
-    `LINK_RELATIONS` (works at, is in, lives in, likes, drives, sells, is
-    the sister of) is one `linkThings` call, all in one answer; "I work at
-    X." and "I live in X." have the subject "user". Where `rememberFact`
-    is offered too, lesson 11's rule comes first ("I live in Lisbon." is a
-    fact), with a test that fails when the link rule is moved before it.
-    "Follow X." and "What is X linked to?" call `followThings` with X;
-    "Unlink e2." calls `unlinkThings`. The ids `linkThings` answered in one
-    step are answered in one sentence ("The links' ids: e1, e2."), which
-    says nothing of what was stored, since a link said again is answered
-    with the id it has; a `followThings` result with "Following X: " and
-    its first two links; an `unlinkThings` result, and any failure, as the
-    tool's. With no call to make, one question sent with the kernel's note
-    of links (`linksNote`: its first line, word for word, then the frame)
-    is answered from the note's first two lines, whatever it asks ("From
-    what I know: Ana works at Acme. Acme is in Lisbon."), each without the
-    bracket the note writes after its sentence (how often and when it was
-    said, `saidText`: a test fails without the strip). The follow rule
-    is a call, so it comes before that reading, with a test that fails
-    when the reading is moved before the calls: "What is Acme linked to?"
-    names Acme and is sent a note too. The note of links is read past as
-    the facts' is (`isAdded`). The world's questions need no rule of their
-    own: each is answered from the note's first two lines, so the order the
-    walk gives is what Echo says.
+    past as the facts' is (`isAdded`).
   - Lesson 13's rule, in `echoReply`, after every other rule but the
     last: one message that says what something is and then asks about it
     under the same name ("The meeting is on Tuesday. When is the

@@ -65,7 +65,6 @@ caught up.
 | `autoApprove(allows)` | sdk, `plugins/approval-auto` | a policy before the person: a wrapper of `Approval` |
 | The skill contract | sdk, `contracts/skill` | `defineSkill`, `catalogue`, `loadedOf`: a skill is a value, and it is loaded where a result of `loadSkill` is stored |
 | The facts contract | sdk, `contracts/facts` | `factsOf`, `relevant`; the `plugin.facts.learned` and `plugin.facts.forgotten` records, kept in a session of their own |
-| The graph contract | sdk, `contracts/graph` | `linksOf`, `near`, `linksNote`; the `plugin.graph.linked`, `plugin.graph.unlinked` and `plugin.graph.restated` records, kept in a session of their own |
 | `factTools`, `factHandlers`, `withFacts({ limit })` | sdk, `plugins/facts` | what an agent knows across conversations: two tools that write facts to the memory session, and a memory wrapper that reads them for each request |
 | `skills(base, ...skills)` | sdk, `plugins/skills` | a host's tools and skills as one value: the whole toolkit, the catalogue, `LoadSkill`'s handler, what a step offers, and a memory wrapper for instructions a memory dropped |
 | The files contract | sdk, `contracts/files` | `Files`, the workspace the host provides; `FilePath`, `workspacePath`; the live `plugin.files.written` |
@@ -74,8 +73,6 @@ caught up.
 | `recordedEmbedder({ model, vectors })` | sdk, `plugins/embedder-recorded` | an embedder of recorded vectors, for tests and a page with no model |
 | The vector store contract | sdk, `contracts/vector-store` | `VectorStore`, an index of the journal found by meaning, the host's; `VectorKey`, `Scored` |
 | `inMemoryVectors()` | sdk, `plugins/vectors-in-memory` | a store of vectors in memory |
-| The recall contract | sdk, `contracts/recall` | `RecallItem`, `recallText`, `recallKey`, `recallNote`; the live `plugin.recall.recalled` |
-| `withRecall({ limit, pool?, reorder? })` | sdk, `plugins/recall` | a memory wrapper that sends the links and facts nearest a question by meaning, over the host's `Embedder` and `VectorStore` |
 | `fileTools`, `fileHandlers` | sdk, `plugins/tool-files` | `readFile`, `listFiles`, `writeFile`, `editFile`: they reach the workspace and never ask anyone |
 | The task contract | sdk, `contracts/task` | `Tasks`, `TaskReports` (where the host takes a report), `TaskReport`, `taskReport`: a report the program stores as a user message whose `from` is the task's session |
 | `tasks(run)`, `taskTools`, `taskHandlers` | sdk, `plugins/tasks` | background tasks: the host's helper on a fiber of the plugin, the two tools that start and cancel one |
@@ -860,7 +857,6 @@ when its writer has them.
 | `conversation.tool.result` | whoever runs the turn, after running a call | stored; bears the result, or the failure, and the call it answers | `conversation` |
 | `plugin.window.dropped` | the window memory, when whole turns leave the window | stored; may be skipped | `memory` |
 | `plugin.window.pressure` | the window memory, when a context came close to the budget | live only | `memory` |
-| `plugin.graph.recalled` | the graph's memory wrapper, for every model call, with what its walk did | live only | `trace` |
 | `plugin.knowledge.source` | the curation step (`curate`), before a curator is asked: what was said, in parts | stored, in the knowledge session | `memory` |
 | `plugin.knowledge.entity` | the same, from a checked reply: a named thing | stored | `memory` |
 | `plugin.knowledge.aliased` | the same: another name an entity bears | stored; may be skipped | `memory` |
@@ -1384,124 +1380,10 @@ its process recovers the memory session (`memorySession`,
 `Sessions.recover`) as it recovers its conversation. Every agent on one
 store shares its facts.
 
-### A graph: what an agent knows, connected
-
-Facts are sentences that do not know of each other: "Ana works at Acme." and
-"Acme is in Lisbon." never meet, and a question that shares no word with the
-second ("In what city does Ana work?") ranks it last, behind every newer fact
-about Ana. A graph keeps what an agent knows as links between things (ADR
-0019): a link is a record in a session of its own, the graph session, and two
-links that name one thing are connected through it. Three tools of the
-kernel's write and read it:
-
-<!-- pinned: packages/sdk/src/kernel/graph.test.ts#tools -->
-
-```ts
-// The agent's own tool, and the three of the graph: one toolkit, each tool with its own type.
-const Add = Tool.make("add", { parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }), success: Schema.Number, failure: Schema.String, failureMode: "return" })
-const tools = Toolkit.merge(Toolkit.make(Add), graphTools)
-const toolsLive = Toolkit.make(Add).toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
-// What the three tools do is the kernel's: each link stored is a turn on the graph session.
-const handlers = Layer.mergeAll(toolsLive, graphHandlers)
-```
-
-A wrapper of `Memory` reads it. For each request it walks from the things the
-question names and adds the links near them, last:
-
-<!-- pinned: packages/sdk/src/kernel/graph.test.ts#memory -->
-
-```ts
-// The memory a conversation reads with, wrapped: each request is sent the conversation, then up to five links
-// near what the question names, two links away at most. "I", "me" and "my" name the thing called "user".
-const memory = withGraph({ hops: 2, limit: 5, speaker: { name: "user", words: ["i", "me", "my"] } })(flatMemory)
-```
-
-So the link that answers reaches the request through the one the question
-names, ranked with the link the path took:
-
-<!-- pinned: packages/sdk/src/kernel/graph.test.ts#connect -->
-
-```ts
-const { conversations, graph, sent } = await Effect.runPromise(run(
-  [
-    calls(link("Ana", "works at", "Acme"), link("Acme", "is in", "Lisbon"), link("Ana", "lives in", "Porto")), says("Noted."),
-    says("Ana works in Lisbon."),
-  ],
-  [["Ana works at Acme, which is in Lisbon. She lives in Porto."], ["In what city does Ana work?"]],
-))
-// The conversation holds the calls and their results, the links' ids: it stored no record of the links.
-expect(results(conversations[0]?.journal ?? [])).toEqual([["linkThings", { id: "e1" }, false], ["linkThings", { id: "e2" }, false], ["linkThings", { id: "e3" }, false]])
-// Each link is a record of the graph session, each in a turn of its own.
-expect(names(graph).filter((name) => name.startsWith("plugin."))).toEqual(["plugin.graph.linked", "plugin.graph.linked", "plugin.graph.linked"])
-// The question names Ana: the path to Lisbon is sent first, though "Acme is in Lisbon" shares no word with it.
-expect(sent[2]).toEqual([
-  { role: "system", text: SYSTEM },
-  { role: "user", text: "In what city does Ana work?" },
-  { role: "user", text: noteOf("e1: Ana works at Acme.", "e2: Acme is in Lisbon.", "e3: Ana lives in Porto.") },
-])
-```
-
-`linkThings({ subject, relation, object })` stores `plugin.graph.linked` in a
-turn on the graph session, with the conversation and turn it came from, and
-answers the link's id; a link that says what a standing one says, once its
-parts are normalised, is not stored again and its id is answered, and said in
-a turn that had not said it, it adds `plugin.graph.restated`, so `saidOf`
-counts the turns that said each link.
-`unlinkThings({ id })` stores `plugin.graph.unlinked`. `followThings({ name })`
-reads a thing's links, newest first, at most twenty and how many more, and
-stores nothing: a model reaches further with it than a request was sent.
-`linksOf(journal)` folds the records into the links that stand. A thing is
-its name's words in lower case (`normalName`): "Acme" and "ACME" are one
-thing, "NYC" and "New York" two until a link says they are one. Nothing is
-merged by meaning: a small embedding model, run on the library the site
-ships for its browser models, scored Lisbon nearer Paris than Lisboa (ADR
-0019).
-
-`withGraph({ hops, limit, speaker?, names?, weights? })` finds the things the question
-names (`namedIn`: a thing whose words are a run of the question's; the
-speaker's words, given by the host, name the speaker's thing; with `names:
-"loose"`, a word also names one without its accent marks, or, both five
-letters or more and without a digit, one letter away, so "Joao" names "João"
-and "Lisbon" names "Lisboa", each still a thing of its own), walks their links from
-either end up to `hops` away, and ranks each link by its path (`near`, a
-pure function): the question's words of four letters or more that the
-relations and names on the path to it meet, then fewer links away, then, with
-`weights` (`"count"`, or `{ halfLifeDays }`), the link said in more turns, or
-more lately (`saidOf`, `weightOf`; a link said again in another turn is
-stored as `plugin.graph.restated`), then the newer. What the walk did, step
-by step (`walked`: the things named and how, every link reached with the
-thing it was reached from and the words its path met), is said live for
-every request as `plugin.graph.recalled` (`recalledOf`, never stored), so a
-client can show why each link was sent, and why others were not; its things
-(`thing`, `from`) keep their accent marks under either naming, and only the
-question's words (`words`, `met`) lose them under loose naming. It sends at
-most `limit` of them, best first, a sentence each with its id and how often
-and when it was said, framed as data (`linksNote` over the links' `saidOf`
-entries: `e1: Ana works at Acme. (said 3 times, last 2025-05-03)`, the UTC
-day, in the words of `saidText`). With nothing named, nothing is added; the
-question is the user's last message in the conversation's journal
-(`questionOf`, the memory contract's). Nothing is stored, and a memory's
-budget does not count the links: they are bounded by `limit` and by a name's
-length. The order helps a small model: on the same six links, Qwen2.5 0.5B
-named the right city in four tries of five with the path first, and in none
-with it last; DeepSeek V4.1 Flash named it either way (ADR 0019 has the
-counts). A word of four letters that carries no meaning,
-such as "does", is a word like any other: it meets a relation that holds it.
-
-What it costs: a link beyond a thing the path reached ranks with every other
-link of that thing ("Acme sells paint" with "Acme is in Lisbon"), the newer
-first, since nothing in "In what city" meets "Lisbon": enough such links cut
-the answer at the limit. The walk reads every link of the graph session for each
-request, and a hub (a thing with many links, such as the speaker) is cut by
-`limit`, the links the question meets first. As for facts, a process that
-dies inside a turn on the graph session leaves it busy until the host
-recovers it (`graphSession`, `Sessions.recover`), and every agent on one
-store shares its graph.
-
 ### Vectors: what an agent knows, found by meaning
 
-Facts and links are ranked for a question by the words it shares with them,
-so a question that says "employs" misses a link that says "works at". Two
+Facts are ranked for a question by the words it shares with them, so a
+question that says "employs" misses a fact that says "works at". Two
 contracts let a host rank by meaning instead (ADR 0021): an `Embedder`
 turns texts into vectors, and a `VectorStore` finds the vectors closest to
 a question's. Both are the host's: a model in the page or the process, or a
@@ -1511,7 +1393,7 @@ any other in words, and `inMemoryVectors()`. No kernel plugin calls a
 model.
 
 - **Vectors are an index of the journal, never a store of truth.** What is
-  embedded is a link's sentence or a fact's text; the store keeps its
+  embedded is a text the journal holds, such as a fact's; the store keeps its
   vector under a key the caller makes from the text, and the item itself is
   read from the journal. A store that is lost is made again from the
   journal, and no part rebuilds the agent's state from it.
@@ -1533,87 +1415,26 @@ model.
   and words.
 - **`search(vector, { limit, among? })`** finds the keys by `cosine`, best
   first, keys of one score by code unit, at most `limit`. `among` is what
-  still stands: a link removed, a fact forgotten or an item of another
+  still stands: a fact forgotten or an item of another
   model may keep its vector, and a search among the standing keys of the
   present model never finds it, and still fills its limit from those
   that stand. `has(keys)` says which are stored, so a
   caller embeds only what is missing.
 - **Likeness is not counting.** A claim said again and one that contradicts
   it sit at the same likeness (ADR 0021's measurement), so how often a
-  thing was said is counted by records, as the graph's
-  `plugin.graph.restated` does, never by vectors that are alike.
+  thing was said is counted by records, as the knowledge's
+  `plugin.knowledge.restated` does, never by vectors that are alike.
 
 A host proves its own embedder with `embedderConformance` (n texts give n
 vectors in order, each pointing where its text's vector alone points; the
 same vector twice; one length; no texts, no vectors; a query and a passage
 of one length), over three or more texts it gives, and its own store with
-`vectorStoreConformance`.
-
-A wrapper of `Memory` uses the two for each request (ADR 0021, amended):
-
-<!-- pinned: packages/sdk/src/kernel/recall.test.ts#recall-memory -->
-
-```ts
-// The vectors of an embedding model, recorded: a host gives its own embedder, a model in the page or a service.
-const embedder = recordedEmbedder({ model: recording.model, vectors: recording.vectors })
-// The memory a conversation reads with, wrapped: each request is sent the conversation, then the three links or
-// facts nearest by meaning to the question, among the twenty the search finds.
-const memory = withRecall({ limit: 3 })(flatMemory)
-```
-
-So a question that shares no word with the link that answers it, but a
-name, is sent that link first:
-
-<!-- pinned: packages/sdk/src/kernel/recall.test.ts#by-meaning -->
-
-```ts
-const ran = await Effect.runPromise(run(Effect.andThen(seeded(), ask("Who employs Ana Silva?"))))
-// No word of the question but the name is in the link, yet it is nearest by meaning, and sent first.
-expect(done(ran)).toEqual([
-  "Who employs Ana Silva?",
-  noteOf("e1: Ana Silva works at Acme.", "e2: Ana Silva lives in Lisbon.", "e15: Eva Novak is the sister of Ana Silva."),
-])
-```
-
-`withRecall({ limit, pool?, reorder? })` needs `Embedder`, `VectorStore`
-and `Sessions`. For each request it reads the graph session's journal and
-the memory session's once (`graphJournal`, `memoryJournal`: neither creates
-a session), and takes what stands as items (`recallItems`: each link with
-how often and when it was said, then each fact with the day its record was
-stored, `learnedOf`). Each item's text is `recallText` (a link's sentence, as
-the note of links writes it, or a fact's text), its key `recallKey(model,
-item)`: the embedder's model, a line feed and the text, so a fact and a link
-that say one sentence share one vector, and a vector made ahead under the
-same key is found. It asks `has`, embeds what is missing as passages, 32
-texts a call, and puts each call's vectors; then it embeds the question (the
-user's last message, `questionOf`) as a query and searches `pool` keys
-(20, or `limit` when more, at most 100) among the keys of what stands. A
-key found stands for every standing item with its text, links first, each
-counted against the limit. A host's `reorder`, when given, scores the
-items found (a keyword ranking, a cross-encoder: the host's function, not a
-contract); the items are put in its order, ties in the order found. The
-first `limit` are added last, after what the memory below gave, as
-`recallNote`: a host note that the lines are facts and links stored earlier,
-each with when it was said, then a line each in `<recalled-items>`, a fact as
-`f3: <text> (said on 2025-05-03)` and a link as `e5: <sentence> (said 3
-times, last 2025-05-03)`. With nothing standing, or no question, nothing is
-embedded and nothing added.
-
-What it found is said live for every request, `plugin.recall.recalled`
-(`recalledByMeaningOf`, tagged `trace`, never stored): the question, the
-model, the items found with their cosines, the host's order with its scores
-when it ran, at most 100 entries a list with the rest counted, and the ids
-sent. An embedder that fails, a store that refuses, a reorder that fails or
-whose scores are not one finite number per item (`ReorderInvalid`) fail the
-context as they are, in words: no request is sent as though nothing were
-known. A store whose medium fails is a defect. There is no keyword ranking
-in the kernel: on the questions held out from every choice, a keyword
-ranking added over the vectors answered fewer than the vectors alone, read
-from the stored ranks after the fact (ADR 0021 has the counts); a host that wants one writes it as its `reorder`.
+`vectorStoreConformance`. No memory wrapper of the kernel's uses the two: a
+host that sends what it keeps by meaning writes its own over them.
 
 ## Knowledge kept by a curator
 
-Facts and links are written by the agent, with tools, while it answers. What
+Facts are written by the agent, with tools, while it answers. What
 it writes it does not keep up: it does not say a thing again, and nothing
 marks what stopped being true. The knowledge contract moves that work out of
 the turn (ADR 0022). A turn is answered first; then what was said is stored
@@ -1811,8 +1632,8 @@ track's world (711 memories), with 44 English stop words, this recall found the 
 single questions need, both memories of 8 of 14 that need two, and both of
 78 of 94 generated two-step questions; with no walk, 20, 1 and 0. ADR 0023
 has the counts and what they rest on. A question whose words the memory
-does not hold, and that names nobody, finds nothing: that is recall by
-meaning's (ADR 0021).
+does not hold, and that names nobody, finds nothing: finding it takes
+ranking by meaning, over ADR 0021's contracts.
 
 A host proves its own curator with `curatorConformance`: asked for a first
 call and for a review, it answers with text that is not blank or fails with
@@ -1977,8 +1798,8 @@ with `JournalOpenFailed` (`Held`) while another live process holds it, takes
 it over from one whose process is gone, and lets it go when its scope
 closes. So a host that has built the layer knows what `Sessions.recover`
 asks it to know: every turn the store holds open was a dead writer's.
-`recoverTurns` closes them all, in every session of the store, the facts,
-graph and knowledge sessions included, and gives the turns it closed and the
+`recoverTurns` closes them all, in every session of the store, the facts
+and knowledge sessions included, and gives the turns it closed and the
 sessions it could not read:
 
 <!-- pinned: packages/sdk/src/kernel/node/durable.test.ts#durable -->
@@ -2750,8 +2571,6 @@ fail on a careless plugin written for it.
 | `ReadResult` | none | a tool, not a contract: its own tests hold its words and what it reads |
 | `Approval` | none | `approve` decodes every answer, so the one rule an implementation could break is held where the answer is used |
 | facts | none of its own | nothing a host implements: two tools, a fold and a wrapper. `withFacts` passes the memory wrapper kit |
-| graph | none of its own | nothing a host implements: three tools, a fold, a walk and a wrapper. `withGraph` passes the memory wrapper kit |
-| recall | none of its own | nothing a host implements but its embedder and store, which have their kits: pure functions and a wrapper. `withRecall` passes the memory wrapper kit |
 | knowledge | none of its own | nothing a host implements but its curator, which has its kit: records, folds, two prompts, the checks, the curation step and recall, held by their own tests. `withKnowledge` passes the memory wrapper kit |
 | skills | none of its own | nothing a host implements: skills are values and pure functions. `withReloadNote` passes the memory wrapper kit |
 | `Files` | `filesConformance` | |
@@ -2795,7 +2614,7 @@ are not made by accident.
   core's root helpers, which the kernel does not import. `clipTo` and its
   marker `clippedMarker` (`[… N characters clipped]`, never half a
   character) came with the knowledge contract's prompts; the contracts that
-  cut a model's text in a failure (facts, graph, files, skills, tasks,
+  cut a model's text in a failure (facts, files, skills, tasks,
   approvals, the embedder) still hold a few lines of their own for it, each
   quoting what it cuts.
 - **What a draft's data holds is checked by the compiler alone.** Untyped

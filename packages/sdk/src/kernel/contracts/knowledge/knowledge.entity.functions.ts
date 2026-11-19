@@ -12,6 +12,8 @@ import type { KeptRecords, Knowledge, KnownEntity, KnownMemory, KnownSource, Nex
  * and punctuation do not tell two texts apart ("João" is "joao", "St Mary's" is "st mary s"). Every letter and
  * digit of every script is kept, never only a to z. Only the accent marks of Latin, Greek and Cyrillic letters
  * (U+0300 to U+036F) are taken off; the marks other scripts write inside a word stay in it.
+ *
+ * @public
  */
 export const folded = (text: string): string =>
   text.normalize("NFD").replace(/[\u0300-\u036f]/g, "").normalize("NFC").toLowerCase().replace(/[^\p{L}\p{N}\p{M}]+/gu, " ").trim()

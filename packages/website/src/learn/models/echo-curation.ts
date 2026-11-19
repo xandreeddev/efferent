@@ -27,7 +27,7 @@ export const isReviewPrompt = (text: string): boolean => text.startsWith(`${REVI
 
 /**
  * The relations Echo reads a memory in, and no other: a sentence "<thing> <relation> <thing>." with one of these
- * between its two things is a memory about the two. The same list as Echo's links (lesson 18 before the curator).
+ * between its two things is a memory about the two.
  */
 export const MEMORY_RELATIONS = ["works at", "is in", "lives in", "likes", "drives", "sells", "is the sister of"] as const
 

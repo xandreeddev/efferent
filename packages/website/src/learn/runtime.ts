@@ -887,7 +887,7 @@ export class LessonRuntime {
   }
 
   /**
-   * A session's journal, as stored: the conversation's unless another is named (lesson 18 reads the graph session's);
+   * A session's journal, as stored: the conversation's unless another is named (lesson 18 reads the knowledge session's);
    * none before a durable lesson's program has named a conversation.
    */
   async journal(session: SessionId = this.session): Promise<ReadonlyArray<StoredEvent>> {

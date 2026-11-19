@@ -863,7 +863,7 @@ function boot(root: HTMLElement, lesson: Lesson) {
     if (Result.isFailure(ran)) pane.say(`The graders were not checked: ${ran.failure}`)
   }))
   document.querySelectorAll<HTMLButtonElement>('[data-graders="stop"]').forEach((button) => button.addEventListener("click", () => void state.runtime?.stopAlone()))
-  // Lesson 18: write the world into the graph session, in one turn, and say what was stored under the button. It
+  // Lesson 18: write the world into the knowledge session, in one turn, and say what was stored under the button. It
   // takes turns with the chat: Send and the chips are off while it runs, and it is off while a turn runs.
   document.querySelectorAll<HTMLButtonElement>("[data-world]").forEach((button) => button.addEventListener("click", async () => {
     const result = (button.closest("[data-step]") ?? document).querySelector<HTMLElement>("[data-world-result]")

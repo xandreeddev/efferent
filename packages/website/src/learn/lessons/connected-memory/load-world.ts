@@ -8,8 +8,8 @@
 // again. A sentence's first saying is a memory about the entities it names,
 // a saying after it a restatement (`plugin.knowledge.restated`), and a later
 // employer or home ends the earlier one (`plugin.knowledge.ended`, changed).
-// Entities are one per name, compared as the graph compares names
-// (`normalName`): a name the knowledge session holds already, as a name or
+// Entities are one per name, compared as the knowledge contract compares names
+// (`folded`): a name the knowledge session holds already, as a name or
 // as another name, is that entity, and two names the world means as one (Lisboa
 // and Lisbon, Acme and Acme Labs) are one entity under its name, with the
 // other as another name (`plugin.knowledge.aliased`). The journal stamps a
@@ -19,7 +19,7 @@ import { Clock, Effect, Option, Result } from "effect"
 import { dataOf, Sessions, stored } from "@xandreed/core/kernel"
 import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
 import {
-  aliasedEvent, curatedEvent, EntityId, entityEvent, knowledgeOf, knowledgeSession, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, nextIds, normalName, SourceId,
+  aliasedEvent, curatedEvent, EntityId, entityEvent, folded, knowledgeOf, knowledgeSession, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, nextIds, SourceId,
   sourceEvent, standing,
 } from "@xandreed/sdk/kernel"
 import type { Knowledge, MemoryKind } from "@xandreed/sdk/kernel"
@@ -116,14 +116,14 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
   let source = numberOf(next.source)
   let entity = numberOf(next.entity)
   let memory = numberOf(next.memory)
-  // Entities by each name they bear, as the graph compares names; the user's is no name the world says.
+  // Entities by each name they bear, folded as the knowledge contract compares names; the user's is no name the world says.
   const byName = new Map<string, EntityId>()
-  for (const known of knowledge.entities.slice(1)) for (const name of [known.name, ...known.aliases]) byName.set(normalName(name), known.id)
-  const aliasesOf = new Map<EntityId, Set<string>>(knowledge.entities.map((known) => [known.id, new Set([known.name, ...known.aliases].map(normalName))]))
-  const byText = new Map<string, MemoryId>(standing(knowledge).map((known) => [normalName(known.text), known.id]))
+  for (const known of knowledge.entities.slice(1)) for (const name of [known.name, ...known.aliases]) byName.set(folded(name), known.id)
+  const aliasesOf = new Map<EntityId, Set<string>>(knowledge.entities.map((known) => [known.id, new Set([known.name, ...known.aliases].map(folded))]))
+  const byText = new Map<string, MemoryId>(standing(knowledge).map((known) => [folded(known.text), known.id]))
   // The memories that ended, by their sentence: a sentence the world says before one of them ended is that memory.
   const endedText = new Map<string, { readonly id: MemoryId; readonly at: number }>(knowledge.memories.flatMap((known) =>
-    Option.match(known.ended, { onNone: () => [], onSome: (ended) => [[normalName(known.text), { id: known.id, at: ended.at }] as const] })))
+    Option.match(known.ended, { onNone: () => [], onSome: (ended) => [[folded(known.text), { id: known.id, at: ended.at }] as const] })))
   // Each person's employer and home that stand, by the person and the relation: the memory and the entity it names.
   const holding = new Map<string, { readonly id: MemoryId; readonly entity: EntityId }>()
   const drafts: Array<{ readonly draft: StoredDraft; readonly at: number }> = []
@@ -144,23 +144,23 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
      * is given it as another name.
      */
     const entityOf = (name: string, kind: string): EntityId => {
-      const group = SAME.find((pair) => pair.some((one) => normalName(one) === normalName(name)))
+      const group = SAME.find((pair) => pair.some((one) => folded(one) === folded(name)))
       const named = group === undefined ? name : group[1]
-      const known = Option.firstSomeOf([name, ...(group ?? [])].map((one) => Option.fromNullishOr(byName.get(normalName(one)))))
+      const known = Option.firstSomeOf([name, ...(group ?? [])].map((one) => Option.fromNullishOr(byName.get(folded(one)))))
       const found = Option.getOrElse(known, () => EntityId.make(`n${entity++}`))
       if (Option.isNone(known)) {
         put(stored(entityEvent, { id: found, name: named, kind, source: id }))
         counts.entities++
-        byName.set(normalName(named), found)
-        aliasesOf.set(found, new Set([normalName(named)]))
+        byName.set(folded(named), found)
+        aliasesOf.set(found, new Set([folded(named)]))
       }
       const names = aliasesOf.get(found) ?? new Set<string>()
-      if (!names.has(normalName(name))) {
+      if (!names.has(folded(name))) {
         put(stored(aliasedEvent, { id: found, alias: name, source: id }))
         counts.aliases++
-        names.add(normalName(name))
+        names.add(folded(name))
         aliasesOf.set(found, names)
-        byName.set(normalName(name), found)
+        byName.set(folded(name), found)
       }
       return found
     }
@@ -170,8 +170,8 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
       // Said word for word by a memory that stands, or by one that ended after this day: that memory, said again. The
       // knowledge does not count a restatement of a memory that ended, so it stays ended: what the world said before
       // a conversation changed it does not bring it back.
-      const before = endedText.get(normalName(text))
-      const again = byText.get(normalName(text)) ?? (before !== undefined && before.at > at ? before.id : undefined)
+      const before = endedText.get(folded(text))
+      const again = byText.get(folded(text)) ?? (before !== undefined && before.at > at ? before.id : undefined)
       if (again !== undefined) {
         put(stored(memoryRestatedEvent, { id: again, source: id, quote: text }))
         counts.restated++
@@ -183,7 +183,7 @@ export const worldDrafts = (knowledge: Knowledge, world: ReadonlyArray<WorldEntr
       const about = [...new Set([who, ...Option.toArray(what)])]
       put(stored(memoryEvent, { id: made, kind: memoryKind(relation), text, about, quote: text, by: "host", source: id }))
       counts.memories++
-      byText.set(normalName(text), made)
+      byText.set(folded(text), made)
       // A later employer or home ends the one the person held, when it is another entity: the same one under another name is no change.
       if (ONE_AT_A_TIME.test(relation) && Option.isSome(what)) {
         const slot = `${who}|${relation}`

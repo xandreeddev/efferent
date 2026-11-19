@@ -28,14 +28,10 @@ export type { Offered, OwnSkills } from "./contracts/skill/skill.entity.function
 export { catalogue, defineSkill, loadedOf } from "./contracts/skill/skill.entity.functions.js"
 export type { SkillSet, SkillTools } from "./plugins/skills/skills.adapter.js"
 export { LoadSkill, skills } from "./plugins/skills/skills.adapter.js"
-export type { Fact, FactsOptions, LearnedFact } from "./contracts/facts/facts.entity.js"
+export type { Fact, FactsOptions } from "./contracts/facts/facts.entity.js"
 export { FACT_LIMIT, FactId, FACTS_OWNER, FactText, FORGET_FACT, ForgottenData, forgottenEvent, LearnedData, learnedEvent, REMEMBER_FACT, RememberedFact } from "./contracts/facts/facts.entity.js"
-export { factsNote, factsOf, learnedOf, relevant } from "./contracts/facts/facts.entity.functions.js"
+export { factsNote, factsOf, relevant } from "./contracts/facts/facts.entity.functions.js"
 export { factHandlers, factTools, ForgetFact, memorySession, rememberedFacts, RememberFact, withFacts } from "./plugins/facts/facts.adapter.js"
-export type { Followed, GraphOptions, Link, LinkedThings, LinkShown, NamedThing, Naming, SaidLink, Speaker, Walked, Weights } from "./contracts/graph/graph.entity.js"
-export { FOLLOW_LIMIT, FOLLOW_THINGS, GRAPH_OWNER, LINK_THINGS, LinkedData, linkedEvent, LinkId, NAME_LIMIT, Relation, QUESTION_SHOWN, RECALL_SHOWN, RecalledData, recalledEvent, RELATION_LIMIT, RestatedData, restatedEvent, ThingName, UNLINK_THINGS, UnlinkedData, unlinkedEvent } from "./contracts/graph/graph.entity.js"
-export { linksNote, linksOf, namedIn, near, normalName, recalledOf, saidOf, saidText, walked, weightOf } from "./contracts/graph/graph.entity.functions.js"
-export { FollowThings, graphHandlers, graphSession, graphTools, knownLinks, LinkThings, saidLinks, UnlinkThings, withGraph } from "./plugins/graph/graph.adapter.js"
 export { Files } from "./contracts/files/files.port.js"
 export { EDIT_FILE, Expected, FILE_PAGE, FileChanged, FileList, FileNotFound, FilePage, FilePath, FilesRefused, FilesUnavailable, FileWritten, LIST_FILES, LIST_LIMIT, PATH_LIMIT, READ_FILE, WRITE_FILE, WRITE_LIMIT, WrittenData, writtenEvent } from "./contracts/files/files.entity.js"
 export { workspacePath } from "./contracts/files/files.entity.functions.js"
@@ -70,11 +66,6 @@ export type { SearchOptions } from "./contracts/vector-store/vector-store.entity
 export { vectorStoreConformance } from "./contracts/vector-store/vector-store.conformance.js"
 export type { VectorStoreSubject } from "./contracts/vector-store/vector-store.conformance.js"
 export { inMemoryVectors } from "./plugins/vectors-in-memory/in-memory-vectors.adapter.js"
-export type { RecallItem, RecallOptions } from "./contracts/recall/recall.entity.js"
-export { MODEL_LIMIT, RecalledByMeaningData, recalledByMeaningEvent, RecallEntry, RecallList } from "./contracts/recall/recall.entity.js"
-export { recalledByMeaningOf, recallItems, recallKey, recallNote, recallText } from "./contracts/recall/recall.entity.functions.js"
-export { withRecall } from "./plugins/recall/recall.adapter.js"
-export { ReorderInvalid } from "./plugins/recall/recall.entity.js"
 export type {
   About, CurateOptions, CurationCalls, CurationOptions, CurationOutcome, Ended, KeptRecords, Knowledge, KnownEntity, KnownMemory, KnownSource, NewSource, NextIds, ReadCuration, ShownKnowledge,
   ShownLimits, Staged, TurnSource, TurnSourceOptions,
@@ -86,7 +77,7 @@ export {
   QUOTE_LIMIT, SaidBy, SHOWN_LIMITS, SOURCE_LIMIT, SourceCall, SourceContext, SourceData, sourceEvent, SourceId, SourcePart, SourceState, SourceText, TURN_MESSAGE_SHOWN,
   TURN_RESULT_SHOWN, USER_ALIASES, USER_ENTITY, USER_NAME,
 } from "./contracts/knowledge/knowledge.entity.js"
-export { endedBy, keptFrom, knowledgeOf, nextIds, sourceText, standing } from "./contracts/knowledge/knowledge.entity.functions.js"
+export { endedBy, folded, keptFrom, knowledgeOf, nextIds, sourceText, standing } from "./contracts/knowledge/knowledge.entity.functions.js"
 export { curate, curateAgain, knowledgeJournal, knowledgeSession } from "./contracts/knowledge/knowledge.usecase.js"
 export type {
   Asked, Bridge, FusedMemory, KnowledgeOptions, KnowledgeRecall, KnowledgeRecallOptions, ListPlace, ScoredMemory, Seed, SentMemory, WalkedMemory,

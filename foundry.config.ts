@@ -129,10 +129,8 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-plugin-tasks",
   "sdk-kernel-plugin-skills",
   "sdk-kernel-plugin-facts",
-  "sdk-kernel-plugin-graph",
   "sdk-kernel-plugin-embedder-recorded",
   "sdk-kernel-plugin-vectors-in-memory",
-  "sdk-kernel-plugin-recall",
   "sdk-kernel-plugin-knowledge",
   "sdk-kernel-plugin-shell-scripted",
   "sdk-kernel-plugin-tool-shell",
@@ -640,7 +638,6 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-plugin-session", path: "packages/sdk/src/kernel/plugins/session/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-approval-auto", path: "packages/sdk/src/kernel/plugins/approval-auto/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-facts", path: "packages/sdk/src/kernel/plugins/facts/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel-plugin-graph", path: "packages/sdk/src/kernel/plugins/graph/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-skills", path: "packages/sdk/src/kernel/plugins/skills/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-tool-read-result", path: "packages/sdk/src/kernel/plugins/tool-read-result/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-files-in-memory", path: "packages/sdk/src/kernel/plugins/files-in-memory/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
@@ -648,13 +645,12 @@ const config: typeof GateSuiteConfig.Encoded = {
       { name: "sdk-kernel-plugin-tasks", path: "packages/sdk/src/kernel/plugins/tasks/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-embedder-recorded", path: "packages/sdk/src/kernel/plugins/embedder-recorded/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-vectors-in-memory", path: "packages/sdk/src/kernel/plugins/vectors-in-memory/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
-      { name: "sdk-kernel-plugin-recall", path: "packages/sdk/src/kernel/plugins/recall/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-knowledge", path: "packages/sdk/src/kernel/plugins/knowledge/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-shell-scripted", path: "packages/sdk/src/kernel/plugins/shell-scripted/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-tool-shell", path: "packages/sdk/src/kernel/plugins/tool-shell/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-search-files", path: "packages/sdk/src/kernel/plugins/search-files/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-tool-search", path: "packages/sdk/src/kernel/plugins/tool-search/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai"] },
-      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-graph", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-recall", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [] },
+      { name: "sdk-kernel", path: "packages/sdk/src/kernel/**", canImport: ["sdk-kernel-contracts", "sdk-kernel-plugin-inbox", "sdk-kernel-plugin-journal-in-process", "sdk-kernel-plugin-journal-web-storage", "sdk-kernel-plugin-memory-flat", "sdk-kernel-plugin-memory-summary", "sdk-kernel-plugin-model-scripted", "sdk-kernel-plugin-memory-window", "sdk-kernel-plugin-session", "sdk-kernel-plugin-tool-read-result", "sdk-kernel-plugin-approval-auto", "sdk-kernel-plugin-skills", "sdk-kernel-plugin-facts", "sdk-kernel-plugin-files-in-memory", "sdk-kernel-plugin-tool-files", "sdk-kernel-plugin-tasks", "sdk-kernel-plugin-embedder-recorded", "sdk-kernel-plugin-vectors-in-memory", "sdk-kernel-plugin-knowledge", "sdk-kernel-plugin-shell-scripted", "sdk-kernel-plugin-tool-shell", "sdk-kernel-plugin-search-files", "sdk-kernel-plugin-tool-search"], externals: [] },
       // The sdk tests may import the sdk by its package name and plugin-render: the
       // events guide's snippets (events-guide.test.ts) are copied into docs/events.md
       // as written, so they import only what a consumer can.

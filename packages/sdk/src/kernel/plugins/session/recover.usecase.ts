@@ -32,7 +32,7 @@ const recoverOne = (sessions: Context.Service.Shape<typeof Sessions>, id: Sessio
  * `Sessions.recover`, which stores `core.session.turn.ended` with the outcome
  * `Abandoned`. Every session of the store is looked at, in the order of
  * `Sessions.list`: a conversation, a helper's or a task's session, and the
- * sessions plugins keep of their own (facts, a graph, knowledge). A session
+ * sessions plugins keep of their own (facts, knowledge). A session
  * written in another journal format is passed over, as a host passes over
  * such a conversation. A session the store cannot read (`Unreadable`: a
  * damaged line) is passed over too, logged and given in `unreadable`, and the
