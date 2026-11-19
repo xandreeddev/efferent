@@ -340,6 +340,7 @@ interface CuratorSubject
 interface EmbedderSubject
 interface Ended
 interface FactsOptions
+interface FilesSearchOptions
 interface FilesSubject
 interface GraphOptions
 interface InboxOptions
