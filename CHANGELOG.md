@@ -8,779 +8,231 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
-### Changed
-
-- The kernel is each package's root (ADR 0036): `@xandreed/core` is core's
-  kernel, `@xandreed/sdk` the sdk's, and `@xandreed/sdk/node` its Node entry.
-  `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and
-  `@xandreed/sdk/kernel/node` are gone: drop `/kernel` from each import. The
-  entries below still name the kernel's subpaths as they were added. Service
-  keys lose the segment too: `@xandreed/<package>/<Name>`, and
-  `@xandreed/sdk/node/<Name>` on the Node entry (`Memory`, declared by the
-  sdk, is `@xandreed/sdk/Memory`). No release had them, and they freeze at
-  this one. The repository follows: each kernel folder is its
-  package's `src`, the gates' layers keep their names over the new paths,
-  `./node` is the sdk layer's restricted subpath, the API snapshot of the
-  Node entry is `api/sdk--node.api.txt`, and the guides, the docs site and
-  the lessons' shown sources import the roots.
+0.23.0 replaces the engine of earlier releases with the kernel: a small core
+(a journal, sessions and events) and every other part a plain Effect layer.
+There is no `Agent.define`, no plugin graph and no loop to configure: a host
+composes the layers it needs, with `Layer.provideMerge` or `Effect.provide`,
+and writes its own loop over `modelAnswer` and `callTool`, which each store
+what they produce. The release publishes six packages: `@xandreed/core`,
+`@xandreed/sdk` (with its Node entry, `@xandreed/sdk/node`),
+`@xandreed/evals`, `@xandreed/evals-cli`, `@xandreed/evals-langfuse` and
+`@xandreed/evals-langsmith`. The eighteen packages of the engine
+(`@xandreed/runtime`, `@xandreed/process-host` and the sixteen
+`@xandreed/plugin-*`) are no longer published; "Removed" says what replaces
+each, and "Migration" shows a program. The guide is `docs/kernel.md`, the
+tutorial the learn track on the docs site, and each decision has its ADR
+under `docs/adr/`.
 
 ### Added
 
-- `@xandreed/sdk/kernel`: a store of images and other bytes for the model
-  (ADR 0034). `MediaStore` keeps bytes under their SHA-256 (`MediaHash`,
-  `mediaHashOf`, pure, so a page hashes as a process does) and gives them
-  back, never changed once kept: `put` copies before it waits (`checkedBytes`)
-  and refuses no bytes, more than the store's `maxBytes` (`MEDIA_LIMIT`,
-  3.75 MiB, by default) or a value that is no byte array of its own
-  (`MediaRefused`); `get` gives a copy of its own, none for a key nothing was
-  put under, refuses a key that is no hash, and fails with `MediaDamaged`
-  rather than give bytes that are not their key's. `mediaStoreConformance`
-  (`MediaStoreSubject`) is the contract as eight checks, and
-  `inMemoryMedia({ maxBytes? })` a store in memory.
-- `@xandreed/sdk/kernel/node`: `directoryMedia({ directory, maxBytes? })`, a
-  media store in a folder: each blob written whole, flushed and published by
-  an exclusive hard link, verified as it is read, a damaged one kept aside and
-  repaired by a put of its bytes, temporary files a crash left swept after an
-  hour, a foreign folder or another layout refused and left as it is. No
-  record names media yet: that, and sending an image from a store, is the
-  next media cut.
-- `@xandreed/sdk/kernel/node`: `openAiCompatibleEmbedder`, an `Embedder`
-  over the OpenAI-compatible `/embeddings` endpoint of OpenAI, the Vercel AI
-  Gateway or a local server (ADR 0032): texts in batches (`batch`, 64), each
-  after the host's `prefixes` for a question or a kept text, every vector made
-  unit length, `dimensions` sent when given. Its `model`, the name its vectors
-  are kept under, carries the model, the dimensions and the prefixes (or the
-  host's `name`, 1 to `EMBEDDER_NAME_LIMIT` characters). Each request charges
-  the `ModelSpend` ledger through the providers' charge, with an output bound
-  of 0 (an embedding model's price has `output: 0`), and is counted as a model
-  call; each `embed` is the span `openai_compatible_embedder.embed` with the
-  `gen_ai.*` attributes of an embeddings call. A failure is `EmbedFailed`; a
-  refusal of the ledger keeps its `ModelSpendExceeded` as the cause, which
-  `spendRefusalOf` and `isSpendRefusal` now read there too. The charge's
-  metrics (`efferent.model.calls`, `efferent.model.tokens`,
-  `efferent.model.cost`) carry `gen_ai.operation.name`, `chat` for a model's
-  calls and `embeddings` for an embedder's, so the two are told apart. Its waits
-  are five seconds each by default (`EMBEDDING_TIMEOUTS`). Under it,
-  `withKnowledgeByMeaning` keeps the last message's vector for the steps of
-  its turn, so they embed it once, and logs a warning the first
-  time each reason fails its embedder, so one that never works is seen.
-- `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
-  calls without writing a span (ADR 0030). `Sessions.turn` is the span
-  `session.turn` (the session, the turn's number, how it ended), `callTool` is
-  `tool.call` (the tool, the call's id, whether its result is a failure), and
-  a model call keeps Effect AI's own `LanguageModel.streamText` span;
-  `planned` marks each attempt on the span it runs under (`model.attempt`).
-  A turn the inbox or a background task runs on a fiber of its own is a
-  trace of its own. `callTool` counts `efferent.tool.calls` by tool and
-  outcome. Every kernel span is named `<part>.<op>` with no `kernel.` prefix
-  (`kernel.session.begin` is now `session.begin`, `kernel.flat.context`
-  `flat_memory.context`, `kernel.approve` `approval.approve`,
-  `knowledge.curateAgain` `knowledge.curate_again`; ADR 0030 lists them).
-- `@xandreed/sdk/kernel/node`: `openAiCompatibleModel` gives each call's span
-  the `gen_ai.*` attributes the Anthropic provider sets (the provider, the
-  model asked and the one that answered, the output cap, why it stopped, the
-  usage with the cache's shares), its new `provider` option naming
-  `gen_ai.provider.name` (`openai` by default). The spend charge counts every
-  call a provider sends, a curator's and a summarizer's too:
-  `efferent.model.calls` by model and outcome (each attempt one),
-  `efferent.model.tokens` by kind, and `efferent.model.cost`, what the ledger
-  settled each call at, with `efferent.cost.basis` (`billed`, `usage` at the
-  host's price, or `held`, the worst case of a call that reported nothing),
-  and nothing for a call whose cost is not known; no metric names a session
-  or a turn. `otlpTelemetry`, `otlpTelemetryOver`, `otlpTelemetryFromEnv`,
-  `otlpTelemetryFromEnvOver` and `flushTelemetry` export the program's traces
-  and metrics over OTLP/HTTP, from options or the standard `OTEL_*`
-  variables, with a span policy (`OtlpSpanPolicy`) that drops spans and
-  redacts attributes: the telemetry plugin's export, ported with its tests.
-  What was said (a prompt, an answer, a tool call's parameters, a failed
-  attempt's reason, a failure's words, a log's text) is not sent unless the
-  host passes `content: true`, which also writes each model call's prompt
-  and answer on its span; with it off, a failed span is sent with its
-  error's type alone. LangSmith takes the same export at its OTLP endpoint;
-  the plugin's LangSmith mapping is not ported.
+#### Sessions and journals
 
-- Docs site: lesson 18 of the learn track, now "A memory that keeps itself",
-  keeps its memory with a curator. Its program offers no tool that remembers
-  (tools.ts is the calculator alone); after each turn's answer agent.ts runs
-  curator.ts's `keep`, which takes up any source an earlier turn left (Stop
-  cut it short, or a try failed) with `curateAgain`, then stores the turn as a
-  source and curates it with the kernel's `curate`, before the next message
-  is taken; the page leaves review off (`review: false`, an experiment turns
-  it on), since on DeepSeek a turn with something to keep took 18 and 19 seconds
-  to curate with it (2 runs), and 5 to 25, most near 10, without (6 runs). memory.ts is `withKnowledge({ limit: 8, walk: 3, speaker,
-  stopWords })(flatMemory)`, the speaker's words and the stop words written
-  out in the file. The curator asks the page's curator model: the model
-  picked when it is Echo or a gateway model, else the page's own Echo, which
-  curates by rule (a local model cannot read the curation prompt in one
-  request), and the status line says so. Echo answers the kernel's curation
-  prompt by rule, read by its first line word for word, and its review prompt
-  with the proposal unchanged; after a question it over-reaches on purpose,
-  proposing the first sentence of the chat's answer as a memory, which the
-  kernel's checks drop (the assistant's words are no evidence). Echo answers
-  a question sent with the note of memories from the note's first memory and
-  up to two more about what it names and the question does not, a line of
-  what a memory replaced read as "Before that: …". The Graph tab draws the
-  knowledge session's memory always, from its records, with no question
-  asked (the user and what the conversation named with their neighbours, or
-  the entities said about most often, or everything), and lights what the
-  latest curation kept and what the latest recall sent, with the curation's
-  and the recall's steps in words. The curator's calls are traced as the
-  curator's, on the knowledge session under the turn that stored their
-  source; the Context tab has a board for the knowledge session, "Memory",
-  which counts what a curation dropped; a curation counts as busy for Load
-  the world, and Stop, Rebuild and Clear context cut it short, its source
-  left pending and said so. Load the world writes the 654 sentences into the
-  knowledge session in one turn, with no model: 554 sources (one a day, each
-  curated), 374 entities, 2 other names, 557 memories, 97 restatements and 3
-  ended.
-- `@xandreed/sdk/kernel`: knowledge curated after the turn and recalled from
-  what the conversation names (ADR 0023). `curate(session, source, { review?,
-  prompt? })` is the curation step a host's program calls after a turn: it
-  stores the source, asks the host's `Curator` (and, unless `review: false`,
-  asks it again to review its reply) outside any turn of the knowledge
-  session, checks the reply and stores what passed with
-  `plugin.knowledge.curated`, or `plugin.knowledge.failed` with the try and
-  the reason (`NOT_CURATED` when a reply holds no JSON object). It answers a
-  `CurationOutcome`; an interrupted curation leaves its source `Pending`, and
-  `curateAgain(session, id)` takes it up. Each of its turns waits while
-  another turn holds the knowledge session, every 25 ms for up to 10 seconds. `knowledgeSession` finds or makes
-  the knowledge session, `knowledgeJournal` reads it, and `keptFrom(journal,
-  source)` reads back what a curation stored. `withKnowledge({ limit?, walk?,
-  speaker?, stopWords? })` is a memory wrapper that sends each request what
-  is kept about what the conversation names, with no model and no embedder:
-  the entities the last message names (the user's by the host's speaker
-  words, people by a first name when nobody is named in full), else the turn
-  before's; the memories about them and those the message's words reach by
-  the kernel's BM25 ("work" meeting "works"), fused by rank, an ended memory
-  ranking for what replaced it; 8 places, then a walk by subject of up to 3
-  more; what a memory replaced sent under it. Its
-  note, `knowledgeNote`, is new model-facing text: `[Host note: these memories
-  were kept from earlier conversations, …]` and the memories framed in
-  `<known-memories>`, a sentence each with when it was said, no ids. What
-  recall did is said live, `plugin.knowledge.recalled`
-  (`knowledgeRecalledEvent`, tagged `trace`). The pure parts are exported:
-  `askedOf`, `seedsOf`, `keywordScores`, `recallKnowledge`,
-  `knowledgeRecalledOf`, `checkedKnowledgeOptions`.
-- `@xandreed/sdk/kernel`: memory kept by a curator, its pure core (ADR 0022,
-  which supersedes ADR 0019; the graph and facts contracts stay as they are
-  until their lessons move). Long-term memory is written after the turn by a
-  curator the host provides, never by the agent's tools. This cut ships no
-  service, listener, tool or recall: a host's program puts the parts
-  together. `Curator` (`curate({ prompt, job })` to the model's reply as
-  text; `CurationJob`: the source, the try, and `extract` or `review`;
-  `CurationFailed`) with its kit `curatorConformance` (`answers`). Eight
-  records in a journal of its own (`KNOWLEDGE_OWNER`, `KNOWLEDGE_VOCABULARY`),
-  all tagged `memory`: `plugin.knowledge.source` (`sourceEvent`: what was
-  said, in parts, each with who said it), `.entity`, `.aliased`, `.memory` (a
-  sentence about up to eight entities, resting on a quote that is never the
-  assistant's), `.restated`, `.ended` (why, and what replaced it), `.curated`
-  and `.failed`. `knowledgeOf(journal)` folds them (`Knowledge`: entities
-  with their other names, every memory with how often and when it was said
-  and how it ended, each time its source's `at` and never when a record was
-  stored, sources with their state), with `standing`, `endedBy`
-  and `nextIds`; nothing is deleted, and a record naming an id that is not
-  there is passed over. `turnSource(turns, at, { leave? })` makes a source
-  of one turn from `turnsOf`'s list, each part bounded on its own;
-  `sourceText` is the parts as a curator reads them. `shownFor(knowledge,
-  source, limits?)` chooses what the curator is shown: what is stored about
-  the entities the source or its context names, up to thirty memories each
-  and forty in all, names compared whatever their case, accents and
-  punctuation, in any script. Two prompts, pinned word for word under
-  `KNOWLEDGE_PROMPT`: `curationPrompt(source, shown, { kinds?, instructions?
-  })` (the task, seven rules, the source in `<this-turn>`, its context in
-  `<earlier-turns>`, the stored items in `<stored-entities>` and
-  `<stored-memories>`, and the JSON shape to reply with) and
-  `reviewPrompt(prompt, reply)` (`<curation-task>`, `<proposed-update>`).
-  `curationOf(reply)` reads a reply item by item, a wrong-shaped item left
-  out and counted; `staged(curation, source, shown)` checks each item alone
-  and drops a bad one with a reason in one sentence (`KNOWLEDGE_CHECKS`): a
-  quote must be in what the user said, a tool returned or the host wrote,
-  never in a tool call's parameters (a tool's part holds its result, with
-  the call beside it as a `SourceCall`), and a memory ends another only
-  when they share an entity;
-  `draftsOf(staged, knowledge, source)` makes the records over the knowledge
-  as it stands when they are stored. With the ids and texts `SourceId`,
-  `EntityId`, `MemoryId`, `USER_ENTITY`, `EntityName`, `EntityKind`,
-  `MemoryText`, `MemoryKind`, `MemoryDay`, `Quote`, `SourceText`,
-  `SourceContext` and their limits.
-- `@xandreed/sdk/kernel`: `clipTo(text, max)` and `clippedMarker(dropped)`,
-  the memory contract's: a text's start and `[… N characters clipped]` on a
-  line of its own, within `max`, never ending on half a character. What
-  bounds a text in a kernel prompt, beside `hostNote` and `framed`.
-- `@xandreed/sdk/kernel`: ranking by meaning, as two contracts with a kit
-  each (ADR 0021). `Embedder` (`model`, and `embed(texts, as)`: one
-  `Vector` per text, in order, of one length, as a `query` or a `passage`,
-  failing with `EmbedFailed` in words) and its kit `embedderConformance`
-  (`order`, `same`, `dimension`, `empty`, `both`, over texts the subject
-  gives); `VectorStore` (`put`, whole or nothing, a key put again
-  replaced; `search(vector, { limit, among? })` by `cosine`, best first,
-  ties by key, `among` the only keys that may be found with the limit
-  still filled; `has(keys)`; `VectorsRefused` with a reason and words;
-  `VectorsUnavailable`) and its kit `vectorStoreConformance` (`replace`,
-  `order`, `ties`, `limit`, `among`, `has`, `dimension`, `empty`). The
-  stock plugins are `recordedEmbedder({ model, vectors })`, which answers
-  recorded texts and refuses any other in words, and `inMemoryVectors()`.
-  Vectors are an index of the journal, made again from it when lost and
-  never read as truth; a vector of another model is never compared. The
-  recall wrapper that uses them comes next.
-- `@xandreed/core/kernel`: the spend ledger, `ModelSpend` (`reserve`,
-  `settle`, `release`, `totals`), with its data (`SpendRequest`, `SpendHold`,
-  `SpendTotals`, `SpendCaps`, `ModelSpendExceeded`, `ModelSpendUnavailable`),
-  a ledger kept in memory (`modelSpendMemory`, `makeModelSpendMemory`) and its
-  kit (`modelSpendConformance`, seven checks, with careless ledgers in its
-  test). Whoever sends a model call holds its worst case before the call goes
-  out and settles it after (ADR 0020). It has the total cap alone: the old
-  ledger's per-turn cap, and the `forget` the old engine's turn called, come
-  back with a provider that names a turn. Its key is
-  `@xandreed/core/kernel/ModelSpend`, apart from old core's.
-- `@xandreed/evals`, `@xandreed/evals-cli`: a run's spend ledger is the
-  kernel's, imported from `@xandreed/core/kernel`; the eval packages no longer
-  import core's root. A trial's account has no `forget`, and `totals` takes no
-  argument. **Migration:** a runnable that reserves imports `ModelSpend` from
-  `@xandreed/core/kernel` and names no `runId` or `caps.turn`. The old models
-  plugin's `spend` guard charges old core's ledger, a separate service, so it
-  no longer charges an eval run's: until a kernel model provider charges the
-  ledger, a run's budget caps what its runnables reserve themselves. The sdk's
-  journey of an old-engine send under an eval budget
-  (`eval-spend.journey.test.ts`) goes with that link.
+- `@xandreed/core` holds what every agent has, whatever its workflow, and
+  imports `effect` alone (ADRs 0002, 0003): ids, `Message`, the event
+  envelope with its tags, and the conversation's records,
+  `conversation.user.message`, `conversation.assistant.message` (the
+  model's answer with its tool calls, its usage and the model that
+  answered) and `conversation.tool.result`, written with `userMessage(text,
+  { from? })`, `assistantMessage(text, meta?)` and `toolResult` and read
+  with `CONVERSATION_VOCABULARY`. `Core` is events only: `publish`, `on` and
+  `events`, from the layer `kernel({ capacity? })`. A plugin defines its
+  own records with `storedEvent` and `liveEvent`, each with a schema and the
+  tags that say what it is for (`conversation`, `turn`, `memory`, `ui`,
+  `trace`, or its own); a record is made with `stored(definition, data)`
+  and no other way.
+- The `JournalStorage` and `Sessions` contracts, each with a conformance
+  kit, and `sessions()`, the plugin that owns turns over a journal:
+  `open(id)` opens a turn in the caller's scope and closes it with the
+  scope's outcome, its writes stored one at a time, then announced; `create`,
+  `list` (by creation), `read`, `recover(id)`, which closes a turn a dead
+  writer left open as `Abandoned`, and `fork(id, { through? })`, a branch
+  copied by the store at a closed turn (ADR 0016). A sub-agent is a session
+  with a parent (ADR 0006). A journal records its format, `JOURNAL_FORMAT`
+  (2), in every session's header; one of another format still reads but
+  opens no turn. `readJournal`, `vocabularyOf` and `inspectionOf` read one.
+- Journals: `inProcessJournal()`, `webStorageJournal(storage, { prefix })`
+  in a browser's `localStorage`, and on `@xandreed/sdk/node`
+  `directoryJournal({ directory })`, a file per session with a line per
+  record and its CRC-32, durable when an append returns, and
+  `sqliteJournal({ path })`, on `bun:sqlite` or `node:sqlite` (ADRs 0010,
+  0024). A durable store has one writer: its layer takes the store as it is
+  built, fails with `JournalOpenFailed` while another live process holds
+  it, and takes it over once that process is gone. `recoverTurns`, the
+  host's first step over such a store, closes every turn left open and
+  gives a `Recovery` (`closed`, and the `unreadable` sessions it passed
+  over).
+- `turnsOf(events)` reads a journal back as its turns, each with its
+  messages, a step per answer of the model with its calls and their
+  results, the answer and how the turn closed: what a host's test checks
+  after it runs its program over `scriptedModel(script)`, a
+  `LanguageModel` that follows a script and calls no provider.
 
-- `@xandreed/evals`: `DecisionComparison` and `DecisionDelta`, the schemas of
-  what `compareDecisionTrials` gives (one row per candidate, and its
-  spreads against the baseline). The function is now typed by them, and a
-  caller that holds a comparison untyped decodes it; lesson 13 of the docs
-  site does, in place of a schema of its own that read five fields.
-- `@xandreed/evals`: `decisionTrialOf(trial, { passed, quality? })`, a
-  trial as `compareDecisionTrials` reads it: the candidate, the task as the
-  case and its family as the group, the sample, `completed` or
-  `infrastructure` (an error, a cancel, a trial the spend budget skipped),
-  a completed trial's latency (none for one that measured nothing), and the
-  cost the trial settled (none when it reserved nothing); a trial still running is no row (`Option.none()`). Whether it
-  passed is the caller's. It never gives `failed`: a trial that did not
-  complete is never a regression. Lesson 13 of the docs site calls it in
-  place of the mapping it wrote out.
-- `@xandreed/evals`: `gate(options)` and `GateOptions`, a suite's gate
-  from what it needs said: the grader, the metric, and a minimum, a maximum
-  or both as plain numbers (the type asks for one); `aggregate` defaults to
-  `passRate`, `mode` to `blocking`, `requiresReviewedReference` to true.
-  Lesson 13 of the docs site writes its gates in that form
-  (`{ grader: "answer@1", metric: "holds", minimum: 0.8 }`), passes each
-  to `gate` in runnable.ts, and refuses at the build a gate with no number
-  for its bound, or a `mode` or `aggregate` outside its words (the run
-  would take a misspelt aggregate for the pass rate); evals.ts no longer
-  imports `Option`. Its comments now say what a reviewed reference does: a
-  gate does not pass while any of its trials' references is provisional
-  (a page test pins it).
-- `@xandreed/evals`: a `GateFinding` holds its gate's `aggregate` and the
-  bounds it held the metric to (`minimum`, `maximum`, each present when the
-  gate has it), so a finding reads without its suite. They are optional
-  keys: reports recorded by earlier releases decode unchanged, as
-  `run-compat.test.ts` checks. Lesson 13's table says them ("answer@1
-  holds at least 0.8, blocking: measured 1").
+#### Memory
+
+- The memory contract (ADR 0005): `Memory`, one function,
+  `context(session)`, the messages that follow the system text, built from
+  the journal each time and never stored; its kit `memoryConformance`, and
+  `memoryWrapperConformance` for a wrapper that adds what one request needs
+  after the context. `estimateTokens`, `estimateContext`, `promptMessage`,
+  `paired` (a call is sent only with its result), and `hostNote`, `framed`
+  and `clipTo` for text a host writes for the model.
+- `flatMemory`, `windowMemory({ budgetTokens })`, which drops whole turns
+  oldest first, and `summaryMemory({ budgetTokens, keepTurns? })`, which
+  folds the oldest closed turns into a summary stored once, over a
+  `Summarizer` the host provides (`summarizerConformance`; ADR 0008).
+  `OverBudget` and `InvalidBudget` are every budgeted memory's.
+- A long tool result stays whole in the journal and is sent as its start
+  and a pointer (ADR 0011), by a memory given `pointers: { overTokens,
+  previewTokens }` (or a host's own, through `pointed`); the model reads on
+  with the `ReadResult` tool (`readResult`), and a tool whose result must go
+  whole carries `SentWhole`.
+- Facts the model keeps itself (ADR 0014): `factTools` (`rememberFact`,
+  `forgetFact`) with `factHandlers` write them to a session of their own,
+  and `withFacts({ limit })` adds those that stand to each request.
+
+#### Tools, approvals, skills, tasks and the inbox
+
+- The loop's two blocks (ADRs 0004, 0007): `modelAnswer(stream, session,
+  { onText? })` reads one call's answer from the model's stream and stores
+  it with its tool calls and usage; `callTool(toolkit, call, session)` runs
+  one call and stores its result, a failure or a defect as a failed result
+  the model reads. Both give the work its turn as `CurrentTurn`, which a
+  tool declares in `dependencies` to append a record of its own or publish
+  its progress. `callTool` is typed over every tool of its toolkit
+  (`ToolNeeds`): a program that leaves out what a tool needs does not
+  compile.
+- A call that fails is tried again or handed to another model under
+  Effect's `ExecutionPlan`, through `planned(plan)`, which never makes an
+  answer twice (`AnswerCut`); `retryable` says which failures are worth
+  another try, and each attempt is said live (`attemptEvent`; ADR 0015).
+- Approvals (ADR 0012): a tool asks a person with `approve({ action,
+  detail })` in its handler, through `Approval`, which the host provides;
+  the answer is a record of the turn, a standing approval is read back with
+  `grantsOf`, and a refusal is the call's failed result. `approveIn` asks
+  before every call of a loop; `autoApprove(allows)` answers a policy's yes
+  before the person is asked.
+- Skills (ADR 0013): `defineSkill({ id, summary, instructions, tools })`,
+  and `skills(base, ...skills)`, one value of a host's tools and skills: the
+  toolkit, the catalogue for the system text, the `loadSkill` tool, what a
+  step offers and a note for instructions a memory no longer sends.
+- Background tasks (ADR 0018): `tasks(run)` with the `startTask` and
+  `cancelTask` tools (`taskTools`, `taskHandlers`) runs the host's helper in
+  a child session; its report goes to `TaskReports`, into the queue the
+  program takes messages from, and is stored as a user message whose `from`
+  names the task's session (`taskReport`).
+- The inbox: `inbox(turn)` and `inboxOf(turn, options)` queue messages per
+  session and answer each in order, in a turn of its own.
+- What the UI shows (ADR 0009): a view record (`showView`, tagged `ui`, never
+  sent to the model), `viewsOf`, the fold a client draws, and live progress
+  (`progressEvent`).
+
+#### Files, a shell and search
+
+- A workspace is reached only by tools, and none of them asks anyone:
+  permission is the app's (ADRs 0017, 0028). `Files`, with its kit
+  `filesConformance`, `inMemoryFiles`, and the tools `readFile`, `listFiles`,
+  `writeFile` and `editFile` (`fileTools`, `fileHandlers`); a path is a
+  `FilePath`, which cannot leave the workspace. `Shell`, with its kit
+  `shellConformance`, `scriptedShell` and the tool `runCommand`
+  (`shellTools`, `shellHandlers`). `Search`, with its kit
+  `searchConformance`, `filesSearch` over any `Files`, and the tool
+  `searchFiles` (`searchTools`, `searchHandlers`).
+- On `@xandreed/sdk/node`: `diskFiles({ root, maxBytes?, ignore? })`, a
+  folder that a link cannot leave, written whole; and `processShell({ cwd,
+  env?, shell?, outputBytes?, timeoutMs? })`, `/bin/sh -c` with exactly the
+  variables given, which stops a command's whole process group however it
+  ends.
+
+#### Knowledge kept by a curator, recalled by words and by meaning
+
+- Long-term memory is written after the turn by a curator the host
+  provides, never by the agent's tools (ADR 0022). `curate(session, source,
+  { review?, prompt? })` stores a source (a turn, made one by `turnSource`),
+  asks the host's `Curator` (`curatorConformance`) with a pinned prompt
+  (`curationPrompt`, then `reviewPrompt`), checks each item of the reply on
+  its own (a memory must rest on what the user said, a tool returned or the
+  host wrote, never on the assistant's words) and stores what passed in a
+  journal of its own; `curateAgain` takes up a source a curation left.
+  `knowledgeOf` folds that journal into entities, memories and what ended
+  them.
+- `withKnowledge({ limit?, walk?, speaker?, stopWords? })` sends each request
+  what is kept about what the conversation names, with no model and no
+  embedder: the entities the last message names, the memories about them
+  and those its words reach by BM25, fused by rank, framed in
+  `knowledgeNote` (ADR 0023).
+- By meaning (ADRs 0021, 0025): the `Embedder` and `VectorStore` contracts,
+  with their kits, `cosine`, `recordedEmbedder` and `inMemoryVectors`;
+  vectors are an index of the journal, made again from it when lost.
+  `withKnowledgeByMeaning` adds a third list, the memories nearest the last
+  message, fused by weight with the other two; an embedder that fails skips
+  that list for the request.
+
+#### Model providers, the spend ledger and a remote embedder
+
+- `@xandreed/core`'s spend ledger (ADR 0020): `ModelSpend` (`reserve`,
+  `settle`, `release`, `totals`) with a total cap, `modelSpendMemory` and
+  its kit `modelSpendConformance`. Whoever sends a model call holds its
+  worst case before it goes out and settles it after.
+- On `@xandreed/sdk/node`, providers that charge it (ADR 0026), each a layer
+  giving Effect AI's `LanguageModel` and needing `ModelSpend`:
+  `openAiCompatibleModel` (OpenAI, Gemini's OpenAI-compatible endpoint, the
+  Vercel AI Gateway) and `anthropicModel`, with prompt caching
+  (`@effect/ai-anthropic` is now a dependency of `@xandreed/sdk`). A model
+  with no `ModelPrice`, a call with no output cap and a call over the cap
+  are refused before anything is sent; `isSpendRefusal` and
+  `spendRefusalOf` tell the cap's refusal from any other failure.
+- `openAiCompatibleEmbedder` (ADR 0032), an `Embedder` over the
+  OpenAI-compatible `/embeddings` endpoint that charges the ledger as a
+  model does, its name carrying the model, the dimensions and the prefixes.
+
+#### Media
+
+- A store of images and other bytes for the model, kept under their SHA-256
+  (ADR 0034): `MediaStore`, `mediaHashOf`, its kit `mediaStoreConformance`,
+  `inMemoryMedia`, and on `@xandreed/sdk/node` `directoryMedia`, a folder
+  written atomically and read verified. No record names media yet.
+
+#### Telemetry
+
+- A host sees its turns, tool calls and model calls without writing a span
+  (ADR 0030): the spans `session.turn`, `tool.call` and Effect AI's own for
+  each model call, with the OpenTelemetry `gen_ai.*` attributes, and the
+  span event `model.attempt` for each try of a planned call; the metrics `efferent.model.calls`,
+  `efferent.model.tokens`, `efferent.model.cost` (with the cost's basis)
+  and `efferent.tool.calls`. `otlpTelemetry`, `otlpTelemetryOver`,
+  `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry`,
+  on `@xandreed/sdk/node`, export them over OTLP/HTTP with a span policy;
+  what was said stays in the process unless the host passes
+  `content: true`.
+
+#### Evaluations
+
+- `@xandreed/evals`: `gate(options)` and `GateOptions`, a suite's gate from
+  its grader, metric and bound, the rest by default; `decisionTrialOf`, a
+  trial as `compareDecisionTrials` reads it; `DecisionComparison` and
+  `DecisionDelta`, the schemas of what `compareDecisionTrials` gives, which
+  is now typed by them. A `GateFinding` holds its gate's `aggregate`,
+  `minimum` and `maximum`, as optional keys: earlier reports decode
+  unchanged.
+
+### Changed
+
+- `@xandreed/core` and `@xandreed/sdk` are the kernel. Their roots no longer
+  export what 0.22.0's did (see "Removed"), and the sdk has one more entry,
+  `@xandreed/sdk/node`, for the parts that need Node or Bun; the two roots
+  load in a browser. A service's key is `@xandreed/<package>/<Name>`
+  (`@xandreed/sdk/Memory`, and on the Node entry `@xandreed/sdk/node/<Name>`),
+  frozen from this release.
+- `@xandreed/evals` and `@xandreed/evals-cli` take the run's spend ledger
+  from the kernel. It keeps its key, `@xandreed/core/ModelSpend`, with a
+  narrower contract: no `forget`, `totals` with no argument, and a
+  `SpendRequest` of an amount and a total cap, with no `runId` and no
+  per-turn cap. A runnable that reserves imports `ModelSpend` from
+  `@xandreed/core` and names neither. The kernel's providers charge the
+  ledger they are given, so an eval run's budget caps what they send.
 - `@xandreed/evals`: `runEvaluation` grades each trial as it ends, in place
-  of every trial once all have run, so a trial's grades reach the store as
-  it ends and a run cut short keeps the grades of the trials it finished.
-  One grade at a time across the run, as before; grading still draws on no
-  spend budget. The report is the one a regrade of the run's execution
-  gives (a test holds the two equal), its `startedAt` the execution's. A
-  run's `eval.grade` spans are now under `eval.run`; `eval.regrade` is
-  `gradeEvaluation`'s alone, over saved work. Lesson 13's table fills with
-  passes trial by trial, and Stop leaves the cut candidate's finished
-  trials graded ("ran 1 of 4, 0 of 1 graded passed").
-
-- `@xandreed/core`, `@xandreed/sdk`: the kernel, a small core with
-  every other part a plain Effect layer, as two new entries beside the
-  existing engine, which neither imports nor is imported by it. It is a
-  first cut, with journals kept in the process or in a browser's
-  storage, and it will change as the parts it leaves out return. `docs/kernel.md` is its
-  direction document.
-  - `@xandreed/core/kernel` holds what every agent has, whatever its
-    workflow: ids, `Message`, the event envelope, the `JournalStorage` and
-    `Sessions` contracts with a conformance kit each, the session's two
-    transitions and the fold of a journal to its state, reading a journal
-    (`readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`), `inspectionOf` (a
-    session's header, state and events), the conversation's records
-    (`conversation.user.message` and `conversation.assistant.message`,
-    written with `userMessage(text)` and `assistantMessage(text, meta?)`,
-    whose meta is the model, the `Usage` the provider reported and the
-    tool calls; `CONVERSATION_VOCABULARY` reads them), and `Core`, which is
-    events only: `publish`, `on` (named, in the background or with
-    `{ wait: true }`) and `events`. `kernel({ capacity? })` is the layer
-    that provides `Core` alone. It imports `effect` alone, and names no
-    loop, memory, system text or request to a model.
-  - `@xandreed/sdk/kernel` holds the workflow contracts, each in a contract
-    folder with its entities, events and pure rules, and a kit where a
-    plugin can break the contract's rules (`docs/kernel.md` lists which
-    have one, and why the others have none): memory's
-    (`Memory`, `memoryConformance`, `Tokens`, `estimateTokens`,
-    `estimateContext`, `promptMessage`, and `memoryWrapperConformance`,
-    the kit of a wrapper of memory: what it adds for one request comes
-    after the context, whole and in its order, and is never stored,
-    `docs/adr/0005-context-for-one-request.md`), what the UI shows
-    (`View`: `Text`, `List`, `Table` and `Card`; the record
-    `plugin.render.view`, tagged `ui`, which bears no message, so the model
-    never sees a view, and a later one with the same id replaces it;
-    `viewsOf`, the pure fold a client draws, live and after a reload; live
-    progress, `plugin.render.progress`; no service: a tool appends its view
-    and publishes its progress through `CurrentTurn`, `docs/adr/0009-what-the-ui-shows-is-a-record.md`), the summary's
-    (`Summarizer`, which a host provides over its model, failing with
-    `SummaryFailed`, with its kit, `summarizerConformance`: it answers with
-    text or fails so, never with nothing), the tool call's
-    (`CurrentTurn`: the turn a piece of work runs for, a `RunningTurn`
-    whose reads and writes cannot fail in their type, which a tool declares
-    in its `dependencies`, `docs/adr/0007-a-tool-reaches-its-turn.md`; and
-    the two blocks every loop wrote, as functions that each store what they
-    produce and give the work its turn:
-    `modelAnswer(stream, session, { onText })`, which reads one call's
-    answer from the model's stream and stores it with its tool calls, its
-    usage and its model, failing with `ModelAnswerFailed` on an error part;
-    and `callTool(toolkit, call, session)`, which runs one call the model
-    made and stores its result, a failure or a defect as a failed result) and the
-    inbox's (`Inbox`, `InboxTurn`). A plugin imports contracts and core, never another
-    plugin's folder, and a contract never imports a plugin: the boundaries
-    gate refuses both. There is no loop contract and no stock loop: the
-    loop is the host's program (`docs/adr/0003-journal-holds-the-conversation.md`).
-  - An event is named by the owner of the contract that defines it: the
-    session's are core's (`core.session.turn.started`,
-    `core.session.turn.ended`), a plugin's `plugin.<name>.*`, and the
-    conversation's `conversation.*`, which a turn's body writes. The set is
-    open: a plugin defines its own with `storedEvent` and `liveEvent`, each
-    with a schema for its data and the tags that say what it is for
-    (`conversation`, `turn`, `memory`, `ui`, `trace`, or a plugin's own
-    `<plugin>.<tag>`; `taggedWith` tells a record by them). A mistake in a
-    definition throws where it is made, with what is wrong: a word that is
-    no reserved tag (a misspelt `conversation`, which does not type either),
-    another plugin's tag, or a name that is none. A record is made with
-    `stored(definition, data)` and no other way: a session refuses an
-    object written by hand, a copy of a draft, or a record of a definition
-    written by hand (`SessionRefused`, `NotADraft`). A listener is given
-    what its definition's kind is delivered as (`DeliveryOf`): a stored
-    record or a live event. A part that holds the open session publishes a
-    live event about its turn with `session.publish(definition, data)`. A
-    journal written in another format than `JOURNAL_FORMAT` opens no turn
-    (`FormatMismatch`), and still reads. Only a record
-    tagged `conversation` is read as a message (`messageOf`); a memory
-    may send the message of a record of its own, as the summary memory
-    sends its summary (`docs/adr/0008-a-memory-keeps-its-summary.md`). Every stored
-    record carries its tags and the turn it was stored in. A stored record
-    says whether a part that does not know it may skip it, and a plugin
-    that reads the conversation or another plugin's records extends that
-    vocabulary (`vocabularyOf(name, own, CONVERSATION_VOCABULARY)`). A live event names its
-    turn only when it happens inside one.
-  - The stock plugins, each a layer whose type says what it needs:
-    `inProcessJournal()`, `sessions()`, `flatMemory`,
-    `windowMemory({ budgetTokens })` and `inbox(turn)`. A host provides
-    them to its program with `Effect.provide`, or composes them with
-    `Layer.provideMerge` over `kernel()`; a stack whose type is written out
-    does not compile when a part is missing. The host's turn opens a turn
-    with `sessions.open(id)`, which closes it with its scope's outcome,
-    stores the user's message, asks memory for the context, calls Effect
-    AI's `LanguageModel` with the system text first, and stores the
-    answer: a turn stores four events (its start, the user's message, the
-    assistant's message, its end). The system text is the program's code,
-    never stored. `sessions.create` decodes its input (`InvalidSession`).
-  - `Memory` is one function, `context(session)`: the messages that follow
-    the system text, ready for a prompt. It keeps nothing, builds each
-    context from the journal, and what it stores of its own is tagged
-    `memory` and derived from the conversation. `flatMemory` sends every
-    message; `windowMemory` drops whole turns oldest first, its budget
-    covering the history, and publishes `plugin.window.pressure` as it
-    builds a context near the budget. `summaryMemory({ budgetTokens,
-    keepTurns? })`, over a `Summarizer` the host provides, folds the
-    oldest closed turns, whole, with the summary so far, into a new
-    summary when the conversation passes its budget, stores it once as
-    `plugin.summary.summarized` (tagged `memory`), and starts every later
-    context with it as a host note, so the cached prefix holds from one
-    compaction to the next; it folds every closed turn but the latest,
-    never the open one, frames the summary as data (`hostNote`,
-    `framed`), and asks for one summary at most per context. A budget's errors, `OverBudget`, `isOverBudget` and
-    `InvalidBudget`, are the memory contract's, shared by every memory
-    with a budget, no longer the window plugin's.
-  - Tools: a turn that uses them is a loop the host writes over Effect
-    AI's `Toolkit`, and the kernel adds no tool service
-    (`docs/adr/0004-tool-traffic-is-conversation.md`). The turn offers
-    the toolkit to the model with `disableToolCallResolution: true` and
-    `toolCallValidation: "deferred"`, runs each call through the toolkit's
-    handlers, and stores the model's answer with its calls
-    (`assistantMessage(text, { toolCalls })`, from the stream's
-    `tool-call` parts) and each call's outcome as
-    `conversation.tool.result` (`toolResult(call, result, isFailure)`, a
-    new `Message` variant, `ToolResult`). A tool's failure, an unknown
-    tool and bad parameters are stored as failed results, and the turn
-    goes on. Tool definitions are code, never stored. `promptMessage`
-    sends a call as a part of the model's message and a result as a tool
-    message; `paired` keeps a call only with its result and a result only
-    with its call, so a turn stopped while a tool ran never sends a call
-    nothing answers. It pairs in order, since a model that numbers its
-    own calls repeats an id after a restart: a result answers the last
-    call of its id before it.
-  - Pointers (ADR 0011): a long tool result stays whole in the journal
-    and the model is sent its start and a pointer. `pointed({ overTokens,
-    previewTokens })` gives the function a memory reads each record's
-    message with; it reads the record alone, so a result is sent the same
-    way in every context, and it names the result by its place in the
-    journal. The model reads on with `ReadResult`, the first tool the
-    kernel ships, and its handler `readResult`. A tool whose result must
-    be sent whole carries the annotation `SentWhole`, which `callTool`
-    stores on the result (`whole`, a new optional key of
-    `conversation.tool.result`; `toolResult` takes it as an option).
-    `windowMemory` and `summaryMemory` take `pointers` and count what
-    they send. The memory kit holds a subject that names its `pointers`
-    to four more checks (`pointer`, `pointer-whole`, `pointer-stable`,
-    `pointer-budget`).
-  - Approvals (ADR 0012): a tool asks a person before it acts, with
-    `approve({ action, detail })` at the start of its handler, through
-    `Approval`, a contract the host provides. The answer is stored in the
-    turn as `plugin.approval.decided`; `ApprovedAlways` is a standing
-    approval of the action in that conversation, read from the journal
-    (`grantsOf`), so it is there after a restart and nowhere else. A
-    refusal is the call's failed result, in fixed words
-    (`APPROVAL_REFUSED`); an answer that is no decision approves nothing.
-    `autoApprove(allows)` wraps `Approval` with a policy, answered
-    `Allowed`, which never grants for good. `approveIn(session, request)`
-    is the same rule for a loop that asks before every call. `callTool` is
-    now typed over every tool of its toolkit, with an explicit signature:
-    what its tools declare in `dependencies`, less the turn, is
-    `ToolNeeds<Tools>`, the requirements of its effect, and a program that
-    leaves one out does not compile. It was typed over the call's name,
-    which lost them. `approve` fails with `ApprovalRefusal`, the refusal's
-    text and nothing else. A toolkit with a tool typed `Tool.Any` (a
-    `Record<string, Tool.Any>`, or one such tool among its own) has lost
-    what its tools declare, and
-    `callTool` refuses it where it is passed (`OwnTools`): a loop written
-    over any toolkit takes `Toolkit.WithHandler<Tools> & OwnTools<Tools>`.
-  - Skills (ADR 0013): instructions and tools the model is not sent until
-    it asks. `defineSkill({ id, summary, instructions, tools })` is a value;
-    `skills(base, ...skills)` makes one value of a host's tools and skills:
-    the whole toolkit (`toolkit`), the catalogue for the system text
-    (`catalogue`), the handler of the new `LoadSkill` tool (`handlers`),
-    what a step offers (`offered(journal)`) and a memory wrapper
-    (`withReloadNote`). A skill is loaded by a call of `loadSkill`, whose
-    stored result is the skill's instructions, sent whole in every later
-    prompt; nothing else is stored, and `loadedOf(journal)` is the fold.
-    A step offers the tools no skill owns, then each loaded skill's in load
-    order; a call of a tool whose skill is not loaded fails as a call of an
-    unknown tool does. The offered toolkit is typed as every tool it could
-    hold, with nothing asserted: a program that leaves out what a skill's
-    tool declares, or that skill's handlers, does not compile, loaded or
-    not. When a memory no longer sends a loaded skill's instructions,
-    `withReloadNote` adds one short note for the request, naming the skill
-    and how to read it again. Refused where written: a skill with a bad
-    id, summary or instructions, also one written by hand and never
-    through `defineSkill`; a set with no skill, two skills with one name,
-    or a tool that two of the base, the kernel and the skills have. A
-    skill annotated `Skill`, or a base annotated `Toolkit.Any`, has lost
-    its tools and what they declare, and `skills` refuses it where it is
-    passed (`OwnSkills`). A load that adds tools changes the request's
-    tool definitions, so the request after it is a cache miss, once per
-    load.
-    Model text: the catalogue, `loadSkill`'s description and parameter, its
-    failure for an unknown name, and the note.
-  - Facts (ADR 0014): what an agent knows across conversations. A fact is
-    a record (`plugin.facts.learned`, with the conversation and turn it
-    came from; `plugin.facts.forgotten`) in a session of its own, the
-    memory session, and `factsOf(journal)` folds them into the facts that
-    stand: there is no store of facts beside the journal. Two tools write
-    it, `RememberFact` (`rememberFact({ fact })`, which answers the fact's
-    id) and `ForgetFact` (`forgetFact({ id })`): a host merges `factTools`
-    into its toolkit and provides `factHandlers`. Each call is a turn on
-    the memory session; the tools declare `Sessions` and `CurrentTurn`, so
-    a program that calls them where there are no sessions does not
-    compile. `withFacts({ limit })` wraps a memory: for each request it
-    adds up to `limit` facts, last, framed as data, a line each with its
-    id, and stores nothing. With more facts than the limit, those that
-    share a word with the user's last message come first, then the newest
-    (`relevant`, a pure function; `questionOf` reads that message by the
-    record's name, and `factsNote` is the text added, for a wrapper of a
-    host's own). A fact is one line of 1 to 300
-    characters: another text is refused in words the model reads, and
-    never cut. `memorySession` finds or creates the session;
-    `rememberedFacts` reads the facts for a wrapper of a host's own. A
-    host on a store that outlives its process recovers the memory session
-    with `Sessions.recover`, as it recovers its conversation: a writer
-    that died inside a `rememberFact` leaves it busy. The fact's text
-    stays in the conversation that said it, in the call the model made,
-    and `forgetFact`'s result repeats it there. A host's own tool named
-    `rememberFact` or `forgetFact` is replaced by the kernel's when the
-    toolkits are merged.
-    Model text: both tools' descriptions and parameters, `forgetFact`'s
-    result, the failures for a text that is no fact, an id no fact has and
-    a memory session that is busy, and the note of remembered facts.
-  - What a program did is read back from its journal with `turnsOf`: a
-    journal as its turns (`TurnRead`). For each turn it gives the messages
-    the turn took, a step for each answer of the model with its calls and
-    their results (`StepRead`, `CallRead`), the answer, how the turn
-    closed, and every record stored in it; each part names the place of
-    its record. It is what a host's test checks after running its program
-    over `scriptedModel` and a journal kept in the process
-    (`docs/kernel.md`, "Testing a host"), and what a client draws a turn
-    from. It is pure and refuses no journal: a record belongs to the turn
-    it was stored in, a result answers the call it was stored for, as
-    `paired` pairs them, and a record it does not know is in
-    its turn's `records` alone. It is no memory, and nothing it returns is
-    sent to a model.
-  - `paired` tells a call from another by its place, not by its id alone.
-    One answer of a model that asked twice under one id, with one result
-    stored, was sent with both calls, one of them with no result, which a
-    provider refuses. The results stored after such an answer now answer
-    its calls in the order they were asked: the first result is the first
-    call's, as a loop that runs the calls one after another stores them,
-    and a call with no result is not sent. `turnsOf` read the one result
-    as the later call's, and now reads it as the first's: the two pair
-    through one function. The memory kit's `pairs` check holds a memory
-    to the case, and to which call is sent beside the result.
-  - Background tasks (`docs/adr/0018-a-background-task-reports-in-a-turn-of-its-own.md`,
-    `docs/kernel.md`, "Background tasks"): a task is a child session and
-    one turn in it on the `tasks(run)` plugin's scope, through the host's
-    helper (`TaskRun`), so `startTask` returns at once. Its report goes to
-    `TaskReports`, which the host provides, into the one queue its loop
-    takes the person's messages from, and is stored by `taskReport` as a
-    user message naming the task's session. Core's
-    `conversation.user.message` gains an optional `from`, the session that
-    sent it when it was not the person (`userMessage(text, { from })`); the
-    format does not change. `turnsOf` gives a message's `from`, and facts'
-    `questionOf` passes over a report. `startTask` and `cancelTask`
-    (`taskTools`, `taskHandlers`); a cancelled task reports nothing; at
-    most four tasks run at once by default.
-  - A workspace (`docs/adr/0017-a-workspace-is-the-world-the-agent-acts-on.md`,
-    `docs/kernel.md`, "A workspace"): files are the world an agent acts
-    on, reached only by tools through a new contract, `Files` (`read`,
-    `list` by folder, `write` with an optional `Expected`, a compare and
-    set that fails with `FileChanged`), with its kit, `filesConformance`,
-    and a workspace in memory, `inMemoryFiles`. Four tools reach it,
-    `readFile` (a page of at most 4,000 characters, sent whole),
-    `listFiles` (at most 200 paths), `writeFile` (a text of more than
-    4,000 characters refused, `append` for more) and `editFile` (`find` there once, replaced
-    against the text read), in `fileTools` with `fileHandlers`; a program
-    provides `Files` alone. A path is a `FilePath`, which cannot leave the
-    workspace (`workspacePath`). The tools never ask: permission is the
-    app's, a `Files` that declines (`FilesRefused`), `approveIn` in its
-    loop, or a judge over the person's `Approval`. A write is said live
-    (`plugin.files.written`). No part that builds the agent's state or a
-    prompt reads a file, and tests hold it.
-  - Branches (`docs/adr/0016-a-branch-is-a-copy-cut-at-a-closed-turn.md`,
-    `docs/kernel.md`, "Branches"): `Sessions.fork(id, { through? })`
-    continues a conversation from the end of an earlier closed turn and
-    keeps the original. The branch is a session whose journal starts as a
-    copy of the other's, made by the store in one step: `JournalStorage`
-    gains a required call, `fork(header)`, which copies the events as they
-    were stored (place, turn, time), so a host's own store must add it. The
-    header gains an optional `branch: { of, through }` (`Branch`); the
-    journal format is the same. A turn not closed is refused with a new
-    reason, `NoClosedTurn`. Nothing is announced. Both kits gain a `fork`
-    check, and `cutOf` and `branchHeaderOf` are exported.
-  - A model call that fails is tried again, then handed to another model,
-    under Effect's `ExecutionPlan` (marked unstable in Effect 4.0.7),
-    applied to the stream the loop asks for with `planned(plan)`
-    (`docs/adr/0015-a-model-call-is-planned-and-an-answer-is-made-once.md`,
-    `docs/kernel.md`, "When the model fails"). Each step of the plan
-    provides a model; `retryable(error)` says which failures are worth
-    another try. An answer is made once: what a model sends before its first
-    piece of text or call is held, so an attempt that fails before then is
-    tried again or handed on, and a failure after it is final, `AnswerCut`.
-    An error a model reports in its stream before any content fails the
-    attempt with `ModelAnswerFailed`, so the plan hands the call on; one
-    after content cuts the answer. A step's `while` reads the model's
-    failures and `ModelAnswerFailed`.
-    Each attempt is said about its turn, live and never stored
-    (`plugin.model.attempt`, `attemptEvent`, `AttemptData`).
-    `scriptedModel`'s `Fails` can be worth another try (`retryable`) and
-    can come after some pieces of an answer (`pieces`).
-  - Both stock memories send through `paired`, the memory
-    kit's new `pairs` check holds a memory to it, and the estimate counts
-    tool traffic (`messageText`). `scriptedModel` can ask for tools
-    (`ModelAnswer` `Calls`). The window memory drops whole turns only, so
-    one long tool turn can go over its budget and fails with `OverBudget`.
-  - The inbox queues messages per session and answers each, in order, with
-    the host's turn function (`inbox(turn)`, `inboxOf(turn, options)`),
-    in a turn of its own: `enqueue(session, message)` returns at once with
-    the message's ticket and its reply, whatever becomes of the message's
-    `plugin.inbox.queued` announcement, which reaches the listeners its
-    publisher waits for before the message's turn starts. A ticket is the
-    inbox's own number, never given twice in one inbox. A failed turn fails
-    only its own reply, a full queue refuses (`InboxRefused`), and every
-    reply not given when the inbox's scope closes fails with `InboxClosed`.
-    The inbox keeps nothing of a session it is not serving. Queued messages
-    live in the process. Its contract, `Inbox`, is the plugin's own.
-  - The journal holds the conversation and nothing derived from
-    configuration: no request, no system text, no pointers to what was
-    sent, so each message's text is stored once and a change to the system
-    text leaves nothing stored stale.
-  - A part is replaced by providing a different layer; a host that keeps
-    sessions going across the change builds the kernel, the journal and
-    the session plugin once and swaps the stack above them.
-  - `api/core--kernel.api.txt` is core's kernel API: a later change that
-    removes or changes a name there says in this file what a plugin must
-    change.
-  - The writes of one open turn are stored one at a time: appends made at
-    once both succeed, and the end waits for an append still being stored.
-    A write whose store did not report success (its caller interrupted
-    while the store had not answered, or a store that failed after it kept
-    the event) leaves the turn's place unknown, and the next write, the
-    end's included, reads the last place from the store: the end is still
-    stored after it, and the session takes its next turn. A turn stays open
-    in the journal only when its end could not be stored, or when the store
-    kept its start and reported a failure. A turn's body that appends a
-    record named under `core.` is refused (`SessionRefused`, `ReservedName`)
-    and nothing is stored: core's records are the session plugin's.
-    A session's events appended one after another reach listeners in
-    journal order. A session is
-    busy until its turn's end was announced, for at most `closeWait` (5
-    seconds) after it was stored, and is free by the time the end reaches
-    a background listener or the stream. Every turn begins from what the
-    journal holds, so two session plugins over one store take turns on a
-    session. Session ids are version 4 UUIDs from the platform's
-    cryptographic random source.
-  - A limit on a wait for a listener holds whatever the listener does: a
-    listener that cannot be interrupted does not keep a turn from
-    returning or a session busy, nor a stack from closing. It is reported
-    as `core.listener.failed`. A handler that ends with an interrupt it
-    was not sent fails as any other (`ListenerFailed`): a background
-    listener is reported and goes on listening, and a turn it is inside
-    ends `Failed`, not `Interrupted`.
-  - `Core.publish(event, { listenerFailures: "report" })` runs every
-    waiting listener, whatever the others did, and reports each failure as
-    `core.listener.failed` once the event was handed over; it cannot fail.
-    The default is unchanged: the first failure stops the waiting listeners
-    after it and fails the publisher. The end of a turn and the inbox's
-    `plugin.inbox.queued` are announced this way, so a waiting listener
-    placed after a failing one still hears them. A turn interrupted as it
-    opened has its start announced before its end, within a `closeWait` of
-    its own, so the session is busy for at most twice `closeWait` then.
-  - The inbox's worker takes a message in one transition, then waits for
-    that message's own announcement before its turn starts, and each
-    announcement follows the session's announcement before it, whether
-    that message waits, was taken or runs.
-  - The memory kit checks that a memory refuses an unknown record of the
-    conversation's that may not be skipped (`unknown-conversation-refused`):
-    a memory reads the conversation's records with the conversation's
-    vocabulary, not its own prefix alone. It holds a memory to a budget only
-    when the subject has one (`MemorySubject.budgetTokens`).
-  - Core's event envelope holds no `replaces`, and `SeqRange` is gone: a
-    plugin whose record stands for a run of the journal keeps that run in
-    its record's own data. `listenerFailed` is no longer exported: a
-    publisher that must report its listeners' failures publishes with
-    `{ listenerFailures: "report" }`.
-  - `scriptedModel(script)` is a `LanguageModel` that follows a
-    `ModelScript` and calls no provider, recording the prompts it was
-    sent: what a test runs an agent on.
-  - `Sessions.open(id)` opens a turn in the caller's scope and closes it
-    with the scope's outcome; `JournalStorage.append` takes the turn the
-    record was stored in.
-  - A store that outlives its process, and the close of a turn its
-    writer left open (`docs/adr/0010-a-store-is-a-part.md`). The journal
-    format is 2: a session's header holds `createdAt`, stamped by the
-    session plugin, and a turn can end `Abandoned`. `JournalStorage.list`
-    and `Sessions.list` give every header in the order of `byCreation`
-    (the creation time, then the id), so a host finds its conversations
-    in the store. `Sessions.recover(id)` closes a turn the journal holds
-    open and the calling process does not, as `Abandoned`, and gives the
-    turn it closed (none for a free session); the host calls it, because
-    only the host knows its store has one writer. A turn refused as busy
-    because the journal holds one open says so and names `recover`. A
-    writer whose turn another writer closed is refused at its next write
-    (`NoOpenTurn`) and stores no second end: before this, such a turn's
-    close left a journal no later turn could open. `webStorageJournal(storage,
-    { prefix })` keeps journals in a browser's `localStorage`, or any value
-    with its five members (`KeyValueStore`), one key per header and per
-    event. `JournalStorageError` gains the reason `Unreadable`, for a
-    stored value that is not a journal's. The storage kit gains `list`
-    and, for a subject that gives a `pair` of handles on one medium,
-    `reopens`. The sessions kit gains `list`, `recover`, `recovered-writer`
-    and `format`, and its subject now gives the store its plugin runs on:
-    `open(core)` returns `{ sessions, storage }`. `headerOf` takes the
-    creation time as its third argument.
-  - Nothing in either entry imports a `node:` or `bun:` module.
-- `@xandreed/sdk/kernel/node`, the kernel's entry for the ports that need a
-  runtime's modules, on Node 24 and Bun (ADR 0024). The browser entry
-  imports none of it. Two journals that outlive their process, each
-  passing the storage and sessions kits:
-  - `directoryJournal({ directory })`: one file per session, a line per
-    event with its CRC-32. An append is on the disk when it returns; a
-    session or a branch is written whole and published by an exclusive hard
-    link. A line a crash left unfinished is never read and is cut before the
-    next append; a damaged line makes the session `Unreadable`.
-  - `sqliteJournal({ path })`: one SQLite file, WAL with
-    `synchronous = FULL`, an append one transaction; `bun:sqlite` on Bun,
-    `node:sqlite` on Node.
-  - Each records its format and refuses one it does not know
-    (`JournalOpenFailed`, `Format`), with no migration. Each has one writer,
-    a process: the layer takes the store as it is built, fails with
-    `JournalOpenFailed` (`Held`) while another live process holds it, and
-    takes it over once that process is gone.
-  - `recoverTurns` (`@xandreed/sdk/kernel`): the host's recovery step once it
-    holds a store, closing every turn left open as `Abandoned`, in every
-    session of the store. A process killed inside a turn no longer leaves
-    its session busy after a restart. It gives a `Recovery`, `{ closed,
-    unreadable }`: `closed`, the turns it closed, and `unreadable`, the
-    sessions it passed over because
-    the store could not read them (a damaged line), each with the store's
-    words; the sessions after one are recovered all the same.
-- `@xandreed/sdk/kernel/node`: model providers that charge the kernel's
-  spend ledger (ADR 0026, which amends ADR 0020), each a layer that gives
-  Effect AI's `LanguageModel` and needs `ModelSpend`, so an eval run's
-  budget now caps what a first-party provider sends:
-  - `openAiCompatibleModel({ model, baseUrl, apiKey, maxOutputTokens?,
-    outputField?, extra?, timeouts?, spend })`: chat completions, streamed,
-    with tool calls; one adapter for OpenAI, Gemini's OpenAI-compatible
-    endpoint and the Vercel AI Gateway (its `providerOptions` given in
-    `extra`, sent as they are).
-  - `anthropicModel({ model, apiKey, baseUrl?, maxOutputTokens?, cache?,
-    timeouts?, spend })`: Anthropic's Messages API through
-    `@effect/ai-anthropic`, now a dependency of `@xandreed/sdk`, with prompt
-    caching (`cache`: `5m` by default, `1h`, `off`).
-  - Each call holds its worst case before it is sent (its body's size and
-    its output cap, which it is sent with, at the model's `ModelPrice`) and
-    is settled at what the provider billed or reported, or at the amount
-    held when the request left and nothing came back (a stream cut, an
-    interruption, a timeout, a 5xx); a call that never left, or that the
-    provider refused with a 4xx, is released. A model with no price, a
-    priced call with no output cap and a call over the ledger's cap are
-    refused before anything is sent; `isSpendRefusal` and `spendRefusalOf`
-    tell the cap's refusal from any other failure.
-  - Failures are `AiError`s whose reason says whether another try is worth
-    it: a rate limit, a provider's own failure, a lost connection and an
-    answer cut part way are; a refused key, no credit and a refused request
-    are not. An answer whose stream ends before its finish fails rather than
-    being taken as whole.
-- The kernel's workspace on a disk, a shell and a search, each a layer a host
-  plugs in or leaves out, and none of whose tools asks anyone: permission is
-  the app's (ADR 0028).
-  - `diskFiles({ root, maxBytes?, ignore? })` (`@xandreed/sdk/kernel/node`):
-    the `Files` contract over a folder. A path whose real path leads outside
-    the root, through a link, is declined; a file that is not UTF-8, or is
-    over `maxBytes` (1 MiB), is declined in words; a write is whole (a
-    temporary file renamed over the old one, its mode kept), and its compare
-    and set holds within the process. A listing passes over `.git`,
-    `node_modules` (`ignore` replaces them), names that make no path, links
-    that lead outside, to nothing or to a folder, and a write's temporary
-    files.
-  - The `Shell` contract (`@xandreed/sdk/kernel`): `run({ command, cwd?,
-    timeoutMs? })` gives the end of stdout and stderr, the bytes cut before
-    each, and how the command ended (`Exited`, `TimedOut`, `Killed`). Its
-    kit, `shellConformance`, checks among others that a background process
-    a command started is gone after a timeout, the command's return, an
-    interruption and the shell's close. `scriptedShell(script)` answers a
-    script for tests. `processShell({ cwd, env?, shell?, outputBytes?,
-    timeoutMs? })` (`@xandreed/sdk/kernel/node`) runs `/bin/sh -c`,
-    keeping the last 8 KiB of each stream by default, with
-    exactly the variables of `env` (none by default; it never reads the
-    host process's environment) and stops a command's whole process group,
-    on Node 24 and on Bun. The tool `runCommand` (`RunCommand`,
-    `shellTools`, `shellHandlers`) takes the command and `timeoutSeconds`.
-  - The `Search` contract (`@xandreed/sdk/kernel`): `find({ pattern, regex?,
-    folder?, glob?, limit })` gives the lines that hold a text or match a
-    JavaScript regular expression, by path then line, with `more` and the
-    files it could not read counted; a pattern that repeats a group holding
-    a choice or a repetition (`(a|aa)+`, `(a+)+`) is refused; its kit is
-    `searchConformance`. `filesSearch(options?)` implements it over any
-    `Files`, in a page as on a disk; a regular expression the check misses
-    can still hold the process, so `filesSearch({ regex: false })` keeps a
-    search to text as written;
-    the tool `searchFiles` (`SearchFiles`, `searchTools`, `searchHandlers`)
-    gives at most 50 matches.
-- `@xandreed/sdk/kernel`: the knowledge contract's `folded`, the fold it
-  compares names and quotes with (lower case, accent marks off, every
-  script's letters and digits kept), is exported.
+  of every trial once all have run, so a run cut short keeps the grades of
+  the trials it finished. A run's `eval.grade` spans are under `eval.run`.
 
 ### Removed
 
@@ -788,762 +240,201 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   an agent (ADR 0036). `@xandreed/runtime`, `@xandreed/process-host` and
   every `@xandreed/plugin-*` package are no longer published: they stay on
   npm at 0.22.0 as they are, never deprecated or published again. Of
-  `@xandreed/core` and `@xandreed/sdk` only the kernels are left: core's
-  root entry, `./conformance` and `./internal` (the old entities, ports,
-  kits, References and the turn's bus) and the sdk's `Agent.define`,
-  `Agent.turn`, the turn engine (`TurnLive` and its lifecycle),
-  `agentTaskExecutor`, `agentInboxRunner` and `./conformance` are removed.
-  Each package's root entry, `@xandreed/core` and `@xandreed/sdk`, now names
-  its kernel's index, the same module as `./kernel`; `./kernel` and
-  `./kernel/node` stay until the kernel moves to the package roots. What a
-  host writes instead of each package:
+  `@xandreed/core`, the old root, `./conformance` and `./internal` (the old
+  entities, ports, kits, references and the turn's bus) are removed; of
+  `@xandreed/sdk`, `Agent.define`, `Agent.turn`, the turn engine (`TurnLive`
+  and its lifecycle), `agentTaskExecutor`, `agentInboxRunner` and
+  `./conformance`. What a host writes instead of each package:
 
   | Removed | Instead |
   | --- | --- |
-  | `@xandreed/runtime` | nothing: plugins are Effect layers, composed with `Layer.provideMerge` |
+  | `@xandreed/runtime` | nothing: each part is an Effect layer, composed with `Layer.provideMerge`; a stack missing a part does not compile |
   | `@xandreed/process-host` | none yet |
   | `@xandreed/plugin-agent-loop` | the host's own loop over `modelAnswer` and `callTool`, `planned` for retries and fallbacks |
   | `@xandreed/plugin-memory-window` | `windowMemory` |
   | `@xandreed/plugin-memory-summary` | `summaryMemory` over a `Summarizer` |
   | `@xandreed/plugin-memory-digest` | none yet; a long result is sent as a pointer (`pointed`, `ReadResult`) |
-  | `@xandreed/plugin-memory` | `curate` with `withKnowledge`; `withFacts` with `factTools`; for the host's `EmbeddingModel`, an `Embedder`: `openAiCompatibleEmbedder` on `@xandreed/sdk/kernel/node` |
-  | `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` (`openAiCompatibleEmbedder` for its `EmbeddingModel`) and a `VectorStore`; retrieval of a document's passages: none yet |
+  | `@xandreed/plugin-memory` | `curate` with `withKnowledge`; `withFacts` with `factTools`; for the host's embedding model, an `Embedder`: `openAiCompatibleEmbedder` on `@xandreed/sdk/node` |
+  | `@xandreed/plugin-rag` | `withKnowledgeByMeaning` over an `Embedder` and a `VectorStore`; retrieval of a document's passages: none yet |
   | `@xandreed/plugin-knowledge-postgres` | none yet |
   | `@xandreed/plugin-tool-discovery` | `defineSkill`, `skills(base, ...skills)` and `loadSkill` |
-  | `@xandreed/plugin-models` | `openAiCompatibleModel` and `anthropicModel` on `@xandreed/sdk/kernel/node`; the router, the credential and settings stores and the subscription sign-ins: none yet |
-  | `@xandreed/plugin-session-files` | `directoryJournal`; `directoryMedia` for its `MediaStoreDirectoryLive` |
+  | `@xandreed/plugin-models` | `openAiCompatibleModel` and `anthropicModel` on `@xandreed/sdk/node`; the router, the credential and settings stores and the subscription sign-ins: none yet |
+  | `@xandreed/plugin-session-files` | `directoryJournal`; `directoryMedia` for its media folder |
   | `@xandreed/plugin-session-sqlite` | `sqliteJournal` |
   | `@xandreed/plugin-sessions` | `sessions()` over a journal, `recoverTurns`, and `inbox` |
   | `@xandreed/plugin-tasks` | `tasks(run)` with `startTask` and `cancelTask` |
   | `@xandreed/plugin-render` | view records (`showView`, `viewsOf`) and `progressEvent`; the feed's SSE and WebSocket transports: none yet |
   | `@xandreed/plugin-workspace` | `diskFiles`, `processShell`, `filesSearch` and their tools; image resizing and a skills directory: none yet |
   | `@xandreed/plugin-telemetry` | the kernel's spans and metrics, exported with `otlpTelemetry` and `otlpTelemetryFromEnv` |
-  | core's `MediaStore`, `MediaStoreMemoryLive` and their kit | the sdk kernel's `MediaStore`, `inMemoryMedia` and `mediaStoreConformance`; media in a message or a tool's result: none yet |
+  | core's `MediaStore`, `MediaStoreMemoryLive` and their kit | the sdk's `MediaStore`, `inMemoryMedia` and `mediaStoreConformance`; media in a message or a tool's result: none yet |
 
   A local embedder in a Node or Bun process has none yet:
   `openAiCompatibleEmbedder` also reaches a local server that speaks the
-  OpenAI-compatible wire, and `recordedEmbedder` serves kits and tests.
+  OpenAI-compatible wire, and `recordedEmbedder` serves kits and tests. The
+  docs site lists the eighteen packages under "Packages that are no longer
+  published".
+
+### Migration
+
+A host of 0.22.0 stays on 0.22.0, every package at that one version, or
+writes its program over the kernel; the two cannot be mixed. The program
+below is the shape of one: a journal in a folder, `sessions()`, a model that
+charges a ledger, a memory, a tool, and the host's own loop over
+`modelAnswer` and `callTool`. Where 0.22.0 gave `Agent.define` a list of
+plugins, a host now provides layers; where the agent loop plugin ran a turn,
+the host's `turn` does, and the journal holds what it stored.
+
+```ts
+import { Config, Effect, Layer, Schema } from "effect"
+import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
+import { kernel, modelSpendMemory, Sessions, userMessage } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
+import { callTool, Memory, modelAnswer, recoverTurns, sessions, windowMemory } from "@xandreed/sdk"
+import { directoryJournal, openAiCompatibleModel } from "@xandreed/sdk/node"
+
+// A tool: what it does, what it takes and what it gives. It is code, offered with every call and never stored.
+const Add = Tool.make("add", {
+  description: "Add two numbers.",
+  parameters: Schema.Struct({ a: Schema.Number, b: Schema.Number }),
+  success: Schema.Number,
+})
+const tools = Toolkit.make(Add)
+const toolsLive = tools.toLayer({ add: ({ a, b }) => Effect.succeed(a + b) })
+
+// The model, over any OpenAI-compatible endpoint, its key read from the environment. Each call holds its worst
+// case in the ledger before it is sent and is settled at what it cost: together they stay under ten cents.
+const MODEL = "gpt-5-mini"
+const model = Layer.unwrap(Effect.map(Config.Redacted("OPENAI_API_KEY"), (apiKey) => openAiCompatibleModel({
+  model: MODEL,
+  baseUrl: "https://api.openai.com/v1",
+  apiKey,
+  maxOutputTokens: 1024,
+  spend: { prices: { [MODEL]: { input: 0.25, output: 2 } }, caps: { total: 0.1 } },
+})))
+
+// One turn, the host's own loop: the message is stored, then the model answers or asks for tools, whose results are
+// stored before it is asked again. `modelAnswer` and `callTool` each store what they produce.
+const turn = (conversation: SessionId, message: string) => Effect.scoped(Effect.gen(function* () {
+  const memory = yield* Memory
+  const toolkit = yield* tools
+  const session = yield* (yield* Sessions).open(conversation)
+  yield* session.append(userMessage(message))
+  for (let step = 1; step <= 4; step++) {
+    const prompt = Prompt.make([{ role: "system", content: "Use a tool when it helps." }, ...(yield* memory.context(session))])
+    const stream = LanguageModel.streamText({ prompt, toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred" })
+    const answer = yield* modelAnswer(stream, session)
+    if (answer.toolCalls.length === 0) return answer.text
+    for (const call of answer.toolCalls) yield* callTool(toolkit, call, session)
+  }
+  return "I stopped after 4 steps."
+}))
+
+// The program: close a turn a killed run left open, then go on with the conversation the folder holds, or start one.
+const program = (message: string) => Effect.gen(function* () {
+  yield* recoverTurns
+  const conversations = yield* Sessions
+  const [first] = yield* conversations.list
+  const conversation = first === undefined ? yield* conversations.create({ owner: "first-program" }) : first.id
+  return yield* turn(conversation, message)
+})
+
+// The parts, each a layer whose type says what it needs. The journal is a folder, so the next run remembers.
+const agent = (directory: string) => Layer.mergeAll(windowMemory({ budgetTokens: 8_000 }), toolsLive, model).pipe(
+  Layer.provideMerge(sessions()),
+  Layer.provideMerge(directoryJournal({ directory })),
+  Layer.provideMerge(Layer.merge(kernel(), modelSpendMemory)),
+)
+```
+
+A file of the host's own runs it, with the model's key in `OPENAI_API_KEY`:
+
+```ts
+const reply = await Effect.runPromise(program(process.argv[2] ?? "What is 2 + 3?").pipe(Effect.provide(agent(".agent"))))
+console.log(reply)
+```
+
+- **Composition.** A part is a layer whose type says what it needs; a stack
+  missing one does not compile. A part is replaced by providing another
+  layer: `sqliteJournal` for the folder, `anthropicModel` for the endpoint,
+  `summaryMemory`, `withFacts` or `withKnowledge` for the window.
+- **The turn.** The system text is the program's code and never stored. A
+  tool's failure is a result the model reads (`failureMode: "return"` in
+  Effect AI's `Tool`), not a failed turn.
+- **Stored data.** The kernel's stores do not open 0.22.0's:
+  `directoryJournal` and `sqliteJournal` refuse a folder or a database of
+  another layout and leave it as it is, and a journal of another format
+  than `JOURNAL_FORMAT` (2) opens no turn. There is no migration of stored
+  conversations.
+- **Tests.** A host's test runs the program over `scriptedModel` and reads
+  it back with `turnsOf`; the kits (`memoryConformance`,
+  `sessionsConformance`, `journalStorageConformance` and the others) hold a
+  host's own part to its contract.
+
+The guide,
+[`docs/kernel.md`](https://github.com/xandreeddev/efferent/blob/main/docs/kernel.md),
+is the reference, and the
+[learn track](https://xandreeddev.github.io/efferent/learn/) builds such a
+program one part at a time.
 
 ### Repository
 
-- The release line is the six packages left: core, the sdk and the four
-  eval packages (`names` in `scripts/build-packages.ts`, the Changesets
-  group, `releaseDirectories`), with the `efferent` landing package; the
-  final registry audit checks those seven names and no longer expects the
-  eighteen retired ones. The release's journal fixture is a kernel host's
-  journals, recorded over `directoryJournal` by
-  `scripts/record-journal-fixture.ts` (five turns with a tool call, a fact,
-  an approval for good and a summary, each curated into knowledge; it
-  refuses to write a recording that misses any of those kinds of record,
-  naming them, or whose turns hold under 1.4 times the summary memory's
-  budget), and
-  `packages/sdk/src/kernel/node/journal-compat.test.ts` replays every
-  fixture of `JOURNAL_FORMAT` through a directory journal and refuses one of
-  another format without changing it. The old engine's journals
-  (`journal-0.13.0.json` to `journal-0.22.0.json`), `STORED_FORMAT`'s record,
-  the plugin and event references and the goldens leave the tree with the
-  code that read them; `release:version` no longer rewrites plugin versions.
-  `verify:packages` runs the kernel's packed consumer, the evaluation
-  consumer, the documentation's imports and every entry on Node and Bun. CI
-  drops the Postgres service and the models plugin's Bun 1.3.6 run. The gates
-  read core's and the sdk's root at their kernel's index; the allow lists
-  and the boundary that excused only deleted files are deleted. The docs
-  site keeps getting started, which points to `docs/kernel.md`, and the
-  eval and foundry pages; the old engine's guides and pages, and the Plugins
-  navigation, go.
-
-- Docs site, lesson 5: the summarizer's request ends "Reply with the
-  summary only, in at most 40 words." in place of asking, in its first
-  line, for "at most three short sentences". On a fixed transcript, over
-  two runs of ten Qwen2.5 0.5B summaries each, the longest fell from 475
-  tokens to 26 (a limit in the first line did not hold: 268), and of five
-  DeepSeek V4.1 Flash summaries from 203 to 91. On the page, at the starting budget of
-  200, DeepSeek now compacts in 3 runs of 3 (before, five presses in a row
-  ended `OverBudget`) and Qwen in 5 of 5, so the page no longer asks a
-  reader on a real model to raise the budget to 300 first. Qwen's short
-  summaries often list only the topics asked: the page says so.
-
-- Docs site: Lesson 19, "Grade the grader", at `/learn/grade-the-grader`.
-  A grader is code that can be wrong too: labels.ts holds eight answers a
-  person labelled right or wrong, graders.ts three graders as the eval
-  package's `Evaluator`s (lesson 13's text rule, and two that ask Jev, a
-  decision model, through the package's `SemanticJudge`: one question, or
-  three in one request), and calibration.ts, read-only, checks each one
-  against the labels with `defineGraderCalibration` and `calibrateGrader`,
-  reading each check's agreement, false pass and false fail from the
-  package's agreement grade. "Check the graders" fills a table as checks
-  end: text agrees with 2 of 8, asked-once with 5 of 8, asked-thrice with
-  7 of 8, each case's verdict against its label and the grader's reason on
-  demand. The judge is the package's `SemanticJevLive`, whose transport the
-  page binds: with an AI Gateway key kept, the real Jev through the page's
-  `decide` (yes-or-no questions alone: a score or a choice question is
-  refused in the page's words); without one, a stand-in that answers with
-  Jev's recorded answers to the starter's sixteen requests (the median of
-  five runs, recorded on 17 November 2026), keyed on the whole request, and
-  refuses any other request in words that ask for a key, so a check of a
-  case of the learner's own gets no grade and counts as a disagreement.
-  Four experiments: a hedged answer labelled wrong, a bar lowered to fit
-  the labels, a case of the learner's own, and a stricter bar that keeps
-  its false passes. The eval package is loaded only when the button is
-  pressed: `imports.test.ts` allows it in lesson 19's own files as in lesson
-  13's. Lesson 18's page links here.
-- Docs site: the page's model adapters hold no `as never`. Echo's, the CPU
-  model's, WebLLM's and Chrome's answers were cast because `settledParts`
-  returned a read-only array (itself cast with `as unknown as`); it now
-  returns the parts `generateText` takes, and the stream casts needed nothing.
-  The CPU worker holds its tokenizer as transformers.js's own
-  `PreTrainedTokenizer`, and a model's `dtype` is the library's `DataType`, so
-  a wrong one in `cpuChoices` does not compile. Each changed file transpiles
-  to the same JavaScript as before.
-
-- Docs site: Echo's early rules no longer misread a message. A date
-  (2026-11-14, 14/11/2026), a phone number or "2x4" is no sum: a number that
-  is part of a longer one is none, and an x is the operator only between
-  spaces. A table's size is the number after "to", not any number in the
-  message. A message that starts with "remember" is a note even when it
-  mentions notes ("Remember to tidy my notes."), and is saved without its
-  "to": lessons 2, 9 and 12 now store "buy milk." for "Remember to buy
-  milk.". A helper's answer ends with a full stop, and a calculator's result
-  in the same step is said after it, where it was dropped. Every message the
-  track sends was run through main's Echo and this one: only those differ.
-
-- Docs site: the learn track's chat, its task chips and Echo pair a tool's
-  result with its call by the kernel's rule, as `paired` and `turnsOf` do:
-  inside one answer, the results of an id answer its calls of that id in the
-  order asked, and a newer answer's calls of an id replace an older answer's
-  that still wait. They matched by id alone, so of one answer that asked
-  twice under one id, both results read the second call's parameters.
-  Unreachable with the page's own models, which mint ids that never repeat;
-  a hosted model's ids are its provider's. A test each, failing on the old
-  code.
-
-- Docs site: every lesson can run on a hosted model, through the Vercel
-  AI Gateway with the learner's own key: the last card of the model list
-  takes the key (kept in this tab only, read at each request, Forget key
-  removes it) and any gateway language model that calls tools, DeepSeek
-  V4.1 Flash first, asked of Baseten. The wire is pure and holds no key
-  (`models/gateway-wire.ts`); calls are native tool calls; the model's
-  reasoning is left on (turned off, DeepSeek dropped words mid-answer in
-  four answers of five) and not shown; the provider's usage, cached
-  tokens included, reaches the Context tab; failures are in words. The
-  gateway sends its error replies without CORS headers, so in a browser a
-  wrong key, a spent key, an unknown model and a busy provider all read
-  as one failure, worth another try, whose words name each; where the
-  status can be read, only a busy provider or a server error is retried
-  (lesson 14's plan). An answer cut short is
-  never stored as whole. Requests of one conversation share an opaque
-  cache key. Every lesson was run on DeepSeek through the gateway, from
-  Baseten, and its model step says what it did: each showed the
-  behaviour it teaches (lesson 5 once its budget was raised to 300, as it
-  tells a reader on a real model to do); lessons 12 and 13 say what a
-  press cost. Lesson 13 names a gateway candidate without the "/" the
-  eval package refuses. `models/decide.ts` is a client for the gateway's
-  decision models (Jev): typed questions, each answer typed by its
-  question, and a scripted decider for tests; no lesson uses it yet.
-
-- Docs site: the learn track is written for a reader who knows a little
-  JavaScript and nothing else. It no longer compares the kernel with
-  Neovim (lessons 1, 3 and 4, and the code comments the lessons show:
-  "hook an event, to run code when it fires"). Every lesson says each term
-  in plain words where the track first uses it: lesson 1's turn, kernel,
-  event, journal, record, session, module, memory, context, prompt,
-  provider, token, layer, vocabulary, kit and tool, and in the lessons
-  after it the terms each one adds (a step, a handler, a budget, a fork, a
-  pointer's preview, a policy, a trial, a golden set, a rate limit, a
-  fiber…), each defined once and pointed back to after. A word with two
-  meanings says which one it means (hook, tag, fold). Lesson 7 says when a
-  browser gives a page Web Locks, and lesson 17 what to press while only
-  tasks run, when Stop is hidden. Skill `add-lesson` gains the rule: no
-  comparison with something outside the page, every term said where the
-  track first uses it, checked by a fresh reader.
-
-- Docs site: the Context tab no longer redraws on every piece a model
-  streams, which rebuilt the step track and restarted its highlight dozens
-  of times a second (on a Qwen answer of 88 pieces, 648 nodes removed and
-  the steps built 273 times; now 40 and 13, the same as a short answer).
-  The page's controls are written only when they change, so while an
-  answer streams only its row in the chat changes. The step running is
-  lit without an animation, and the streamed step stays lit until the
-  answer is stored. Once a turn closes, the Memory column lists the
-  records the turn stored after its last context (the answer), marked as
-  stored after it.
-
-- Docs site: when the GPU stops running a model in the browser, the chat
-  says why in plain words (one request gave the model more new text to read
-  at once than the GPU finishes in time, as a long message or a whole
-  conversation read again does on some laptop GPUs) and what to do: pick
-  a model that runs on the processor, which no GPU driver stops, or Clear
-  context, since the same model picked again would read the whole
-  conversation again. The old
-  message told the learner to pick the same model again.
-
-- Docs site: Lesson 13, "Evals", at `/learn/evals`, between "Test your
-  agent" and "When the model fails". A check says the program did the
-  right thing once; an eval runs it on many tasks, many times, and says
-  how often, model by model, with the repository's own eval package,
-  `@xandreed/evals`. The learner edits `evals.ts`, in the package's
-  nouns: a dataset of four tasks with references written by hand (two
-  sums for the calculator, two questions answered from the message), two
-  code graders (`Evaluator`s: the answer holds the reference and is no
-  copy of the message; the right tool with the right numbers), five
-  repetitions and a blocking gate. `runnable.ts`, read-only, binds lesson
-  12's exported program as the runnable, hands each grader the turns and
-  the task's reference, and runs the suite once for each candidate: Echo,
-  the reference solution, which passes every task; `echo-no-tools`, an
-  Echo that calls no tool; and the model picked. "Run evals" fills a table
-  as trials end: per task and candidate the passes of N with their Wilson
-  interval, each trial's grades and transcript, the gates, the suite's
-  verdict and the comparison with Echo (`compareDecisionTrials`). It takes
-  turns with the chat, each trial on a stack of its own with a two-minute
-  limit, and Stop interrupts it. Four experiments: a lenient grader, each
-  task once, a strict gate, and a task Echo misses. The page loads the
-  eval package only when the button is pressed, so no other lesson's page
-  carries it; `imports.test.ts` allows it in this lesson's files alone.
-  Echo gains a rule (a message that says what something is, then asks
-  about it, is answered with what it said) and `loadEcho(…, …, "words")`,
-  an Echo that calls no tool. The runtime gains `runAlone` and
-  `stopAlone`, for a run that takes turns with the chat. Lesson 12's page
-  links here. No published package changes.
-
-- Docs site: lessons 13 to 15 of the learn track are now 14 to 16 ("When the
-  model fails", "Branches", "A workspace"), so an evals lesson can follow
-  lesson 12, "Test your agent". Their addresses do not change.
-
-- Docs site: lesson 7's store, the `JournalStorage` the learner writes over
-  `localStorage`, gains the contract's fifth call, `fork`, written events
-  first and header last. Its kit lists eight checks, `fork` among them, and
-  the store as written passes each. Lesson 7's page says five calls.
-- Docs site: the learn track's models name themselves. Each answer a page
-  model streams (Echo, the GPU and CPU models, Chrome's Prompt API) starts
-  with a `response-metadata` part that carries the model's id, as a
-  provider's does, so the kernel's `modelAnswer` stores which model
-  answered (`echo`, or the picked model's id, the same for a GPU model's
-  f16 and f32 builds) on every
-  `conversation.assistant.message` it makes. The Context tab shows it in
-  the record's data. Nothing new is sent to a model: prompts are as they
-  were. Lessons 1 and 2, which read the stream by hand, store no name.
-  `loadEcho` takes the name it gives, so a second Echo can be named apart.
-
-- Docs site: Lesson 14, "When the model fails", at `/learn/model-failures`.
-  `agent.ts` is the base program with its model call asked for under a
-  plan: the loop no longer takes the model as a service and calls
-  `LanguageModel.streamText({ … }).pipe(planned(plan))`; `plan` is
-  Effect's `ExecutionPlan`, three tries of the model picked a second apart
-  while `retryable` holds, then a spare once; `main` provides no model. A
-  new file, `failures.ts`, lists what the model picked does the next
-  times it is asked, one entry each try (`{ retryable?, pieces? }`, the fields of the
-  scripted model's `Fails`, its type declared in the file's read-only
-  part): the page makes those calls fail, in its own words ("failures.ts
-  made this call fail, and said it is worth another try"), without calling
-  the model, so the lesson shows a failure on any model. The list counts
-  the picked model's tries alone, not the spare's or a summarizer's, and
-  starts again with every build
-  (Rebuild, Stop, Clear context, a model picked). The page gives the
-  program a spare (`PageParts.spare`, a second Echo named `echo-spare`,
-  watched as the model picked is) and the model picked failing as the list
-  says (`PageParts.failing`). The runtime's model watcher is now a
-  function of the model and its name: a `Prompt` trace names the model it
-  was sent to and the model picked, and a stream that fails says so in a
-  `PromptFailed` trace. The Context tab groups a turn's prompts by model
-  call from those marks, never from the order the records are heard in:
-  a failed try is a step of its own ("Attempt 1 failed", in the failure's
-  words), the prompt step names the try that answered, each prompt keeps
-  its usage, and an answer whose record names a model other than the one
-  picked, or a turn whose answers name two, says which model answered.
-  Lessons 1 to 12 draw as they did. The chat says an answer cut after its
-  first words was cut, from the record of the turn's end, and the status
-  line follows `plugin.model.attempt`. Experiments put the failure back,
-  fail for good (the spare answers at once), cut an answer after a word,
-  ask with Effect's plan alone (the answer is made twice and stored as one
-  text) and drop the step's `while` (three tries, then the spare). Lesson
-  12's page links here. No Echo rule was added. No published package
-  changes. A test of lesson 11 no longer reads the store's sessions in
-  the order it lists them: two created in one millisecond are listed by a
-  random id.
-
-- Docs site: Lesson 17, "Background tasks", at `/learn/background-tasks`.
-  The base program with the kernel's two task tools merged into the
-  toolkit its loop offers and calls (`Toolkit.merge(tools, taskTools)`),
-  `taskHandlers` and `tasks(helper)` provided, and the page's
-  `reportsOn(pane)` (`PageParts.reportsOn`), the host's `TaskReports`: it
-  puts a task's report into the chat's one queue, behind the messages that
-  came before it. A new file, `helper.ts`, is the work of one task: lesson
-  4's helper agent as a small loop over tools.ts's tools (`modelAnswer`,
-  `callTool`, three steps at most) in the task's own session, which sees
-  only the task's text and waits three seconds first; main provides the
-  task lines before `toolsLive`, so the helper's calls find the handlers. The page's chat holds one queue of
-  inputs (`Chat.inputs`, a message or a report) and the lesson's `chat.ts`,
-  derived from lesson 1's by named pieces, shows it; the loop's one change
-  stores a report with `taskReport` in `report.parent`. `drain` takes the
-  messages waiting and leaves the reports, in one step that does not wait,
-  so a message sent during a turn steers it and a report gets a turn of its
-  own; a report taken says no `Taken`. A report still waiting when the
-  program stops (Stop, Rebuild, Clear context) is dropped
-  (`ReportsDropped`), and its task ids start again at t1. The chat draws a
-  report as a row of its own kind, never a message the person typed
-  (`reportLine`, from the kernel's words), and a row of task chips says how
-  each task stands, keyed by its session (`task-chips.ts`: running, its
-  report on its way or waiting, reported, cancelled, stopped with the
-  program, dropped). The Context tab names a task's session "Task N" (a
-  child the tasks plugin owns, `kindOf`). Each page model gives each
-  request its own stop, so a task cancelled while the chat streams leaves
-  the chat's answer whole: WebLLM skips a waiting request by its own ticket
-  and tells the engine to stop only when the request cancelled is the one
-  generating, which also keeps a request that ends from stopping the one
-  waiting behind it; the CPU worker's Stop interrupts every request not
-  done; Echo has a flag per answer. Echo learns "in the background, X" and
-  "start a task: X" (`startTask`) and "cancel task t1" (`cancelTask`),
-  ahead of every other rule, and answers a report, known by the kernel's
-  words, before anything else, with no call; a report is never what the
-  person said. Experiments take the helper's wait out and run one task at
-  a time. Lesson 16's page links here. No published package changes.
-- Docs site: Lesson 16, "A workspace", at `/learn/workspace`. The base
-  program with the kernel's four file tools merged into the toolkit its
-  loop offers and calls (`Toolkit.merge(tools, fileTools)`), `fileHandlers`
-  provided, and the workspace as a new file, `workspace.ts`, gives it:
-  one function of the page's files, a sandbox as it starts. The page's
-  workspace is one `Files` in memory, built once per runtime from the
-  lesson's seed (`Lesson.workspace`) and given to the program as a value
-  (`PageParts.files`), so the files outlive Rebuild, Stop, Clear context
-  and every experiment, and a reload starts them over. The Code pane has a
-  Files tab beside Context for such a lesson (`workspace-pane.ts`,
-  `panes/files.ts`): it reads the page's own `Files`, never the journal or
-  what workspace.ts wraps, again on `plugin.files.written` and at every
-  turn's end, and a person's Save is a compare and set against the text it
-  loaded, a draft kept when the agent writes the file. The chat's status
-  line says a write, and a write or an edit that wrote nothing
-  (`workspaceLine`), until the next turn starts. Echo learns the file tools ("list the files", "read
-  X", "read X from N", "write X: text", "in X replace A with B"), each
-  where its tool is offered and ahead of lesson 2's rules. Experiments
-  decline writes under `docs/` (`FilesRefused`), ask before a write keyed
-  by the file (`approveIn`), put a judge before the person (`Allowed` under
-  `scratch/`) and answer writes late, so Stop leaves a changed file and a
-  call with no result. Lesson 15's page links here. No published package
-  changes.
-- Docs site: Lesson 15, "Branches", at `/learn/branches`. Lesson 7's
-  durable program, with a new file, `branch.ts`: `branchFrom(conversation,
-  turn)`, one call of `Sessions.fork(conversation, { through })`. The page
-  calls it when "Branch after turn N" is pressed, a button at the last
-  stored row of each closed turn (`branchPoints`), and runs it on its own
-  base `Sessions`, the store the chat reads (`Lesson.branch`,
-  `runtime.branch`): nothing is stopped and nothing switches. A row of
-  chats above the messages lists the learner's own sessions by creation
-  (owner `learner`, no parent, this kernel's format), labelled "Chat 1",
-  and a branch "Chat 1, branch after turn 2", read from the branch's own
-  record at `branch.through` (`chats.ts`). `chat.ts`'s `resume`, derived
-  from lesson 7's by named pieces, shows the chat the page asks for,
-  `chosen` (`PageParts.chosen`), when it is one of the learner's own, and
-  lesson 7's latest otherwise. Picking a chat sets `chosen` and rebuilds,
-  dropping the messages that waited; making a branch sets it to the chat
-  shown, so a rebuild does not move to the branch; Clear context clears it;
-  a reload keeps it in the tab's `sessionStorage` (`RuntimeOptions.tab`).
-  The page says when `resume` showed another chat than the one asked for.
-  A `Showing` of another session is always drawn anew (`drawsAnew`): a
-  chat and its branch share their copied records' places and times. The
-  Context tab says a branch's copied turns were "copied from Chat 1", and a
-  chat switched back to "before this chat was shown again"; a reload reads
-  as lesson 7's. Experiments cut at the latest closed turn, branch while a
-  slow tool runs, ask for a turn that is not closed (`NoClosedTurn`, in the
-  kernel's words) and put back lesson 7's `resume`. Lesson 14's page links
-  here. No Echo rule was added. No published package changes.
-- Docs site: Lesson 12, "Test your agent", at `/learn/test-your-agent`.
-  A new file, `checks.ts`, holds the lines that run the program for a
-  check (`turnsAfter`: the seven layers of `main`, with the model the
-  check gives and a pane of the check's own under chat.ts's `chatOn`),
-  `check(id, name, script, messages, holds)`, two readers over the
-  kernel's `turnsOf` and three checks over lesson 2's tools: a sum is
-  worked out by the calculator, a call the model got wrong is a failed
-  result and the turn still answers, two messages are two turns.
-  `agent.ts` is the base program with `program` exported and nothing
-  else changed, so a check runs the program `main` runs. **Run checks**
-  is lesson 7's button. Each check runs on a stack of its own: the
-  page runs every file again for the checks, with the kernel's own
-  `kernel`, `inProcessJournal` and `sessions`, memory.ts's memory not
-  watched, and the shown chat.ts with its types taken out by named
-  pieces, so the page hears nothing of a check: no trace, no row in the
-  chat, no session in its store. A check that fails names the record it
-  read (`record #4: the calculator answered -1, not 5`). A stack that
-  leaves out the tools' handlers or the model does not compile, which a
-  test pins by the compiler's words; on the page, where the code is
-  untyped, the check fails in words when the program stops. Experiments
-  break the calculator (the chat still answers, and the sum's check
-  fails), add a check that asks something of every call over a script
-  that makes none (it passes and checks nothing) beside the form that
-  counts first (it fails on the same script), and add a live check that
-  runs the program on the model picked five times and says how many runs
-  passed. A kit of the page (`LessonKit`) is now a value: its `checks`,
-  which are also handed the model picked as it was loaded, a time limit
-  of its own for a check (five seconds when it states none) and whether
-  it runs alone, in which case it is refused while a turn runs and the
-  chat takes no message while it runs. A check that passes may say
-  something, which the list draws after its name. A checks.ts that makes
-  no list of checks refuses the build in words that name the file.
-  Lesson 7's page and its tests are as they were; its `lesson.ts`
-  registers its kit as such a value, and a failed check with no words
-  now reads as its name alone, with no colon after it. Lesson 11's
-  page links here. No Echo rule was added. No published package changes.
-- Docs site: the Context tab builds a turn's steps from the kernel's
-  `turnsOf`, in place of its own filters over the records: the turn's
-  start, its messages, each answer's calls with their results, and how it
-  closed. Nothing a learner sees changes. The page's own list of turn
-  numbers is now `turnNumbersOf`.
-- Docs site: Lesson 11, "Remember across sessions", at `/learn/remember`.
-  `tools.ts` is lesson 2's calculator with the kernel's two tools that
-  remember merged in (`Toolkit.merge(Toolkit.make(calculator),
-  factTools)`), in place of lesson 2's `remember`, `recall` and their
-  `notes` array. `memory.ts` is one statement over the kernel's flat
-  memory, `withFacts({ limit: 5 })(flatMemory)`, applied over the memory
-  the page watches, so the Context tab shows the facts' note as added by
-  the code. `agent.ts` is the base program with nothing changed in its
-  loop: `main` provides `factHandlers` and memory.ts's memory, and the
-  boot hook names only the conversation's turns, since a `rememberFact`
-  call opens a turn of its own on the memory session. The page walks a
-  fact stored by a tool call (the conversation holds the call and the
-  id, the memory session the fact's record, with the conversation and
-  turn it came from), what a request is sent (the note, last, framed as
-  data), a new conversation (Clear context: sent the fact), a rebuild
-  (still sent) and a reload (gone: the page's journal is kept in the
-  page), forgetting (a record more, and the text stays in the journals
-  that said it), and what it costs. A limit `withFacts` refuses refuses
-  the build, in the kernel's words. Echo remembers "my name is X", "I
-  live in X" and "remember that X", forgets a fact by its id or by a
-  word it shares with a listed fact, and answers a question from a
-  listed fact that shares a word with it; it reads the facts from the
-  kernel's note alone. Experiments take the wrapper away and add a
-  recall tool written over `rememberedFacts` (Echo is sent no fact, and
-  only "What do you remember?" calls the tool; the tool without its
-  `dependencies: [Sessions]` does not compile, which a test pins by the
-  compiler's words), put the facts first with a wrapper of the learner's
-  own (the prompt's shared start falls to the system text when a fact is
-  learned), and set the limit to one. The Context tab's row of sessions
-  is now built from each session's header, which the runtime tells the
-  page in a new `Session` trace: the chat's, a helper (it has a parent),
-  the memory session ("Memory", kept across Clear context) or another
-  session, where every session but the chat's was called a helper. A
-  turn on the memory session reads as three steps and no model call. An
-  experiment may edit a second file (`also`), both or neither. Lesson
-  10's page links here. No published package changes.
-- Docs site: Lesson 10, "Skills", at `/learn/skills`. A new file,
-  `skills.ts`, holds two skills as values (`units`, with a tool of its
-  own, `convert`, and its handlers; `haiku`, instructions alone) and the
-  one value over them and lesson 2's tools, `skills(tools, units,
-  haiku)`. `agent.ts` is the base program with three changes: the system
-  text ends with the catalogue, the loop reads what to offer as each step
-  starts (`skillSet.offered(yield* session.journal)`) where the base took
-  its toolkit once, and `main` provides the skill's handlers and
-  `loadSkill`'s. The page walks a load (a tool call whose result is the
-  instructions, stored as any result), the tools each model call was
-  offered, which the Context tab's prompt column lists (`convert` from
-  the call after the load), a rebuild (still loaded) and a new
-  conversation (nothing loaded), and what a skill costs. A skill `skills`
-  refuses refuses the build, in the kernel's words. Echo loads a skill a
-  message's words cover, read from the catalogue in the system text, or
-  one asked for by name; goes on in the same turn to the skill's tool;
-  answers a conversion to one decimal; and writes its own answers in
-  three fixed lines while the haiku skill is loaded. Experiments offer
-  every tool and send every instruction always (two model calls where
-  the lesson takes three, and a larger first prompt), leave the catalogue
-  out (Echo loads nothing), call `convert` before its skill is loaded
-  (the call fails as a call of an unknown tool), and give `main` no
-  handlers for the skill (the page runs it and the call fails when the
-  tool runs, in the JavaScript engine's words; TypeScript refuses the
-  program, which a test pins by the compiler's words,
-  `Handler<"convert">`). Lesson 9's page links here.
-  The test that a learner's file which makes the wrong kind of thing is
-  refused now compares its table with the lesson list and requires a
-  case for every file a learner can edit. No published package changes.
-- Docs site: the lessons' `evaluate` functions read what a learner's file
-  made with one function, `named`, and hold it to a guard, where lessons 1
-  to 8 cast it to a type (a memory as a layer of `Memory`, the tools
-  file's two names, lesson 3's plugin, lesson 5's summarizer). Two
-  assertions remain, in lesson 7, each with its reason: the type of the
-  learner's `store` function and of its `resume`. A new test holds, for
-  every lesson, that a file which makes the wrong kind of thing is
-  refused in words that name the file. Nothing a learner sees changes. No
-  published package changes.
-- Docs site: Lesson 9, "Approvals", at `/learn/approvals`. `tools.ts` is
-  lesson 2's with one tool more, `forget`, which deletes every note and
-  asks first: it declares `dependencies: [Approval, CurrentTurn]`, and
-  its handler starts with `approve({ action, detail })`. `agent.ts` is
-  the base program with one module more in `main`, `approvalOn(pane)`:
-  the page is who a tool asks. The question is a row of the chat with
-  three buttons (Approve, Refuse, Always approve the action), there
-  while it waits and gone when it is answered or dropped by Stop, a
-  rebuild or Clear context; the status chip says a question waits. The
-  answer, `plugin.approval.decided`, is drawn in the chat as a note from
-  its record, live and when the chat is drawn again. The page walks a
-  refusal (Echo says nothing was deleted), a yes for good (not asked
-  again, still approved after a rebuild, asked again in a new
-  conversation) and where the record sits in the journal. Echo sends
-  "forget", "delete" or "clear my notes" to `forget`, ahead of the rule
-  that sends a message about notes to `recall`, and answers a refused
-  `forget` in a sentence of its own. Experiments put a policy before the
-  person (`autoApprove`: the record says `Allowed`), give `main` no
-  approval (the page runs it and the call fails with "Service not
-  found"; TypeScript refuses the program, which a test pins by the
-  compiler's words), ask in the loop before every call (`approveIn`:
-  `forget` is asked for twice) and take the question out of the tool.
-  Lesson 8's page links here. Every lesson's `evaluate` hands its
-  program over through one function, `programOf`, where each had its own
-  copy of the same type assertion. No published package changes.
-- Docs site: each lesson's typed program states that it needs nothing
-  more, so the learn track's type check refuses a program whose `main` was
-  not given a module it asks for. Lesson 4 has the test: without the helper
-  its `delegate` tool declares, the program does not compile. Lesson 2's
-  typed module calls the toolkit by hand with the exact parameter type
-  where it had `as never`.
-- Docs site: Lesson 8, "Pointers", at `/learn/pointers`. `memory.ts` is
-  lesson 2's flat memory with one function changed: each record's message
-  is read with the function `pointed` gives, made once in a statement
-  above the layer, so a tool's long result is sent as its start and a
-  pointer while the journal keeps it whole.
-  `tools.ts` holds `lookup`, which answers with one of three articles of
-  about 2,400 characters, and the kernel's `ReadResult` with `readResult`
-  as its handler; `agent.ts` is the base program with one comment of
-  `main` changed. Two controls set the size over which a result is
-  pointed and the preview sent with the pointer; numbers `pointed`
-  refuses refuse the build, in the kernel's words, and leave the
-  conversation untouched. Echo looks up "tides", "volcanoes" or "honeybees",
-  answers with the first sentence of what it was sent and how much of
-  the whole that is, and reads on with `readResult` at "read more", 400
-  characters at a time. In the Context tab a tool's result that was sent
-  as something other than its record holds reads "sent as a pointer: N
-  tok kept in the journal", and a prompt's row counts as the same as the
-  prompt before only when it was sent the same way: until now a tool's
-  result was matched by its call alone. Experiments read every record
-  with `messageOf` again (three lookups cost 1,952 tokens a prompt where
-  pointers cost 458), point only the turns before the open one (the next
-  turn's prompt no longer starts with the one before), send a preview of
-  five tokens, and take `ReadResult` out of the tools (Echo says it has
-  no tool to read on). In the chat of every lesson, a tool's row is at
-  most a few lines high and scrolls: it holds the whole result, which
-  is long here. Lesson 7's page links here. No published package
-  changes.
-- Docs site: the models that run in the page (Echo, and the real models'
-  tool calls written as text) numbered their calls from one on every page
-  load, so lesson 7, which keeps its conversation across reloads, could
-  store two calls under one id. After a reload in the middle of a tool
-  call, the next tool call made the prompt send the abandoned call with no
-  result. Their ids now differ between page loads, and the kernel's
-  `paired` no longer depends on it.
-- Docs site: Lesson 7, "Keep the conversation", at
-  `/learn/keep-the-conversation`. The learner writes the journal's store
-  over the browser's `localStorage` in `store.ts`, held to the storage kit
-  beside the kernel's `webStorageJournal`, and `chat.ts` gains one
-  editable piece, `resume`: the last conversation the learner started
-  that this kernel reads, its open turn closed with `Sessions.recover`,
-  or a new one. `agent.ts` is the base program with one line of `main`
-  changed. A reload brings the conversation back: the chat is drawn again
-  from the journal and the Context tab shows the earlier turns with what
-  they stored, saying their prompts never were. A "Run the kit" button
-  lists each check of the storage kit over the code as it stands. The
-  page holds a Web Lock as the store's one writer, so a second tab waits
-  until the first is closed; the learner's edits survive a reload in the
-  tab; "Start over" forgets everything stored. Experiments reload in the
-  middle of a turn (closed as `Abandoned`, its unanswered call not
-  sent), take `recover` out (the next message is refused and the failure
-  names it), remove the store's place check (the kit's `conflict`
-  fails) and keep the events in the page's memory (the kit's `reopens`
-  fails, and a reload finds the conversation empty). A message a program
-  takes and never stores, as when its turn is refused, no longer stays
-  "waiting" in the chat: it says it was not stored, and the failure
-  follows it. Lesson 1's "Show one thing, store another" now says what
-  the chat shows since it is drawn from the journal: two answers, the
-  stored one and the capitals the program said. Fixed: editing a file whose code starts a line with
-  `export` (tools.ts in lessons 2 to 6) showed "Unexpected keyword
-  'export'" under the editor, though the code ran; and in a lesson with
-  five files the Code pane's Rebuild button was cut off at its right
-  edge (the file tabs now scroll). No published package changes.
-- Docs site: the learn pages' chat is drawn from a model of its own
-  (`chat-model.ts`), as the Context tab is. Every row that shows a stored
-  record (a message, an answer, a tool's result, the line a stopped,
-  failed or abandoned turn leaves) comes from one step, live and when the
-  chat is drawn from a journal, and a journal's rows only grow at the end.
-  What a program says and never stores is still shown as it is said: a
-  reply that is no stored answer ("I stopped after 5 steps.") or an answer
-  cut off by Stop now reads "not stored" under it. A message sent while a
-  turn works waits at the end of the chat and is taken where it stands,
-  so it sits after what the turn had stored by then, as in the journal. A turn that fails shows one error, from the record
-  of its end, so it now starts with the failure's tag ("SummaryFailed: …")
-  and shows also when the program says nothing. Lesson 6's button redraws
-  the whole chat from the journal, every row and view back in its place
-  (it redrew the views alone, at the end of the chat), and is named
-  "Redraw the chat from the journal". Tests run the lessons and compare
-  the rows the page drew with the rows the journal alone gives. No
-  published package changes.
-- Docs site: the learn track runs on the kernel's two functions from
-  lesson 3 on. Lesson 2 still writes both blocks of a loop by hand, to
-  teach them, and then says what replaces them; `lessons/base/` holds its
-  program on `modelAnswer` and `callTool`, derived by named pieces, and a
-  test runs both programs and compares their prompts and journals. Lessons
-  3, 5 and 6 derive their `agent.ts` from that base (lessons 3 and 4 were
-  hand copies), and lesson 4's `loop.ts` is written on the two functions.
-  Its `delegate` declares `CurrentTurn` and creates the helper under the
-  session of the turn it was called in, as ADR 0006 says. Lesson 6's
-  `show` writes through its turn with no `Effect.orDie`, its loop names no
-  turn, and its "run calls outside their turn" experiment is gone: with
-  `callTool` a call cannot lack its turn. Fixed: pressing Format on a
-  fresh page of lessons 2 to 6 wrapped `const system = "…"` onto two lines
-  and the system-text control then went dead; every starter text is now
-  as Format leaves it (the list of untidy ones is deleted) and the control
-  reads and writes the wrapped form. The page's model watcher reads
-  `CurrentTurn` when a stream runs, so a prompt is filed under the session
-  and turn that asked for it and not under a guess, also with two sessions
-  calling the model at once; a summarizer's call is known by a reference
-  set around `summarize`, not by a counter. The Context tab's steps name
-  the line that did the work: `modelAnswer(stream, session)` and
-  `callTool(toolkit, call, session)` on such a loop, the hand-written
-  lines in lessons 1 and 2. A stray conflict marker left in this file is
-  removed.
-- Docs site: the learn track's own checklist is now held by tests. Each of
-  Echo's tool rules has a direct test that fails without the rule; the
-  lesson registry's test lists lesson 2; and the Format test covers every
-  editable starter file of every lesson, with a list of the twelve that
-  Format would still change, which only shrinks.
-- Repository: an architecture review of the kernel after lessons 4 to 6.
-  The learn track's code and every source it shows import only the two
-  kernel entries, and a test now fails on any other `@xandreed/` import.
-  The clock note of lesson 3 and the kernel's own-plugin test is written
-  with the kernel's `hostNote`. `packages/website/AGENTS.md` describes the
-  learn track, a new skill, `add-lesson`, is its checklist, and
-  `docs/kernel.md` lists the questions still open.
-- Docs site: Lesson 6, "Render", at `/learn/render`. Lesson 2's program,
-  whose loop runs each tool call in its turn (`CurrentTurn`), with a
-  `show` tool that stores a table as a view and returns a few words. The
-  chat draws views by folding the chat session's records with `viewsOf`
-  (a later view under the same id updates in place), shows a progress bar
-  from the live events while the work runs, removes it when the turn ends
-  however it ends, and draws every view again from the journal alone on
-  "Redraw views from the journal". Cells are drawn as text. Echo sends
-  "show a table of squares to n", cubes and times tables to `show`.
-  Experiments make `show` slow and return the table to the model instead.
-- Docs site: Lesson 5, "Compaction", at `/learn/compaction`. Lesson 2's
-  program over `summaryMemory`: `memory.ts` holds its options (the budget
-  and `keepTurns`), and `summarizer.ts` the learner's `Summarizer` over the
-  model they picked, its prompt framing the turns it folds as data. The
-  page's runtime wraps the summarizer (`watchSummarizer`), so a model call
-  made while it runs is stamped as the summarizer's and counted apart from
-  the turn's; the Context tab shows a "Memory compacted" step, the summary
-  row from its record and the folded turns left out. Echo summarizes by
-  rule, reads past every host note (a summary's as well as the clock's)
-  when it picks a tool, and quotes the summary when asked what was said
-  earlier. Experiments compact on every turn, keep no finished turn and
-  make the summarizer fail.
-- Docs site: Lesson 4, "Sub-agents", at `/learn/sub-agents`. The chat's
-  agent hands a task to a helper through a `delegate` tool; the helper is
-  an agent of its own (its own system text, tools and quiet hooks) working
-  in a session of its own, a child of the chat's, and returns `{ answer,
-  session }`. `loop.ts` holds lesson 2's loop as `runAgent({ system,
-  toolkit, hooks })`, so both agents run it; `tools.ts` declares the
-  `Helper` contract `delegate` needs, and main provides it. The Context tab
-  gets a row of sessions (the chat, and each helper with its task), one
-  board each. Echo hands "Ask a helper: …" to `delegate` and passes the
-  helper's answer on. Experiments run the helper in the chat's own session
-  (refused as busy), make it slow while the chat is steered, and take
-  `delegate` away. ADR 0006 records the shape; `sub-agent.test.ts` holds
-  it and `docs/kernel.md` quotes it.
-- Docs site: the learn pages' runtime keeps a turn open per session and
-  stamps what memory built, each prompt and its usage with the session they
-  are for, so a program that runs a turn in a second session inside the
-  chat's (a sub-agent) no longer marks the chat idle when that turn ends,
-  and the Context tab shows the chat's turns only. A test runs such a
-  program and checks every trace's session.
-- Docs site: Lesson 3, "A plugin of your own", at `/learn/your-own-plugin`.
-  The learner writes two plugins in `plugin.ts`: `meter`, an event plugin
-  that hooks each stored answer and each turn's end with `core.on` and
-  shows what the turn cost on the status line, and `withClock`, a wrapper
-  of memory (a higher-order plugin) that adds the time after the context
-  for each request and stores none of it. The Context tab shows the note as
-  code's, with no record behind it. Experiments store the clock the wrong
-  way (every request then carries every earlier note), drop the first
-  message (the wrapper kit's `starts-with-inner` fails on it), make the
-  meter slow (the turn waits for a `wait: true` listener) and unplug it.
-  A test compiles the five files with tsc and holds the learner's clock to
-  `memoryWrapperConformance`; Echo skips the note and answers "What time is
-  it?" from it. ADR 0005 records the rule, and lesson 2 now points here.
-- Docs site: the learn pages' Context tab keeps each list at its bottom as
-  the conversation grows, also when the tab was hidden while it grew, and a
-  list scrolled up stays where it is. A row under the pointer no longer
-  flashes while an answer streams: a paint keeps every row whose content is
-  unchanged, and the step track and the model-call picker keep the room
-  they took, so the columns do not move during a turn. The workbench's
-  scrollbars are slim and in the theme's colours. No published package
-  changes.
-- Docs site: the learn pages' CPU models keep their downloads in IndexedDB
-  where the browser has no Cache API (a page served over plain http from a
-  LAN address is no secure context), so a second visit loads them from
-  disk instead of downloading them again. No published package changes.
-- `docs/adr/0001-kernel-plugin-composition.md` records how the kernel's
-  plugins compose (replace, wrap, an event, or an entry in the journal; no
-  hooks), `docs/adr/0002-core-owns-state-plugins-own-workflows.md`
-  what core owns (sessions, their journal, events, the message vocabulary)
-  and what it leaves to plugins' contracts, with the import graph and
-  core's API, and `docs/adr/0003-journal-holds-the-conversation.md` that
-  the journal holds the conversation, records carry tags, memory builds
-  the context and the kernel has no loop. The skill `kernel-architecture`
-  loads them before an architectural change of the kernel.
-- The boundaries gate holds the kernel's import graph: the sdk's kernel
-  contracts are a layer that imports core's kernel and no plugin, and
-  each plugin folder a layer that imports the contracts and core's kernel
-  and no other plugin's folder. Test code anywhere under the sdk's kernel
-  (every test glob the build leaves out, inside a contract or a plugin
-  folder too) is its test layer, not that folder's.
-- The boundaries gate refuses a `restricted` subpath to the layer of the
-  package's own entry too, unless that layer is granted it: a file of
-  `core` can no longer reach `@xandreed/core/kernel` by its package name,
-  nor one of the sdk `@xandreed/sdk/kernel`.
-- `bun run verify:packages` runs the kernel from the packed packages, on
-  Node and on Bun: the three contracts' kits (two of core's, memory's
-  from the sdk) on the stock plugins, one turn of a host's own over a
-  stack of layers on the scripted model, two messages queued with the
-  inbox, and a consumer's own contract composed as a layer
-  (`scripts/kernel-consumer.fixture.mjs`).
-- Docs site: Lesson 2, "Tools", at `/learn/tools`. The learner's turn is a
-  loop over steps: the model answers or asks for tools, which tools.ts
-  declares with Effect AI's `Tool` and `Toolkit` and runs in the page; the
-  turn runs each call with `toolkit.handle`, stores the call and its result
-  (a failure as a failed result) and asks again, up to `MAX_STEPS`, and
-  takes the messages sent while it works between steps (`chat.drain`). Its
-  memory sends through `paired`. Echo calls the tools by rule; the browser's
-  small models are offered them in the system text and their
-  `<tool_call>` blocks are read back, held out of the chat. The Context tab
-  builds a turn's steps from what happened, call by call (steers and tool
-  runs included), links tool calls and results to their records by id, and
-  shows each model call's context and prompt. A test compiles, type-checks
-  and runs the four files on the scripted model. In both lessons a turn
-  also takes every message waiting as it opens (`chat.drain`, now in
-  lesson 1's chat.ts too), stores them all and answers them together, so
-  messages sent while a turn runs are answered by the next one. Lesson 1's memory now
-  passes every kit check but `pairs`, and its text says why. No published
-  package changes.
-- Docs site: in Lesson 1, "Your first agent", the learner's program is the
-  agent, and it runs as written. agent.ts holds the system text, one
-  `turn` (open a scoped turn with `sessions.open`, store the message, ask
-  `memory.context`, stream the model's answer to the chat, store it), the
-  `program` (a boot hook with `core.on`, then one turn per message from
-  the chat), and `main`, which gives it its modules with `Effect.provide`.
-  chat.ts (read-only) is the chat it takes messages from, and memory.ts is
-  a flat memory the learner edits. A test compiles, type-checks and runs
-  the three files on the scripted model, and the memory through the
-  memory kit. The page runs `main` as one long-running fiber over a base
-  and a chat queue built once, so a rebuild keeps the conversation and
-  the waiting messages, and a turn it stops closes `Interrupted`. A
-  module removed from `main` stops the program at its first message, in
-  words. The Context tab replaces the editor: each turn's seven steps lit
-  as they run, the journal with its tags, what memory took and left out,
-  the prompt with each message's source, the part the prompt before
-  shares, and the provider's usage, linked by record, with an events log
-  under them. It reads the journal and what the page saw the model
-  receive; nothing derived is stored. Rebuild, Reset and Format say what
-  they did, and the model bar wraps on a phone. No published package
-  changes.
-- Docs site: the lesson workbench runs any lesson. A lesson's definition
-  (`packages/website/src/learn/lessons/<slug>/`) holds its files, the
-  names its code may use and how it is evaluated, its chips, its controls
-  and experiments, and the page passes the lesson's slug to the workbench.
-  The runtime, the editor and the playground name no lesson; Lesson 1 moved
-  into its own folder unchanged, and a test runs a second definition
-  through the same runtime. No published package changes.
+- The release line is the six packages, with the `efferent` landing
+  package (`names` in `scripts/build-packages.ts`, the Changesets group,
+  `releaseDirectories`); the final registry audit checks those seven names
+  and no longer expects the eighteen retired ones. The release's journal
+  fixture is a kernel host's journals, recorded over `directoryJournal` by
+  `scripts/record-journal-fixture.ts` (turns with a tool call, a fact, an
+  approval for good and a summary, each curated into knowledge), and
+  `packages/sdk/src/node/journal-compat.test.ts` replays every fixture of
+  `JOURNAL_FORMAT` and refuses one of another format without changing it.
+  The old engine's journals (`journal-0.13.0.json` to
+  `journal-0.22.0.json`) stay at their tags; `STORED_FORMAT`'s record, the
+  plugin and event references and the goldens left the tree with the code
+  that read them. `verify:packages` runs the kernel's packed consumer, the
+  evaluation consumer, the documentation's imports and every entry on Node
+  and Bun.
+- The kernel is each package's `src`, its root entry the package's root;
+  the gates' layers keep their names (`core-kernel`, `sdk-kernel-*`) over
+  the new paths. The API snapshots are `api/core.api.txt`,
+  `api/sdk.api.txt` and `api/sdk--node.api.txt`. The boundaries gate holds
+  the kernel's import graph: a contract imports core and other contracts,
+  a plugin imports contracts and core, never another plugin.
+- `docs/adr/` records each decision of the kernel, ADRs 0001 to 0036; the
+  skill `kernel-architecture` loads them before an architectural change.
+- Docs site: the learn track, `/learn`, builds an agent on the kernel in
+  the browser, one lesson at a time, each a workbench of files the learner
+  edits, a chat and a Context tab that shows each turn's journal, memory
+  and prompt: 1 "Your first agent", 2 "Tools", 3 "A plugin of your own",
+  4 "Sub-agents", 5 "Compaction", 6 "Render", 7 "Keep the conversation",
+  8 "Pointers", 9 "Approvals", 10 "Skills", 11 "Remember across sessions",
+  12 "Test your agent", 13 "Evals", 14 "When the model fails",
+  15 "Branches", 16 "A workspace", 17 "Background tasks", 18 "A memory that
+  keeps itself", 19 "Grade the grader" and 20 "Recall by meaning". A lesson
+  runs on Echo, a model that answers by rule, on small models in the page
+  (WebLLM on WebGPU, a CPU worker, Chrome's built-in model), or on a model
+  of the Vercel AI Gateway with the learner's own key; its code is compiled
+  and run by its tests, and every claim its page makes is held by one.
+- Docs site: getting started is a first program in Node, the one the
+  README shows, run and pinned by
+  `packages/sdk/src/node/first-program.test.ts` (the README, the page and
+  these notes quote it). `docs:generate` mirrors the guide, `docs/kernel.md`,
+  at `/docs/guide/` (a fence pinned by `guide.test.ts` counts as checked)
+  and writes `/docs/decisions/`, the index of `docs/adr/`. A new page,
+  "Packages that are no longer published", lists the eighteen packages,
+  their last version and what replaces each. The home page and the
+  navigation say what ships; the old engine's pages and the Plugins
+  navigation are gone.
+- Each published package's `package.json` has a `description` and
+  `keywords`, which its packed README now starts with; the build refuses a
+  package with no description. The `efferent` landing package's notice
+  and description say what the framework is now.
+- Foundry's fix hints no longer name the old engine's helpers:
+  `no-instanceof-tagged-error` says "a guard the owning module exports" for
+  `isHarnessError`, `no-stringified-cause` drops `reasonOf` and
+  `messagesOf`, `no-code-property-guard` drops `harnessCodeOf`, and
+  `layers-live-at-edges` says "another layer, the host's program or a
+  main.ts" for "an agent definition", in the library rules and their
+  vendored twins alike.
 
 ## 0.22.0 — 2026-11-12
 

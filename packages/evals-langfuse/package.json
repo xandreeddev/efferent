@@ -3,6 +3,8 @@
   "version": "0.22.0",
   "engines": { "node": ">=24" },
   "type": "module",
+  "description": "Exports a saved Efferent evaluation run to Langfuse: one trace per trial and one score per measured metric.",
+  "keywords": ["efferent", "evals", "evaluation", "llm", "langfuse"],
   "main": "./src/index.ts",
   "exports": {
     ".": "./src/index.ts"

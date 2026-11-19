@@ -826,7 +826,7 @@ export const noInstanceofTaggedError = {
   defaultSeverity: "error",
   description: "tagged errors are recognized by their tag, never `instanceof`",
   fixHint:
-    "use the owning module's guard (`isHarnessError`), `Predicate.isTagged(e, \"X\")`, `Match.tag` or `Effect.catchTag`; not `Schema.is(X)` of the class, which checks identity too",
+    "use a guard the owning module exports, `Predicate.isTagged(e, \"X\")`, `Match.tag` or `Effect.catchTag`; not `Schema.is(X)` of the class, which checks identity too",
   check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
     matchesIn(sourceFile, (node) =>
       ts.isBinaryExpression(node) &&
@@ -966,7 +966,7 @@ export const noStringifiedCause = {
   defaultSeverity: "error",
   description: "a tagged error keeps the failure it wraps as a value, not as `String(e)`",
   fixHint:
-    "keep the failure as a value (a `cause` field, `Schema.Defect`) and write a message that says what failed; text for a person comes from `reasonOf(cause)`, for the model from `messagesOf(cause)` (no code or tag), or from a decoded error's own `message`",
+    "keep the failure as a value (a `cause` field, `Schema.Defect`) and write a message that says what failed; text for a person or the model comes from the cause's failures (`Cause.prettyErrors`, a decoded error's own `message`), never a stack",
   check: ({ sourceFile, checker }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
     matchesIn(sourceFile, (node) =>
       ts.isNewExpression(node) && isTaggedClass(checker, node.expression)
@@ -1026,7 +1026,7 @@ export const noCodePropertyGuard = {
   defaultSeverity: "error",
   description: "a failure's `code` is read through its reader, never guarded by hand",
   fixHint:
-    "use `errorCodeOf(error)` for a Node or SQLite code (`Option.contains(errorCodeOf(error), \"ENOENT\")`), `harnessCodeOf(error)` for the framework's codes, `Effect.catchTag` for a tagged error",
+    "use `errorCodeOf(error)` for a Node or SQLite code (`Option.contains(errorCodeOf(error), \"ENOENT\")`), `Effect.catchTag` for a tagged error",
   check: ({ sourceFile }: VendoredRuleContext): ReadonlyArray<VendoredMatch> =>
     matchesIn(sourceFile, (node) =>
       isCodeGuard(node) ? [{ node, message: `\`${node.getText(sourceFile)}\` reads a \`code\` by hand` }] : [],

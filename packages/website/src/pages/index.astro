@@ -2,28 +2,28 @@
 import BaseLayout from "../layouts/BaseLayout.astro"
 import { href, GITHUB } from "../lib/nav"
 const modules = [
-  ["01", "Loop", "Choose how the agent thinks, acts, and stops."],
-  ["02", "Context & memory", "Decide what survives a turn, a session, or a restart."],
-  ["03", "Tools & tasks", "Discover tools on demand and run background work."],
-  ["04", "Evidence", "Replay sessions. Fork experiments. Evaluate outcomes."],
+  ["01", "Your loop", "Write the turn yourself: modelAnswer and callTool store what they produce."],
+  ["02", "Context & memory", "Decide what each request is sent: a window, a summary, facts, knowledge kept by a curator."],
+  ["03", "Tools & tasks", "Approvals, skills loaded when asked, a workspace with a shell, background work."],
+  ["04", "Evidence", "Every turn in a journal: read it back, branch it, trace it, evaluate it."],
 ]
 ---
-<BaseLayout title="Efferent — compose the agent" description="An Effect-native agent framework. Configurable plugins from the agent loop to memory, with durable sessions and reusable evals.">
+<BaseLayout title="Efferent — compose the agent" description="An Effect-native agent framework: a small kernel, every other part a layer you replace, your program the loop, with durable sessions and reusable evals.">
   <section class="intro">
     <p class="eyebrow">EFFECT / COMPOSABLE AGENTS / NODE + BUN</p>
-    <div class="headline"><h1>Compose the agent.<br /><em>Own the harness.</em></h1><p>An agent framework built from typed plugins.<br />Replace the parts that matter.</p></div>
+    <div class="headline"><h1>Compose the agent.<br /><em>Own the harness.</em></h1><p>A small kernel, every other part an Effect layer.<br />Your program is the loop.</p></div>
     <div class="actions"><a class="primary" href={href("/docs/getting-started")}>Start building <span>↗</span></a><a href={href("/learn")}>Learn the kernel →</a></div>
     <div class="workbench">
       <div class="terminal" aria-label="Illustrative agent session">
         <div class="bar"><strong>efferent</strong><span>your-agent / session</span><span class="ready">● Ready</span></div>
-        <div class="conversation"><p class="label">YOU</p><p>Summarise yesterday’s support tickets.</p><p class="label agent">AGENT</p><p>I’ll load the ticket skill and keep the summary with this session.</p><div class="tool">✓ load_skill <span>support-tickets</span></div><div class="tool">✓ tickets.search <span>since: yesterday</span></div><p>Done. The summary is stored in the session and can be replayed or forked.</p></div>
+        <div class="conversation"><p class="label">YOU</p><p>Summarise yesterday’s support tickets.</p><p class="label agent">AGENT</p><p>I’ll load the ticket skill and keep the summary with this session.</p><div class="tool">✓ loadSkill <span>support-tickets</span></div><div class="tool">✓ tickets.search <span>since: yesterday</span></div><p>Done. The summary is stored in the session and can be replayed or forked.</p></div>
         <div class="composer">› <span>What should we build next?</span><span class="cursor"></span></div>
       </div>
-      <aside><p class="eyebrow">YOUR COMPOSITION</p><h2>Every capability<br />has a place.</h2><div class="graph"><span>models</span><span>loop</span><span>tools</span><span>tasks</span><span>render</span><span class="selected">memory ↗</span><span>sessions</span><span>evals</span></div><p>Typed services. Validated options.<br />Scoped resources. Replaceable implementations.</p><a href={href("/learn")}>Build one, lesson by lesson →</a></aside>
+      <aside><p class="eyebrow">YOUR COMPOSITION</p><h2>Every capability<br />has a place.</h2><div class="graph"><span>models</span><span>your loop</span><span>tools</span><span>tasks</span><span>views</span><span class="selected">memory ↗</span><span>journal</span><span>evals</span></div><p>Typed services. Validated options.<br />Scoped resources. Replaceable implementations.</p><a href={href("/learn")}>Build one, lesson by lesson →</a></aside>
     </div>
-    <div class="install"><code><span>$</span> npm install @xandreed/sdk</code><p>0.22.0 on npm · Node 24 or Bun</p></div>
+    <div class="install"><code><span>$</span> npm install effect @xandreed/core @xandreed/sdk</code><p>0.22.0 on npm · Node 24 or Bun</p></div>
   </section>
-  <section class="modules" id="ecosystem"><header><p class="eyebrow">FROM CORE TO PRODUCT</p><h2>A small core.<br />Room for your ideas.</h2><p>Start from the SDK and the first-party plugins. Keep the behavior you need and supply your own services.</p></header><div class="module-list">{modules.map(([number,title,description]) => <a href={href("/docs/getting-started")}><span>{number}</span><div><h3>{title}</h3><p>{description}</p></div><span>↗</span></a>)}</div></section>
+  <section class="modules" id="ecosystem"><header><p class="eyebrow">FROM CORE TO PRODUCT</p><h2>A small core.<br />Room for your ideas.</h2><p>Start from the kernel and its stock plugins, each a layer. Keep the parts you need and supply your own.</p></header><div class="module-list">{modules.map(([number,title,description]) => <a href={href("/docs/guide")}><span>{number}</span><div><h3>{title}</h3><p>{description}</p></div><span>↗</span></a>)}</div></section>
   <section class="closing"><p class="eyebrow">BUILT IN THE OPEN</p><h2>Your agent should fit your work.</h2><p>Effect Layers for composition. Durable events for evidence. Deterministic checks for confidence.</p><a class="primary" href={GITHUB}>Read the source ↗</a></section>
 </BaseLayout>
 <style>

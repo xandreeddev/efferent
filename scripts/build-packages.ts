@@ -11,6 +11,9 @@ const names = ["core", "sdk", "evals", "evals-cli", "evals-langfuse", "evals-lan
 const manifests = new Map(await Promise.all(names.map(async (name) =>
   [name, JSON.parse(await readFile(join(root, "packages", name, "package.json"), "utf8"))] as const,
 )))
+/** Each package says what it is: its packed README starts with it, and npm shows it. */
+const undescribed = names.filter((name) => typeof manifests.get(name)?.description !== "string" || manifests.get(name).description.length === 0)
+if (undescribed.length > 0) { console.error(`Declare a "description" in the package.json of: ${undescribed.join(", ")}`); process.exit(1) }
 /** Each package declares the runtimes it supports; the published manifest keeps that declaration. */
 const undeclared = names.filter((name) => manifests.get(name)?.engines === undefined)
 if (undeclared.length > 0) { console.error(`Declare "engines" in the package.json of: ${undeclared.join(", ")}`); process.exit(1) }
@@ -87,7 +90,7 @@ await Promise.all(names.map(async (name) => {
   }
   delete manifest.devDependencies
   await writeFile(join(target, "package.json"), `${JSON.stringify(manifest, null, 2)}\n`)
-  await writeFile(join(target, "README.md"), `# ${original.name}\n\nEfferent composable agent framework, ${version}. ${runtimeNote(original.engines)}\n\nDocumentation: https://github.com/xandreeddev/efferent\n`)
+  await writeFile(join(target, "README.md"), `# ${original.name}\n\n${original.description}\n\nPart of Efferent ${version}, an agent framework on Effect. ${runtimeNote(original.engines)}\n\n- Documentation: https://xandreeddev.github.io/efferent/docs/\n- Source and changelog: https://github.com/xandreeddev/efferent\n`)
   await cp(join(root, "LICENSE"), join(target, "LICENSE"))
   console.log(`Built ${relative(root, target)}`)
 }))

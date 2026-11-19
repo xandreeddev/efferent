@@ -261,16 +261,16 @@ are removed. The public package exports the native domain and its pure grading h
 `./stats` remains a separate entrypoint. There is no historical report importer. Existing
 historical artifacts can remain on disk while new runs use the native schema.
 
-## Agent plugins and captured context
+## The agent's parts and captured context
 
-An application composes its agent plugins independently of its `EvaluationApp` registry.
-Memory plugins maintain and render model context from a session log; tool discovery provides
-active tool definitions. An app model adapter captures the serialized request after those
-steps and any provider-specific transformations, then the runnable copies capture into the
-portable execution. Final database state is useful as an independent outcome but cannot
+An application composes its agent (the kernel's layers: its memory, its tools and skills)
+independently of its `EvaluationApp` registry. Memory builds each request's context from the
+session's journal; skills change the tools a step offers. An app model adapter captures the
+serialized request after those steps and any provider-specific transformations, then the
+runnable copies capture into the portable execution. Final database state is useful as an independent outcome but cannot
 reproduce what an earlier model call saw.
 
 A projection reads saved capture, not current memory or live storage. Another app supplies
 its own environment, runnable, evidence codecs and projections while reusing this domain,
-CLI, retrieval graders and optional export adapters. To test a changed memory plugin, execute
+CLI, retrieval graders and optional export adapters. To test a changed memory, execute
 again. To test a changed rubric or projection, grade the same saved execution again.

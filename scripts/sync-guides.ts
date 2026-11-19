@@ -7,12 +7,16 @@
  *   that region of the file (a test that runs) with the import lines its
  *   code uses, from the file's own imports; a snippet may import only
  *   public packages. Every region of a quoted file must be in a guide.
- * - Every TypeScript or JavaScript fence is a snippet (a `ts` fence), or
+ * - Every TypeScript or JavaScript fence is a snippet (a `ts` fence), is
+ *   pinned by a test (`<!-- pinned: <file>[#<region>] -->` before a `ts`
+ *   fence: `packages/sdk/src/guide.test.ts` holds `docs/kernel.md`'s), or
  *   says why not on the line before it (`<!-- unchecked: <why> -->`); a
  *   snippet marker the sync cannot fill is a problem too.
  * - Every link must resolve: an anchor to a heading of its target, a
  *   repository file that exists. On the website, a file that has a page
  *   links to it; any other file links to GitHub.
+ * - The decisions (`docs/adr/`) get one page, `/docs/decisions/`: each
+ *   record's number, title and status, read from its first lines.
  */
 import { existsSync, statSync } from "node:fs"
 import { mkdir, readFile, writeFile } from "node:fs/promises"
@@ -32,11 +36,13 @@ interface Guide {
   readonly description: string
 }
 
-/**
- * The guides the website mirrors. None while the old engine's guides are gone and the kernel's guide
- * (`docs/kernel.md`, whose quotes `packages/sdk/src/guide.test.ts` pins) has no page yet.
- */
-const guides: ReadonlyArray<Guide> = []
+/** The guides the website mirrors: the kernel's guide, whose quotes `packages/sdk/src/guide.test.ts` pins. */
+const guides: ReadonlyArray<Guide> = [{
+  source: "docs/kernel.md",
+  page: "guide",
+  title: "The guide",
+  description: "How a host writes its turn over the kernel, every contract and stock plugin, and why each is shaped as it is.",
+}]
 
 /** Repository files with a page of their own on the website; any other file a guide links to is linked on GitHub. */
 const sitePages: ReadonlyMap<string, string> = new Map(guides.map((guide): readonly [string, string] => [guide.source, `/docs/${guide.page}/`]))
@@ -106,13 +112,13 @@ const withSnippets = async (guide: Guide, text: string) => {
   return { text: next, quoted: markers, problems: snippets.flatMap((snippet) => snippet.problems) }
 }
 
-/** Fences of code a reader would run that are neither a snippet (a `ts` fence the sync fills) nor say why not. */
+/** Fences of code a reader would run that are neither a snippet (a `ts` fence the sync fills) nor pinned by a test, nor say why not. */
 const unmarkedFences = (guide: Guide, text: string): ReadonlyArray<string> => {
   const parts = fenced(text)
   return parts.flatMap((part, index) => index % 2 === 1 && /^```(ts|typescript|tsx|js|javascript|mjs)\b/.test(part)
     && !/<!-- unchecked: [^\n]+ -->\n$/.test(parts[index - 1] ?? "")
-    && !(/^```(ts|typescript)\b/.test(part) && /<!-- snippet: [^\n]+ -->\n$/.test(parts[index - 1] ?? ""))
-    ? [`${guide.source}:${parts.slice(0, index).join("").split("\n").length}: a code fence that is neither a snippet nor marked <!-- unchecked: why -->`]
+    && !(/^```(ts|typescript)\b/.test(part) && /<!-- (snippet|pinned): [^\n]+ -->\n\n?$/.test(parts[index - 1] ?? ""))
+    ? [`${guide.source}:${parts.slice(0, index).join("").split("\n").length}: a code fence that is neither a snippet nor pinned nor marked <!-- unchecked: why -->`]
     : [])
 }
 
@@ -159,7 +165,7 @@ const results = await Promise.all(guides.map(async (guide) => {
   const original = await read(guide.source)
   const snippets = await withSnippets(guide, original)
   const body = snippets.text
-    .replace(/^<!-- (snippet|unchecked): [^\n]* -->\n/gm, "")
+    .replace(/^<!-- (snippet|pinned|unchecked): [^\n]* -->\n\n?/gm, "")
     .replace(/^# [^\n]*\n+/, "")
   const website = await forWebsite(guide, body)
   return {
@@ -174,7 +180,19 @@ const unquoted = await Promise.all([...new Set(results.flatMap((result) => resul
   return [...(await quoted(file)).regions.keys()].filter((region) => !used.has(region)).map((region) => `${file}: #region ${region} is in no guide`)
 }))
 
-const problems = [...results.flatMap((result) => result.problems), ...unquoted.flat()]
+/* ── the decisions ── */
+
+/** One row per record of `docs/adr/`, in the order of their numbers: its title from its heading, its status from its first line. */
+const decisions = await Promise.all(Array.from(new Bun.Glob("docs/adr/[0-9][0-9][0-9][0-9]-*.md").scanSync({ cwd: root })).sort().map(async (file) => {
+  const text = await read(file)
+  const heading = /^# ADR (\d{4}): (.+)$/m.exec(text)
+  const status = /^- \*\*Status:\*\* (\w+)[^;\n]*(?:; (superseded by ADR \d{4}))?/m.exec(text)
+  return heading === null || status === null
+    ? { problem: `${file}: a decision starts with "# ADR NNNN: <title>" and a "- **Status:**" line` }
+    : { row: `| [${heading[1]}](${github}/blob/main/${file}) | ${heading[2]!.replaceAll("|", "\\|")} | ${status[2] ?? status[1]} |` }
+}))
+
+const problems = [...results.flatMap((result) => result.problems), ...unquoted.flat(), ...decisions.flatMap((decision) => "problem" in decision ? [decision.problem] : [])]
 if (problems.length > 0) {
   console.error(`The guides are out of step:\n${problems.join("\n")}`)
   process.exit(1)
@@ -186,4 +204,20 @@ await Promise.all(results.map(async (result) => {
   await mkdir(dirname(page), { recursive: true })
   await writeFile(page, `---\ntitle: ${JSON.stringify(result.guide.title)}\ndescription: ${JSON.stringify(result.guide.description)}\n---\n\n<!-- Generated by bun run docs:generate (scripts/sync-guides.ts) from ${result.guide.source}: edit that file. -->\n\n${result.page}`)
 }))
-console.log(`Synced ${results.length} guide${results.length === 1 ? "" : "s"} (${results.reduce((sum, result) => sum + result.quoted.length, 0)} snippets) to the website`)
+await writeFile(join(root, "packages/website/src/content/docs/decisions.md"), `---
+title: "The decisions"
+description: "One record per architectural decision of the kernel: what was decided, why, and what it costs."
+---
+
+<!-- Generated by bun run docs:generate (scripts/sync-guides.ts) from docs/adr/: edit the records. -->
+
+Each record says what was decided, the context it was decided in, and what
+follows from it. A later decision that changes an earlier one names the
+record it amends or supersedes. The guide,
+[the kernel](/docs/guide/), says how the parts fit as they are today.
+
+| ADR | Decision | Status |
+| --- | --- | --- |
+${decisions.flatMap((decision) => "row" in decision ? [decision.row] : []).join("\n")}
+`)
+console.log(`Synced ${results.length} guide${results.length === 1 ? "" : "s"} (${results.reduce((sum, result) => sum + result.quoted.length, 0)} snippets) and ${decisions.length} decisions to the website`)
