@@ -122,34 +122,49 @@ describe("a media store in a folder", () => {
 
   test("a process killed while it puts leaves every blob whole", async () => {
     await run((folder) => Effect.gen(function* () {
-      yield* open(folder, 1_000_000)
+      yield* open(folder, 300_000)
       const script = join(folder, "putter.ts")
       const effect = Bun.resolveSync("effect", import.meta.dir)
       const adapter = join(import.meta.dir, "directory-media.adapter.ts")
+      // Forty puts of 300 KB at most, then a wait: the child writes a bounded amount whenever it is killed.
       yield* Effect.promise(() => writeFile(script, `
 import { Context, Effect, Layer } from ${JSON.stringify(effect)}
 import { directoryMedia } from ${JSON.stringify(adapter)}
 import { MediaStore } from ${JSON.stringify(join(import.meta.dir, "../../contracts/media/media.port.ts"))}
 await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-  const store = Context.get(yield* Layer.build(directoryMedia({ directory: ${JSON.stringify(folder)}, maxBytes: 1_000_000 })), MediaStore)
-  for (let n = 0; ; n++) {
-    yield* store.put(Uint8Array.from({ length: 1_000_000 }, (_, at) => (at + n) % 256))
+  const store = Context.get(yield* Layer.build(directoryMedia({ directory: ${JSON.stringify(folder)}, maxBytes: 300_000 })), MediaStore)
+  for (let n = 0; n < 40; n++) {
+    yield* store.put(Uint8Array.from({ length: 300_000 }, (_, at) => (at + n) % 256))
     if (n === 0) process.stdout.write("put\\n")
   }
+  yield* Effect.never
 })))
 `))
-      const child = Bun.spawn([process.execPath, script], { stdout: "pipe", stderr: "inherit" })
-      const reader = child.stdout.getReader()
-      yield* Effect.promise(() => reader.read())
-      yield* Effect.sleep("150 millis")
+      // Killed when the test's scope closes, whatever ended it, as the store holder of the journals' tests is.
+      const child = yield* Effect.acquireRelease(
+        Effect.sync(() => Bun.spawn([process.execPath, script], { stdout: "pipe", stderr: "inherit" })),
+        (spawned) => Effect.promise(() => { spawned.kill("SIGKILL"); return spawned.exited }),
+      )
+      yield* Effect.promise(() => child.stdout.getReader().read())
+      yield* Effect.sleep("100 millis")
       child.kill("SIGKILL")
       yield* Effect.promise(() => child.exited)
-      const store = yield* open(folder, 1_000_000)
+      const store = yield* open(folder, 300_000)
       const blobs = yield* listed(join(folder, "blobs"))
       expect(blobs.length).toBeGreaterThan(0)
       for (const name of blobs) expect(Option.isSome(yield* store.get(name as MediaHash))).toBe(true)
     }))
   }, 30_000)
+
+  test("openings of a fresh folder at once all open it, as one store", async () => {
+    await run((folder) => Effect.forEach(Array.from({ length: 10 }, (_, at) => join(folder, `fresh-${at}`)), (fresh) => Effect.gen(function* () {
+      // A marker another opening linked between this one's read and its listing is no other file. The window is too
+      // narrow to hit on purpose: this holds that openings at once agree, and the adapter's listing holds the rule.
+      const stores = yield* Effect.all(Array.from({ length: 3 }, () => open(fresh)), { concurrency: 3 })
+      const key = yield* stores[0]!.put(input())
+      for (const store of stores) expect(Option.map(yield* store.get(key), (bytes) => Array.from(bytes))).toEqual(Option.some(Array.from(input())))
+    }), { concurrency: 1, discard: true }))
+  })
 
   test("a bound that is no whole number of 1 or more dies where the layer is built", async () => {
     const exit = await Effect.runPromiseExit(Effect.scoped(Effect.flatMap(scratch, (folder) => open(folder, 0))))

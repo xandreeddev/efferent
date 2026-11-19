@@ -66,7 +66,8 @@ this cut gives the kernel the store, and only the store.
   did not write is left). Bytes already kept are not written again. A get reads at most `maxBytes` and one more, and
   verifies: a file cut short, changed or too long is `MediaDamaged`. A put of the right bytes over a damaged blob
   links the damaged file into `damaged/` as evidence and renames the good bytes over it, with a warning. A folder with
-  other files and no marker, or with another store's or layout's marker, is refused and left as it is.
+  other files and no marker, or with another store's or layout's marker, is refused and left as it is. Openings of a fresh
+  folder at once agree: each publishes the marker by an exclusive link, and one that finds it taken reads it.
 - **No writer lock** (ADR 0024's `holdWriter` is not taken): a blob never changes once kept, and its name is its
   content, so two stores (two processes) that put the same bytes converge: the second link finds the name taken and
   the blob there whole. A journal needs one writer because its order is its truth; a store of content has no order.

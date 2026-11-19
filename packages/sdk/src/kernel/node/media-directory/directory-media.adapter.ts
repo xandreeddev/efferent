@@ -104,7 +104,8 @@ export const directoryMedia = (options: DirectoryMediaOptions): Layer.Layer<Medi
   yield* call(() => mkdir(root, { recursive: true, mode: 0o700 })).pipe(Effect.mapError(opening))
   if (!(yield* markerFound)) {
     const names = yield* call(() => readdir(root)).pipe(Effect.mapError(opening))
-    const other = names.filter((name) => !MEDIA_FOLDERS.includes(name))
+    // A marker another opening of a fresh folder published meanwhile is no other file: its link is read below.
+    const other = names.filter((name) => name !== "media.json" && !MEDIA_FOLDERS.includes(name))
     if (other.length > 0) {
       return yield* Effect.fail(new MediaUnavailable({ message: `the media folder ${root} holds other files (${other.slice(0, 3).join(", ")}) and no media.json: it is not made a store` }))
     }
