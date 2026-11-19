@@ -4,8 +4,8 @@
 // context, calls the model and stores the answer.
 import { Effect, Layer, Option, Result, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { Memory, promptMessage } from "@xandreed/sdk/kernel"
+import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"
+import { Memory, promptMessage } from "@xandreed/sdk"
 import { programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

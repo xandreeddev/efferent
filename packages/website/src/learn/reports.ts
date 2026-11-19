@@ -4,9 +4,9 @@
 // the kernel's words changes what is read, and Echo and the chat know a report
 // only by those exact words. Echo reads past every host note, and a report
 // starts with one, so it must know a report before it reads anything else.
-import { SessionId } from "@xandreed/core/kernel"
-import { reportText, TaskId } from "@xandreed/sdk/kernel"
-import type { TaskOutcome } from "@xandreed/sdk/kernel"
+import { SessionId } from "@xandreed/core"
+import { reportText, TaskId } from "@xandreed/sdk"
+import type { TaskOutcome } from "@xandreed/sdk"
 
 /** What a report's words say: the task, how it ended, and its answer or why it failed, as the task gave it. */
 export interface ReportRead {

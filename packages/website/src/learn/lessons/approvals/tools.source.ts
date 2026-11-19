@@ -11,7 +11,7 @@ const FIRST_AI = 'import { Tool, Toolkit } from "effect/ai"'
 
 /** What this lesson replaces in lesson 2's imports, as `[from, to]`: the contract, the function that asks, and the turn. */
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
-  [FIRST_AI, `${FIRST_AI}\nimport { Approval, approve, CurrentTurn } from "@xandreed/sdk/kernel"`],
+  [FIRST_AI, `${FIRST_AI}\nimport { Approval, approve, CurrentTurn } from "@xandreed/sdk"`],
 ]
 
 /** Read-only: what the tools import. */

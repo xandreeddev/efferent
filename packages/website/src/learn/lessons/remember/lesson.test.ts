@@ -8,8 +8,8 @@
 // order, and each experiment starts from a new runtime, as from a reload.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Option } from "effect"
-import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
-import { estimateTokens, FACT_LIMIT, FACTS_OWNER, factsOf } from "@xandreed/sdk/kernel"
+import { dataOf, turnEndedEvent } from "@xandreed/core"
+import { estimateTokens, FACT_LIMIT, FACTS_OWNER, factsOf } from "@xandreed/sdk"
 import { chatRowsOf, emptyChat, hear, sent } from "../../chat-model.ts"
 import type { ChatBoard, ChatRow } from "../../chat-model.ts"
 import { applyExperiment } from "../../lesson.ts"

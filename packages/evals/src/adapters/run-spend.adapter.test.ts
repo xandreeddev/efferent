@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Context, Deferred, Effect, Fiber, Layer, Option } from "effect"
-import { ModelSpend, modelSpendConformance, modelSpendMemory } from "@xandreed/core/kernel"
-import type { SpendHold } from "@xandreed/core/kernel"
+import { ModelSpend, modelSpendConformance, modelSpendMemory } from "@xandreed/core"
+import type { SpendHold } from "@xandreed/core"
 import { runSpendLedger } from "./run-spend.adapter.js"
 
 /** A fresh run's ledger over an in-memory `ModelSpend`, within `budget`. */

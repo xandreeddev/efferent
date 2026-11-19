@@ -14,8 +14,8 @@ import { DEFAULT_TOOLS as NOTE_TOOLS, TOOLS_IMPORTS as NOTE_IMPORTS } from "../t
  * `recall-tool` experiment writes a tool over them, and an experiment edits only the code under the imports.
  */
 export const TOOLS_IMPORTS = `${NOTE_IMPORTS}
-import { Sessions } from "@xandreed/core/kernel"
-import { factTools, rememberedFacts } from "@xandreed/sdk/kernel"`
+import { Sessions } from "@xandreed/core"
+import { factTools, rememberedFacts } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const TOOLS_HEADER = `${TOOLS_IMPORTS}\n\n`

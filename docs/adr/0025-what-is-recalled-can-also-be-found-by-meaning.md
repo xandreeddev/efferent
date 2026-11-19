@@ -1,7 +1,7 @@
 # ADR 0025: What is recalled can also be found by meaning
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the knowledge contract's recall: `recallKnowledge`'s list by meaning,
+- **Applies to:** `@xandreed/sdk` (the knowledge contract's recall: `recallKnowledge`'s list by meaning,
   `meaningTexts`, `meaningKey`, `checkedMeaningOptions`, `KNOWLEDGE_BY_MEANING`, `WORDS_WEIGHTS`,
   `MEANING_MODEL_LIMIT`, the event `plugin.knowledge.recalled`; the memory wrapper `withKnowledgeByMeaning`)
 - **Takes up:** ADR 0023's first "What would reopen this" (recall by meaning beside the two lists, a third list,

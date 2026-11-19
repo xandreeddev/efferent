@@ -6,8 +6,8 @@
 // loaded.
 import { Effect, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { callTool, defineSkill, Memory, modelAnswer, paired, promptMessage, skills } from "@xandreed/sdk/kernel"
+import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"
+import { callTool, defineSkill, Memory, modelAnswer, paired, promptMessage, skills } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

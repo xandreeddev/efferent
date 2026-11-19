@@ -8,7 +8,7 @@
 /** Read-only: what the tools import. */
 export const TOOLS_IMPORTS = `import { Context, Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { CurrentTurn } from "@xandreed/sdk/kernel"`
+import { CurrentTurn } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const TOOLS_HEADER = `${TOOLS_IMPORTS}\n\n`
@@ -73,7 +73,7 @@ export const delegateLive = delegating.toLayer(
 export const toolsDocumentOf = (tools: string): string => `${TOOLS_HEADER}${tools}\n`
 
 /** The same file as a module a test can compile: the contract's shape written out. */
-export const toolsModuleOf = (tools: string): string => `${TOOLS_IMPORTS}\nimport type { SessionId } from "@xandreed/core/kernel"\n\n${tools.replace(
+export const toolsModuleOf = (tools: string): string => `${TOOLS_IMPORTS}\nimport type { SessionId } from "@xandreed/core"\n\n${tools.replace(
   'export class Helper extends Context.Service()("lesson/Helper") {}',
   'export class Helper extends Context.Service<Helper, {\n  readonly ask: (task: string, parent: SessionId) => Effect.Effect<{ readonly answer: string; readonly session: string }, string>\n}>()("lesson/Helper") {}',
 )}\n`

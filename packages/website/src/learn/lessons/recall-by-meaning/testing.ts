@@ -5,7 +5,7 @@
 // A text recorded for neither is refused with `EmbedFailed`, so a test that
 // claims something of the list by meaning also asserts it was not skipped.
 import { Context, Effect, Layer, Result, Schema } from "effect"
-import { Embedder, recordedEmbedder } from "@xandreed/sdk/kernel"
+import { Embedder, recordedEmbedder } from "@xandreed/sdk"
 import type { Lesson } from "../../lesson.ts"
 import type { EmbedderService } from "../../models/meaning.ts"
 import { recallByMeaning } from "./lesson.ts"

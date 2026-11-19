@@ -1,7 +1,7 @@
 # ADR 0001: How the kernel's plugins compose
 
 - **Status:** accepted, 12 November 2026; rule 2 of "Rules for wrappers" and the proposal "context that lives for a turn" superseded, for context of one request, by ADR 0005. The examples below name the memory contract's first method, `build`; today it is `context(session)` (ADR 0003)
-- **Applies to:** `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and every plugin written for them
+- **Applies to:** `@xandreed/core`, `@xandreed/sdk` and every plugin written for them
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -91,7 +91,7 @@ The plugin names are illustrations of later plugins. None of them exists yet.
 - **Compiles, and is lost:** a wrapper applied to a layer that provides more than its contract compiles, because a layer's provided services are contravariant, and the wrapper hides the rest.
 - **The limit:** behaviour that spans two contracts is two wrappers that share through the journal.
 
-`packages/sdk/src/kernel/wrapping.test.ts` pins all of this. It also pins why the plain
+`packages/sdk/src/wrapping.test.ts` pins all of this. It also pins why the plain
 layer form is not used for wrappers: a plain wrapper composed above the part that uses the
 contract wraps nothing for it, and nothing says so.
 

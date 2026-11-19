@@ -11,9 +11,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Ref, Result, Stream } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { kernel, Sessions } from "@xandreed/core/kernel"
-import { inProcessJournal, scriptedModel, sessions } from "@xandreed/sdk/kernel"
-import type { ModelScript } from "@xandreed/sdk/kernel"
+import { kernel, Sessions } from "@xandreed/core"
+import { inProcessJournal, scriptedModel, sessions } from "@xandreed/sdk"
+import type { ModelScript } from "@xandreed/sdk"
 import { programOf, runStatements } from "../../evaluate.ts"
 import { formatRegion } from "../../format.ts"
 import { applyExperiment } from "../../lesson.ts"
@@ -173,8 +173,8 @@ describe("lesson 12's displayed program", () => {
     expect(changed(CHAT, body)).toEqual({
       gone: [
         'import { Context, Effect, Layer, Queue, Stream } from "effect"',
-        'import { Sessions } from "@xandreed/core/kernel"',
-        'import type { SessionId } from "@xandreed/core/kernel"',
+        'import { Sessions } from "@xandreed/core"',
+        'import type { SessionId } from "@xandreed/core"',
         "export class Chat extends Context.Service<Chat, {",
         '  // The conversation this chat shows. "Clear context" gives it a new one.',
         "  readonly session: SessionId",
@@ -249,8 +249,8 @@ const probe = Effect.gen(function* () {
   test("checks.ts: its imports, the list its experiments add to, and the lines that take a type in the module a test compiles", () => {
     expect(CHECKS_IMPORTS.split("\n")).toEqual([
       'import { Effect, Fiber, Option, Queue } from "effect"',
-      'import { ConformanceFailure, kernel, Sessions } from "@xandreed/core/kernel"',
-      'import { inProcessJournal, scriptedModel, sessions, turnsOf } from "@xandreed/sdk/kernel"',
+      'import { ConformanceFailure, kernel, Sessions } from "@xandreed/core"',
+      'import { inProcessJournal, scriptedModel, sessions, turnsOf } from "@xandreed/sdk"',
       'import { program } from "./agent.ts"',
       'import { Chat, chatOn } from "./chat.ts"',
       'import { flatMemory } from "./memory.ts"',

@@ -1,7 +1,7 @@
 # ADR 0006: A sub-agent is a session with a parent
 
 - **Status:** accepted, 13 November 2026
-- **Applies to:** `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and every host that hands a task to an agent of its own
+- **Applies to:** `@xandreed/core`, `@xandreed/sdk` and every host that hands a task to an agent of its own
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

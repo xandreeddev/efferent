@@ -4,7 +4,7 @@
 // its line and does what the page says it does.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect, Option, Stream } from "effect"
-import { assistantMessageEvent, toolResultEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { assistantMessageEvent, toolResultEvent, userMessageEvent } from "@xandreed/core"
 import { makeBrowserModel } from "../../models/make.ts"
 import { echoChoice, loadEcho } from "../../models/mock.ts"
 import type { LoadedModel } from "../../models/types.ts"

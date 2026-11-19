@@ -1,7 +1,7 @@
 # ADR 0005: Context for one request is added after memory's, never stored
 
 - **Status:** accepted, 13 November 2026
-- **Applies to:** `@xandreed/sdk/kernel`'s memory contract and every wrapper of it
+- **Applies to:** `@xandreed/sdk`'s memory contract and every wrapper of it
 - **Supersedes:** in ADR 0001, rule 2 of "Rules for wrappers" ("a memory wrapper appends,
   then delegates") and the proposal "context that lives for a turn", for context of one
   request
@@ -36,7 +36,7 @@ never stored.
   of the conversation, and a memory that understands that record sends it.
 - Its place at the end keeps the cache: the next request starts with this one's context
   up to the conversation's end, and only what was added for this request differs.
-- `memoryWrapperConformance` (`@xandreed/sdk/kernel`) is the rule as checks:
+- `memoryWrapperConformance` (`@xandreed/sdk`) is the rule as checks:
   `starts-with-inner` and `own-records`. The memory kit (`memoryConformance`) keeps
   checking memories: its `prefix` rule is about what a memory returns, so a wrapped
   memory, whose last message changes with each request, answers to the wrapper kit.

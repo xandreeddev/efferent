@@ -5,13 +5,13 @@
 // A turn may call the model several times (a turn with tools is a loop over
 // steps), so its steps are built from what happened, call by call.
 import { Option, Predicate } from "effect"
-import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core/kernel"
-import type { Message, StoredEvent } from "@xandreed/core/kernel"
+import { dataOf, messageOf, SessionId, turnEndedEvent, TurnNumber, turnStartedEvent } from "@xandreed/core"
+import type { Message, StoredEvent } from "@xandreed/core"
 import {
   aliasedEvent, curatedEvent, curationFailedEvent, entityEvent, estimateTokens, FACTS_OWNER, forgottenEvent, KNOWLEDGE_OWNER, knowledgeOf, learnedEvent, memoryEndedEvent,
   memoryEvent, memoryRestatedEvent, resultText, sourceEvent, TASKS_OWNER, turnsOf,
-} from "@xandreed/sdk/kernel"
-import type { ClosedRead, TurnRead } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { ClosedRead, TurnRead } from "@xandreed/sdk"
 import type { Reported, Said, Trace } from "./runtime.ts"
 import { cameFrom, saidOfStored } from "./said.ts"
 

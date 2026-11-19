@@ -2,7 +2,7 @@ import { expect, test } from "bun:test"
 import { readFile } from "node:fs/promises"
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
-import { Journal } from "@xandreed/core/kernel"
+import { Journal } from "@xandreed/core"
 import { missingRecords, REQUIRED, SUMMARY_BUDGET, SUMMARY_PRESSURE, summaryPressure } from "./journal-fixture-coverage.js"
 
 const recorded = await Effect.runPromise(Effect.tryPromise(() => readFile(join(import.meta.dir, "../packages/sdk/fixtures/journal-unreleased.json"), "utf8")).pipe(

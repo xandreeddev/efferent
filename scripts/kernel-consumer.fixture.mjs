@@ -6,9 +6,9 @@ import { tmpdir } from "node:os"
 import { dirname, join } from "node:path"
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, Embedder, embedderConformance, Files, inMemoryMedia, MediaStore, mediaStoreConformance, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
-import { anthropicModel, directoryJournal, directoryMedia, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleEmbedder, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core"
+import { callTool, Embedder, embedderConformance, Files, inMemoryMedia, MediaStore, mediaStoreConformance, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk"
+import { anthropicModel, directoryJournal, directoryMedia, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleEmbedder, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -252,9 +252,9 @@ assert.deepEqual(resumed, { listed: [left], busy: "SessionBusy", closed: 2, turn
  */
 const holderScript = (kind, path) => `
 import { Effect, Layer } from "effect"
-import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
-import { sessions } from "@xandreed/sdk/kernel"
-import { anthropicModel, directoryJournal, isSpendRefusal, openAiCompatibleModel, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { kernel, Sessions, userMessage } from "@xandreed/core"
+import { sessions } from "@xandreed/sdk"
+import { anthropicModel, directoryJournal, isSpendRefusal, openAiCompatibleModel, sqliteJournal } from "@xandreed/sdk/node"
 const store = ${kind === "sqlite" ? "sqliteJournal({ path: " + JSON.stringify(path) + " })" : "directoryJournal({ directory: " + JSON.stringify(path) + " })"}
 const say = (value) => Effect.sync(() => { process.stdout.write(JSON.stringify(value) + "\\n") })
 await Effect.runPromise(Effect.scoped(Effect.gen(function* () {

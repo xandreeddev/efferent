@@ -1,9 +1,9 @@
 # ADR 0030: A kernel host's telemetry is Effect's, exported around its program
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (every kernel span renamed by one rule; `Sessions.turn` is the span
+- **Applies to:** `@xandreed/sdk` (every kernel span renamed by one rule; `Sessions.turn` is the span
   `session.turn`, `callTool` the span `tool.call`; `planned` marks each attempt on the span it runs under; the inbox's
-  worker and a task's turn run as traces of their own; the metric `efferent.tool.calls`), `@xandreed/sdk/kernel/node`
+  worker and a task's turn run as traces of their own; the metric `efferent.tool.calls`), `@xandreed/sdk/node`
   (new: `otlpTelemetry`, `otlpTelemetryOver`, `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver`, `flushTelemetry`,
   `OtlpTelemetryOptions`, `OtlpSpanPolicy`, `OtlpProtocol`, `OtlpCompression`, `OtlpTemporality`;
   `openAiCompatibleModel` takes `provider` and sets the `gen_ai.*` attributes; the charge counts

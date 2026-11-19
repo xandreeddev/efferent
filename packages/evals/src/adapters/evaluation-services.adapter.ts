@@ -1,5 +1,5 @@
 import { Context, Effect, Layer } from "effect"
-import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
+import { ModelSpend, modelSpendMemory } from "@xandreed/core"
 import type { EvaluationApp } from "../contracts/evaluation-app.contract.js"
 import { EvaluationError } from "../domain/identity.entity.js"
 import { EvaluationServices } from "../ports/evaluation-services.port.js"

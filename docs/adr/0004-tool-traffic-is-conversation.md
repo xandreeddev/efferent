@@ -1,7 +1,7 @@
 # ADR 0004: Tool traffic is conversation; tools are code; failures are data; memory keeps calls paired
 
 - **Status:** accepted, 13 November 2026
-- **Applies to:** `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and every memory written for them
+- **Applies to:** `@xandreed/core`, `@xandreed/sdk` and every memory written for them
 - **Builds on:** [ADR 0003](0003-journal-holds-the-conversation.md), whose rules stand: the journal holds the
   conversation and nothing derived from configuration, records carry tags, memory builds the context, the kernel
   has no loop

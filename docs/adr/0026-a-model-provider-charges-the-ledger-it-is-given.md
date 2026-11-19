@@ -1,7 +1,7 @@
 # ADR 0026: A model provider charges the ledger it is given
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel/node` (new: `openAiCompatibleModel`, `OpenAiCompatibleOptions`,
+- **Applies to:** `@xandreed/sdk/node` (new: `openAiCompatibleModel`, `OpenAiCompatibleOptions`,
   `anthropicModel`, `AnthropicOptions`, `ModelPrice`, `SpendOptions`, `Timeouts`, `isSpendRefusal`,
   `spendRefusalOf`)
 - **Amends:** ADR 0020 (a first-party provider now charges the ledger; the eval run's budget caps what it sends),

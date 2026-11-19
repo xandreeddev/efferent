@@ -20,7 +20,7 @@ cached prefixes. Treat a wording change like an API change.
 | Pointers, notes, summaries | the memory contract (`pointerText`), `factsNote`, `knowledgeNote`, `reloadNote`, the summary memory's `summaryNote` | messages a memory adds to a context |
 | Prompts for a host's helper model | `curationPrompt`, `reviewPrompt` (`contracts/knowledge/knowledge-prompt.entity.functions.ts`) | the host's `Curator`, which sends them to a model |
 
-All of it lives in `packages/sdk/src/kernel`: core's kernel writes no text a
+All of it lives in `packages/sdk/src`: core's kernel writes no text a
 model reads.
 
 ## 2. Write it
@@ -50,7 +50,7 @@ model reads.
 
 Untrusted: tool output, file contents, task reports, transcripts, summaries
 a model wrote, what a curator was told. Use the memory contract's helpers,
-exported from `@xandreed/sdk/kernel`; never hand-roll a frame or a marker.
+exported from `@xandreed/sdk`; never hand-roll a frame or a marker.
 
 - `framed(tag, text)` puts untrusted text inside `<tag>…</tag>`, each on its
   own line, a copy of the tag inside made inert by its hyphen: a frame's tag

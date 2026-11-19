@@ -4,8 +4,8 @@
 // answer; each experiment does what the page says.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Context, Effect, Layer, Option } from "effect"
-import { Sessions, toolResultEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
+import { Sessions, toolResultEvent, turnStartedEvent } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
 import type { Lesson, PageParts } from "../../lesson.ts"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"

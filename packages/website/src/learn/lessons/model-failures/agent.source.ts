@@ -12,8 +12,8 @@ import { BASE_AGENT, IMPORTS as BASE_IMPORTS, replaced, typedModule } from "../b
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   ['import { Effect, Stream } from "effect"', 'import { Effect, ExecutionPlan, Schedule, Stream } from "effect"'],
   [
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
-    'import { callTool, inProcessJournal, Memory, modelAnswer, planned, retryable, sessions } from "@xandreed/sdk/kernel"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, planned, retryable, sessions } from "@xandreed/sdk"',
   ],
 ]
 

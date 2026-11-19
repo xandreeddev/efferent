@@ -4,7 +4,7 @@
   an agent knows is a journal of its own, never a store beside it) and changes who writes it: a curator after the
   turn, not the two tools. The facts contract and its plugin stay, unchanged, until the lessons that use them are
   moved
-- **Applies to:** `@xandreed/sdk/kernel` (the facts contract, the `facts` plugin, a host's memory)
+- **Applies to:** `@xandreed/sdk` (the facts contract, the `facts` plugin, a host's memory)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

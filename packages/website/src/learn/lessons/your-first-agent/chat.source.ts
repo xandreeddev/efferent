@@ -4,8 +4,8 @@
 
 /** chat.ts, as the learner reads it. */
 export const CHAT = `import { Context, Effect, Layer, Queue, Stream } from "effect"
-import { Sessions } from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
+import { Sessions } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
 
 // The chat: how messages get into your program and answers get out.
 export class Chat extends Context.Service<Chat, {

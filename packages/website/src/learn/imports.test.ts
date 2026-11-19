@@ -1,6 +1,8 @@
 // The learn track runs on the kernel alone: every `@xandreed/` specifier its
 // code names, the lessons' shown sources included, is one of the two kernel
-// entries. The engine of earlier releases is gone, and no name of it (an
+// entries, `@xandreed/core` and `@xandreed/sdk` (never the Node entry
+// `@xandreed/sdk/node`, nor the `./kernel` subpaths the kernel had before it
+// took the package roots). The engine of earlier releases is gone, and no name of it (an
 // `@xandreed/plugin-*` package, core's old subpaths) is shown to a learner.
 // Lessons 13 and 19 alone also name the eval package (`@xandreed/evals` and
 // its `/stats`), which brings core's kernel with it for its `ModelSpend`
@@ -11,7 +13,7 @@ import { readdirSync, readFileSync } from "node:fs"
 import { join } from "node:path"
 import { fileURLToPath } from "node:url"
 
-const ALLOWED = new Set(["@xandreed/core/kernel", "@xandreed/sdk/kernel"])
+const ALLOWED = new Set(["@xandreed/core", "@xandreed/sdk"])
 
 /** The eval package's two entries, which lessons 13's and 19's files may name beside the kernel's. */
 const EVALS = new Set(["@xandreed/evals", "@xandreed/evals/stats"])
@@ -50,7 +52,7 @@ describe("the learn track's imports", () => {
     expect(evals.some(({ file }) => file.startsWith("learn/lessons/grade-the-grader/"))).toBe(true)
   })
 
-  test("the eval package is allowed in lessons 13's and 19's files alone, and core's root nowhere", () => {
+  test("the eval package is allowed in lessons 13's and 19's files alone, and the Node entry and the old subpaths nowhere", () => {
     expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/evals")).toBe(true)
     expect(allowedIn("learn/lessons/evals/board.ts", "@xandreed/evals/stats")).toBe(true)
     expect(allowedIn("learn/lessons/grade-the-grader/run.ts", "@xandreed/evals")).toBe(true)
@@ -59,12 +61,15 @@ describe("the learn track's imports", () => {
     expect(allowedIn("learn/panes/graders.ts", "@xandreed/evals")).toBe(false)
     expect(allowedIn("learn/lessons/test-your-agent/lesson.ts", "@xandreed/evals")).toBe(false)
     expect(allowedIn("learn/playground.ts", "@xandreed/evals/stats")).toBe(false)
-    expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/core")).toBe(false)
+    expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/core")).toBe(true)
+    expect(allowedIn("learn/lessons/base/program.ts", "@xandreed/sdk/node")).toBe(false)
+    expect(allowedIn("learn/lessons/base/program.ts", "@xandreed/sdk/kernel")).toBe(false)
+    expect(allowedIn("learn/lessons/base/program.ts", "@xandreed/core/kernel")).toBe(false)
     expect(allowedIn("learn/lessons/evals/run.ts", "@xandreed/evals/testing/fixture.testing")).toBe(false)
   })
 
   test("the scan sees an import of another entry, written as code or inside a shown source", () => {
-    expect(specifiersOf('import { Agent } from "@xandreed/sdk"')).toEqual(["@xandreed/sdk"])
+    expect(specifiersOf('import { directoryJournal } from "@xandreed/sdk/node"')).toEqual(["@xandreed/sdk/node"])
     expect(specifiersOf('export const IMPORTS = `import { Memory } from "@xandreed/core"`')).toEqual(["@xandreed/core"])
     expect(specifiersOf("const shown = \"import { x } from \\\"@xandreed/plugin-render\\\"\"")).toEqual(["@xandreed/plugin-render"])
     expect(specifiersOf('await import("@xandreed/core/internal")')).toEqual(["@xandreed/core/internal"])

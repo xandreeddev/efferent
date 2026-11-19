@@ -6,7 +6,7 @@
 // worker is decoded before it is read; a worker that fails says so in words,
 // as `EmbedFailed`.
 import { Context, Effect, Option, Schema } from "effect"
-import { Embedder, EmbedFailed } from "@xandreed/sdk/kernel"
+import { Embedder, EmbedFailed } from "@xandreed/sdk"
 import { EMBEDDER_MODEL, EMBEDDER_REVISION } from "../lessons/recall-by-meaning/model.ts"
 
 /** An embedder as the kernel's port holds it. */

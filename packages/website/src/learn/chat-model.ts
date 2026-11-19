@@ -14,10 +14,10 @@
 // chat draws them from the same records with the kernel's `viewsOf`
 // (views.ts).
 import { Match, Option } from "effect"
-import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import type { StoredEvent, TurnNumber, TurnOutcome } from "@xandreed/core/kernel"
-import { decidedEvent } from "@xandreed/sdk/kernel"
-import type { AttemptData, DecidedData, Decision } from "@xandreed/sdk/kernel"
+import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core"
+import type { StoredEvent, TurnNumber, TurnOutcome } from "@xandreed/core"
+import { decidedEvent } from "@xandreed/sdk"
+import type { AttemptData, DecidedData, Decision } from "@xandreed/sdk"
 import { reportIn } from "./reports.ts"
 import type { Trace } from "./runtime.ts"
 

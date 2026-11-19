@@ -34,7 +34,7 @@ interface Guide {
 
 /**
  * The guides the website mirrors. None while the old engine's guides are gone and the kernel's guide
- * (`docs/kernel.md`, whose quotes `packages/sdk/src/kernel/guide.test.ts` pins) has no page yet.
+ * (`docs/kernel.md`, whose quotes `packages/sdk/src/guide.test.ts` pins) has no page yet.
  */
 const guides: ReadonlyArray<Guide> = []
 

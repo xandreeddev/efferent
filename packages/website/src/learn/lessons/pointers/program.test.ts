@@ -9,8 +9,8 @@ import { fileURLToPath } from "node:url"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
 import type { LanguageModel } from "effect/ai"
-import { CONVERSATION_VOCABULARY, messageOf, readJournal, vocabularyOf } from "@xandreed/core/kernel"
-import { Memory, paired, pointed, promptMessage, ReadResult, readResult, scriptedModel } from "@xandreed/sdk/kernel"
+import { CONVERSATION_VOCABULARY, messageOf, readJournal, vocabularyOf } from "@xandreed/core"
+import { Memory, paired, pointed, promptMessage, ReadResult, readResult, scriptedModel } from "@xandreed/sdk"
 import { evaluateStatements } from "../../evaluate.ts"
 import { BASE_AGENT } from "../base/agent.source.ts"
 import { CHAT } from "../tools/chat.source.ts"
@@ -106,7 +106,7 @@ describe("lesson 8's displayed program", () => {
     const ours = memoryDocumentOf(DEFAULT_MEMORY).split("\n")
     const flat = `${FLAT_INTRO}${FLAT_MEMORY}\n`.split("\n")
     expect(ours.filter((line) => !flat.includes(line))).toEqual([
-      'import { Memory, paired, pointed, promptMessage } from "@xandreed/sdk/kernel"',
+      'import { Memory, paired, pointed, promptMessage } from "@xandreed/sdk"',
       "// A long tool result is sent as its start and a pointer: the journal keeps it whole.",
       "// Over `overTokens` a result is long; `previewTokens` of its start go with the pointer.",
       "// The rule reads only the record, so a result is sent the same way in every prompt.",
@@ -115,7 +115,7 @@ describe("lesson 8's displayed program", () => {
       "        const messages = conversation.flatMap((record) => Option.toArray(sent(record)))",
     ])
     expect(flat.filter((line) => !ours.includes(line))).toEqual([
-      'import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"',
+      'import { Memory, paired, promptMessage } from "@xandreed/sdk"',
       "        const messages = conversation.flatMap((record) => Option.toArray(messageOf(record)))",
     ])
     // The rule is a statement of the file, above the layer: the editable part starts with it.

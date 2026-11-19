@@ -1,6 +1,6 @@
 /*
  * A process over a durable kernel journal, for the tests that kill one
- * (`src/kernel/node/testing.ts`, `holder`). Arguments: the store (`directory`
+ * (`src/node/testing.ts`, `holder`). Arguments: the store (`directory`
  * or `sqlite`), its path, and what to do: `hold` opens the store and waits;
  * `turn` also creates a session, opens a turn in it, stores a user message
  * and waits inside the turn. Its first line of output says what it holds, as
@@ -8,9 +8,9 @@
  * (`{"refused":"<reason>","message":"..."}`). It waits until it is killed.
  */
 import { Effect, Layer } from "effect"
-import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"
-import { sessions } from "../src/kernel/index.js"
-import { directoryJournal, sqliteJournal } from "../src/kernel/node/index.js"
+import { kernel, Sessions, userMessage } from "@xandreed/core"
+import { sessions } from "../src/index.js"
+import { directoryJournal, sqliteJournal } from "../src/node/index.js"
 
 const [kind, path, mode] = process.argv.slice(2)
 if (path === undefined) process.exit(2)

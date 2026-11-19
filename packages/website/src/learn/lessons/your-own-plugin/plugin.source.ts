@@ -5,8 +5,8 @@
 
 /** Read-only: what the plugins import. */
 export const PLUGIN_IMPORTS = `import { Clock, Effect, Layer, Ref } from "effect"
-import { assistantMessageEvent, Core, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { estimateTokens, hostNote, Memory, messageText } from "@xandreed/sdk/kernel"
+import { assistantMessageEvent, Core, turnEndedEvent, turnStartedEvent, userMessage } from "@xandreed/core"
+import { estimateTokens, hostNote, Memory, messageText } from "@xandreed/sdk"
 import { Chat } from "./chat.ts"`
 
 /** Everything before the editable part. */

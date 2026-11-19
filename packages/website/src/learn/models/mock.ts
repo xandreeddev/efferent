@@ -6,7 +6,7 @@ import { Effect, Stream } from "effect"
 import type { Prompt } from "effect/ai"
 import {
   APPROVAL_REFUSED, CANCEL_TASK, catalogue, EDIT_FILE, factsNote, FORGET_FACT, LIST_FILES, LOAD_SKILL, READ_FILE, REMEMBER_FACT, START_TASK, WRITE_FILE,
-} from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
 import type { ChatMessage } from "../prompt-map.ts"
 import { reportIn } from "../reports.ts"
 import { settledParts, streamDelta, streamEnd, streamFinish, streamStart, toChatMessages, usageOf } from "../prompt-map.ts"

@@ -1,14 +1,14 @@
 # ADR 0002: Core owns state and events, plugins own every workflow
 
 - **Status:** accepted, 12 November 2026
-- **Applies to:** `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and every plugin written for them
+- **Applies to:** `@xandreed/core`, `@xandreed/sdk` and every plugin written for them
 - **Supersedes:** nothing. ADR 0001 says how plugins compose; this record says what core holds and what it leaves to them.
 - **Skill:** `kernel-architecture` loads this record and 0001 before an architectural change
 
 ## Context
 
 The first cut of the kernel put every part in a layer, the loop included, but core still
-named a workflow. `@xandreed/core/kernel` held the `Loop` and `Memory` contracts, the
+named a workflow. `@xandreed/core` held the `Loop` and `Memory` contracts, the
 request a model is sent (`ModelRequest`, its estimate, `Tokens`, `StepNumber`), the loop's
 events, and `Settings { system }`, which `kernel(...)` provided beside `Core`. Core so said
 that every agent has a loop, a memory and a system prompt. That is policy: an agent that
@@ -36,7 +36,7 @@ assembles an editor from them. Here the sessions and their journal are the buffe
 **Core never owns** a loop, a memory, a prompt, a system text or a request to a model.
 Those are workflow, and a workflow is a plugin's.
 
-**Workflow contracts live in contract folders** of `@xandreed/sdk/kernel`:
+**Workflow contracts live in contract folders** of `@xandreed/sdk`:
 
 - `contracts/loop` (superseded by ADR 0003: there is no loop contract; the loop is the
   host's program, and the conversation's records are core's): `Loop` (`run(input)`), `TurnInput`, `Reply`, `LoopFailure`, the loop
@@ -89,7 +89,7 @@ the loop contract, beside `LOOP_READER`, not to core: core's reader stays a read
 
 ## Core's API
 
-Core's API is exactly what `@xandreed/core/kernel` exports (`packages/core/src/kernel/index.ts`),
+Core's API is exactly what `@xandreed/core` exports (`packages/core/src/index.ts`),
 which `api/core--kernel.api.txt` lists. A plugin may rely on all of it:
 
 - **Ids:** `SessionId`, `Seq`, `TurnNumber`, `EventName`, `PluginName`, `Owner`, `ToolCallId`.

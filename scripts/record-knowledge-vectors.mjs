@@ -1,5 +1,5 @@
 /**
- * Records the vectors the kernel's recall by meaning tests read (`packages/sdk/src/kernel/knowledge-meaning.test.ts`):
+ * Records the vectors the kernel's recall by meaning tests read (`packages/sdk/src/knowledge-meaning.test.ts`):
  * the memories of a small knowledge and the questions asked of it, embedded by the model the learn track's recall
  * lesson loads. The tests answer from the recording through `recordedEmbedder`, so no test loads a model.
  *

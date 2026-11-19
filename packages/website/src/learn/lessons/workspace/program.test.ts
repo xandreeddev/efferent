@@ -10,8 +10,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { APPROVAL_REFUSED, Approval, Files, inMemoryFiles, scriptedModel } from "@xandreed/sdk/kernel"
-import type { ApprovalRequest, Decision, ModelScript } from "@xandreed/sdk/kernel"
+import { APPROVAL_REFUSED, Approval, Files, inMemoryFiles, scriptedModel } from "@xandreed/sdk"
+import type { ApprovalRequest, Decision, ModelScript } from "@xandreed/sdk"
 import { BASE_AGENT, IMPORTS as BASE_IMPORTS, typedModule } from "../base/agent.source.ts"
 import { formatRegion } from "../../format.ts"
 import { CHAT } from "../tools/chat.source.ts"
@@ -123,8 +123,8 @@ describe("lesson 16's displayed program", () => {
     expect(IMPORTS.split("\n").filter((line) => !BASE_IMPORTS.split("\n").includes(line))).toEqual([
       'import { Effect, Layer, Predicate, Result, Stream } from "effect"',
       'import { LanguageModel, Prompt, Toolkit } from "effect/ai"',
-      'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
-      'import { Approval, approveIn, callTool, fileHandlers, fileTools, inProcessJournal, Memory, modelAnswer, sessions, workspacePath } from "@xandreed/sdk/kernel"',
+      'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"',
+      'import { Approval, approveIn, callTool, fileHandlers, fileTools, inProcessJournal, Memory, modelAnswer, sessions, workspacePath } from "@xandreed/sdk"',
       'import { workspace } from "./workspace.ts"',
     ])
     // `files` and `approvalOn` are named by no import: they are the page's, and main's comment says so.

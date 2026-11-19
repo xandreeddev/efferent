@@ -1,8 +1,8 @@
 # The kernel: a small core, every other part a layer
 
 This is a direction document. It describes the kernel, the way to build an
-agent here, and where it goes next. The entries are `@xandreed/core/kernel` (what every
-agent has, whatever its workflow) and `@xandreed/sdk/kernel` (the workflow
+agent here, and where it goes next. The entries are `@xandreed/core` (what every
+agent has, whatever its workflow) and `@xandreed/sdk` (the workflow
 contracts and the stock plugins). What the journal holds, why records carry
 tags and why the kernel has no loop are recorded in
 [ADR 0003](adr/0003-journal-holds-the-conversation.md); how tool calls and
@@ -18,10 +18,11 @@ host and the `@xandreed/plugin-*` packages) is gone ([ADR
 The kernel starts from the other end: the smallest set of agreements that
 lets the parts of an agent be written, replaced and tested apart. Nothing in
 it imports a runtime module, so it runs in a browser as it is, its Node
-entry aside (`@xandreed/sdk/kernel/node`: the stores on a disk, the model
-providers, a disk workspace and a shell, OTLP export). Until the next
-release moves it, each package's root entry is its kernel's index, beside
-`./kernel`. [What it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
+entry aside (`@xandreed/sdk/node`: the stores on a disk, the model
+providers, a disk workspace and a shell, OTLP export). Core's kernel is
+`@xandreed/core` and the sdk's is `@xandreed/sdk`; a service's key is
+`@xandreed/<package>/<Name>` (`@xandreed/sdk/Memory`, and on the Node entry
+`@xandreed/sdk/node/<Name>`), frozen from 0.23.0, its first release. [What it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
 is listed below.
 
 ## Core, and plugins as layers
@@ -101,14 +102,14 @@ A host's program is its loop. This one runs as long as messages come, one
 turn per message, in order; the lesson that teaches the kernel starts from
 it. One turn, quoted from the test that runs it:
 
-<!-- pinned: packages/sdk/src/kernel/lesson.test.ts#turn -->
+<!-- pinned: packages/sdk/src/lesson.test.ts#turn -->
 
 ```ts
 import { Effect, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { assistantMessage, Sessions, userMessage } from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
-import { Memory } from "@xandreed/sdk/kernel"
+import { assistantMessage, Sessions, userMessage } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
+import { Memory } from "@xandreed/sdk"
 
 // The system text: code, sent first in every prompt, never stored.
 const system = "You are a friendly tutor. Keep answers short."
@@ -164,11 +165,11 @@ const turn = (conversation: SessionId, message: string) =>
 
 The program, and how it is run:
 
-<!-- pinned: packages/sdk/src/kernel/lesson.test.ts#program -->
+<!-- pinned: packages/sdk/src/lesson.test.ts#program -->
 
 ```ts
-import { Core, kernel, Sessions, turnStartedEvent } from "@xandreed/core/kernel"
-import { flatMemory, inProcessJournal, sessions } from "@xandreed/sdk/kernel"
+import { Core, kernel, Sessions, turnStartedEvent } from "@xandreed/core"
+import { flatMemory, inProcessJournal, sessions } from "@xandreed/sdk"
 
 // The program: one conversation, one turn per message, in order.
 const program = Effect.scoped(
@@ -203,7 +204,7 @@ shares the one `Core`. `model` is any layer of Effect AI's `LanguageModel`;
 for a test or an example, `scriptedModel(script)` follows a script and calls
 no provider. A layer the program asks for and is not given is a compile
 error where the program is run: its requirements must be `never` there
-(`packages/sdk/src/kernel/composition.test.ts` writes the type out on a
+(`packages/sdk/src/composition.test.ts` writes the type out on a
 stack, so the error lands on that line).
 
 A session is plain data, an id the host keeps. `sessions.create` decodes
@@ -222,7 +223,7 @@ declared in code like the system text, offered in every call and never
 stored, and the turn calls them through their handlers as it calls the
 model. The tools, quoted from the test that runs them:
 
-<!-- pinned: packages/sdk/src/kernel/tools.test.ts#tools -->
+<!-- pinned: packages/sdk/src/tools.test.ts#tools -->
 
 ```ts
 import { Effect, Schema } from "effect"
@@ -253,14 +254,14 @@ const toolsLive = tools.toLayer({
 
 And the turn:
 
-<!-- pinned: packages/sdk/src/kernel/tools.test.ts#turn -->
+<!-- pinned: packages/sdk/src/tools.test.ts#turn -->
 
 ```ts
 import { Effect } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { Sessions, userMessage } from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer } from "@xandreed/sdk/kernel"
+import { Sessions, userMessage } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
+import { callTool, Memory, modelAnswer } from "@xandreed/sdk"
 
 // One turn: the model answers, or asks for tools; their results are stored, and the model is asked again.
 const turn = (conversation: SessionId, message: string) =>
@@ -392,7 +393,7 @@ The tool asks where it acts, with one line at the start of its handler.
 `action` names the kind of thing, the same every time; `detail` says what
 this call would do, for the person to read:
 
-<!-- pinned: packages/sdk/src/kernel/approvals.test.ts#tool -->
+<!-- pinned: packages/sdk/src/approvals.test.ts#tool -->
 
 ```ts
 // The notes a tool keeps, and a tool that deletes them. Deleting asks first: one line at the start of the handler.
@@ -420,7 +421,7 @@ The host provides `Approval`, whose one function answers a request with a
 decision: `Approved`, `ApprovedAlways`, `Refused`, or `Allowed`, a yes given
 by policy with nobody asked.
 
-<!-- pinned: packages/sdk/src/kernel/approvals.test.ts#host -->
+<!-- pinned: packages/sdk/src/approvals.test.ts#host -->
 
 ```ts
 // Who is asked. A host answers from a button, a prompt or a policy: here, from a list, and with a no once it ends.
@@ -429,7 +430,7 @@ const approval = Layer.succeed(Approval, Approval.of({
 }))
 ```
 
-<!-- pinned: packages/sdk/src/kernel/approvals.test.ts#ask -->
+<!-- pinned: packages/sdk/src/approvals.test.ts#ask -->
 
 ```ts
 const { journal, asked } = await Effect.runPromise(Effect.gen(function* () {
@@ -481,7 +482,7 @@ skill is instructions and tools the model is not sent until it asks (ADR
 `loadSkill`. A host writes its skills as values, and makes one value of them
 with its tools:
 
-<!-- pinned: packages/sdk/src/kernel/skills.test.ts#skills -->
+<!-- pinned: packages/sdk/src/skills.test.ts#skills -->
 
 ```ts
 // A tool the agent always has.
@@ -527,7 +528,7 @@ the same in every request.
 The loop reads what to offer at each step, and gives the same toolkit to the
 model and to `callTool`:
 
-<!-- pinned: packages/sdk/src/kernel/skills.test.ts#loop -->
+<!-- pinned: packages/sdk/src/skills.test.ts#loop -->
 
 ```ts
 const turn = (conversation: SessionId, message: string) => Effect.scoped(Effect.gen(function* () {
@@ -555,7 +556,7 @@ sent whole in every later prompt, among the messages and never in a system
 text that would change. A skill is loaded because that result is in the
 journal:
 
-<!-- pinned: packages/sdk/src/kernel/skills.test.ts#load -->
+<!-- pinned: packages/sdk/src/skills.test.ts#load -->
 
 ```ts
 const { journal, offered, sent } = await Effect.runPromise(run([calls(load("units")), calls(convert), says("3.1 miles.")], ["How far is 5 km in miles?"]))
@@ -613,7 +614,7 @@ Neovim autocmd does. It observes: it stores nothing and says nothing to the
 model, and only a listener registered with `wait: true` holds the turn. This
 one counts what each answer cost and shows it when the turn ends:
 
-<!-- pinned: packages/sdk/src/kernel/own-plugin.test.ts#meter -->
+<!-- pinned: packages/sdk/src/own-plugin.test.ts#meter -->
 
 ```ts
 /**
@@ -653,7 +654,7 @@ needs after it (ADR 0005). What it adds is code's, like the system text:
 never stored, so it is not sent again in later requests, and the cached
 prefix up to the conversation's end still holds.
 
-<!-- pinned: packages/sdk/src/kernel/own-plugin.test.ts#clock -->
+<!-- pinned: packages/sdk/src/own-plugin.test.ts#clock -->
 
 ```ts
 /**
@@ -693,19 +694,19 @@ new for it: the helper's session is created with the caller's as its
 reaches it through a tool. The tool's handler needs a helper, so the helper
 is a contract the host provides:
 
-<!-- pinned: packages/sdk/src/kernel/testing.port.ts#helper-contract -->
+<!-- pinned: packages/sdk/src/testing.port.ts#helper-contract -->
 
 ```ts
 // What the delegate tool needs: a helper that takes a task and answers it, under the turn the call runs in.
 // A contract, so the tool does not know how.
 export class Helper extends Context.Service<Helper, {
   readonly ask: (task: string) => Effect.Effect<{ readonly answer: string; readonly session: string }, string, CurrentTurn>
-}>()("@xandreed/sdk/kernel/testing/Helper") {}
+}>()("@xandreed/sdk/testing/Helper") {}
 ```
 
 The tool, and the helper the host provides:
 
-<!-- pinned: packages/sdk/src/kernel/sub-agent.test.ts#helper -->
+<!-- pinned: packages/sdk/src/sub-agent.test.ts#helper -->
 
 ```ts
 // The tool the parent's model calls. Its result names the helper's session: the stored link from the call to the child.
@@ -772,12 +773,12 @@ keeps out of the context what the tool worked out, not what the model
 wrote: a call's parameters are the model's message and are sent with the
 conversation, so the model asks in a few words and the tool makes the rows:
 
-<!-- pinned: packages/sdk/src/kernel/render.test.ts#show-tool -->
+<!-- pinned: packages/sdk/src/render.test.ts#show-tool -->
 
 ```ts
 import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { CurrentTurn, progressEvent, showView, ViewId } from "@xandreed/sdk/kernel"
+import { CurrentTurn, progressEvent, showView, ViewId } from "@xandreed/sdk"
 
 // A tool that works out a table and shows it. The model asks in a few words; the rows are the tool's own work.
 const Squares = Tool.make("squares", {
@@ -933,7 +934,7 @@ turn asked for it is refused with `SessionBusy`.
 A host follows events by running the stream, which has no replay, so it
 starts reading before the turn it wants to see:
 
-<!-- pinned: packages/sdk/src/kernel/guide.test.ts#follow -->
+<!-- pinned: packages/sdk/src/guide.test.ts#follow -->
 
 ```ts
 const answered = yield* core.events.pipe(
@@ -954,10 +955,10 @@ tags. `live(definition, origin, data)` makes an event for `Core.publish`;
 `stored(definition, data)` a draft for `session.append`. The kind is in the
 type: a live event cannot be appended and a draft cannot be published.
 
-<!-- pinned: packages/sdk/src/kernel/guide.test.ts#own-event -->
+<!-- pinned: packages/sdk/src/guide.test.ts#own-event -->
 
 ```ts
-import { assistantMessageEvent, Core, live, liveEvent, originOf } from "@xandreed/core/kernel"
+import { assistantMessageEvent, Core, live, liveEvent, originOf } from "@xandreed/core"
 
 // An event of the plugin's own, defined in the plugin's folder: its name, what it is for, the schema of its data, live or stored.
 const answerCounted = liveEvent("meter", "answer.counted", { tags: ["trace"], data: Schema.Struct({ answers: Schema.Int, outputTokens: Schema.Int }) })
@@ -1017,7 +1018,7 @@ journal's. A stored fact is `session.append(...)`, which stores it through
 session, a tool or a memory, publishes a live fact about its turn with
 `session.publish(definition, data)`, and needs no `Core` of its own:
 
-<!-- pinned: packages/sdk/src/kernel/plugins/session/sessions.adapter.ts -->
+<!-- pinned: packages/sdk/src/plugins/session/sessions.adapter.ts -->
 
 ```ts
 const append = (open: Turn) => (event: StoredDraft) => Effect.gen(function* () {
@@ -1040,7 +1041,7 @@ close cannot fail, so an end that cannot be stored is a defect of the scope
 under `open`, and the storage failure itself under `turn`; either way the
 turn stays open, as the journal says:
 
-<!-- pinned: packages/sdk/src/kernel/plugins/session/sessions.adapter.ts -->
+<!-- pinned: packages/sdk/src/plugins/session/sessions.adapter.ts -->
 
 ```ts
 open: (id) => Effect.flatMap(
@@ -1060,7 +1061,7 @@ conversation and rebuildable from it, never a copy of it. A budget, when a
 memory has one, is its own option, and covers the history: the system text
 is the program's. The flat memory, quoted from its source:
 
-<!-- pinned: packages/sdk/src/kernel/plugins/memory-flat/flat.adapter.ts -->
+<!-- pinned: packages/sdk/src/plugins/memory-flat/flat.adapter.ts -->
 
 ```ts
 export const flatMemory: Layer.Layer<Memory> = Layer.succeed(
@@ -1085,7 +1086,7 @@ turn alone does not fit, it fails with `OverBudget` (`isOverBudget` tells
 it). The estimate is one pure function, `estimateTokens`, a quarter of the
 characters rounded up:
 
-<!-- pinned: packages/sdk/src/kernel/plugins/memory-window/window.adapter.ts -->
+<!-- pinned: packages/sdk/src/plugins/memory-window/window.adapter.ts -->
 
 ```ts
 export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => {
@@ -1111,11 +1112,11 @@ export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, Invali
 
 A memory written in a few lines:
 
-<!-- pinned: packages/sdk/src/kernel/guide.test.ts#memory-plugin -->
+<!-- pinned: packages/sdk/src/guide.test.ts#memory-plugin -->
 
 ```ts
-import { messageOf, userMessageEvent } from "@xandreed/core/kernel"
-import { Memory, promptMessage } from "@xandreed/sdk/kernel"
+import { messageOf, userMessageEvent } from "@xandreed/core"
+import { Memory, promptMessage } from "@xandreed/sdk"
 
 /** A memory that sends the message the turn answers and nothing before it. */
 const goldfish = Layer.succeed(Memory, Memory.of({
@@ -1145,7 +1146,7 @@ beside the turns that stay is not stored, and the context fails with
 `OverBudget`, so the next one asks again; when even folding every closed
 turn would not fit, it fails so without asking for one.
 
-<!-- pinned: packages/sdk/src/kernel/plugins/memory-summary/summary.adapter.ts -->
+<!-- pinned: packages/sdk/src/plugins/memory-summary/summary.adapter.ts -->
 
 ```ts
 return Memory.of({
@@ -1214,7 +1215,7 @@ says becomes the first `previewTokens` of its text, framed, and one host
 note with the result's length and the call that reads on. A memory that
 points is the flat memory with that one function changed:
 
-<!-- pinned: packages/sdk/src/kernel/pointers.test.ts#memory -->
+<!-- pinned: packages/sdk/src/pointers.test.ts#memory -->
 
 ```ts
 // A flat memory that points: every message of the conversation, a long tool result as its start and a pointer.
@@ -1239,7 +1240,7 @@ with `readResult` as its handler. A host adds both where it lists its tools.
 It reads the journal of the turn it runs in (`CurrentTurn`), a page of at
 most 2,000 characters a call, whatever length is asked:
 
-<!-- pinned: packages/sdk/src/kernel/pointers.test.ts#tools -->
+<!-- pinned: packages/sdk/src/pointers.test.ts#tools -->
 
 ```ts
 // A tool with a long answer, and the kernel's tool that reads on from a pointer, with its handler.
@@ -1248,7 +1249,7 @@ const tools = Toolkit.make(Lookup, ReadResult)
 const toolsLive = tools.toLayer({ lookup: () => Effect.succeed(article), readResult })
 ```
 
-<!-- pinned: packages/sdk/src/kernel/pointers.test.ts#read -->
+<!-- pinned: packages/sdk/src/pointers.test.ts#read -->
 
 ```ts
 const { calls, journal } = await Effect.runPromise(run(story, ["Tell me about tides.", "Thanks."]).pipe(Effect.provide(over(pointingMemory))))
@@ -1308,7 +1309,7 @@ in a session of its own, the memory session (ADR 0014): a fact is a record
 there, and there is no store of facts beside the journal. Two tools of the
 kernel's write it, and a host merges them into its toolkit:
 
-<!-- pinned: packages/sdk/src/kernel/facts.test.ts#tools -->
+<!-- pinned: packages/sdk/src/facts.test.ts#tools -->
 
 ```ts
 // The agent's own tool, and the two that remember: one toolkit, each tool with its own type.
@@ -1322,7 +1323,7 @@ const handlers = Layer.mergeAll(toolsLive, factHandlers)
 A wrapper of `Memory` reads it. For each request it adds the facts that
 stand, last, after the context the memory below returned:
 
-<!-- pinned: packages/sdk/src/kernel/facts.test.ts#memory -->
+<!-- pinned: packages/sdk/src/facts.test.ts#memory -->
 
 ```ts
 // The memory a conversation reads with, wrapped: each request is sent the conversation, then up to five facts.
@@ -1331,7 +1332,7 @@ const memory = withFacts({ limit: 5 })(flatMemory)
 
 So a fact remembered in one conversation is in the prompt of another:
 
-<!-- pinned: packages/sdk/src/kernel/facts.test.ts#remember -->
+<!-- pinned: packages/sdk/src/facts.test.ts#remember -->
 
 ```ts
 const { conversations, memory: held, sent } = await Effect.runPromise(run(
@@ -1451,7 +1452,7 @@ answer, `curate(session, source, options?)`, with the knowledge session
 (`knowledgeSession`, the first whose owner is `KNOWLEDGE_OWNER`, created when
 there is none) and the turn as a source:
 
-<!-- pinned: packages/sdk/src/kernel/knowledge.test.ts#curate -->
+<!-- pinned: packages/sdk/src/knowledge.test.ts#curate -->
 
 ```ts
 /** After a turn is answered: the turn as a source, kept by the kernel's curation step in the knowledge session. */
@@ -1531,7 +1532,7 @@ is deleted. A memory that changed, was wrong or was asked to be forgotten
 is ended by a record that says why and what replaced it, and it stays in
 the list:
 
-<!-- pinned: packages/sdk/src/kernel/knowledge.test.ts#records -->
+<!-- pinned: packages/sdk/src/knowledge.test.ts#records -->
 
 ```ts
 const knowledge = knowledgeOf(journal.events)
@@ -1573,7 +1574,7 @@ A memory wrapper, `withKnowledge(options)`, sends each request what is
 kept about what the conversation names, last, after the context of the
 memory below (ADR 0023). It calls no model and embeds nothing:
 
-<!-- pinned: packages/sdk/src/kernel/knowledge.test.ts#recall -->
+<!-- pinned: packages/sdk/src/knowledge.test.ts#recall -->
 
 ```ts
 // The memory a conversation reads with: every message, then what is kept about what the conversation names. The
@@ -1607,7 +1608,7 @@ const memory = withKnowledge({ limit: 8, walk: 3, speaker: ["i", "me", "my"], st
 The note (`knowledgeNote`) is a line a memory with when it was said, and no
 ids:
 
-<!-- pinned: packages/sdk/src/kernel/knowledge.test.ts#recalled -->
+<!-- pinned: packages/sdk/src/knowledge.test.ts#recalled -->
 
 ```ts
 // A later conversation names Ana Silva: it is sent what is kept about her, each with when it was said, and what
@@ -1645,7 +1646,7 @@ nobody is named, and "bird" is not "parrot" to a comparison of letters.
 ranked by meaning, fused by rank with the other two (ADR 0025). It needs an
 `Embedder` and a `VectorStore` (ADR 0021) beside `Sessions`:
 
-<!-- pinned: packages/sdk/src/kernel/knowledge-meaning.test.ts#meaning-memory -->
+<!-- pinned: packages/sdk/src/knowledge-meaning.test.ts#meaning-memory -->
 
 ```ts
 // The vectors of an embedding model, recorded: a host gives its own embedder (a model in the page, a service) and its
@@ -1675,7 +1676,7 @@ const memory3 = withKnowledgeByMeaning({ limit: 3, walk: 0, ...english })(flatMe
   `withKnowledge`'s. The walk by subject, the note and the places are
   `withKnowledge`'s.
 
-<!-- pinned: packages/sdk/src/kernel/knowledge-meaning.test.ts#bird -->
+<!-- pinned: packages/sdk/src/knowledge-meaning.test.ts#bird -->
 
 ```ts
 const { context, heard } = await askKept("Who keeps a bird?")
@@ -1724,13 +1725,13 @@ contract folder of the sdk (`contracts/inbox`), under a key named after its
 package, and its plugin in `plugins/inbox`. `inbox(turn)` is given the turn
 it runs for each message, and needs what that turn needs.
 
-<!-- pinned: packages/sdk/src/kernel/contracts/inbox/inbox.port.ts -->
+<!-- pinned: packages/sdk/src/contracts/inbox/inbox.port.ts -->
 
 ```ts
 export class Inbox extends Context.Service<Inbox, {
   /** Queue a message for the session. Returns at once, in call order, with its ticket and its reply. */
   readonly enqueue: (session: SessionId, message: string) => Effect.Effect<Queued, InboxRefused>
-}>()("@xandreed/sdk/kernel/Inbox") {}
+}>()("@xandreed/sdk/Inbox") {}
 ```
 
 A program that reads messages from a stream needs no inbox: the stream is
@@ -1814,7 +1815,7 @@ the abandoned turn stored stays in the journal, and a memory sends of it
 what it sends of any turn: a tool call with no result is not sent
 (`paired`).
 
-<!-- pinned: packages/sdk/src/kernel/durable.test.ts#resume -->
+<!-- pinned: packages/sdk/src/durable.test.ts#resume -->
 
 ```ts
 /**
@@ -1844,7 +1845,7 @@ to exist: the parent may be in another store.
 
 ### On Node and Bun: a directory or a SQLite file
 
-`@xandreed/sdk/kernel/node` holds the ports that need a runtime's modules,
+`@xandreed/sdk/node` holds the ports that need a runtime's modules,
 which Node 24 and Bun both provide ([ADR 0024](adr/0024-the-kernel-s-node-ports-live-on-an-entry-of-their-own.md)).
 The browser entry imports none of it. Two stores pass the storage and
 sessions kits there:
@@ -1870,14 +1871,14 @@ asks it to know: every turn the store holds open was a dead writer's.
 and knowledge sessions included, and gives the turns it closed and the
 sessions it could not read:
 
-<!-- pinned: packages/sdk/src/kernel/node/durable.test.ts#durable -->
+<!-- pinned: packages/sdk/src/node/durable.test.ts#durable -->
 
 ```ts
 import { Effect, Layer } from "effect"
-import { kernel, Sessions } from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
-import { recoverTurns, sessions } from "@xandreed/sdk/kernel"
-import { directoryJournal } from "@xandreed/sdk/kernel/node"
+import { kernel, Sessions } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
+import { recoverTurns, sessions } from "@xandreed/sdk"
+import { directoryJournal } from "@xandreed/sdk/node"
 
 /**
  * A host's stack over a directory of files. The store is taken as the layer is
@@ -1919,7 +1920,7 @@ the other's, up to the end of a closed turn, made by the store in one step
 time kept. `Sessions.fork(id, { through })` cuts at the end of turn
 `through`, or of the last closed turn; the branch's next turn follows it:
 
-<!-- pinned: packages/sdk/src/kernel/branches.test.ts#branch -->
+<!-- pinned: packages/sdk/src/branches.test.ts#branch -->
 
 ```ts
 // A conversation of two turns, then a branch cut after the first: asked the second question another way.
@@ -1935,7 +1936,7 @@ const branched = Effect.gen(function* () {
 })
 ```
 
-<!-- pinned: packages/sdk/src/kernel/branches.test.ts#test -->
+<!-- pinned: packages/sdk/src/branches.test.ts#test -->
 
 ```ts
 test("a branch starts as the conversation up to the turn it was cut after, and goes on alone", async () => {
@@ -1979,7 +1980,7 @@ no disk). Four tools reach it,
 `fileHandlers`); a program provides `Files` alone, and one that leaves it
 out does not compile where it calls them:
 
-<!-- pinned: packages/sdk/src/kernel/files.test.ts#stack -->
+<!-- pinned: packages/sdk/src/files.test.ts#stack -->
 
 ```ts
 // What a program with the file tools provides: the model, the tools' handlers, a memory, the sessions over a store,
@@ -1988,7 +1989,7 @@ const stackOf = (model: Layer.Layer<LanguageModel.LanguageModel>, files: Layer.L
   Layer.mergeAll(model, fileHandlers, flatMemory, sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()))).pipe(Layer.provideMerge(files))
 ```
 
-<!-- pinned: packages/sdk/src/kernel/files.test.ts#tools -->
+<!-- pinned: packages/sdk/src/files.test.ts#tools -->
 
 ```ts
 // The workspace this program acts on: in memory, with one file. A test, a page and a command line each give their own.
@@ -2039,7 +2040,7 @@ Permission is the app's, never the tools'. They ask no one; the app wraps
 a layer around the plugin. A `Files` of its own declines by a rule, and the
 model reads why (`FilesRefused`):
 
-<!-- pinned: packages/sdk/src/kernel/files.test.ts#declining -->
+<!-- pinned: packages/sdk/src/files.test.ts#declining -->
 
 ```ts
 // A `Files` of the app's over the one it was given: writes to the `docs` folder are declined, everything else passes.
@@ -2061,14 +2062,14 @@ loop asks before it runs a call that writes, with `approveIn` (ADR 0012),
 keyed by the app (here per file, by the path as the workspace has it, which
 `PATH_LIMIT` keeps short enough for a key):
 
-<!-- pinned: packages/sdk/src/kernel/files.test.ts#path -->
+<!-- pinned: packages/sdk/src/files.test.ts#path -->
 
 ```ts
 /** The path a call of a file tool names, as the app keys its question by it. */
 const pathOf = (params: unknown): string => Predicate.hasProperty(params, "path") && typeof params.path === "string" ? params.path : "?"
 ```
 
-<!-- pinned: packages/sdk/src/kernel/files.test.ts#asking -->
+<!-- pinned: packages/sdk/src/files.test.ts#asking -->
 
 ```ts
 // The app's turn asks before it runs a call that writes: the tools never ask, so the question is the loop's.
@@ -2089,7 +2090,7 @@ const askFirst: BeforeCall<Approval> = (session, call) => {
 And a judge before the person, an `Approval` of the app's over the
 person's: what the judge finds safe is `Allowed`, the rest is asked:
 
-<!-- pinned: packages/sdk/src/kernel/files.test.ts#judge -->
+<!-- pinned: packages/sdk/src/files.test.ts#judge -->
 
 ```ts
 // An `Approval` of the app's over the person's: a judge answers first, and what it is not sure of goes to the person.
@@ -2118,13 +2119,13 @@ The Node entry holds a workspace in a folder of the disk, `diskFiles({ root
 a search over any `Files` ([ADR 0028](adr/0028-the-workspace-s-ports-are-the-app-s-to-plug-in.md)).
 Each is a layer a host plugs in or leaves out:
 
-<!-- pinned: packages/sdk/src/kernel/node/workspace.test.ts#workspace -->
+<!-- pinned: packages/sdk/src/node/workspace.test.ts#workspace -->
 
 ```ts
 import { Layer } from "effect"
 import { Toolkit } from "effect/ai"
-import { fileHandlers, fileTools, filesSearch, searchHandlers, searchTools, shellHandlers, shellTools } from "@xandreed/sdk/kernel"
-import { diskFiles, processShell } from "@xandreed/sdk/kernel/node"
+import { fileHandlers, fileTools, filesSearch, searchHandlers, searchTools, shellHandlers, shellTools } from "@xandreed/sdk"
+import { diskFiles, processShell } from "@xandreed/sdk/node"
 
 /**
  * The tools a host offers and what they run over: the file tools and the search over a folder of the disk, and a shell
@@ -2171,7 +2172,7 @@ const workspace = (folder: string) => Layer.mergeAll(fileHandlers, searchHandler
 
 Permission is the app's here too. A `Shell` of its own declines by a rule:
 
-<!-- pinned: packages/sdk/src/kernel/shell.test.ts#shell-declining -->
+<!-- pinned: packages/sdk/src/shell.test.ts#shell-declining -->
 
 ```ts
 // A `Shell` of the app's over the one it was given: a command that names `rm` is declined, every other passes.
@@ -2187,7 +2188,7 @@ const keepFiles = <E, R>(shell: Layer.Layer<Shell, E, R>) => Layer.effect(Shell,
 
 and the app's loop asks a person before a command runs:
 
-<!-- pinned: packages/sdk/src/kernel/shell.test.ts#shell-asking -->
+<!-- pinned: packages/sdk/src/shell.test.ts#shell-asking -->
 
 ```ts
 // The app's turn asks before it runs a command: the tool never asks, and a `Shell` cannot, since an answer is
@@ -2238,7 +2239,7 @@ program, which answers it in a turn of the conversation's own, between the
 person's messages. The work is the host's, a `TaskRun`: a turn of a helper
 on its own model, as lesson 4's sub-agent is:
 
-<!-- pinned: packages/sdk/src/kernel/tasks.test.ts#helper -->
+<!-- pinned: packages/sdk/src/tasks.test.ts#helper -->
 
 ```ts
 // The helper's work: a turn of its own in the task's session, on a model of its own. Its answer is the report's text.
@@ -2257,7 +2258,7 @@ its report goes to `TaskReports`, which the host provides: into the one
 queue its loop takes the person's messages from, so the loop runs one turn
 for each, in the order they came:
 
-<!-- pinned: packages/sdk/src/kernel/tasks.test.ts#program -->
+<!-- pinned: packages/sdk/src/tasks.test.ts#program -->
 
 ```ts
 // What comes into the conversation: a message the person sent, or a task's report. One queue holds both, in the
@@ -2315,7 +2316,7 @@ swaps those two layers and nothing else: the model for one that follows a
 script (`scriptedModel`), the store for a journal kept in the process. The
 program is the one the host ships. Here it is one tool and one turn:
 
-<!-- pinned: packages/sdk/src/kernel/host-test.test.ts#program -->
+<!-- pinned: packages/sdk/src/host-test.test.ts#program -->
 
 ```ts
 // The host's program: one tool, and one turn. It asks for its model, its memory and its sessions by contract.
@@ -2352,7 +2353,7 @@ answer of the model with its calls and their results, the answer, how the
 turn closed, and every record stored in it. Each part names the place of its
 record (`seq`), so a check that fails can say which record it read:
 
-<!-- pinned: packages/sdk/src/kernel/host-test.test.ts#test -->
+<!-- pinned: packages/sdk/src/host-test.test.ts#test -->
 
 ```ts
 // The same program over a model that follows a script and a journal kept in the process: what it did, as turns.
@@ -2404,7 +2405,7 @@ model, with Effect's `ExecutionPlan` (ADR 0015). Each step of a plan
 provides a model and says how often to try it, when, and while what holds;
 `retryable` says which failures are worth another try:
 
-<!-- pinned: packages/sdk/src/kernel/model-plans.test.ts#plan -->
+<!-- pinned: packages/sdk/src/model-plans.test.ts#plan -->
 
 ```ts
 // The plan: try the preferred model up to three times while its failure is worth another try, a second apart;
@@ -2420,7 +2421,7 @@ The loop asks for its answer under the plan, through the kernel's
 `planned`, before `modelAnswer` reads it. The program then needs no model
 of its own: the plan's steps provide it.
 
-<!-- pinned: packages/sdk/src/kernel/model-plans.test.ts#loop -->
+<!-- pinned: packages/sdk/src/model-plans.test.ts#loop -->
 
 ```ts
 // The loop asks for its answer under the plan: the model it reads is whichever the plan's step provides.
@@ -2446,7 +2447,7 @@ const answer = (plan: Plan, conversation: SessionId, message: string) =>
 A test runs it over scripted models that fail as their script says, and
 reads each attempt as it is said about the turn:
 
-<!-- pinned: packages/sdk/src/kernel/model-plans.test.ts#test -->
+<!-- pinned: packages/sdk/src/model-plans.test.ts#test -->
 
 ```ts
 test("a model that fails once with a failure worth another try is tried again, and its answer is the turn's", async () => {
@@ -2513,13 +2514,13 @@ the request left and nothing came back. A model with no price, a call with
 no output cap and a call over the ledger's cap are refused before anything is
 sent; `isSpendRefusal` tells the cap's refusal from every other failure:
 
-<!-- pinned: packages/sdk/src/kernel/node/models.test.ts#gateway -->
+<!-- pinned: packages/sdk/src/node/models.test.ts#gateway -->
 
 ```ts
 import { Config, Effect, Layer } from "effect"
 import { LanguageModel } from "effect/ai"
-import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
-import { isSpendRefusal, openAiCompatibleModel } from "@xandreed/sdk/kernel/node"
+import { ModelSpend, modelSpendMemory } from "@xandreed/core"
+import { isSpendRefusal, openAiCompatibleModel } from "@xandreed/sdk/node"
 
 const DEEPSEEK = "deepseek/deepseek-v4.1-flash-1017"
 
@@ -2574,13 +2575,13 @@ reads `query: ` and `passage: `), and makes every vector unit length. Its
 `model`, the name its vectors are kept under, carries the model, the
 dimensions and the prefixes, so two configurations never share vectors:
 
-<!-- pinned: packages/sdk/src/kernel/node/embedders.test.ts#embedder -->
+<!-- pinned: packages/sdk/src/node/embedders.test.ts#embedder -->
 
 ```ts
 import { Config, Effect, Layer } from "effect"
-import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
-import { cosine, Embedder } from "@xandreed/sdk/kernel"
-import { isSpendRefusal, openAiCompatibleEmbedder } from "@xandreed/sdk/kernel/node"
+import { ModelSpend, modelSpendMemory } from "@xandreed/core"
+import { cosine, Embedder } from "@xandreed/sdk"
+import { isSpendRefusal, openAiCompatibleEmbedder } from "@xandreed/sdk/node"
 
 const GEMINI = "google/gemini-embedding-001"
 
@@ -2642,7 +2643,7 @@ plugin reaches. `otlpTelemetryFromEnv` reads the standard `OTEL_*` variables;
 `otlpTelemetry` takes the same options in code; each has an `…Over` form that
 posts through the host's `HttpClient`:
 
-<!-- pinned: packages/sdk/src/kernel/node/telemetry.test.ts#telemetry -->
+<!-- pinned: packages/sdk/src/node/telemetry.test.ts#telemetry -->
 
 ```ts
 /**
@@ -2674,16 +2675,16 @@ memory or the store, the rest as it was. The kernel's tests run a turn of
 their own over the stock journal, session and memory layers, and a memory of
 their own that announces an event of its own on a compression check, which
 another plugin reacts to, with nothing under core changed
-(`packages/sdk/src/kernel/plugins.test.ts`). Core needs no workflow at all: a
+(`packages/sdk/src/plugins.test.ts`). Core needs no workflow at all: a
 stack of the kernel, the journal, the session plugin and one plugin that
 opens a turn and appends its own records runs and stores the turn, with no
-memory or model in it (`packages/sdk/src/kernel/no-loop.test.ts`).
+memory or model in it (`packages/sdk/src/no-loop.test.ts`).
 
 There is no API for replacing a part while an agent runs. A host that keeps
 sessions going across the change builds the base once and swaps the stack
 above it, as this test does:
 
-<!-- pinned: packages/sdk/src/kernel/swap.test.ts#swap -->
+<!-- pinned: packages/sdk/src/swap.test.ts#swap -->
 
 ```ts
 const scope = yield* Effect.scope
@@ -2751,7 +2752,7 @@ session plugin and three memories. A host's turn runs tools itself, through Effe
    `viewsOf`.)
 2. **Stores that several processes write**, with claims that expire.
    (Stores on a disk and in a database have returned, with one writer each:
-   `directoryJournal` and `sqliteJournal` on `@xandreed/sdk/kernel/node`, and
+   `directoryJournal` and `sqliteJournal` on `@xandreed/sdk/node`, and
    `recoverTurns`. So have a store that outlives its process and the close
    of a turn its writer left open, `webStorageJournal` and
    `Sessions.recover`; a summary of old turns, `summaryMemory`; and results

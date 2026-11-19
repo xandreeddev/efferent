@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Deferred, Effect, Fiber, Layer, Option, Ref, Schema } from "effect"
-import { ModelSpend } from "@xandreed/core/kernel"
-import type { SpendCaps } from "@xandreed/core/kernel"
+import { ModelSpend } from "@xandreed/core"
+import type { SpendCaps } from "@xandreed/core"
 import {
   EvalId,
   EvaluationError,

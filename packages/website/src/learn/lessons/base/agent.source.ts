@@ -102,12 +102,12 @@ export const KERNEL_FUNCTIONS: ReadonlyArray<readonly [string, string]> = [
 export const KERNEL_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   ['import { Effect, Option, Stream } from "effect"', 'import { Effect, Stream } from "effect"'],
   [
-    'import { assistantMessage, Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
-    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
+    'import { assistantMessage, Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"',
+    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"',
   ],
   [
-    'import { inProcessJournal, Memory, sessions } from "@xandreed/sdk/kernel"',
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
+    'import { inProcessJournal, Memory, sessions } from "@xandreed/sdk"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
   ],
 ]
 

@@ -11,7 +11,7 @@
 import { INTRO } from "../remember/memory.source.ts"
 
 /** Read-only: where each name the memory uses comes from. */
-export const MEMORY_IMPORTS = `import { flatMemory, withKnowledge } from "@xandreed/sdk/kernel"`
+export const MEMORY_IMPORTS = `import { flatMemory, withKnowledge } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const MEMORY_HEADER = `${MEMORY_IMPORTS}\n\n`

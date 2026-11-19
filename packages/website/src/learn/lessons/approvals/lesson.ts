@@ -4,8 +4,8 @@
 // in the chat, and the answer is a record of the turn.
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { Approval, approve, approveIn, autoApprove, callTool, CurrentTurn, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
+import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"
+import { Approval, approve, approveIn, autoApprove, callTool, CurrentTurn, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

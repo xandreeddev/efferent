@@ -7,7 +7,7 @@
 /** Read-only: what the tools import. */
 export const TOOLS_IMPORTS = `import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { CurrentTurn, progressEvent, showView, ViewData, ViewId } from "@xandreed/sdk/kernel"`
+import { CurrentTurn, progressEvent, showView, ViewData, ViewId } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const TOOLS_HEADER = `${TOOLS_IMPORTS}\n\n`

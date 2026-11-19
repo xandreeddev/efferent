@@ -149,7 +149,7 @@ test("a citation names one test that holds an exact expectation, in its body or 
 })
 
 test("deleting the assertion a row cites fails its citation, though the suite keeps many others", async () => {
-  const file = "packages/sdk/src/kernel/contracts/knowledge/knowledge-recall.entity.functions.test.ts"
+  const file = "packages/sdk/src/contracts/knowledge/knowledge-recall.entity.functions.test.ts"
   const text = await readFile(join(root, file), "utf8")
   const cited = "knowledgeNote: the note says the memories were kept and are data"
   expect(citationProblem(suiteBlocks(text), cited)).toBeUndefined()

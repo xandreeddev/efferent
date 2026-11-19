@@ -15,8 +15,8 @@
 import { replaced } from "../base/agent.source.ts"
 import { DEFAULT_MEMORY as FLAT_MEMORY, MEMORY_IMPORTS as FLAT_IMPORTS, MEMORY_INTRO as FLAT_INTRO } from "../tools/memory.source.ts"
 
-const FLAT_KERNEL = 'import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"'
-const OUR_KERNEL = 'import { Memory, paired, pointed, promptMessage } from "@xandreed/sdk/kernel"'
+const FLAT_KERNEL = 'import { Memory, paired, promptMessage } from "@xandreed/sdk"'
+const OUR_KERNEL = 'import { Memory, paired, pointed, promptMessage } from "@xandreed/sdk"'
 
 /** What this lesson replaces in lesson 2's imports, as `[from, to]`: `pointed` joins them. */
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [[FLAT_KERNEL, OUR_KERNEL]]

@@ -9,7 +9,7 @@ import { mkdtemp, readFile, writeFile } from "node:fs/promises"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Option, Schema, Layer } from "effect"
-import { ModelSpend } from "@xandreed/core/kernel"
+import { ModelSpend } from "@xandreed/core"
 import {
   defineEvaluationApp,
   defineRunnable,
@@ -182,7 +182,7 @@ const declaration = source.slice(
 )
 await writeFile(
   config,
-  `import { Effect, Layer, Option, Schema } from 'effect'; import { ModelSpend } from '@xandreed/core/kernel'; import { runnableExecutionPort, evaluationEnvironmentPort, TrialRecorder, EvidenceProjector, GraderAssessment, defineEvaluationApp, defineRunnable, EvalId, EvaluationError, gradingContext, unknownEvaluationUsage } from '@xandreed/evals';\n${declaration}\nexport default app;\n`
+  `import { Effect, Layer, Option, Schema } from 'effect'; import { ModelSpend } from '@xandreed/core'; import { runnableExecutionPort, evaluationEnvironmentPort, TrialRecorder, EvidenceProjector, GraderAssessment, defineEvaluationApp, defineRunnable, EvalId, EvaluationError, gradingContext, unknownEvaluationUsage } from '@xandreed/evals';\n${declaration}\nexport default app;\n`
 )
 const output = () => undefined
 const code = await Effect.runPromise(

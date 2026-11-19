@@ -3,7 +3,7 @@ import { copyFile, mkdir, mkdtemp, readFile, rm, symlink, writeFile } from "node
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Schema } from "effect"
-import { JOURNAL_FORMAT, Journal } from "@xandreed/core/kernel"
+import { JOURNAL_FORMAT, Journal } from "@xandreed/core"
 
 const root = join(import.meta.dir, "..")
 const released = "authentic release fixture must stay untouched\n"

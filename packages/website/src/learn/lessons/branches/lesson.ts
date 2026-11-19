@@ -8,9 +8,9 @@ import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import {
   CONVERSATION_VOCABULARY, Core, currentFormat, messageOf, readJournal, SessionId, Sessions, turnStartedEvent, TurnNumber, userMessage, vocabularyOf,
-} from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
-import type { KeyValueStore } from "@xandreed/sdk/kernel"
+} from "@xandreed/core"
+import { callTool, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk"
+import type { KeyValueStore } from "@xandreed/sdk"
 import { named, programOf, run, runStatements, textOf } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

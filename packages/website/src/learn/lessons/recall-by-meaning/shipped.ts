@@ -11,8 +11,8 @@
 // This codec and the data, vectors.ts, are imported only when Load the world
 // is pressed (ship.ts): no page carries them before.
 import { Result, Schema } from "effect"
-import { meaningKey } from "@xandreed/sdk/kernel"
-import type { VectorEntry } from "@xandreed/sdk/kernel"
+import { meaningKey } from "@xandreed/sdk"
+import type { VectorEntry } from "@xandreed/sdk"
 
 import { EMBEDDER_MODEL, EMBEDDER_REVISION } from "./model.ts"
 

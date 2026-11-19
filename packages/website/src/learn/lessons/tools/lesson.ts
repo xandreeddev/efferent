@@ -4,8 +4,8 @@
 // sent while it works between steps.
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"
+import { assistantMessage, Core, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"
+import { Memory, paired, promptMessage } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

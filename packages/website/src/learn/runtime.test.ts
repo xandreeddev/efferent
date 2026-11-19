@@ -7,7 +7,7 @@
 // handed, and a kit that runs alone.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Effect, Option, Result } from "effect"
-import { turnEndedEvent } from "@xandreed/core/kernel"
+import { turnEndedEvent } from "@xandreed/core"
 import { loadEcho } from "./models/mock.ts"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"

@@ -23,9 +23,9 @@ const INTRO = `// How the page runs your evals. evals.ts says what is measured: 
 /** What runnable.ts imports: the page gives the names its value imports list. */
 export const RUNNABLE_IMPORTS = `import { Effect, Fiber, Layer, Option, Queue, Schema } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { kernel, Sessions } from "@xandreed/core/kernel"
-import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk/kernel"
-import type { TurnRead } from "@xandreed/sdk/kernel"
+import { kernel, Sessions } from "@xandreed/core"
+import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk"
+import type { TurnRead } from "@xandreed/sdk"
 import {
   compareDecisionTrials,
   decisionTrialOf,

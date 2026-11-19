@@ -14,8 +14,8 @@
  * the code under the imports.
  */
 export const MEMORY_IMPORTS = `import { Effect, Layer } from "effect"
-import { Sessions } from "@xandreed/core/kernel"
-import { factsNote, flatMemory, Memory, questionOf, relevant, rememberedFacts, withFacts } from "@xandreed/sdk/kernel"`
+import { Sessions } from "@xandreed/core"
+import { factsNote, flatMemory, Memory, questionOf, relevant, rememberedFacts, withFacts } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const MEMORY_HEADER = `${MEMORY_IMPORTS}\n\n`

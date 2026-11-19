@@ -1,7 +1,7 @@
 # ADR 0012: A tool asks through a contract the host provides; the answer is a record
 
 - **Status:** accepted, 15 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the approval contract, `callTool`, the `autoApprove` wrapper)
+- **Applies to:** `@xandreed/sdk` (the approval contract, `callTool`, the `autoApprove` wrapper)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -45,7 +45,7 @@ way, and one of them asks nobody.
 - **It fails closed.** An answer that is no `Decision` (untyped code can answer anything)
   approves nothing, and nothing is stored, since nobody decided. A host that dies while it is
   asked approves nothing. Untyped code that provides no `Approval` at all runs, and the call
-  fails with "Service not found: @xandreed/sdk/kernel/Approval" as its result: the tool does
+  fails with "Service not found: @xandreed/sdk/Approval" as its result: the tool does
   not act.
 - **A long detail is cut, not refused.** The detail is built from what the model sent, so its
   length is not the tool's to promise: over 2,000 characters it keeps its start and says how

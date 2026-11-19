@@ -12,8 +12,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Clock, Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { curationPrompt, knowledgeOf, reviewPrompt, scriptedModel, shownFor } from "@xandreed/sdk/kernel"
-import type { ModelScript } from "@xandreed/sdk/kernel"
+import { curationPrompt, knowledgeOf, reviewPrompt, scriptedModel, shownFor } from "@xandreed/sdk"
+import type { ModelScript } from "@xandreed/sdk"
 import { applyExperiment } from "../../lesson.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
@@ -252,7 +252,7 @@ describe("lesson 18's displayed program", () => {
     expect(common.split(/\s+/)).toEqual(
       "a an and are as at be by do does for from has have how i in is it its me my of on or that the their they this to was what when where which who whose will with you your did s".split(" "),
     )
-    expect(MEMORY_IMPORTS).toBe('import { flatMemory, withKnowledge } from "@xandreed/sdk/kernel"')
+    expect(MEMORY_IMPORTS).toBe('import { flatMemory, withKnowledge } from "@xandreed/sdk"')
     expect(memoryDocumentOf(DEFAULT_MEMORY)).toBe(`${MEMORY_IMPORTS}\n\n${DEFAULT_MEMORY}\n`)
     // The files the page shows are these texts, and chat.ts is lesson 1's.
     expect([STARTERS.memory, STARTERS.curator, STARTERS.tools, STARTERS.agent]).toEqual([DEFAULT_MEMORY, DEFAULT_CURATOR, DEFAULT_TOOLS, DEFAULT_AGENT])
@@ -262,8 +262,8 @@ describe("lesson 18's displayed program", () => {
     expect(CURATOR_IMPORTS.split("\n")).toEqual([
       'import { Clock, Effect, Layer, Option, Stream } from "effect"',
       'import { LanguageModel } from "effect/ai"',
-      'import { Sessions } from "@xandreed/core/kernel"',
-      'import { curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf } from "@xandreed/sdk/kernel"',
+      'import { Sessions } from "@xandreed/core"',
+      'import { curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf } from "@xandreed/sdk"',
       'import { Chat } from "./chat.ts"',
     ])
     expect(DEFAULT_CURATOR.startsWith(REVIEW_LINE)).toBe(true)

@@ -8,8 +8,8 @@
 // second Echo, as `spare`.
 import { Effect, ExecutionPlan, Layer, Option, Predicate, Result, Schedule, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer, paired, planned, promptMessage, retryable } from "@xandreed/sdk/kernel"
+import { CONVERSATION_VOCABULARY, Core, messageOf, vocabularyOf, readJournal, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"
+import { callTool, Memory, modelAnswer, paired, planned, promptMessage, retryable } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, MadeFailure, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

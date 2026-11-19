@@ -9,8 +9,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { Approval, APPROVAL_REFUSED, scriptedModel } from "@xandreed/sdk/kernel"
-import type { ApprovalRequest, Decision, ModelScript } from "@xandreed/sdk/kernel"
+import { Approval, APPROVAL_REFUSED, scriptedModel } from "@xandreed/sdk"
+import type { ApprovalRequest, Decision, ModelScript } from "@xandreed/sdk"
 import { BASE_AGENT, IMPORTS as BASE_IMPORTS } from "../base/agent.source.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_MEMORY, memoryModuleOf } from "../tools/memory.source.ts"
@@ -114,7 +114,7 @@ describe("lesson 9's displayed program", () => {
     const ours = toolsDocumentOf(DEFAULT_TOOLS).split("\n")
     const first = `${FIRST_IMPORTS}\n\n${FIRST_TOOLS}\n`.split("\n")
     expect(ours.filter((line) => !first.includes(line))).toEqual([
-      'import { Approval, approve, CurrentTurn } from "@xandreed/sdk/kernel"',
+      'import { Approval, approve, CurrentTurn } from "@xandreed/sdk"',
       "// forget deletes every note. That should not happen on a model's word alone, so it asks first.",
       'const forget = Tool.make("forget", {',
       '  description: "Delete every note saved with remember.",',
@@ -143,8 +143,8 @@ describe("lesson 9's displayed program", () => {
     expect(DEFAULT_AGENT).toContain("yield* callTool(toolkit, call, session)")
     // Its imports beside the base's: the three names two experiments use.
     expect(IMPORTS.split("\n").filter((line) => !BASE_IMPORTS.split("\n").includes(line))).toEqual([
-      'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
-      'import { approveIn, autoApprove, callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
+      'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"',
+      'import { approveIn, autoApprove, callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
     ])
     // `approvalOn` is named by no import: it is the page's, as `pane` and `model` are, and main's comment says so.
     expect(IMPORTS).not.toContain("approvalOn")

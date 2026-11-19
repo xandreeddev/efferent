@@ -4,8 +4,8 @@
 // runtime reads the headers and each branch's turn from the store, and the
 // page draws what this gives.
 import { Option, Result } from "effect"
-import { currentFormat } from "@xandreed/core/kernel"
-import type { SessionHeader, SessionId } from "@xandreed/core/kernel"
+import { currentFormat } from "@xandreed/core"
+import type { SessionHeader, SessionId } from "@xandreed/core"
 
 /** Who the page's chats belong to: the owner lesson 7's `resume` keeps, and the one `Clear context` creates under. */
 export const CHAT_OWNER = "learner"

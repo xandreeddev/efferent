@@ -4,8 +4,8 @@
 // and starts every later context with it.
 import { Effect, Layer, Option, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { callTool, framed, Memory, messageText, modelAnswer, Summarizer, SummaryFailed, summaryMemory } from "@xandreed/sdk/kernel"
+import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"
+import { callTool, framed, Memory, messageText, modelAnswer, Summarizer, SummaryFailed, summaryMemory } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

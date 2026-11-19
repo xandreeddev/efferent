@@ -25,10 +25,10 @@ npm install effect @xandreed/core @xandreed/sdk
 packages share one copy of each.
 Workspace packages share version `0.22.0`.
 
-In this source the kernel is imported from `@xandreed/core/kernel`,
-`@xandreed/sdk/kernel` and, for the ports that need Node or Bun (durable
+In this source the kernel is imported from `@xandreed/core`,
+`@xandreed/sdk` and, for the ports that need Node or Bun (durable
 journals, model providers, a disk workspace and a shell, OTLP export),
-`@xandreed/sdk/kernel/node`; the next release moves it to the package roots.
+`@xandreed/sdk/node`; the next release moves it to the package roots.
 
 ## Learn more
 

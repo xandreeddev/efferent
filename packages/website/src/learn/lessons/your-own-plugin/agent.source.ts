@@ -33,8 +33,8 @@ const PLUGIN_LINES = `  Effect.provide(meter), // your event plugin: it counts w
 /** What this lesson replaces in the base's imports, as `[from, to]`: no `Core` or `turnStartedEvent`, and plugin.ts. */
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   [
-    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
-    'import { kernel, Sessions, userMessage } from "@xandreed/core/kernel"',
+    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"',
+    'import { kernel, Sessions, userMessage } from "@xandreed/core"',
   ],
   [
     'import { flatMemory } from "./memory.ts"',

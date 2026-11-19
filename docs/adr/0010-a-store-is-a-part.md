@@ -1,7 +1,7 @@
 # ADR 0010: A store is a part; a turn left open is closed by the host that knows its writer is gone
 
 - **Status:** accepted, 14 November 2026
-- **Applies to:** `@xandreed/core/kernel` (`JournalStorage`, `Sessions`), `@xandreed/sdk/kernel` (the session plugin, the stores)
+- **Applies to:** `@xandreed/core` (`JournalStorage`, `Sessions`), `@xandreed/sdk` (the session plugin, the stores)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -75,7 +75,7 @@ four questions the in-process store never had to answer:
 *Amended 15 November 2026 (ADR 0016).* The contract has a fifth call, `fork`: a branch, a new session whose
 journal starts as another's up to a place, copied as stored in one step. The storage kit checks it (`fork`).
 
-*Amended 18 November 2026 (ADR 0024).* The durable stores of `@xandreed/sdk/kernel/node` enforce one writer per
+*Amended 18 November 2026 (ADR 0024).* The durable stores of `@xandreed/sdk/node` enforce one writer per
 store, a process, taking the store as their layer is built and refusing a second live process (`JournalOpenFailed`,
 `Held`). A host that has built one knows that every turn the store holds open was a dead writer's, and closes them all
 with `recoverTurns`, which calls `recover` on every session it reads. The host still calls it: the kernel never does.

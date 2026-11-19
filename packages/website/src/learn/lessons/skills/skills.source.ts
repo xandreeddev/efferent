@@ -9,7 +9,7 @@
 /** Read-only: what the skills import. `tools` is tools.ts's toolkit: the tools the agent always has. */
 export const SKILLS_IMPORTS = `import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { defineSkill, skills } from "@xandreed/sdk/kernel"
+import { defineSkill, skills } from "@xandreed/sdk"
 import { tools } from "./tools.ts"`
 
 /** Everything before the editable part. */

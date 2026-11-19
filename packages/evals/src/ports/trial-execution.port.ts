@@ -3,7 +3,7 @@ import type { Effect, Schema, Scope } from "effect"
 import type { Candidate } from "../domain/candidate.entity.js"
 import type { Outcome } from "../domain/outcome.entity.js"
 import type { EvaluationError } from "../domain/identity.entity.js"
-import type { ModelSpend } from "@xandreed/core/kernel"
+import type { ModelSpend } from "@xandreed/core"
 import type { TrialRecorder } from "./trial-recorder.port.js"
 
 /**

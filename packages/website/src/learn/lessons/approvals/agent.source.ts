@@ -14,12 +14,12 @@ import { BASE_AGENT, IMPORTS as BASE_IMPORTS, replaced, typedModule } from "../b
  */
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   [
-    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
-    'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
+    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"',
+    'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"',
   ],
   [
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
-    'import { approveIn, autoApprove, callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
+    'import { approveIn, autoApprove, callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
   ],
 ]
 
@@ -58,5 +58,5 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
  */
 export const moduleOf = (agent: string): string =>
   typedModule(IMPORTS, agent)
-    .replace('import type { Layer } from "effect"', 'import type { Layer } from "effect"\nimport type { Approval } from "@xandreed/sdk/kernel"')
+    .replace('import type { Layer } from "effect"', 'import type { Layer } from "effect"\nimport type { Approval } from "@xandreed/sdk"')
     .replace("export const run = (pane: ChatPane,", "export const run = (approvalOn: (pane: ChatPane) => Layer.Layer<Approval>, pane: ChatPane,")

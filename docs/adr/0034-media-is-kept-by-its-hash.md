@@ -1,9 +1,9 @@
 # ADR 0034: Media is kept by its hash
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (new: `MediaStore`, `MediaHash`, `MediaRefused`, `MediaRefusedBecause`,
+- **Applies to:** `@xandreed/sdk` (new: `MediaStore`, `MediaHash`, `MediaRefused`, `MediaRefusedBecause`,
   `MediaUnavailable`, `MediaDamaged`, `MEDIA_LIMIT`, `mediaHashOf`, `checkedBytes`, `mediaStoreConformance`,
-  `MediaStoreSubject`, `inMemoryMedia`, `InMemoryMediaOptions`), `@xandreed/sdk/kernel/node` (new: `directoryMedia`,
+  `MediaStoreSubject`, `inMemoryMedia`, `InMemoryMediaOptions`), `@xandreed/sdk/node` (new: `directoryMedia`,
   `DirectoryMediaOptions`)
 - **Amends:** ADR 0028 (the media it left "in its own cut": the store comes first, alone)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
@@ -18,7 +18,7 @@ this cut gives the kernel the store, and only the store.
 
 ## Decision
 
-### The contract (`contracts/media`, key `@xandreed/sdk/kernel/MediaStore`)
+### The contract (`contracts/media`, key `@xandreed/sdk/MediaStore`)
 
 - **`put(bytes)` gives the bytes' key, `get(hash)` gives them back.** The key is their SHA-256 in lowercase hexadecimal
   (`MediaHash`, 64 digits), so the same bytes have the same key in every store and a key names content, granting

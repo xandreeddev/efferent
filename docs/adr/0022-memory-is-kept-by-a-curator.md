@@ -1,7 +1,7 @@
 # ADR 0022: Memory is kept by a curator, after the turn
 
 - **Status:** accepted, 18 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the knowledge contract: its records, folds, prompts and checks, the
+- **Applies to:** `@xandreed/sdk` (the knowledge contract: its records, folds, prompts and checks, the
   `Curator` contract and its kit `curatorConformance`)
 - **Supersedes:** ADR 0019 (what an agent knows as links the model writes with a tool). Its code stays until the
   lessons that use it are moved

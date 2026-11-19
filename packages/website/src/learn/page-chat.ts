@@ -5,8 +5,8 @@
 // page's, built once, so they outlive every rebuild of the program.
 import { Context } from "effect"
 import type { Effect, Stream } from "effect"
-import type { SessionId } from "@xandreed/core/kernel"
-import type { TaskReport } from "@xandreed/sdk/kernel"
+import type { SessionId } from "@xandreed/core"
+import type { TaskReport } from "@xandreed/sdk"
 
 /**
  * What waits in the chat's one queue: a message the person sent, or a task's report (lesson 17, ADR 0018), in the

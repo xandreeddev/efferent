@@ -203,7 +203,7 @@ execution and measurement behavior, not model quality or provider compatibility.
 
 A run can cap what its trials spend on models: `--budget-usd <amount>` on
 `efferent-eval run` and `calibrate`, `spendBudget` in an `EvaluationSelection`.
-The run opens one `ModelSpend` ledger (`@xandreed/core/kernel`) and gives
+The run opens one `ModelSpend` ledger (`@xandreed/core`) and gives
 each trial its own account in it, which a runnable reads from its context.
 Whatever sends a model call reserves the call's worst case in it before the
 call goes out, and settles the hold at what the call cost, or releases it.

@@ -21,7 +21,7 @@ see a file by its suffix, so the suffix decides which rules apply.
   entity's rule (`packages/evals/src/usecases/`). Both export functions,
   under the other bans of a functions file. A use case's input and output
   types are entities, in a `.entity.ts`.
-- Example pair: `sdk/src/kernel/contracts/shell/shell.entity.ts` (`Ran`,
+- Example pair: `sdk/src/contracts/shell/shell.entity.ts` (`Ran`,
   `RunEnded`, `ShellRefused`) and `shell.entity.functions.ts`
   (`commandRunOf`).
 - Never write an `interface X` beside `const X = Schema.…`: derive the type

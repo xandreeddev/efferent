@@ -9,8 +9,8 @@
 /** Read-only: what the loop imports. */
 export const LOOP_IMPORTS = `import { Effect } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { userMessage } from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer } from "@xandreed/sdk/kernel"`
+import { userMessage } from "@xandreed/core"
+import { callTool, Memory, modelAnswer } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const LOOP_HEADER = `${LOOP_IMPORTS}\n\n`
@@ -70,8 +70,8 @@ export const loopDocumentOf = (loop: string): string => `${LOOP_HEADER}${loop}\n
 /** The same file as a module a test can compile: what the page leaves untyped is typed. */
 export const loopModuleOf = (loop: string): string => `${LOOP_IMPORTS}
 import type { Tool, Toolkit } from "effect/ai"
-import type { OpenSession } from "@xandreed/core/kernel"
-import type { OwnTools } from "@xandreed/sdk/kernel"
+import type { OpenSession } from "@xandreed/core"
+import type { OwnTools } from "@xandreed/sdk"
 
 /** Where an agent's words, status and steers go: the chat's for the chat, quiet ones for a helper. */
 export interface Hooks {

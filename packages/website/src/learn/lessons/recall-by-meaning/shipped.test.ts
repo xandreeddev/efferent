@@ -4,7 +4,7 @@
 // is no base64, and a vector of the wrong length are refused in words.
 import { describe, expect, test } from "bun:test"
 import { Result } from "effect"
-import { meaningKey } from "@xandreed/sdk/kernel"
+import { meaningKey } from "@xandreed/sdk"
 import { decodeVector, EMBEDDER_MODEL, EMBEDDER_REVISION, encodeVector, shippedEntries, shippedFileOf } from "./shipped.ts"
 import { shippedFile } from "./testing.ts"
 

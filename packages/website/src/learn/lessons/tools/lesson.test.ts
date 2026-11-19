@@ -3,7 +3,7 @@
 // a slow turn, and every experiment and control finding its line.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
+import { toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"

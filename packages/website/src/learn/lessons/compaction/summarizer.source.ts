@@ -6,7 +6,7 @@
 /** Read-only: where each name the summarizer uses comes from. */
 export const SUMMARIZER_IMPORTS = `import { Effect, Layer, Option, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { framed, messageText, Summarizer, SummaryFailed } from "@xandreed/sdk/kernel"`
+import { framed, messageText, Summarizer, SummaryFailed } from "@xandreed/sdk"`
 
 /** Read-only: the comment and the declaration before the editable layer. */
 export const SUMMARIZER_INTRO = `${SUMMARIZER_IMPORTS}

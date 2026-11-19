@@ -8,8 +8,8 @@
 // from the report stored in the chat's journal, a message whose `from` is the
 // task's session. A cancel is `cancelTask`'s stored result.
 import { Option, Predicate } from "effect"
-import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import { CANCEL_TASK, START_TASK } from "@xandreed/sdk/kernel"
+import { assistantMessageEvent, dataOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core"
+import { CANCEL_TASK, START_TASK } from "@xandreed/sdk"
 import type { Trace } from "./runtime.ts"
 
 /**

@@ -7,8 +7,8 @@
 
 /** Read-only: what the program imports. */
 export const IMPORTS = `import { Effect, Layer, Stream } from "effect"
-import { kernel, Sessions } from "@xandreed/core/kernel"
-import { inProcessJournal, sessions } from "@xandreed/sdk/kernel"
+import { kernel, Sessions } from "@xandreed/core"
+import { inProcessJournal, sessions } from "@xandreed/sdk"
 import { Chat, chatOn } from "./chat.ts"
 import { runAgent } from "./loop.ts"
 import { flatMemory } from "./memory.ts"
@@ -104,7 +104,7 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
  */
 export const moduleOf = (agent: string): string => `${IMPORTS.replace('import { Chat, chatOn } from "./chat.ts"', 'import { Chat, chatOn } from "./chat.ts"\nimport type { ChatPane } from "./chat.ts"')}
 import { LanguageModel } from "effect/ai"
-import { Memory } from "@xandreed/sdk/kernel"
+import { Memory } from "@xandreed/sdk"
 
 export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>): Effect.Effect<unknown, unknown> => {
 ${agent

@@ -3,18 +3,18 @@ import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { existsSync } from "node:fs"
 import { mkdir, mkdtemp, readFile, rm, writeFile } from "node:fs/promises"
 import { join, relative } from "node:path"
-import { JOURNAL_FORMAT, Journal, JournalStorage, kernel, SessionId, Sessions, TurnNumber, userMessage } from "@xandreed/core/kernel"
+import { JOURNAL_FORMAT, Journal, JournalStorage, kernel, SessionId, Sessions, TurnNumber, userMessage } from "@xandreed/core"
 import {
   Approval, approve, callTool, curate, Curator, CurrentTurn, factHandlers, factTools, knowledgeSession, Memory, modelAnswer, scriptedModel, sessions,
   Summarizer, summaryMemory, turnSource, turnsOf, withFacts,
-} from "@xandreed/sdk/kernel"
-import type { ModelScript } from "@xandreed/sdk/kernel"
-import { directoryJournal } from "@xandreed/sdk/kernel/node"
+} from "@xandreed/sdk"
+import type { ModelScript } from "@xandreed/sdk"
+import { directoryJournal } from "@xandreed/sdk/node"
 import { missingRecords, SUMMARY_BUDGET, SUMMARY_PRESSURE, summaryPressure } from "./journal-fixture-coverage.js"
 
 /*
  * Records the journals a kernel host stores, for the journal compatibility
- * test (`packages/sdk/src/kernel/node/journal-compat.test.ts`): historical
+ * test (`packages/sdk/src/node/journal-compat.test.ts`): historical
  * evidence of what this release stored, which later releases of the same
  * journal format (`JOURNAL_FORMAT`) replay and others refuse unchanged. The
  * recording is deterministic: a scripted model, curator and summarizer, a

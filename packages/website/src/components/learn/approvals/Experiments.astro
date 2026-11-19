@@ -7,7 +7,7 @@ const experiments = [
   },
   {
     id: "no-approval", title: "Nobody to ask", button: "Give main no approval",
-    text: "main no longer provides an approval. The page runs your file as JavaScript, so the build passes. Press Clear context, then the two Remember chips and Forget my notes. The call fails when the tool runs, where it would ask: forget failed: \"Service not found: @xandreed/sdk/kernel/Approval\". A service is a part the program asks for by its contract, such as Approval; main must provide it. Nothing is deleted: What are my notes? still lists both. TypeScript refuses this program before it runs. forget declares Approval, so the program that calls it needs one, and the compiler says so: \"Type 'Approval' is not assignable to type 'never'\".",
+    text: "main no longer provides an approval. The page runs your file as JavaScript, so the build passes. Press Clear context, then the two Remember chips and Forget my notes. The call fails when the tool runs, where it would ask: forget failed: \"Service not found: @xandreed/sdk/Approval\". A service is a part the program asks for by its contract, such as Approval; main must provide it. Nothing is deleted: What are my notes? still lists both. TypeScript refuses this program before it runs. forget declares Approval, so the program that calls it needs one, and the compiler says so: \"Type 'Approval' is not assignable to type 'never'\".",
   },
   {
     id: "ask-in-loop", title: "Ask in the loop", button: "Ask before every call",

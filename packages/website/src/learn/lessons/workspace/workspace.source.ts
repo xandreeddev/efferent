@@ -6,7 +6,7 @@
 
 /** Read-only: what the file imports. The starter uses none of the four: the experiments that wrap the files do. */
 export const WORKSPACE_IMPORTS = `import { Effect, Layer } from "effect"
-import { Files, FilesRefused } from "@xandreed/sdk/kernel"`
+import { Files, FilesRefused } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const WORKSPACE_HEADER = `${WORKSPACE_IMPORTS}\n\n`

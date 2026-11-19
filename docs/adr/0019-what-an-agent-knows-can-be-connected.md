@@ -5,7 +5,7 @@
   graph contract and its plugin stay in the kernel, unchanged, until the lessons that use them are moved
 - **Superseded:** removed on 19 November 2026 by the knowledge module, ADRs 0022 and 0023; this record is kept as
   history
-- **Applies to:** `@xandreed/sdk/kernel` (the graph contract, the `graph` plugin, a host's memory)
+- **Applies to:** `@xandreed/sdk` (the graph contract, the `graph` plugin, a host's memory)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

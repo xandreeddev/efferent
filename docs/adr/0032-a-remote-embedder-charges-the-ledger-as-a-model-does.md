@@ -1,7 +1,7 @@
 # ADR 0032: A remote embedder charges the ledger as a model does
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel/node` (new: `openAiCompatibleEmbedder`, `OpenAiCompatibleEmbedderOptions`,
+- **Applies to:** `@xandreed/sdk/node` (new: `openAiCompatibleEmbedder`, `OpenAiCompatibleEmbedderOptions`,
   `EmbedPrefixes`, `EMBEDDER_NAME_LIMIT`; `spendRefusalOf` and `isSpendRefusal` also read an `EmbedFailed`)
 - **Amends:** ADR 0026 (the charge holds a call with an output bound of 0; a refusal also rides in an `EmbedFailed`'s
   `cause`), ADR 0021 (what `EmbedAs` means on a model that reads no prefix of its own), ADR 0030 (the charge's

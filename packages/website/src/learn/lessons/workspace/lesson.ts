@@ -7,10 +7,10 @@
 // 2's, shown read-only: the page runs their starter text.
 import { Effect, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { CONVERSATION_VOCABULARY, Core, messageOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage, vocabularyOf } from "@xandreed/core/kernel"
+import { CONVERSATION_VOCABULARY, Core, messageOf, readJournal, Sessions, toolResult, turnStartedEvent, userMessage, vocabularyOf } from "@xandreed/core"
 import {
   Approval, approveIn, callTool, fileHandlers, Files, FilesRefused, fileTools, Memory, modelAnswer, paired, promptMessage, workspacePath,
-} from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
 import { named, programOf, run, runStatements, textOf } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

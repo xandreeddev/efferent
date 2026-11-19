@@ -9,8 +9,8 @@ import { BASE_AGENT, IMPORTS as BASE_IMPORTS, replaced, typedModule } from "../b
 /** What this lesson replaces in the base's imports, as `[from, to]`: store.ts for the in-process journal. */
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   [
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
-    'import { callTool, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
+    'import { callTool, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
   ],
   ['import { flatMemory } from "./memory.ts"', 'import { flatMemory } from "./memory.ts"\nimport { store } from "./store.ts"'],
 ]
@@ -41,5 +41,5 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
  */
 export const moduleOf = (agent: string): string =>
   typedModule(IMPORTS, agent)
-    .replace('import type { Layer } from "effect"', 'import type { Layer } from "effect"\nimport type { KeyValueStore } from "@xandreed/sdk/kernel"')
+    .replace('import type { Layer } from "effect"', 'import type { Layer } from "effect"\nimport type { KeyValueStore } from "@xandreed/sdk"')
     .replace("export const run = (pane: ChatPane,", "export const run = (localStorage: KeyValueStore, pane: ChatPane,")

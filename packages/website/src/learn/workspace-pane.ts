@@ -10,10 +10,10 @@
 // `panes/files.ts` draws what this gives.
 import { Cause, Effect, Exit, Option, Result } from "effect"
 import type { Context } from "effect"
-import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
-import type { KernelEvent } from "@xandreed/core/kernel"
-import { APPROVAL_REFUSED, EDIT_FILE, WRITE_FILE, workspacePath, writtenEvent } from "@xandreed/sdk/kernel"
-import type { Files, FilePath } from "@xandreed/sdk/kernel"
+import { dataOf, turnEndedEvent } from "@xandreed/core"
+import type { KernelEvent } from "@xandreed/core"
+import { APPROVAL_REFUSED, EDIT_FILE, WRITE_FILE, workspacePath, writtenEvent } from "@xandreed/sdk"
+import type { Files, FilePath } from "@xandreed/sdk"
 import { textOf } from "./evaluate.ts"
 import type { Trace } from "./runtime.ts"
 

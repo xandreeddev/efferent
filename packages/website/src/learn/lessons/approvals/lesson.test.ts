@@ -6,9 +6,9 @@
 // `runtime.decide`, as the chat's buttons answer them.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Option } from "effect"
-import { dataOf, toolResultEvent, turnEndedEvent } from "@xandreed/core/kernel"
-import { APPROVAL_REFUSED, decidedEvent, grantsOf } from "@xandreed/sdk/kernel"
-import type { Decision } from "@xandreed/sdk/kernel"
+import { dataOf, toolResultEvent, turnEndedEvent } from "@xandreed/core"
+import { APPROVAL_REFUSED, decidedEvent, grantsOf } from "@xandreed/sdk"
+import type { Decision } from "@xandreed/sdk"
 import { chatRowsOf, emptyChat, hear, questionsWaiting, sent } from "../../chat-model.ts"
 import type { ChatBoard, ChatRow } from "../../chat-model.ts"
 import { loadEcho } from "../../models/mock.ts"
@@ -415,8 +415,8 @@ describe("lesson 9 on the page (the kernel, Echo)", () => {
     expect(result).toEqual({ _tag: "Built" })
     await say(...NOTES, "Forget my notes.", "What are my notes?")
     expect(questions()).toEqual([])
-    expect(replies().slice(-2)).toEqual(['The tool answered: forget failed: "Service not found: @xandreed/sdk/kernel/Approval".', BOTH])
-    expect(rows()[10]).toBe('tool: forget({}) failed: "Service not found: @xandreed/sdk/kernel/Approval"')
+    expect(replies().slice(-2)).toEqual(['The tool answered: forget failed: "Service not found: @xandreed/sdk/Approval".', BOTH])
+    expect(rows()[10]).toBe('tool: forget({}) failed: "Service not found: @xandreed/sdk/Approval"')
     // Nobody was asked and nobody decided: the turn holds the call and its failed result, and goes on.
     expect(await decisions()).toEqual([])
     expect((await names()).slice(12, 18)).toEqual([

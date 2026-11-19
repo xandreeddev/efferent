@@ -1,7 +1,7 @@
 import { expect, test } from "bun:test"
 import { Option } from "effect"
-import { SpendHoldId } from "@xandreed/core/kernel"
-import type { SpendRequest } from "@xandreed/core/kernel"
+import { SpendHoldId } from "@xandreed/core"
+import type { SpendRequest } from "@xandreed/core"
 import { budgetStopOf, cappedAtBudget, held, refusalOf, refused, released, reserving, runSpendOf, settled, trialSpendOf, unmetered } from "./spend.entity.functions.js"
 
 const first = SpendHoldId.make("first")

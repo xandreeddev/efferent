@@ -6,7 +6,7 @@
 
 /** Read-only: where each name branch.ts uses comes from. */
 export const BRANCH_IMPORTS = `import { Effect } from "effect"
-import { Sessions, TurnNumber } from "@xandreed/core/kernel"`
+import { Sessions, TurnNumber } from "@xandreed/core"`
 
 /** The call branch.ts makes, as it starts: a cut at the end of the turn the page names. */
 export const FORK_AT_TURN = `    // A turn's number is a TurnNumber: a whole number from 1, which make checks.
@@ -40,4 +40,4 @@ export const TYPED: ReadonlyArray<readonly [string, string]> = [
  * parameters typed, the conversation's id and the turn's number the page gives.
  */
 export const branchModuleOf = (branch: string): string =>
-  `${BRANCH_IMPORTS}\nimport type { SessionId } from "@xandreed/core/kernel"\n\n${TYPED.reduce((text, [from, to]) => text.replace(from, to), branch)}\n`
+  `${BRANCH_IMPORTS}\nimport type { SessionId } from "@xandreed/core"\n\n${TYPED.reduce((text, [from, to]) => text.replace(from, to), branch)}\n`

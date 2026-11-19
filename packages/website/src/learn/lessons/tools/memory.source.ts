@@ -4,8 +4,8 @@
 
 /** Read-only: where each name the memory uses comes from. */
 export const MEMORY_IMPORTS = `import { Effect, Layer, Option } from "effect"
-import { CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal } from "@xandreed/core/kernel"
-import { Memory, paired, promptMessage } from "@xandreed/sdk/kernel"`
+import { CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal } from "@xandreed/core"
+import { Memory, paired, promptMessage } from "@xandreed/sdk"`
 
 /** Read-only: the comment and the declaration before the editable layer. */
 export const MEMORY_INTRO = `${MEMORY_IMPORTS}

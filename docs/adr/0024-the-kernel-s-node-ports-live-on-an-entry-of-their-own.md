@@ -5,6 +5,8 @@
   `@xandreed/sdk/kernel` (`recoverTurns`, `RecoveredTurn`)
 - **Amends:** ADR 0010 (one writer per store is enforced by the durable stores, not only assumed; the host's
   recovery is one call over the whole store)
+- **Amended:** 19 November 2026 by ADR 0036: the kernel moved to the package roots, so this entry is
+  `@xandreed/sdk/node` and the browser entry `@xandreed/sdk`, as decided below
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

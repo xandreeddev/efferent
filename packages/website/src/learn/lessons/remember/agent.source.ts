@@ -12,8 +12,8 @@ import { BASE_AGENT, IMPORTS as BASE_IMPORTS, replaced, typedModule } from "../b
 /** What this lesson replaces in the base's imports, as `[from, to]`: the kernel's handlers join them, and memory.ts gives `memory`. */
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   [
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
-    'import { callTool, factHandlers, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
+    'import { callTool, factHandlers, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
   ],
   ['import { flatMemory } from "./memory.ts"', 'import { memory } from "./memory.ts"'],
 ]

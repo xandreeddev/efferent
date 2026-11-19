@@ -6,8 +6,8 @@
 // the row of sessions, built from each session's header.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
-import { toolResult, userMessage } from "@xandreed/core/kernel"
-import { estimateTokens } from "@xandreed/sdk/kernel"
+import { toolResult, userMessage } from "@xandreed/core"
+import { estimateTokens } from "@xandreed/sdk"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
 import { withReminder, writeLastN } from "./lessons/your-first-agent/config-edit.ts"

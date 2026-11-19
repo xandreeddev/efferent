@@ -5,10 +5,9 @@
   "private": true,
   "type": "module",
   "description": "The agent kernel: the journal, sessions, events and the model spend ledger, with their conformance kits — pure Effect, no IO, no provider SDKs.",
-  "main": "./src/kernel/index.ts",
+  "main": "./src/index.ts",
   "exports": {
-    ".": "./src/kernel/index.ts",
-    "./kernel": "./src/kernel/index.ts"
+    ".": "./src/index.ts"
   },
   "dependencies": {
     "effect": "4.0.7"

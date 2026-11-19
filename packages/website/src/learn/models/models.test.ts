@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { kernel, Seq, SessionId, Sessions, toolResult, TurnNumber } from "@xandreed/core/kernel"
+import { kernel, Seq, SessionId, Sessions, toolResult, TurnNumber } from "@xandreed/core"
 import {
   APPROVAL_REFUSED, catalogue, curate, curationPrompt, Curator, defineSkill, FactId, factsNote, FactText, inProcessJournal, knowledgeNote, knowledgeOf, knowledgeSession, pointed,
   promptMessage, reportText, reviewPrompt, sessions, TaskId,
-} from "@xandreed/sdk/kernel"
-import type { CurationOutcome, Knowledge } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { CurationOutcome, Knowledge } from "@xandreed/sdk"
 import { answerFromNote, CURATION_HEAD, MEMORY_RELATIONS, memoriesIn, namesIn } from "./echo-curation.ts"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"
@@ -976,7 +976,7 @@ describe("Echo's rules for a tool that asks (lesson 9)", () => {
 
   test("any other result of forget is answered as the tool's: what it deleted, another failure, or the refusal's words in a result that did not fail", () => {
     expect(echoStep(forgot("Deleted 2 notes."), every)).toEqual({ text: 'The tool answered: forget says "Deleted 2 notes.".', calls: [] })
-    expect(echoStep(forgot("Service not found: @xandreed/sdk/kernel/Approval", true), every)).toEqual({ text: 'The tool answered: forget failed: "Service not found: @xandreed/sdk/kernel/Approval".', calls: [] })
+    expect(echoStep(forgot("Service not found: @xandreed/sdk/Approval", true), every)).toEqual({ text: 'The tool answered: forget failed: "Service not found: @xandreed/sdk/Approval".', calls: [] })
     // The refusal's words with one more: not the kernel's constant, so not read as a refusal.
     expect(echoStep(forgot(`${APPROVAL_REFUSED} Sorry.`, true), every).text).toBe(`The tool answered: forget failed: ${JSON.stringify(`${APPROVAL_REFUSED} Sorry.`)}.`)
     expect(echoStep(forgot(APPROVAL_REFUSED), every).text).toBe(`The tool answered: forget says ${JSON.stringify(APPROVAL_REFUSED)}.`)

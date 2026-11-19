@@ -7,8 +7,8 @@
 // conversation: the store, and the memory session in it, stay.
 import { Effect, Layer, Predicate, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { callTool, factHandlers, factsNote, factTools, flatMemory, Memory, modelAnswer, questionOf, relevant, rememberedFacts, withFacts } from "@xandreed/sdk/kernel"
+import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"
+import { callTool, factHandlers, factsNote, factTools, flatMemory, Memory, modelAnswer, questionOf, relevant, rememberedFacts, withFacts } from "@xandreed/sdk"
 import { named, programOf, runStatements } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"
