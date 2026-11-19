@@ -51,7 +51,7 @@ checklist, the records have the reasons.
 ## Choose the place
 
 - [ ] Every agent has it, whatever its workflow: core (`packages/core/src/kernel`). Rare:
-      it changes `api/core--kernel.api.txt`, and a name removed or changed there needs a
+      it changes `api/core.api.txt` (core's kernel API while the root names the kernel), and a name removed or changed there needs a
       CHANGELOG line saying what a plugin must change.
 - [ ] Anything else: a contract in `packages/sdk/src/kernel/contracts/<name>/` (entities,
       events, pure rules, kit), its stock plugin in `plugins/<name>/`.

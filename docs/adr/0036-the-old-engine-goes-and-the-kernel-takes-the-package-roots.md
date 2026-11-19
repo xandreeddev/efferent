@@ -62,7 +62,10 @@ Each of `@xandreed/core` and `@xandreed/sdk` needs a root entry: the boundaries 
 among the published ones. With the old roots gone, `.` names the kernel's index now, beside `./kernel` (and the sdk's
 `./kernel/node`), so this change moves no file and renames no specifier. The next change makes each kernel folder its
 package's `src`, renames every `@xandreed/sdk/kernel` specifier to `@xandreed/sdk` (and `./kernel/node` to `./node`) and
-drops `./kernel`. Service keys are public and never renamed: `Memory` stays `@xandreed/core/kernel/Memory`.
+drops `./kernel`. Service keys are public and never renamed: `Memory` stays `@xandreed/core/kernel/Memory`. Since
+`./kernel` names the same module as `.`, the API snapshot lists each kernel once, under the root: core's kernel API is
+`api/core.api.txt` (ADR 0002's rule now reads that file) and the sdk's `api/sdk.api.txt`; the Node entry keeps
+`api/sdk--kernel--node.api.txt`.
 
 While the roots are the kernel's index, the gates read them there:
 

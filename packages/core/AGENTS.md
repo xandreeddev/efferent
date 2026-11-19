@@ -42,7 +42,7 @@ kernel's rules:
   Core stores nothing and runs no turn. `Core` is `publish`, `on` and
   `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
   vocabulary, pure rules, the two contracts and their kits.
-- Core's API is a product. `api/core.api.txt` and `api/core--kernel.api.txt` list it, and
+- Core's API is a product. `api/core.api.txt` lists it (`./kernel` names the same module, so it has no file of its own), and
   `verify:packages` fails when it differs from the build (`bun run
   api:update` rewrites it). A change that removes or changes a name there
   comes with a CHANGELOG line saying what a plugin must change. There is no
