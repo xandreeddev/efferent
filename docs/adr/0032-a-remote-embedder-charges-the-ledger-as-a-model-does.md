@@ -6,7 +6,7 @@
 - **Amends:** ADR 0026 (the charge holds a call with an output bound of 0; a refusal also rides in an `EmbedFailed`'s
   `cause`), ADR 0021 (what `EmbedAs` means on a model that reads no prefix of its own), ADR 0030 (the charge's
   metrics carry `gen_ai.operation.name`; the span `openai_compatible_embedder.embed`), ADR 0025 (`withKnowledgeByMeaning`
-  keeps the last message's vector while the message is the same, and warns once per reason its embedder fails)
+  keeps the last message's vector for the steps of its turn, and warns once per reason its embedder fails)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -94,8 +94,9 @@ output, so its call is charged with an **output bound of 0**, and an embedding m
 ### Under recall by meaning
 
 `withKnowledgeByMeaning` (ADR 0025) builds a context before every request, so a turn of several steps would embed its
-last message at each. Its layer now keeps the last message's vector while the message is the same (the model is the
-layer's), so one turn embeds it once and the next turn its own; the passages it lacks are embedded 32 a call, each
+last message at each. Its layer now keeps the last message's vector for the turn it was asked in, while the message is
+the same (the model is the layer's), so one turn embeds it once and the next turn its own, the same words included (a
+lesson's program shows a request embedding its message, and a vector kept across turns would hide that for little); the passages it lacks are embedded 32 a call, each
 call's vectors put as it returns, so a call that fails leaves those before it stored and the next request embeds only
 what is still missing. The wrapper's 32 is under the embedder's default `batch` of 64, so each of its calls is one
 request: a smaller `batch` would split a call into requests that fail together.
