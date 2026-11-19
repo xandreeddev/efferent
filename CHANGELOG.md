@@ -10,6 +10,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/kernel`: a kernel host sees its turns, model calls and tool
+  calls without writing a span (ADR 0030). `Sessions.turn` is the span
+  `kernel.turn` (the session, the turn's number, how it ended), `callTool` is
+  `kernel.tool.call` (the tool, the call's id, whether its result is a
+  failure), and a model call keeps Effect AI's own `LanguageModel.streamText`
+  span; `planned` marks each attempt on the span it runs under
+  (`kernel.model.attempt`). `modelAnswer` counts `kernel.model.calls` by model
+  and outcome and `kernel.model.tokens` by kind, `callTool` counts
+  `kernel.tool.calls` by tool and outcome; no metric names a session or a turn.
+- `@xandreed/sdk/kernel/node`: `openAiCompatibleModel` gives each call's span
+  the `gen_ai.*` attributes the Anthropic provider sets (the provider, the
+  model asked and the one that answered, the output cap, why it stopped, the
+  usage with the cache's shares), its new `provider` option naming
+  `gen_ai.provider.name` (`openai` by default). The spend charge counts
+  `kernel.model.cost`, what the ledger settled each call at, and nothing for a
+  call whose cost is not known. `otlpTelemetry`, `otlpTelemetryOver`,
+  `otlpTelemetryFromEnv`, `otlpTelemetryFromEnvOver` and `flushTelemetry`
+  export the program's traces and metrics over OTLP/HTTP, from options or the
+  standard `OTEL_*` variables, with a span policy (`OtlpSpanPolicy`) that drops
+  spans and redacts attributes: the telemetry plugin's export, moved. What was
+  said (a prompt, an answer, a tool call's parameters) is left out unless the
+  host passes `content: true`, which also writes each model call's prompt and
+  answer on its span. LangSmith takes the same export at its OTLP endpoint;
+  the plugin's LangSmith mapping is not ported.
+
 - Docs site: lesson 18 of the learn track, now "A memory that keeps itself",
   keeps its memory with a curator. Its program offers no tool that remembers
   (tools.ts is the calculator alone); after each turn's answer agent.ts runs

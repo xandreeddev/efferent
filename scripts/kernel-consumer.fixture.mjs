@@ -8,7 +8,7 @@ import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
 import { callTool, Embedder, embedderConformance, Files, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
-import { anthropicModel, directoryJournal, diskFiles, isSpendRefusal, openAiCompatibleModel, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { anthropicModel, directoryJournal, diskFiles, flushTelemetry, isSpendRefusal, openAiCompatibleModel, otlpTelemetry, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -364,6 +364,62 @@ assert.deepEqual(providers, {
 })
 assert.deepEqual(served, ["/v1/chat/completions", "/v1/messages"])
 
+/**
+ * One host turn with a tool call, exported over OTLP/HTTP to a local collector (`otlpTelemetry`, the Node entry's):
+ * the turn's span with the tool call's under it, no tool's parameters while content is off, and the turn's metrics.
+ */
+const posts = []
+const collectorServer = createServer((request, response) => {
+  let body = ""
+  request.on("data", (chunk) => { body += chunk })
+  request.on("end", () => {
+    posts.push({ path: request.url, body })
+    response.writeHead(200, { "content-type": "application/json" })
+    response.end("{}")
+  })
+})
+await new Promise((resolve) => collectorServer.listen(0, "127.0.0.1", resolve))
+const exportedTurn = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+  const { model } = yield* scriptedModel([
+    { _tag: "Calls", pieces: [], calls: [{ name: "add", params: { a: 2, b: 3 } }] },
+    { _tag: "Answers", pieces: ["It is 5."] },
+  ])
+  return yield* Effect.gen(function* () {
+    const sessionsOf = yield* Sessions
+    const session = yield* sessionsOf.create({ owner: "consumer" })
+    const reply = yield* sessionsOf.turn(session, (open) => Effect.gen(function* () {
+      const toolkit = yield* tools
+      yield* open.append(userMessage("What is 2 + 3?"))
+      for (let step = 1; step <= 3; step++) {
+        const history = yield* (yield* Memory).context(open)
+        const answer = yield* modelAnswer((yield* LanguageModel.LanguageModel).streamText({
+          prompt: Prompt.make([{ role: "system", content: system }, ...history]), toolkit: tools, disableToolCallResolution: true, toolCallValidation: "deferred",
+        }), open)
+        if (answer.toolCalls.length === 0) return answer.text
+        for (const call of answer.toolCalls) yield* callTool(toolkit, call, open)
+      }
+      return "stopped"
+    }))
+    yield* flushTelemetry
+    return reply
+  }).pipe(
+    Effect.provide(Layer.merge(agentOf(model), toolsLive)),
+    Effect.provide(otlpTelemetry({ baseUrl: `http://127.0.0.1:${collectorServer.address().port}`, protocol: "http/json", exportInterval: "1 hour" })),
+  )
+})).pipe(Effect.timeout("20 seconds")))
+await new Promise((resolve) => collectorServer.close(resolve))
+const exportedSpans = posts.filter((post) => post.path === "/v1/traces").flatMap((post) =>
+  JSON.parse(post.body).resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans)))
+const exportedMetrics = posts.filter((post) => post.path === "/v1/metrics").flatMap((post) =>
+  JSON.parse(post.body).resourceMetrics.flatMap((resource) => resource.scopeMetrics.flatMap((scope) => scope.metrics.map((metric) => metric.name))))
+const turnSpan = exportedSpans.find((span) => span.name === "kernel.turn")
+const toolSpan = exportedSpans.find((span) => span.name === "kernel.tool.call")
+assert.equal(exportedTurn, "It is 5.")
+assert.ok(turnSpan !== undefined && toolSpan !== undefined)
+assert.equal(toolSpan.parentSpanId, turnSpan.spanId)
+assert.deepEqual(toolSpan.attributes.filter((entry) => entry.key === "parameters"), [])
+assert.ok(exportedMetrics.includes("kernel.model.calls") && exportedMetrics.includes("kernel.tool.calls"))
+
 console.log(`kernel ${JSON.stringify({
   runtime: typeof Bun === "undefined" ? "Node" : "Bun",
   storageKit: true,
@@ -378,5 +434,6 @@ console.log(`kernel ${JSON.stringify({
   layersComposed: true,
   modelProviders: true,
   workspaceKits: true,
+  exportedTurn: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)

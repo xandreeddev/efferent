@@ -2644,6 +2644,51 @@ A failure is an `AiError` whose reason says whether another try is worth it
 error, and not a refused key). The providers send over `fetch`, on Node and
 on Bun; a test gives its own with `FetchHttpClient.Fetch`.
 
+## Seeing what a host did: traces and metrics
+
+The kernel's work is traced with Effect's own spans and counted with its own
+metrics, so a host writes no span to see it
+([ADR 0030](adr/0030-a-kernel-host-s-telemetry-is-effect-s-exported-around-its-program.md)).
+`Sessions.turn` is the span `kernel.turn` (the session, the turn's number, how
+it ended); a model call is Effect AI's own span, `LanguageModel.streamText`,
+with the `gen_ai.*` attributes OpenTelemetry names (the provider, the model,
+the usage), one per attempt of a plan, which marks each attempt on the span
+it runs under; `callTool` is `kernel.tool.call` (the tool, the call's id,
+whether its result is a failure), a tool's own spans under it. `modelAnswer`
+counts each call by model and outcome with its tokens by kind, `callTool`
+each call by tool and outcome, and the Node entry's providers count what the
+ledger settled each call at: the cost has no other source, and a call whose
+cost is not known counts none. No metric names a session or a turn.
+
+The Node entry exports them over OTLP/HTTP, as a layer around the host's
+program: the `Tracer` and the metric registry are the program's, which no
+plugin reaches. `otlpTelemetryFromEnv` reads the standard `OTEL_*` variables;
+`otlpTelemetry` takes the same options in code; each has an `…Over` form that
+posts through the host's `HttpClient`:
+
+<!-- pinned: packages/sdk/src/kernel/node/telemetry.test.ts#telemetry -->
+
+```ts
+/**
+ * A host's program, traced and measured: the spans and metrics of every turn it runs, posted over OTLP/HTTP to the
+ * collector the standard OTEL_* variables name (none named, nothing sent), with what was said left out. The last
+ * batch is posted before the program returns; a failed post never fails it.
+ */
+const observed = <A, E, R>(program: Effect.Effect<A, E, R>) => program.pipe(
+  Effect.tap(() => flushTelemetry),
+  Effect.provide(otlpTelemetryFromEnv({ serviceName: "my-agent" })),
+)
+```
+
+What was said stays in the process unless the host turns it on with
+`content: true`: off, the export leaves out a prompt, an answer and a tool
+call's `parameters` (which Effect AI's toolkit puts on the span it is handled
+under) before anything is sent; on, it also writes each model call's prompt
+and answer on its span. A span policy (`spans`) drops spans, their children
+kept under the nearest span kept, and redacts or drops attributes as they are
+set. LangSmith takes the same export at its OTLP endpoint; ADR 0030 shows the
+options.
+
 ## Replacing a part
 
 A part is replaced by giving the program a different layer for it: the

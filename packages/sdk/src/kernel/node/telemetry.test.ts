@@ -1,10 +1,10 @@
 import { describe, expect, test } from "bun:test"
-import { Effect, Layer, Metric, Option, Redacted, Schema, Stream } from "effect"
+import { ConfigProvider, Effect, Layer, Metric, Option, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
 import type { SessionId } from "@xandreed/core/kernel"
 import { callTool, curate, CurationFailed, Curator, flatMemory, inProcessJournal, knowledgeSession, Memory, modelAnswer, scriptedModel, sessions } from "../index.js"
-import { flushTelemetry, openAiCompatibleModel, otlpTelemetry } from "./index.js"
+import { flushTelemetry, openAiCompatibleModel, otlpTelemetry, otlpTelemetryFromEnv } from "./index.js"
 import type { OtlpTelemetryOptions } from "./index.js"
 
 /* ── a collector: Bun.serve keeping every OTLP post ── */
@@ -108,6 +108,18 @@ const attributesOf = (list: ReadonlyArray<KeyValue>): Record<string, unknown> =>
 const spansOf = (posts: ReadonlyArray<Post>): ReadonlyArray<JsonSpan> => posts.filter((post) => post.path === "/v1/traces").flatMap((post) =>
   (JSON.parse(post.body) as { readonly resourceSpans: ReadonlyArray<{ readonly scopeSpans: ReadonlyArray<{ readonly spans: ReadonlyArray<JsonSpan> }> }> })
     .resourceSpans.flatMap((resource) => resource.scopeSpans.flatMap((scope) => scope.spans)))
+
+// #region telemetry
+/**
+ * A host's program, traced and measured: the spans and metrics of every turn it runs, posted over OTLP/HTTP to the
+ * collector the standard OTEL_* variables name (none named, nothing sent), with what was said left out. The last
+ * batch is posted before the program returns; a failed post never fails it.
+ */
+const observed = <A, E, R>(program: Effect.Effect<A, E, R>) => program.pipe(
+  Effect.tap(() => flushTelemetry),
+  Effect.provide(otlpTelemetryFromEnv({ serviceName: "my-agent" })),
+)
+// #endregion telemetry
 
 interface JsonPoint { readonly attributes: ReadonlyArray<KeyValue>; readonly asDouble?: number; readonly asInt?: number | string }
 interface JsonMetric { readonly name: string; readonly sum?: { readonly dataPoints: ReadonlyArray<JsonPoint> } }
@@ -349,5 +361,29 @@ describe("a curation, which runs in no turn", () => {
     expect(isRoot(host!)).toBe(true)
     expect(childrenOf(hosted, host!)).toEqual(["knowledge.curate"])
     expect(new Set(hosted.map((span) => span.traceId)).size).toBe(1)
+  })
+})
+
+describe("a host's program, observed as docs/kernel.md shows it", () => {
+  test("exports where the standard variables say, under the host's service name, and nothing when they name no collector", async () => {
+    const run = (env: (url: string) => Record<string, string>) => Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const { url, posts } = yield* collector
+      const model = yield* modelServer([ASKS_ADD, ANSWERS])
+      const result = yield* observed(askAdd.pipe(Effect.provide(stackOver(model.url)))).pipe(
+        Effect.provideService(ConfigProvider.ConfigProvider, ConfigProvider.fromEnv({ env: env(url) })),
+        Effect.provideService(Metric.MetricRegistry, new Map()),
+      )
+      return { reply: result.reply, posts: [...posts] }
+    })))
+    const sent = await run((url) => ({ OTEL_EXPORTER_OTLP_ENDPOINT: url, OTEL_EXPORTER_OTLP_PROTOCOL: "http/json" }))
+    expect(sent.reply).toBe("It is 5.")
+    expect(new Set(sent.posts.map((post) => post.path))).toEqual(new Set(["/v1/traces", "/v1/metrics"]))
+    const resource = (JSON.parse(sent.posts.find((post) => post.path === "/v1/traces")!.body) as { readonly resourceSpans: ReadonlyArray<{ readonly resource: { readonly attributes: ReadonlyArray<KeyValue> } }> }).resourceSpans[0]!.resource
+    expect(attributesOf(resource.attributes)["service.name"]).toBe("my-agent")
+    expect(named(spansOf(sent.posts), "kernel.turn").length).toBe(1)
+    expect(contentOf(spansOf(sent.posts))).toEqual([])
+
+    const silent = await run(() => ({}))
+    expect([silent.reply, silent.posts]).toEqual(["It is 5.", []])
   })
 })
