@@ -1,5 +1,6 @@
 import { Duration, Effect, Layer, Match, Option, Redacted, Result, Stream } from "effect"
-import { AiError, LanguageModel } from "effect/ai"
+import type { Tracer } from "effect"
+import { AiError, LanguageModel, Telemetry } from "effect/ai"
 import type { Response } from "effect/ai"
 import { FetchHttpClient, HttpBody, HttpClient, HttpClientRequest } from "effect/http"
 import type { HttpClientError } from "effect/http"
@@ -31,6 +32,20 @@ const transportFailure = (url: string) => (error: HttpClientError.HttpClientErro
   Match.tag("InvalidUrlError", (reason) => failed(new AiError.NetworkError({ reason: "InvalidUrlError", request: { method: "POST", url, urlParams: [], headers: {} }, description: reason.description ?? "the address is not one a request can be sent to" }))),
   Match.orElse((reason) => lost(url, reason.description ?? "the connection failed")),
 )
+
+/** What one part of an answer says on its call's span: the model that answered, or how it finished and what it counted. */
+const annotated = (span: Tracer.Span, part: Response.StreamPartEncoded): void => {
+  if (part.type === "response-metadata") Telemetry.addGenAIAnnotations(span, { response: { id: part.id, model: part.modelId } })
+  if (part.type === "finish") {
+    Telemetry.addGenAIAnnotations(span, {
+      response: { finishReasons: [part.reason] },
+      usage: { inputTokens: part.usage.inputTokens.total, outputTokens: part.usage.outputTokens.total },
+    })
+    // Cache counts are in `gen_ai.usage.input_tokens` too, as Effect AI's Anthropic provider counts them.
+    if (part.usage.inputTokens.cacheRead !== undefined) span.attribute("gen_ai.usage.cache_read.input_tokens", part.usage.inputTokens.cacheRead)
+    if (part.usage.inputTokens.cacheWrite !== undefined) span.attribute("gen_ai.usage.cache_write.input_tokens", part.usage.inputTokens.cacheWrite)
+  }
+}
 
 /** The body of one call, or why it is not sent. */
 const bodyOf = (options: OpenAiCompatibleOptions, provider: LanguageModel.ProviderOptions, bound: Option.Option<number>): Result.Result<string, AiError.AiError> => {
@@ -125,12 +140,26 @@ export const openAiCompatibleModel = (options: OpenAiCompatibleOptions): Layer.L
           ))),
       ),
     )
+    /**
+     * The call's span (Effect AI's `LanguageModel.streamText`, which ends with the stream) given the attributes
+     * OpenTelemetry names for a model call, the keys Effect AI's Anthropic provider sets: what was asked before it is
+     * sent, then the model that answered, why it stopped and what it counted as each part arrives, so all of them are
+     * on the span before it ends, however the stream ends.
+     */
+    const traced = <E, R>(span: Tracer.Span, answer: Stream.Stream<Response.StreamPartEncoded, E, R>) => Stream.suspend(() => {
+      Telemetry.addGenAIAnnotations(span, {
+        provider: { name: options.provider ?? "openai" },
+        operation: { name: "chat" },
+        request: { model: options.model, maxTokens: Option.getOrUndefined(bound) },
+      })
+      return answer.pipe(Stream.tap((part) => Effect.sync(() => annotated(span, part))))
+    })
     const streamText = (provider: LanguageModel.ProviderOptions): Stream.Stream<Response.StreamPartEncoded, AiError.AiError> =>
       Result.match(bodyOf(options, provider, bound), {
         onFailure: (error) => Stream.fail(error),
         onSuccess: (body) => Result.match(chargeOf(options.spend, options.model, new TextEncoder().encode(body).length, bound), {
           onFailure: (why) => Stream.fail(unchargeable(why, options.model, OPENAI_COMPATIBLE, METHOD)),
-          onSuccess: (charge) => chargedStream(charging, METHOD, charge, (report) => send(body, report)),
+          onSuccess: (charge) => traced(provider.span, chargedStream(charging, METHOD, charge, (report) => send(body, report))),
         }),
       })
     return yield* LanguageModel.make({

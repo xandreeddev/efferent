@@ -58,7 +58,7 @@ const summaryMemoryOver = (options: SummaryOptions, sent: (record: StoredEvent) 
   })
 
   return Memory.of({
-    context: Effect.fn("kernel.summary.context")(function* (session: OpenSession) {
+    context: Effect.fn("summary_memory.context")(function* (session: OpenSession) {
       const first = yield* planned(session)
       const fitted = yield* Match.valueTags(first, {
         Fits: (fits) => Effect.succeed(fits),

@@ -18,6 +18,8 @@ import type { SpendOptions, Timeouts } from "../model-spend/model-spend.entity.j
  *   `reasoning_effort`. A field a request is made of (`model`, `messages`, `tools`…) is refused, never replaced.
  * - `timeouts`: how long to wait for the headers and between two pieces of the answer.
  * - `spend`: how each call charges the `ModelSpend` ledger in context (ADR 0026).
+ * - `provider`: the name a call's span gives the provider (`gen_ai.provider.name`, ADR 0030): `openai` by default;
+ *   OpenTelemetry's names for the others are `gcp.gemini` and `deepseek`, and a gateway takes its own.
  *
  * @public
  */
@@ -30,6 +32,7 @@ export interface OpenAiCompatibleOptions {
   readonly extra?: Schema.JsonObject
   readonly timeouts?: Timeouts
   readonly spend: SpendOptions
+  readonly provider?: string
 }
 
 /** The `AiError` module this provider's failures name. */

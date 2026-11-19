@@ -171,6 +171,7 @@ describe("docs/kernel.md", () => {
       "packages/sdk/src/kernel/model-plans.test.ts#loop",
       "packages/sdk/src/kernel/model-plans.test.ts#test",
       "packages/sdk/src/kernel/node/models.test.ts#gateway",
+      "packages/sdk/src/kernel/node/telemetry.test.ts#telemetry",
       "packages/sdk/src/kernel/swap.test.ts#swap",
     ])
     // Every fence of the document is one of the pinned quotes: two fence lines each.

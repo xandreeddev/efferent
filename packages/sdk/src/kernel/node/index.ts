@@ -17,3 +17,6 @@ export type { ProcessShellOptions } from "./shell-process/process-shell.entity.j
 export { diskFiles } from "./files-disk/disk-files.adapter.js"
 export { DEFAULT_IGNORE, DEFAULT_MAX_BYTES } from "./files-disk/disk-files.entity.js"
 export type { DiskFilesOptions } from "./files-disk/disk-files.entity.js"
+export { flushTelemetry, otlpTelemetry, otlpTelemetryFromEnv, otlpTelemetryFromEnvOver, otlpTelemetryOver } from "./telemetry-otlp/otlp-telemetry.adapter.js"
+export { OtlpCompression, OtlpProtocol, OtlpTemporality } from "./telemetry-otlp/otlp-telemetry.entity.js"
+export type { OtlpSpanPolicy, OtlpTelemetryOptions } from "./telemetry-otlp/otlp-telemetry.entity.js"

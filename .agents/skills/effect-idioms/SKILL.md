@@ -143,7 +143,11 @@ service method that only returns `Effect.gen(…)` is one of the two below.
 - **Names**: dotted lowercase with snake_case words. `agent.turn`,
   `engine.`, `tool.`, `providers.` and `LanguageModel.` belong to the spans
   that use them today (the sdk tests select `tool.*` spans by prefix): no
-  new name starts with them.
+  new name of the old engine starts with them. The kernel's spans are
+  `<part>.<op>`, the part its contract, plugin or port, with no `kernel.`
+  prefix (ADR 0030); its `tool.call` and `tasks.start` share a prefix with
+  the old engine's spans, which go with it before the names freeze at the
+  release. Kernel metrics and attributes are `efferent.*`.
 - **Ids**: span attributes and log annotations share their keys:
   `efferent.session.id`, `efferent.run.id`, `efferent.turn` (core's
   `sessionAttributes` and `turnAttributes`), `efferent.task.id`,
@@ -169,6 +173,7 @@ service method that only returns `Effect.gen(…)` is one of the two below.
 | evals | `eval.run`, `eval.trial`, `eval.grade`, `eval.regrade`, `eval.calibrate`, `eval.calibration.execute`, `eval.calibration.project`, `eval.retrieval.assess`, `eval.semantic.run`, `eval.semantic.llm`, `eval.semantic.jev`, `eval.evaluator` |
 | evals exporters, evals-cli | `eval.export`, `eval.cli` |
 | foundry | `foundry.check`, `foundry.run`, `foundry.attempt`, `foundry.pipeline`, `foundry.gate` |
+| sdk kernel (ADR 0030) | `session.turn`, `session.begin`, `session.end`, `session.recover`, `session.fork`, `session.recover_turns`, `tool.call` (and the event `model.attempt`), `flat_memory.context`, `window_memory.context`, `summary_memory.context`, `inbox.enqueue`, `tasks.start`, `approval.approve`, `approval.approve_in`, `read_result.read`, `knowledge.curate`, `knowledge.curate_again`, `scripted_model.make`, `scripted_shell.make`; the Node entry's `journal_directory.<op>`, `journal_sqlite.<op>`, `disk_files.<op>`, `files_search.find`, `process_shell.run` |
 
 ## 8. Branching
 

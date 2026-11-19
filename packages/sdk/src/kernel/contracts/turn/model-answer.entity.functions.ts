@@ -47,7 +47,9 @@ const nothing: Answered = { text: "", toolCalls: [], usage: Option.none(), model
  * provided as `CurrentTurn` while the stream runs, so a wrapper of the model
  * reaches the session its call is for. A stream that reports an error fails
  * with `ModelAnswerFailed` and stores nothing. The stream is the host's: it
- * calls the model with its own prompt, tools and options.
+ * calls the model with its own prompt, tools and options. The call's span is
+ * the model's own (`LanguageModel.streamText`), and none is added here; its
+ * provider counts it (ADR 0030).
  *
  * @public
  */

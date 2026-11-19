@@ -1,7 +1,7 @@
 // The Anthropic provider over a fake `fetch` that answers with the Messages API's stream, as recorded shapes: no
 // network. What Anthropic counts (the input without the cache's shares) is settled at the model's prices.
 import { describe, expect, test } from "bun:test"
-import { Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream } from "effect"
+import { Deferred, Effect, Fiber, Layer, Redacted, Schema, Stream, Tracer } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core/kernel"
@@ -167,5 +167,61 @@ describe("the Anthropic provider", () => {
     ])
     expect(run.totals.reserved).toBe(0)
     expect(run.totals.settled).toBeCloseTo((40 + 9 * 5 + 60 + 4 * 5) / 1_000_000, 12)
+  })
+})
+
+/** A tracer that keeps every span it opens, as Effect's own native spans. */
+const recording = () => {
+  const spans: Array<Tracer.Span> = []
+  const tracer = Tracer.make({ span: (options) => {
+    const span = new Tracer.NativeSpan(options)
+    spans.push(span)
+    return span
+  } })
+  return { spans, tracer }
+}
+const callSpans = (spans: ReadonlyArray<Tracer.Span>) => spans.filter((span) => span.name === "LanguageModel.streamText")
+
+describe("the Anthropic provider's span", () => {
+  test("is the call's own span (Effect AI's), with the provider's gen_ai attributes, ended with the stream: whole, cut and interrupted", async () => {
+    const asked = { "gen_ai.provider.name": "anthropic", "gen_ai.operation.name": "chat", "gen_ai.request.model": MODEL, "gen_ai.request.max_tokens": 1000 }
+
+    const whole = recording()
+    await over(fakeFetch(stream(words)).fetch, options(priced), streamed.pipe(Effect.withTracer(whole.tracer)))
+    const [answered] = callSpans(whole.spans)
+    expect(answered?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(answered!.attributes)).toMatchObject({
+      ...asked,
+      "gen_ai.response.model": MODEL,
+      "gen_ai.usage.input_tokens": 1220,
+      "gen_ai.usage.output_tokens": 12,
+      "gen_ai.usage.cache_read.input_tokens": 1000,
+      "gen_ai.usage.cache_write.input_tokens": 200,
+    })
+
+    const cut = recording()
+    const early = await over(fakeFetch(stream(sse([start({ input_tokens: 20, output_tokens: 1 }), ...textBlock(["12"]).slice(0, 2)]))).fetch, options(priced), streamed.pipe(Effect.withTracer(cut.tracer)))
+    expect(early.outcome._tag).toBe("Failure")
+    const [lost] = callSpans(cut.spans)
+    expect(lost?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(lost!.attributes)).toMatchObject(asked)
+
+    const stopped = recording()
+    const started = Effect.runSync(Deferred.make<void>())
+    const hanging = (_: Sent, signal: AbortSignal) => new Response(new ReadableStream({
+      start: (controller) => {
+        controller.enqueue(new TextEncoder().encode(sse([start({ input_tokens: 20, output_tokens: 1 }), ...textBlock(["12"]).slice(0, 2)])))
+        Effect.runSync(Deferred.succeed(started, undefined))
+        signal.addEventListener("abort", () => controller.error(new Error("aborted")))
+      },
+    }), { status: 200, headers: { "content-type": "text/event-stream" } })
+    await over(fakeFetch(hanging).fetch, options(priced), Effect.gen(function* () {
+      const fiber = yield* Effect.forkChild(streamed)
+      yield* Deferred.await(started)
+      yield* Fiber.interrupt(fiber)
+    }).pipe(Effect.withTracer(stopped.tracer)))
+    const [interrupted] = callSpans(stopped.spans)
+    expect(interrupted?.status._tag).toBe("Ended")
+    expect(Object.fromEntries(interrupted!.attributes)).toMatchObject(asked)
   })
 })

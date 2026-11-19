@@ -145,6 +145,7 @@ const SDK_KERNEL_TESTS = [
   "sdk-kernel-node-model-anthropic",
   "sdk-kernel-node-shell-process",
   "sdk-kernel-node-files-disk",
+  "sdk-kernel-node-telemetry-otlp",
   "core/kernel",
 ]
 
@@ -614,14 +615,18 @@ const config: typeof GateSuiteConfig.Encoded = {
       // The model providers (ADR 0026): the spend charge both share (`model-spend/`, as the stores share the lock), and
       // a folder per provider. The Anthropic one is the only layer outside the models plugin that names a provider
       // package (`@effect/ai-anthropic`); the OpenAI-compatible one speaks its wire itself.
-      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
+      { name: "sdk-kernel-node-model-spend", path: "packages/sdk/src/kernel/node/model-spend/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-openai-compatible", path: "packages/sdk/src/kernel/node/model-openai-compatible/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http"] },
       { name: "sdk-kernel-node-model-anthropic", path: "packages/sdk/src/kernel/node/model-anthropic/**", canImport: ["sdk-kernel-node-model-spend", "core/kernel"], externals: ["effect", "effect/ai", "effect/http", "@effect/ai-anthropic"] },
       // The workspace's ports (ADR 0028): a shell over `node:child_process`, and files in a folder of the disk. Each imports the contract it implements
       // from `sdk-kernel-contracts` and nothing of another port's folder; it holds no store, so it takes no lock.
       { name: "sdk-kernel-node-shell-process", path: "packages/sdk/src/kernel/node/shell-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
       { name: "sdk-kernel-node-files-disk", path: "packages/sdk/src/kernel/node/files-disk/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect", "node:"] },
-      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk"], externals: [] },
+      // The export of a host's traces and metrics over OTLP/HTTP (ADR 0030): Effect's own exporters behind a span policy,
+      // a layer around the host's program. It imports nothing of the kernel: the spans and metrics it sends are the
+      // program's, whoever made them.
+      { name: "sdk-kernel-node-telemetry-otlp", path: "packages/sdk/src/kernel/node/telemetry-otlp/**", canImport: [], externals: ["effect", "effect/ai", "effect/http", "effect/observability"] },
+      { name: "sdk-kernel-node", path: "packages/sdk/src/kernel/node/**", canImport: ["sdk-kernel-node-writer", "sdk-kernel-node-journal-directory", "sdk-kernel-node-journal-sqlite", "sdk-kernel-node-model-spend", "sdk-kernel-node-model-openai-compatible", "sdk-kernel-node-model-anthropic", "sdk-kernel-node-shell-process", "sdk-kernel-node-files-disk", "sdk-kernel-node-telemetry-otlp"], externals: [] },
       { name: "sdk-kernel-contracts", path: "packages/sdk/src/kernel/contracts/**", canImport: ["core/kernel"], externals: ["effect", "effect/ai"] },
       { name: "sdk-kernel-plugin-inbox", path: "packages/sdk/src/kernel/plugins/inbox/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
       { name: "sdk-kernel-plugin-journal-in-process", path: "packages/sdk/src/kernel/plugins/journal-in-process/**", canImport: ["sdk-kernel-contracts", "core/kernel"], externals: ["effect"] },
