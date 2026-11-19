@@ -220,15 +220,18 @@ describe("what recall says it did", () => {
       before: { user: "Hi.", answer: "Hello." },
       limit: 1,
       walk: 3,
+      // Recall by words: the list by meaning has no weight, and no model.
+      weights: { seed: 1, words: 0.5, meaning: 0 },
+      meaning: null,
       seeds: [{ id: "n3", name: "Acme", by: "name", word: "Acme" }, { id: "n4", name: "Lisbon", by: "name", word: "Lisbon" }],
       bridges: [{ id: "n5", name: "Globex", from: "m6" }, { id: "n2", name: "Ana Silva", from: "m5" }],
       memories: [
-        { id: "m2", text: "Acme is in Lisbon.", about: ["n3", "n4"], seed: { place: 1, seeds: ["n3", "n4"], via: null }, words: { place: 1, score: recall.ranked[0]?.score ?? -1, terms: ["acme", "lisbon"], via: null }, walk: null, fused: 1 / 10 + 0.5 / 10, sent: true, why: "ranked", before: [] },
-        { id: "m6", text: "Globex is in Lisbon.", about: ["n5", "n4"], seed: { place: 2, seeds: ["n4"], via: null }, words: { place: 2, score: recall.ranked[1]?.score ?? -1, terms: ["lisbon"], via: null }, walk: { place: 1, from: "n5" }, fused: 1.5 / 11, sent: true, why: "walked", before: [] },
+        { id: "m2", text: "Acme is in Lisbon.", about: ["n3", "n4"], seed: { place: 1, seeds: ["n3", "n4"], via: null }, words: { place: 1, score: recall.ranked[0]?.score ?? -1, terms: ["acme", "lisbon"], via: null }, meaning: null, walk: null, fused: 1 / 10 + 0.5 / 10, sent: true, why: "ranked", before: [] },
+        { id: "m6", text: "Globex is in Lisbon.", about: ["n5", "n4"], seed: { place: 2, seeds: ["n4"], via: null }, words: { place: 2, score: recall.ranked[1]?.score ?? -1, terms: ["lisbon"], via: null }, meaning: null, walk: { place: 1, from: "n5" }, fused: 1.5 / 11, sent: true, why: "walked", before: [] },
         // Its places were taken by the memory it replaced, whose seeds, score and words they show.
         {
           id: "m5", text: "Ana Silva works at Globex.", about: ["n2", "n5"], seed: { place: 3, seeds: ["n3"], via: "m1" },
-          words: { place: 3, score: Option.getOrThrow(recall.ranked[2]?.words ?? Option.none()).by.score, terms: ["acme"], via: "m1" }, walk: { place: 2, from: "n2" }, fused: 1.5 / 12, sent: true, why: "walked", before: ["m1"],
+          words: { place: 3, score: Option.getOrThrow(recall.ranked[2]?.words ?? Option.none()).by.score, terms: ["acme"], via: "m1" }, meaning: null, walk: { place: 2, from: "n2" }, fused: 1.5 / 12, sent: true, why: "walked", before: ["m1"],
         },
       ],
       more: 0,

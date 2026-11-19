@@ -43,6 +43,103 @@ export interface KnowledgeRecallOptions {
 export const KNOWLEDGE_RECALL: KnowledgeRecallOptions = { limit: 8, walk: 3, speaker: [], stopWords: [] }
 
 /**
+ * The weight of each list in the fusion by rank (ADR 0025): a memory at place `p` (from 0) of a list adds
+ * `weight / (10 + p)`. `seed` is the list of the memories about a seed, `words` the list the message's words reach,
+ * `meaning` the list ranked by meaning. A weight of 0 turns its list off: it is not made, and adds nothing.
+ *
+ * @public
+ */
+export interface RecallWeights {
+  readonly seed: number
+  readonly words: number
+  readonly meaning: number
+}
+
+/**
+ * The weights recall by words runs with (ADR 0023): the list about a seed 1, the words' 0.5, and no list by meaning.
+ *
+ * @public
+ */
+export const WORDS_WEIGHTS: RecallWeights = { seed: 1, words: 0.5, meaning: 0 }
+
+/**
+ * The options of `withKnowledgeByMeaning` (ADR 0025): those of `withKnowledge`, and
+ *
+ * - `pool`: how many texts the list by meaning ranks, the nearest to the last message, a whole number from 1 to 100
+ *   (50);
+ * - `weights`: the weight of each list in the fusion (`RecallWeights`), each a number from 0 to 10, 0 turning a list
+ *   off, at least one above 0; a weight left out keeps its default (seed 1, words 0.5, meaning 1.5).
+ *
+ * @public
+ */
+export interface MeaningOptions extends KnowledgeOptions {
+  readonly pool?: number
+  readonly weights?: Partial<RecallWeights>
+}
+
+/**
+ * `withKnowledgeByMeaning`'s options with every default filled in: what `checkedMeaningOptions` gives.
+ *
+ * @public
+ */
+export interface MeaningRecallOptions extends KnowledgeRecallOptions {
+  readonly pool: number
+  readonly weights: RecallWeights
+}
+
+/**
+ * The options `withKnowledgeByMeaning` runs with when it is given none: those of `withKnowledge`, a pool of 50, and
+ * the weights 1 for the list about a seed, 0.5 for the words' and 1.5 for the list by meaning (measured in ADR 0025).
+ *
+ * @public
+ */
+export const KNOWLEDGE_BY_MEANING: MeaningRecallOptions = { ...KNOWLEDGE_RECALL, pool: 50, weights: { seed: 1, words: 0.5, meaning: 1.5 } }
+
+/**
+ * The most characters of an embedder's model name that keys a memory's vector (ADR 0025): a key is the model, a line
+ * feed and the memory's text (at most `MEMORY_LIMIT`, 300), within the vector store's `KEY_LIMIT` (400), whole.
+ *
+ * @public
+ */
+export const MEANING_MODEL_LIMIT = 99
+
+/**
+ * A text the list by meaning found (ADR 0025): a memory's text the vector store found nearest the last message, with
+ * their cosine. One text can be the text of several memories: each is found by it.
+ *
+ * @public
+ */
+export interface FoundText {
+  readonly text: string
+  readonly cosine: number
+}
+
+/**
+ * What recall by meaning brings to `recallKnowledge` (ADR 0025): the embedder's model, the pool and the weights it ran
+ * with, and the texts found, nearest first (none when the list was off, nothing was asked, or nothing could be found).
+ *
+ * @public
+ */
+export interface ByMeaning {
+  readonly model: string
+  readonly pool: number
+  readonly weights: RecallWeights
+  readonly found: ReadonlyArray<FoundText>
+}
+
+/**
+ * A standing memory's place (from 1) in the list by meaning, the memory that took it (the standing one itself, or one
+ * it replaced that was found in its stead), and that memory's cosine to the last message.
+ *
+ * @public
+ */
+export interface MeaningPlace {
+  readonly place: number
+  readonly by: KnownMemory
+  readonly cosine: number
+}
+
+/**
  * What a conversation asks, as recall reads it (`askedOf`): the person's last message (`last`, the memory contract's
  * `questionOf`), and the turn before the one that holds it: the person's messages in it (`user`) and its final answer
  * (`answer`), each empty when there is none.
@@ -101,14 +198,15 @@ export interface ListPlace {
 }
 
 /**
- * A memory of the fused list, which stands: how it was scored, its place in the list of memories about a seed and in
- * the list the message's words reach, when it is in them, and its fused score.
+ * A memory of the fused list, which stands: how it was scored, its place in the list of memories about a seed, in
+ * the list the message's words reach and in the list by meaning, when it is in them, and its fused score.
  *
  * @public
  */
 export interface FusedMemory extends ScoredMemory {
   readonly seed: Option.Option<ListPlace>
   readonly words: Option.Option<ListPlace>
+  readonly meaning: Option.Option<MeaningPlace>
   readonly fused: number
 }
 
@@ -146,14 +244,16 @@ export interface SentMemory {
 }
 
 /**
- * What recall did for one request (`recallKnowledge`): what was asked, the seeds, the fused list, best first, all
- * of it; the entities the walk started from; every memory it could have taken, best first, all of them; and what is
+ * What recall did for one request (`recallKnowledge`): what was asked, the weights of the lists, the embedder's model
+ * and the pool when a list by meaning was given, the seeds, the fused list, best first, all of it; the entities the walk started from; every memory it could have taken, best first, all of them; and what is
  * sent, in order.
  *
  * @public
  */
 export interface KnowledgeRecall {
   readonly asked: Asked
+  readonly weights: RecallWeights
+  readonly meaning: Option.Option<{ readonly model: string; readonly pool: number }>
   readonly seeds: ReadonlyArray<Seed>
   readonly ranked: ReadonlyArray<FusedMemory>
   readonly bridges: ReadonlyArray<Bridge>
@@ -196,13 +296,16 @@ export const RecalledWhy = Schema.Literals(["ranked", "walked", "past-limit", "p
 export type RecalledWhy = typeof RecalledWhy.Type
 
 /**
- * The data of `plugin.knowledge.recalled`: what `withKnowledge` did for one request (ADR 0023). What was asked (each
- * text at most `ASKED_SHOWN` characters, what was cut counted); the options it ran with; the seeds, each with how it
+ * The data of `plugin.knowledge.recalled`: what `withKnowledge` or `withKnowledgeByMeaning` did for one request (ADRs
+ * 0023 and 0025). What was asked (each text at most `ASKED_SHOWN` characters, what was cut counted); the options it
+ * ran with, the weights of the lists among them; the embedder's model and the pool, when it ranked by meaning (else
+ * `null`); the seeds, each with how it
  * was named; the entities the walk by subject started from, each with the memory that brought it in; the memories it
  * could send, those sent first in the order sent, then the rest of the fused list, then the rest of what the walk
  * found (at most `KNOWLEDGE_SHOWN`, the rest counted in `more`), each with its place in the list about a seed and the
- * seeds it is about, its place in the list the message's words reach with its score and those words (each place with
- * the memory it replaced that took it, `via`, when one did, and then that memory's seeds, score and words), its place in
+ * seeds it is about, its place in the list the message's words reach with its score and those words, its place in
+ * the list by meaning with its cosine (each place with the memory it replaced that took it, `via`, when one did, and
+ * then that memory's seeds, score, words and cosine), its place in
  * the walk with the entity it was found by, its fused score, whether it was sent and why or why not, and the
  * memories sent under it as what it replaced; the ids sent, in order; and what the note costs, in tokens (0 with no
  * note).
@@ -214,6 +317,8 @@ export const KnowledgeRecalledData = Schema.Struct({
   before: Schema.Struct({ user: Schema.String, answer: Schema.String }),
   limit: Schema.Number,
   walk: Schema.Number,
+  weights: Schema.Struct({ seed: Schema.Number, words: Schema.Number, meaning: Schema.Number }),
+  meaning: Schema.NullOr(Schema.Struct({ model: Schema.String, pool: Schema.Number })),
   seeds: Schema.Array(Schema.Struct({ id: EntityId, name: Schema.String, by: SeedWay, word: Schema.String })),
   bridges: Schema.Array(Schema.Struct({ id: EntityId, name: Schema.String, from: MemoryId })),
   memories: Schema.Array(Schema.Struct({
@@ -222,6 +327,7 @@ export const KnowledgeRecalledData = Schema.Struct({
     about: Schema.Array(EntityId),
     seed: Schema.NullOr(Schema.Struct({ place: Schema.Number, seeds: Schema.Array(EntityId), via: Schema.NullOr(MemoryId) })),
     words: Schema.NullOr(Schema.Struct({ place: Schema.Number, score: Schema.Number, terms: Schema.Array(Schema.String), via: Schema.NullOr(MemoryId) })),
+    meaning: Schema.NullOr(Schema.Struct({ place: Schema.Number, cosine: Schema.Number, via: Schema.NullOr(MemoryId) })),
     walk: Schema.NullOr(Schema.Struct({ place: Schema.Number, from: EntityId })),
     fused: Schema.Number,
     sent: Schema.Boolean,
@@ -235,7 +341,8 @@ export const KnowledgeRecalledData = Schema.Struct({
 export type KnowledgeRecalledData = typeof KnowledgeRecalledData.Type
 
 /**
- * `plugin.knowledge.recalled`: what `withKnowledge` did for one request (ADR 0023), said live about the turn and never
+ * `plugin.knowledge.recalled`: what `withKnowledge` or `withKnowledgeByMeaning` did for one request (ADRs 0023 and
+ * 0025), said live about the turn and never
  * stored, tagged `trace`. It is said for every model call the memory builds a context for, whether or not anything
  * was named or sent, so a client can show why a request was sent the memories it was, or none.
  *
