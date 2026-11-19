@@ -8,6 +8,7 @@ import { InboxClosed } from "../../contracts/inbox/inbox.entity.js"
 import type { InboxOptions, InboxState } from "./inbox.entity.js"
 import type { InboxRefused, Ticket } from "../../contracts/inbox/inbox.entity.js"
 import { Inbox } from "../../contracts/inbox/inbox.port.js"
+import { ownTrace } from "../../contracts/turn/telemetry.entity.functions.js"
 
 const DEFAULT_CAPACITY = 64
 
@@ -134,10 +135,11 @@ const makeInbox = <R>(turn: InboxTurn<R>, options: InboxOptions) => Layer.effect
         // Announced on a fiber of the plugin, after the session's announcement before it, so no caller holds it and none is
         // held by it. Its turn waits for it: failed or not, the turn runs; cut short by the close, it does not.
         const previous = Option.match(after, { onNone: () => Effect.void, onSome: (before) => Deferred.await(before) })
-        yield* Effect.forkIn(Effect.andThen(previous, announceQueued(session, queued.ticket)).pipe(
+        // Each fiber is a trace of its own: the span current here, this message's `inbox.enqueue`, ends before they do.
+        yield* Effect.forkIn(ownTrace(Effect.andThen(previous, announceQueued(session, queued.ticket))).pipe(
           Effect.onExit((exit) => Exit.hasInterrupts(exit) ? Deferred.interrupt(announced) : Deferred.succeed(announced, undefined)),
         ), scope, { startImmediately: true })
-        if (queued.start) yield* Effect.forkIn(worker(session), scope)
+        if (queued.start) yield* Effect.forkIn(ownTrace(worker(session)), scope)
         return { ticket: queued.ticket, reply: Deferred.await(answer) }
       }))
     }),
