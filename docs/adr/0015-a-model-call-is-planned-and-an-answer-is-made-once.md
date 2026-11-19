@@ -1,7 +1,7 @@
 # ADR 0015: A model call is planned, and an answer is made once
 
 - **Status:** accepted, 15 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the turn contract: `planned`, `retryable`, `AnswerCut`,
+- **Applies to:** `@xandreed/sdk` (the turn contract: `planned`, `retryable`, `AnswerCut`,
   `plugin.model.attempt`; the scripted model's failures)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 

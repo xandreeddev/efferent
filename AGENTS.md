@@ -27,9 +27,9 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 
 ## Architecture
 
-- `core` (`src/kernel`): the kernel's core: ids, messages, the event envelope, the conversation's records, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (events), and the `ModelSpend` ledger. Effect alone; no loop, no memory, no IO.
-- `sdk` → core (`src/kernel`): the workflow contracts (memory, tools and their turn, approvals, skills, facts, knowledge, tasks, the inbox, files, shell, search, ranking by meaning, a store of bytes for the model) with their kits, and the stock plugins, each a plain Effect layer; `src/kernel/node`, the ports that need a runtime's modules (the durable journals, the model providers and a remote embedder that charge the ledger, a media folder, a disk workspace and a process shell, OTLP export). There is no loop: the host's program is the loop (`docs/kernel.md`).
-- Until the kernel's folders become the packages' `src`, each package's root entry is its kernel's index, beside `./kernel` (and the sdk's `./kernel/node`) (ADR 0036).
+- `core` (`src`): the kernel's core: ids, messages, the event envelope, the conversation's records, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (events), and the `ModelSpend` ledger. Effect alone; no loop, no memory, no IO.
+- `sdk` → core (`src`): the workflow contracts (memory, tools and their turn, approvals, skills, facts, knowledge, tasks, the inbox, files, shell, search, ranking by meaning, a store of bytes for the model) with their kits, and the stock plugins, each a plain Effect layer; `src/node`, the ports that need a runtime's modules (the durable journals, the model providers and a remote embedder that charge the ledger, a media folder, a disk workspace and a process shell, OTLP export). There is no loop: the host's program is the loop (`docs/kernel.md`).
+- The kernel is each package's `src` and root entry: `@xandreed/core`, `@xandreed/sdk` and the sdk's Node entry `@xandreed/sdk/node` (ADR 0036). Service keys keep the prefix they were declared with (`@xandreed/core/kernel/Memory`).
 - `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core's kernel for the `ModelSpend` ledger a run shares across its trials, nothing else.
 - `foundry` runs the gates (development tooling); `website` is the docs site and the learn track. Neither is published.
 
@@ -140,8 +140,8 @@ use-case files: `no-raw-promise-core`, `no-runtime-imports-core`,
 ## Ports, adapters and composition
 
 - Ports are `Context.Service` classes in a `.port.ts` file or a `ports/`
-  folder: core's kernel's in `packages/core/src/kernel`, a workflow
-  contract's in its folder of `packages/sdk/src/kernel/contracts`.
+  folder: core's kernel's in `packages/core/src`, a workflow
+  contract's in its folder of `packages/sdk/src/contracts`.
   Methods return `Effect` or `Stream`; expected failures are
   `Schema.TaggedError`s, absence is `Option`.
 - A plugin is a plain Effect `Layer` in a `.adapter.ts` file, its type
@@ -170,7 +170,7 @@ Naming (skill `effect-idioms` §7 has the span policy and names):
 
 Text the model reads is a contract and part of cached prompt prefixes: in
 the kernel, frame it with the memory contract's `hostNote`, `framed` and
-`clipTo` from `@xandreed/sdk/kernel`; pin it exactly, and follow skill
+`clipTo` from `@xandreed/sdk`; pin it exactly, and follow skill
 `write-model-text`.
 Each package's `AGENTS.md` inventories its model-facing text and cites the
 tests that pin each row by title (`path.test.ts#<part of a test's title>`).

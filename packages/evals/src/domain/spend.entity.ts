@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { SpendAmount, SpendHoldId } from "@xandreed/core/kernel"
+import { SpendAmount, SpendHoldId } from "@xandreed/core"
 
 /**
  * What one trial spent: `settled`, the observed cost of the model sends it

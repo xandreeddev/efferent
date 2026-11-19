@@ -3,8 +3,8 @@
 // asked for.
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { JOURNAL_FORMAT, Owner, Seq, SessionId } from "@xandreed/core/kernel"
-import type { SessionHeader } from "@xandreed/core/kernel"
+import { JOURNAL_FORMAT, Owner, Seq, SessionId } from "@xandreed/core"
+import type { SessionHeader } from "@xandreed/core"
 import { chatsOf, ignoredLine } from "./chats.ts"
 
 const id = (name: string) => SessionId.make(name)

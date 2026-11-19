@@ -10,9 +10,9 @@
 // world, and puts the vectors made ahead for its memories in the store first,
 // so a request embeds only its message.
 import { Effect, Layer } from "effect"
-import { Sessions } from "@xandreed/core/kernel"
-import { flatMemory, withKnowledgeByMeaning } from "@xandreed/sdk/kernel"
-import type { VectorStore } from "@xandreed/sdk/kernel"
+import { Sessions } from "@xandreed/core"
+import { flatMemory, withKnowledgeByMeaning } from "@xandreed/sdk"
+import type { VectorStore } from "@xandreed/sdk"
 import type { Lesson, PageParts } from "../../lesson.ts"
 import type { EmbedderService } from "../../models/meaning.ts"
 import { Chat } from "../../page-chat.ts"

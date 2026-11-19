@@ -1,19 +1,18 @@
 # @xandreed/core
 
-The kernel's core (`src/kernel`, `docs/kernel.md`): what every agent has,
+The kernel's core (`src`, `docs/kernel.md`): what every agent has,
 whatever its workflow. Its only runtime dependency is Effect. No provider
 SDK, no IO, no runtime module (`node:`, `bun:`), no loop and no memory: the
 workflow contracts and the stock plugins are the sdk's kernel
-(`packages/sdk/src/kernel`), and the loop is the host's own program.
+(`packages/sdk/src`), and the loop is the host's own program.
 
 The engine of earlier releases (its entities, ports, kits, References, the
-turn's bus, `./conformance` and `./internal`) is gone (ADR 0036). Until the
-kernel's folder becomes the package's `src`, the package's root entry and
-`./kernel` are both `src/kernel/index.ts`:
+turn's bus, `./conformance` and `./internal`) is gone, and the kernel is the
+package's `src` (ADR 0036). Its one entry is the root, `src/index.ts`:
 
 | Entry | Holds | Semver | Who imports it (boundaries) |
 |---|---|---|---|
-| `@xandreed/core` and `./kernel` (`src/kernel/index.ts`) | Ids, `Message` (`UserMessage`, `AssistantMessage` with its `ToolCall`s, `ToolResult`), the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `conversation.tool.result`, `userMessage`, `assistantMessage`, `toolResult`, `toolResultEvent`, `ToolResultData`, `CONVERSATION_VOCABULARY`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (publish, on, events) with `kernel`, the layer that provides it, and the spend ledger `ModelSpend` with `modelSpendMemory` and its kit (ADR 0020) | a name removed or changed in `api/core.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel, and the eval packages for the spend ledger (`core-kernel`) |
+| `@xandreed/core` (`src/index.ts`) | Ids, `Message` (`UserMessage`, `AssistantMessage` with its `ToolCall`s, `ToolResult`), the event envelope with its `tags` and `turn` (`Tag`, `taggedWith`), core's own events (`core.session.turn.started`, `core.session.turn.ended`, `core.listener.failed`), the conversation's records (`conversation.user.message`, `conversation.assistant.message`, `conversation.tool.result`, `userMessage`, `assistantMessage`, `toolResult`, `toolResultEvent`, `ToolResultData`, `CONVERSATION_VOCABULARY`) and the helpers a plugin defines its own with (`storedEvent`, `liveEvent`), reading a journal (`readJournal`, `vocabularyOf`, `KERNEL_VOCABULARY`), the session's phase and its fold, `inspectionOf`, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (publish, on, events) with `kernel`, the layer that provides it, and the spend ledger `ModelSpend` with `modelSpendMemory` and its kit (ADR 0020) | a name removed or changed in `api/core.api.txt` comes with a CHANGELOG line saying what a plugin must change | the sdk's kernel, and the eval packages for the spend ledger (`core-kernel`) |
 
 `quality/exports-have-consumers` runs on the entry (`CURATED_ENTRIES` in
 `foundry.config.ts`): each export is imported, by one of the entry's
@@ -25,24 +24,24 @@ goes is removed in the release that drops it, with its replacement in the
 CHANGELOG.
 
 The boundaries gate (`foundry.config.ts`) holds the package in one layer,
-`core-kernel` (`src/kernel/**`), with its tests in `core-kernel-tests`: it
+`core-kernel` (`src/**`), with its tests in `core-kernel-tests`: it
 imports nothing of the workspace and `effect` alone, so no model type and
 no runtime module enters it. A package that imports `@xandreed/core` or
-`@xandreed/core/kernel` names `core-kernel` in its `canImport`. The
+`@xandreed/core` names `core-kernel` in its `canImport`. The
 kernel's rules:
 
 - Core owns what every agent has, whatever its workflow: sessions and
   their journal, journal storage, events, the message vocabulary and the
   conversation's records (ADRs 0002 and 0003). It never owns a loop, a
   memory, a prompt, a system text or a request to a model: memory is a
-  contract of the sdk's kernel (`packages/sdk/src/kernel/contracts`), the
+  contract of the sdk's kernel (`packages/sdk/src/contracts`), the
   loop and the system text are the host's program, and no code here
   defines or imports them; a comment names them only to say where they
   live.
   Core stores nothing and runs no turn. `Core` is `publish`, `on` and
   `events` (`core.port.ts`, `core.adapter.ts`); everything else there is
   vocabulary, pure rules, the two contracts and their kits.
-- Core's API is a product. `api/core.api.txt` lists it (`./kernel` names the same module, so it has no file of its own), and
+- Core's API is a product. `api/core.api.txt` lists it, and
   `verify:packages` fails when it differs from the build (`bun run
   api:update` rewrites it). A change that removes or changes a name there
   comes with a CHANGELOG line saying what a plugin must change. There is no
@@ -206,7 +205,7 @@ kernel's rules:
   has an `id`, the one its kit's doc comment lists, and a failure names
   the check it came from. `journalStorageConformance` has its self-test
   here; `sessionsConformance` runs, with its careless plugins, where the
-  stock plugins live (`packages/sdk/src/kernel/kits.test.ts`). A new check comes with a
+  stock plugins live (`packages/sdk/src/kits.test.ts`). A new check comes with a
   careless plugin that fails it and no other check it is not careless
   about. A check never counts scheduler turns to show that something did
   not happen: it waits on a latch or publishes a probe after.

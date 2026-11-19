@@ -1,7 +1,7 @@
 # ADR 0018: A background task reports in a turn of its own
 
 - **Status:** accepted, 16 November 2026
-- **Applies to:** `@xandreed/core/kernel` (`conversation.user.message`'s data, `userMessage`), `@xandreed/sdk/kernel`
+- **Applies to:** `@xandreed/core` (`conversation.user.message`'s data, `userMessage`), `@xandreed/sdk`
   (the `Tasks` contract, the `tasks` plugin, the task tools, `turnsOf`, `questionOf`)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 

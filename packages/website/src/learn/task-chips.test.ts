@@ -4,9 +4,9 @@
 // feed the fold the records a run makes, in the orders a run can make them;
 // lesson 17's page tests read the same chips from real runs.
 import { describe, expect, test } from "bun:test"
-import { assistantMessage, Seq, SessionId, ToolCallId, toolResult, turnEnded, TurnNumber, turnStarted } from "@xandreed/core/kernel"
-import type { StoredDraft } from "@xandreed/core/kernel"
-import { TaskId, taskReport } from "@xandreed/sdk/kernel"
+import { assistantMessage, Seq, SessionId, ToolCallId, toolResult, turnEnded, TurnNumber, turnStarted } from "@xandreed/core"
+import type { StoredDraft } from "@xandreed/core"
+import { TaskId, taskReport } from "@xandreed/sdk"
 import type { Trace } from "./runtime.ts"
 import { chipLine, heardTask, noTasks } from "./task-chips.ts"
 import type { TaskChips } from "./task-chips.ts"

@@ -6,10 +6,10 @@
 // runtime in the lesson's own test, where `withKnowledge` says them.
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
-import { SessionId, stored, TurnNumber } from "@xandreed/core/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
-import { curatedEvent, curationFailedEvent, EntityId, entityEvent, knowledgeOf, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, SourceId, sourceEvent } from "@xandreed/sdk/kernel"
-import type { StoredDraft } from "@xandreed/core/kernel"
+import { SessionId, stored, TurnNumber } from "@xandreed/core"
+import type { StoredEvent } from "@xandreed/core"
+import { curatedEvent, curationFailedEvent, EntityId, entityEvent, knowledgeOf, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, SourceId, sourceEvent } from "@xandreed/sdk"
+import type { StoredDraft } from "@xandreed/core"
 import { COLUMN_ROWS, curationCutLine, latestCuration, memoryViewOf, MOST_SAID, namedBy, NEIGHBOURS, ordinal } from "./graph-model.ts"
 import { worldDrafts } from "./lessons/connected-memory/load-world.ts"
 

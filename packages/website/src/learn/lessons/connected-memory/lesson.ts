@@ -11,8 +11,8 @@
 // `limit` and `walk` of memory.ts's one call.
 import { Clock, Effect, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { callTool, curate, curateAgain, CurationFailed, Curator, flatMemory, knowledgeOf, knowledgeSession, Memory, modelAnswer, turnSource, turnsOf, withKnowledge } from "@xandreed/sdk/kernel"
+import { Core, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"
+import { callTool, curate, curateAgain, CurationFailed, Curator, flatMemory, knowledgeOf, knowledgeSession, Memory, modelAnswer, turnSource, turnsOf, withKnowledge } from "@xandreed/sdk"
 import { named, programOf, runStatements } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

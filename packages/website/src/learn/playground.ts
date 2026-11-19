@@ -5,12 +5,12 @@
 // (lesson 16) has a Files tab too, over the page's own files, and a lesson
 // with a graph (lesson 18) a Graph tab, over what each request's walk did.
 import { Option, Result } from "effect"
-import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import type { StoredEvent, TurnNumber } from "@xandreed/core/kernel"
-import { attemptEvent, knowledgeOf, progressEvent, viewEvent } from "@xandreed/sdk/kernel"
+import { dataOf, turnEndedEvent, turnStartedEvent } from "@xandreed/core"
+import type { StoredEvent, TurnNumber } from "@xandreed/core"
+import { attemptEvent, knowledgeOf, progressEvent, viewEvent } from "@xandreed/sdk"
 import { attemptLine, branchPoints, drawsAnew, dropWaiting, emptyChat, hear, questionsWaiting, said, sent, stored, WAITING_FOR_ANSWER, waitingCount, withoutFailure } from "./chat-model.ts"
 import { ignoredLine } from "./chats.ts"
-import type { KeyValueStore } from "@xandreed/sdk/kernel"
+import type { KeyValueStore } from "@xandreed/sdk"
 import type { ChatBoard } from "./chat-model.ts"
 import { lessonOf } from "./lessons/index.ts"
 import { heardTask, noTasks } from "./task-chips.ts"

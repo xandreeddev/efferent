@@ -9,8 +9,8 @@
 // of chats above the messages shows each chat of the store, the one shown
 // marked. In lesson 17 the row of task chips above the messages shows each
 // background task the conversation started, and how it stands.
-import type { TurnNumber } from "@xandreed/core/kernel"
-import type { Decision } from "@xandreed/sdk/kernel"
+import type { TurnNumber } from "@xandreed/core"
+import type { Decision } from "@xandreed/sdk"
 import type { ChatEntry } from "../chats.ts"
 import { answersTo, NO_TEXT } from "../chat-model.ts"
 import type { ChatRow } from "../chat-model.ts"

@@ -7,7 +7,7 @@ description: Add or change a service port (Context.Service) of the kernel, its a
 
 A port is a contract in domain terms; adapters are interchangeable
 implementations proved by one runnable kit. Worked example: `Shell`
-(`packages/sdk/src/kernel/contracts/shell/shell.port.ts`, its
+(`packages/sdk/src/contracts/shell/shell.port.ts`, its
 `shell.entity.ts` and `shell.conformance.ts`; the scripted adapter
 `plugins/shell-scripted/scripted-shell.adapter.ts`; the process adapter
 `node/shell-process/process-shell.adapter.ts`, on the Node entry).
@@ -15,9 +15,9 @@ implementations proved by one runnable kit. Worked example: `Shell`
 ## 1. Place the contract
 
 - What every agent has, whatever its workflow (the journal, sessions,
-  events, the spend ledger): core's kernel, `packages/core/src/kernel`
+  events, the spend ledger): core's kernel, `packages/core/src`
   (ADR 0002). Anything else is a workflow contract of the sdk's kernel:
-  a folder `packages/sdk/src/kernel/contracts/<name>/`.
+  a folder `packages/sdk/src/contracts/<name>/`.
 - A `Context.Service` outside a `.port.ts` file or a `ports/` folder fails
   `architecture/context-tags-live-in-ports`.
 - Data, options and errors go in `<thing>.entity.ts`; pure helpers in
@@ -64,7 +64,7 @@ export class Thing extends Context.Service<Thing, {
   kernel's own helpers (`contracts/conformance.entity.functions.ts` in the
   sdk, `conformance.entity.functions.ts` in core's kernel); checks fail with
   `ConformanceFailure`, and a failure names the check it came from.
-- Export the kit from the kernel's entry (`@xandreed/sdk/kernel`), so hosts
+- Export the kit from the kernel's entry (`@xandreed/sdk`), so hosts
   can prove their own adapters. Never import a module whose name ends in
   `testing.ts` from a kit: the build drops those files.
 - A contract change starts as a new or changed check in the kit.

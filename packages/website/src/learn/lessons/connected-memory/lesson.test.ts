@@ -14,13 +14,13 @@
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Context, Deferred, Effect, Layer, Option, Result, Stream } from "effect"
 import { AiError, LanguageModel, Prompt } from "effect/ai"
-import { dataOf, kernel, SessionId, Sessions, stored } from "@xandreed/core/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
+import { dataOf, kernel, SessionId, Sessions, stored } from "@xandreed/core"
+import type { StoredEvent } from "@xandreed/core"
 import {
   curatedEvent, curationFailedEvent, EntityId, entityEvent, estimateTokens, inProcessJournal, KNOWLEDGE_OWNER, knowledgeJournal, knowledgeOf, knowledgeSession, memoryEvent, MemoryId, sessions, SourceId,
   sourceEvent, standing,
-} from "@xandreed/sdk/kernel"
-import type { Knowledge } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { Knowledge } from "@xandreed/sdk"
 import { applyExperiment } from "../../lesson.ts"
 import { isCurationPrompt } from "../../models/echo-curation.ts"
 import { loadEcho } from "../../models/mock.ts"

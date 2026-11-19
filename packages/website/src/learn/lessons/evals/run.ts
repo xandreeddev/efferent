@@ -11,8 +11,8 @@
 // schemas before the page draws it.
 import { Cause, Effect, Fiber, Layer, Option, Predicate, Queue, Result, Schema } from "effect"
 import { LanguageModel } from "effect/ai"
-import { kernel, Sessions } from "@xandreed/core/kernel"
-import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk/kernel"
+import { kernel, Sessions } from "@xandreed/core"
+import { inProcessJournal, sessions, turnsOf } from "@xandreed/sdk"
 import {
   compareDecisionTrials,
   decisionTrialOf,

@@ -7,10 +7,10 @@ import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import {
   byCreation, CONVERSATION_VOCABULARY, Core, currentFormat, JournalStorage, JournalStorageError, journalStorageConformance, messageOf,
   readJournal, Seq, SessionHeader, Sessions, StoredEvent, turnStartedEvent, userMessage, vocabularyOf,
-} from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk/kernel"
-import type { KeyValueStore } from "@xandreed/sdk/kernel"
+} from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
+import { callTool, Memory, modelAnswer, paired, promptMessage } from "@xandreed/sdk"
+import type { KeyValueStore } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { Lesson, LessonControl, LessonKit, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

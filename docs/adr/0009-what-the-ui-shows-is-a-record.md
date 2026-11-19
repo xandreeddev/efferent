@@ -1,7 +1,7 @@
 # ADR 0009: What the UI shows is a record tagged ui; a client folds them; the model never sees them
 
 - **Status:** accepted, 14 November 2026
-- **Applies to:** `@xandreed/sdk/kernel`, every tool that shows something and every client that draws it
+- **Applies to:** `@xandreed/sdk`, every tool that shows something and every client that draws it
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

@@ -7,7 +7,7 @@ import { CHAT as FIRST_CHAT } from "../your-first-agent/chat.source.ts"
 /** What this lesson replaces in lesson 1's chat.ts, as `[from, to]`. */
 export const REPLACED: ReadonlyArray<readonly [string, string]> = [
   ['import { Context, Effect, Layer, Queue, Stream } from "effect"', 'import { Context, Effect, Layer, Queue, Result, Stream } from "effect"'],
-  ['import { Sessions } from "@xandreed/core/kernel"', 'import { currentFormat, Sessions } from "@xandreed/core/kernel"'],
+  ['import { Sessions } from "@xandreed/core"', 'import { currentFormat, Sessions } from "@xandreed/core"'],
   [
     '  // The conversation this chat shows. "Clear context" gives it a new one.\n',
     '  // The conversation this chat shows: the one `resume` gave. "Clear context" starts a new one.\n',

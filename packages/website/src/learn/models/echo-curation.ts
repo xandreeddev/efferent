@@ -10,7 +10,7 @@
 // no evidence). It also reads the kernel's note of memories
 // (`knowledgeNote`) for the chat: a question sent with one is answered from
 // the note's first memory and what the note says about it.
-import { curationPrompt, knowledgeNote, reviewPrompt, USER_NAME } from "@xandreed/sdk/kernel"
+import { curationPrompt, knowledgeNote, reviewPrompt, USER_NAME } from "@xandreed/sdk"
 
 /** The text inside `<tag>…</tag>`, when a text frames one. */
 const framedIn = (tag: string, text: string): string | undefined => new RegExp(`<${tag}>\\n([\\s\\S]*?)\\n</${tag}>`).exec(text)?.[1]

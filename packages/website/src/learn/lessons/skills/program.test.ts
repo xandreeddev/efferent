@@ -12,8 +12,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { scriptedModel } from "@xandreed/sdk/kernel"
-import type { ModelScript } from "@xandreed/sdk/kernel"
+import { scriptedModel } from "@xandreed/sdk"
+import type { ModelScript } from "@xandreed/sdk"
 import { BASE_AGENT, IMPORTS as BASE_IMPORTS } from "../base/agent.source.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
@@ -180,7 +180,7 @@ describe("lesson 10's displayed program", () => {
     expect(SKILLS_IMPORTS.split("\n")).toEqual([
       'import { Effect, Schema } from "effect"',
       'import { Tool, Toolkit } from "effect/ai"',
-      'import { defineSkill, skills } from "@xandreed/sdk/kernel"',
+      'import { defineSkill, skills } from "@xandreed/sdk"',
       'import { tools } from "./tools.ts"',
     ])
     expect(skillsDocumentOf(DEFAULT_SKILLS)).toBe(`${SKILLS_IMPORTS}\n\n${DEFAULT_SKILLS}\n`)

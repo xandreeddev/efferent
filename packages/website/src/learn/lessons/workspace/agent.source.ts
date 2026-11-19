@@ -17,12 +17,12 @@ export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   ['import { Effect, Stream } from "effect"', 'import { Effect, Layer, Predicate, Result, Stream } from "effect"'],
   ['import { LanguageModel, Prompt } from "effect/ai"', 'import { LanguageModel, Prompt, Toolkit } from "effect/ai"'],
   [
-    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
-    'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"',
+    'import { Core, kernel, Sessions, turnStartedEvent, userMessage } from "@xandreed/core"',
+    'import { Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"',
   ],
   [
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
-    'import { Approval, approveIn, callTool, fileHandlers, fileTools, inProcessJournal, Memory, modelAnswer, sessions, workspacePath } from "@xandreed/sdk/kernel"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
+    'import { Approval, approveIn, callTool, fileHandlers, fileTools, inProcessJournal, Memory, modelAnswer, sessions, workspacePath } from "@xandreed/sdk"',
   ],
   ['import { tools, toolsLive } from "./tools.ts"', 'import { tools, toolsLive } from "./tools.ts"\nimport { workspace } from "./workspace.ts"'],
 ]
@@ -68,7 +68,7 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
 /** What the typed module replaces in the base's, as `[from, to]`: `approvalOn` and `files` are parameters of `run`. */
 export const TYPED: ReadonlyArray<readonly [string, string]> = [
   // The shown imports hold `Layer` already: the base's own type import of it would be a second.
-  ['import type { Layer } from "effect"\n', 'import type { Files } from "@xandreed/sdk/kernel"\n'],
+  ['import type { Layer } from "effect"\n', 'import type { Files } from "@xandreed/sdk"\n'],
   [
     "export const run = (pane: ChatPane,",
     "export const run = (approvalOn: (pane: ChatPane) => Layer.Layer<Approval>, files: Layer.Layer<Files>, pane: ChatPane,",

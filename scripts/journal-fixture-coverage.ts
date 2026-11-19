@@ -2,8 +2,8 @@
  * What a recorded journal fixture must hold (scripts/record-journal-fixture.ts refuses to write one that misses any),
  * as pure functions over the journals the recording stored. journal-fixture-coverage.test.ts covers them.
  */
-import type { Journal, StoredEvent } from "@xandreed/core/kernel"
-import { estimateTokens, messageText } from "@xandreed/sdk/kernel"
+import type { Journal, StoredEvent } from "@xandreed/core"
+import { estimateTokens, messageText } from "@xandreed/sdk"
 
 /** One kind of record the fixture is meant to hold: its name in a refusal, and whether a record is one. */
 export interface Required { readonly name: string; readonly is: (event: StoredEvent) => boolean }

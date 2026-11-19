@@ -10,8 +10,8 @@
 // queue over its pane.
 import { Effect, Layer, Option, Predicate, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { CONVERSATION_VOCABULARY, Core, messageOf, readJournal, Sessions, turnStartedEvent, userMessage, vocabularyOf } from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer, paired, promptMessage, taskHandlers, taskReport, tasks, taskTools } from "@xandreed/sdk/kernel"
+import { CONVERSATION_VOCABULARY, Core, messageOf, readJournal, Sessions, turnStartedEvent, userMessage, vocabularyOf } from "@xandreed/core"
+import { callTool, Memory, modelAnswer, paired, promptMessage, taskHandlers, taskReport, tasks, taskTools } from "@xandreed/sdk"
 import { programOf, run, runStatements, named } from "../../evaluate.ts"
 import type { Lesson, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

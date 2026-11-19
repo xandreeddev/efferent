@@ -2,7 +2,7 @@
 // in the page's store, each under the kernel's key for its text. This module, with the vectors and their codec, is
 // imported only when Load the world is pressed: no page carries it before.
 import { Effect, Schema } from "effect"
-import { VectorStore } from "@xandreed/sdk/kernel"
+import { VectorStore } from "@xandreed/sdk"
 import { ShippedFile, shippedEntries } from "./shipped.ts"
 import { SHIPPED } from "./vectors.ts"
 

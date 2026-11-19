@@ -13,8 +13,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Context, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { scriptedModel } from "@xandreed/sdk/kernel"
-import type { ModelScript } from "@xandreed/sdk/kernel"
+import { scriptedModel } from "@xandreed/sdk"
+import type { ModelScript } from "@xandreed/sdk"
 import { applyExperiment } from "../../lesson.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"
@@ -195,8 +195,8 @@ describe("lesson 11's displayed program", () => {
     expect(loopOf(DEFAULT_AGENT)).toBe(loopOf(BASE_AGENT))
     // Its imports beside the base's: the kernel's handlers, and memory.ts's one name.
     expect(changed(BASE_IMPORTS, IMPORTS)).toEqual({
-      gone: ['import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"', 'import { flatMemory } from "./memory.ts"'],
-      come: ['import { callTool, factHandlers, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"', 'import { memory } from "./memory.ts"'],
+      gone: ['import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"', 'import { flatMemory } from "./memory.ts"'],
+      come: ['import { callTool, factHandlers, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"', 'import { memory } from "./memory.ts"'],
     })
     expect(documentOf(DEFAULT_AGENT).startsWith(`${IMPORTS}\n\n// The system text`)).toBe(true)
   })
@@ -238,7 +238,7 @@ describe("lesson 11's displayed program", () => {
     expect(DEFAULT_TOOLS).toContain(`${HANDLERS_START}  calculator: ({ a, op, b }) =>\n`)
     // The toolkit is never annotated: the merge keeps each tool's type.
     expect(DEFAULT_TOOLS).not.toMatch(/Toolkit\.Any|: Toolkit\b|\bas (?:never|any|unknown)\b/)
-    expect(TOOLS_IMPORTS).toBe(`${NOTE_IMPORTS}\nimport { Sessions } from "@xandreed/core/kernel"\nimport { factTools, rememberedFacts } from "@xandreed/sdk/kernel"`)
+    expect(TOOLS_IMPORTS).toBe(`${NOTE_IMPORTS}\nimport { Sessions } from "@xandreed/core"\nimport { factTools, rememberedFacts } from "@xandreed/sdk"`)
     expect(toolsDocumentOf(DEFAULT_TOOLS)).toBe(`${TOOLS_IMPORTS}\n\n${DEFAULT_TOOLS}\n`)
   })
 
@@ -248,8 +248,8 @@ describe("lesson 11's displayed program", () => {
     expect(DEFAULT_MEMORY.split("\n").filter((line) => !line.startsWith("//") && line.length > 0)).toEqual(["export const memory = withFacts({ limit: 5 })(flatMemory)"])
     expect(MEMORY_IMPORTS.split("\n")).toEqual([
       'import { Effect, Layer } from "effect"',
-      'import { Sessions } from "@xandreed/core/kernel"',
-      'import { factsNote, flatMemory, Memory, questionOf, relevant, rememberedFacts, withFacts } from "@xandreed/sdk/kernel"',
+      'import { Sessions } from "@xandreed/core"',
+      'import { factsNote, flatMemory, Memory, questionOf, relevant, rememberedFacts, withFacts } from "@xandreed/sdk"',
     ])
     expect(memoryDocumentOf(DEFAULT_MEMORY)).toBe(`${MEMORY_IMPORTS}\n\n${DEFAULT_MEMORY}\n`)
     // The files the page shows are these texts, and chat.ts is lesson 1's.

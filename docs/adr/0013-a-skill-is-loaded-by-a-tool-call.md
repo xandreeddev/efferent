@@ -1,7 +1,7 @@
 # ADR 0013: A skill is loaded by a tool call; what is offered is a fold of the journal
 
 - **Status:** accepted, 15 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the skill contract, the `skills` plugin, a host's loop)
+- **Applies to:** `@xandreed/sdk` (the skill contract, the `skills` plugin, a host's loop)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

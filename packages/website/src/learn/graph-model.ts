@@ -7,13 +7,13 @@
 // as `plugin.knowledge.recalled`; this file folds both, with no listener of
 // its own. Pure: no DOM, no clock. `panes/graph.ts` draws what it gives.
 import { Option } from "effect"
-import { dataOf } from "@xandreed/core/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
+import { dataOf } from "@xandreed/core"
+import type { StoredEvent } from "@xandreed/core"
 import {
   aliasedEvent, curatedEvent, curationFailedEvent, entityEvent, estimateTokens, keptFrom, knowledgeNote, knowledgeOf, knowledgeRecalledEvent, memoryEndedEvent, memoryEvent,
   memoryRestatedEvent, sourceEvent, standing, USER_ENTITY,
-} from "@xandreed/sdk/kernel"
-import type { Knowledge, KnowledgeRecalledData, KnownMemory } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { Knowledge, KnowledgeRecalledData, KnownMemory } from "@xandreed/sdk"
 import type { Trace } from "./runtime.ts"
 
 /** One request's recall, as the page heard it: the turn of the conversation, and which of its model calls (from 1). */

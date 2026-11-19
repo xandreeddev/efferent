@@ -16,13 +16,13 @@
 // record with the clock of the fiber that appends it, so each append is given
 // a clock that reads its day.
 import { Clock, Effect, Option, Result } from "effect"
-import { dataOf, Sessions, stored } from "@xandreed/core/kernel"
-import type { StoredDraft, StoredEvent } from "@xandreed/core/kernel"
+import { dataOf, Sessions, stored } from "@xandreed/core"
+import type { StoredDraft, StoredEvent } from "@xandreed/core"
 import {
   aliasedEvent, curatedEvent, EntityId, entityEvent, folded, knowledgeOf, knowledgeSession, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, nextIds, SourceId,
   sourceEvent, standing,
-} from "@xandreed/sdk/kernel"
-import type { Knowledge, MemoryKind } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { Knowledge, MemoryKind } from "@xandreed/sdk"
 import { WORLD } from "./world.ts"
 import type { WorldEntry } from "./world.ts"
 

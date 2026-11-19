@@ -26,7 +26,7 @@ packages/
   evals-langsmith/src/# official SDK export adapter
 ```
 
-The core has no agent SDK, Docker, browser, database or provider client dependency; of the framework it imports only `@xandreed/core/kernel`, for the `ModelSpend` ledger a run shares across its trials. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
+The core has no agent SDK, Docker, browser, database or provider client dependency; of the framework it imports only `@xandreed/core`, for the `ModelSpend` ledger a run shares across its trials. The CLI and exporters are Node 24 packages. An app can use the core runner without the CLI or register its own exporter without changing the domain.
 
 ## Entities and their relationships
 
@@ -198,7 +198,7 @@ Remote export does not change the local execution or grade revision.
 `efferent-eval run` and `calibrate` take `--budget-usd <amount>` (programmatically,
 `EvaluationSelection.spendBudget`): the most the run's trials may spend together on model
 sends, in the currency of the prices their ledgers reserve at. A run opens one `ModelSpend`
-ledger (`@xandreed/core/kernel`) for its trials, and every runnable reads its trial's account in
+ledger (`@xandreed/core`) for its trials, and every runnable reads its trial's account in
 it from its context (`yield* ModelSpend`). Whatever sends a model call reserves the call's worst
 case in it before the call goes out, and settles the hold at what the call cost, or releases it.
 No first-party model provider charges the ledger yet: a runnable that sends model calls itself
@@ -246,7 +246,7 @@ eval.regrade           gradeEvaluation, on its own over saved work: eval.run.id
 
 Logs written under `eval.trial` and `eval.grade` carry the same ids as annotations, under the same keys. An evaluator behind a grader opens `eval.evaluator` under its grade, `eval.semantic.run` for `semanticEvaluator`, the judges' `eval.semantic.llm` and `eval.semantic.jev`. Each exporter's `exportRun` is one `eval.export` span carrying `eval.exporter` and `eval.run.id`.
 
-The command line traces through the app. An app's `observability` layer (a `Layer.Layer<never>`, such as one built over the kernel's OTLP export, `otlpTelemetryFromEnv` from `@xandreed/sdk/kernel/node`) is provided around each command that loads the app, and that command is one `eval.cli` span carrying `eval.command`, over the spans above and the exports' `eval.export`. The layer closes with the command, so its spans are flushed when the command ends and when Ctrl-C or SIGTERM interrupts it. It has no error type: observability never fails an eval. `inspect`, `compare` and `help` load no app and open no span.
+The command line traces through the app. An app's `observability` layer (a `Layer.Layer<never>`, such as one built over the kernel's OTLP export, `otlpTelemetryFromEnv` from `@xandreed/sdk/node`) is provided around each command that loads the app, and that command is one `eval.cli` span carrying `eval.command`, over the spans above and the exports' `eval.export`. The layer closes with the command, so its spans are flushed when the command ends and when Ctrl-C or SIGTERM interrupts it. It has no error type: observability never fails an eval. `inspect`, `compare` and `help` load no app and open no span.
 
 ## Retrieval grading
 

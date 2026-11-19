@@ -19,8 +19,8 @@ import { BASE_AGENT, IMPORTS as BASE_IMPORTS, replaced, typedModule } from "../b
 export const REPLACED_IMPORTS: ReadonlyArray<readonly [string, string]> = [
   ['import { LanguageModel, Prompt } from "effect/ai"', 'import { LanguageModel, Prompt, Toolkit } from "effect/ai"'],
   [
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"',
-    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions, taskHandlers, taskReport, tasks, taskTools } from "@xandreed/sdk/kernel"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"',
+    'import { callTool, inProcessJournal, Memory, modelAnswer, sessions, taskHandlers, taskReport, tasks, taskTools } from "@xandreed/sdk"',
   ],
   ['import { flatMemory } from "./memory.ts"', 'import { helper } from "./helper.ts"\nimport { flatMemory } from "./memory.ts"'],
 ]
@@ -145,7 +145,7 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
  * and `reportsOn` is a parameter of `run`, as `pane` and `model` are.
  */
 export const TYPED: ReadonlyArray<readonly [string, string]> = [
-  ['import type { ChatPane } from "./chat.ts"', 'import type { ChatPane, Input } from "./chat.ts"\nimport type { TaskReports } from "@xandreed/sdk/kernel"'],
+  ['import type { ChatPane } from "./chat.ts"', 'import type { ChatPane, Input } from "./chat.ts"\nimport type { TaskReports } from "@xandreed/sdk"'],
   ["export const run = (pane: ChatPane,", "export const run = (reportsOn: (pane: ChatPane) => Layer.Layer<TaskReports>, pane: ChatPane,"],
   ["const turn = (input) =>", "const turn = (input: Input) =>"],
 ]

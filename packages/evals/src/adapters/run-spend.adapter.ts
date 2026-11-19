@@ -1,6 +1,6 @@
 import { Cause, Effect, Option, Ref } from "effect"
-import { ModelSpend } from "@xandreed/core/kernel"
-import type { ModelSpendUnavailable, SpendAmount } from "@xandreed/core/kernel"
+import { ModelSpend } from "@xandreed/core"
+import type { ModelSpendUnavailable, SpendAmount } from "@xandreed/core"
 import { EvaluationError } from "../domain/identity.entity.js"
 import { reasonOf } from "../domain/identity.entity.functions.js"
 import type { TrialSpendState } from "../domain/spend.entity.js"

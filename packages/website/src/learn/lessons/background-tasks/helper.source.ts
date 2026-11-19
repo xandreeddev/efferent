@@ -13,8 +13,8 @@
 /** Read-only: what the file imports. */
 export const HELPER_IMPORTS = `import { Effect } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { userMessage } from "@xandreed/core/kernel"
-import { callTool, Memory, modelAnswer } from "@xandreed/sdk/kernel"
+import { userMessage } from "@xandreed/core"
+import { callTool, Memory, modelAnswer } from "@xandreed/sdk"
 import { tools } from "./tools.ts"`
 
 /** Everything before the editable part. */
@@ -74,7 +74,7 @@ export const helperDocumentOf = (helper: string): string => `${HELPER_HEADER}${h
 
 /** The same file as a module a test can compile: the task's session and text typed as a `TaskRun`'s are. */
 export const helperModuleOf = (helper: string): string =>
-  `${HELPER_IMPORTS}\nimport type { OpenSession } from "@xandreed/core/kernel"\n\n${helper.replace(DECLARATION, "export const helper = (session: OpenSession, task: string) =>")}\n`
+  `${HELPER_IMPORTS}\nimport type { OpenSession } from "@xandreed/core"\n\n${helper.replace(DECLARATION, "export const helper = (session: OpenSession, task: string) =>")}\n`
 
 /** The editable part as the page runs it: statements, without `export`. */
 export const helperBodyOf = (helper: string): string => helper.replace(/^export /gm, "")

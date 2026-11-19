@@ -4,6 +4,6 @@
  * checks nothing.
  */
 import { sep } from "node:path"
-import { Agent } from "../src/kernel/index.js"
+import { Agent } from "../src/index.js"
 
 export const control = { Agent, sep }

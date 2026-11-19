@@ -3,7 +3,7 @@
 // so every later context starts the same way.
 
 /** Read-only: where each name the memory uses comes from. */
-export const MEMORY_IMPORTS = `import { summaryMemory } from "@xandreed/sdk/kernel"`
+export const MEMORY_IMPORTS = `import { summaryMemory } from "@xandreed/sdk"`
 
 /** Read-only: the comment and the declaration before the editable layer. */
 export const MEMORY_INTRO = `${MEMORY_IMPORTS}

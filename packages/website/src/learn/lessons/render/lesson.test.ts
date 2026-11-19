@@ -5,7 +5,7 @@
 // its line.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Option } from "effect"
-import { viewsOf } from "@xandreed/sdk/kernel"
+import { viewsOf } from "@xandreed/sdk"
 import { loadEcho } from "../../models/mock.ts"
 import { LessonRuntime } from "../../runtime.ts"
 import type { Trace } from "../../runtime.ts"

@@ -29,13 +29,13 @@
 // session and the turn that stored their source, never as the chat's.
 import { Cause, Context, Deferred, Effect, Exit, Fiber, Layer, Option, Predicate, Queue, Result, Schema, Scope, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Response } from "effect/ai"
-import { Core, dataOf, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core/kernel"
-import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core/kernel"
+import { Core, dataOf, JournalStorage, JournalStorageError, kernel, SessionId, Sessions, turnEndedEvent, turnStartedEvent } from "@xandreed/core"
+import type { KernelEvent, SessionHeader, StoredEvent, TurnNumber } from "@xandreed/core"
 import {
   Approval, curatedEvent, curationFailedEvent, Curator, CurrentTurn, Embedder, EmbedFailed, Files, inMemoryFiles, inMemoryVectors, inProcessJournal, knowledgeSession, Memory, sessions, sourceEvent,
   Summarizer, TaskReports, VectorStore,
-} from "@xandreed/sdk/kernel"
-import type { Decision, KeyValueStore, TaskReport } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { Decision, KeyValueStore, TaskReport } from "@xandreed/sdk"
 import { CHAT_OWNER, chatsOf } from "./chats.ts"
 import type { ChatEntry } from "./chats.ts"
 import { buildFailure, textOf } from "./evaluate.ts"

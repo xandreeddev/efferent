@@ -6,8 +6,8 @@
 // closed: a closed page can write nothing more.
 import { afterEach, describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
-import { messageOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core/kernel"
-import type { KeyValueStore } from "@xandreed/sdk/kernel"
+import { messageOf, toolResultEvent, turnEndedEvent, userMessageEvent } from "@xandreed/core"
+import type { KeyValueStore } from "@xandreed/sdk"
 import { chatRowsOf, emptyChat, hear, sent, showing } from "../../chat-model.ts"
 import { BEFORE_THIS_PAGE, emptyBoard, record, turnNumbersOf, viewOf } from "../../trace-model.ts"
 import { callIds } from "../../models/call-ids.ts"

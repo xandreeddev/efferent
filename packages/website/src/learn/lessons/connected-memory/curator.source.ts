@@ -14,8 +14,8 @@
 /** Read-only: where each name the curator uses comes from. */
 export const CURATOR_IMPORTS = `import { Clock, Effect, Layer, Option, Stream } from "effect"
 import { LanguageModel } from "effect/ai"
-import { Sessions } from "@xandreed/core/kernel"
-import { curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf } from "@xandreed/sdk/kernel"
+import { Sessions } from "@xandreed/core"
+import { curate, curateAgain, CurationFailed, Curator, knowledgeOf, knowledgeSession, turnSource, turnsOf } from "@xandreed/sdk"
 import { Chat } from "./chat.ts"`
 
 /** Everything before the editable part. */
@@ -126,7 +126,7 @@ export const curatorDocumentOf = (curator: string): string => `${CURATOR_HEADER}
  * The same file as a module a test can compile: the curator's model is typed, and so is what `said` reads. Nothing
  * else needs a type, and nothing is cast.
  */
-export const curatorModuleOf = (curator: string): string => `${CURATOR_HEADER.replace('import { Chat } from "./chat.ts"', 'import { Chat } from "./chat.ts"\nimport type { CurationOutcome } from "@xandreed/sdk/kernel"')}${curator
+export const curatorModuleOf = (curator: string): string => `${CURATOR_HEADER.replace('import { Chat } from "./chat.ts"', 'import { Chat } from "./chat.ts"\nimport type { CurationOutcome } from "@xandreed/sdk"')}${curator
   .replace("export const curatorOn = (model) =>", "export const curatorOn = (model: Layer.Layer<LanguageModel.LanguageModel>) =>")
   .replace("const said = (outcome) => {", "const said = (outcome: CurationOutcome) => {")}\n`
 

@@ -59,8 +59,8 @@ warns that CI will refuse the grown file.
 ## Adding a package or a plugin
 
 A plugin is a layer in a folder of the sdk's kernel
-(`packages/sdk/src/kernel/plugins/<name>` or, for one that needs a runtime's
-modules, `src/kernel/node/<name>`) with a boundaries layer of its own: skill
+(`packages/sdk/src/plugins/<name>` or, for one that needs a runtime's
+modules, `src/node/<name>`) with a boundaries layer of its own: skill
 `kernel-architecture`, and skill `add-port` for a contract and its kit. A new
 package under `packages/` must be registered by hand, and
 `bun run typecheck` fails (`quality/package-registered`) naming each list
@@ -74,9 +74,7 @@ it is missing from:
 - `names` in `scripts/build-packages.ts`, so it is built, verified and
   published (foundry, development tooling, is exempt);
 - `compilerOptions.paths` in `tsconfig.base.json` (`"@xandreed/<name>"`);
-- its root entry, `src/index.ts`, and each other entry in `CURATED_ENTRIES`
-  (core's and the sdk's root entry is their kernel's index until the
-  kernel's folders become the packages' `src`).
+- its root entry, `src/index.ts`, and each other entry in `CURATED_ENTRIES`.
 
 The lists the check reads are the `registration` data in
 `foundry.config.ts`; the docs site (`packages/website`) is exempt.
@@ -98,7 +96,7 @@ release previews use the maintainer-owned PR handoff below.
 - Colocate tests next to the source (`foo.ts` / `foo.test.ts`); fixtures live
   outside `src/` so the gates never see deliberate violations.
 - A change to a documented contract updates `docs/kernel.md` (whose quotes
-  `packages/sdk/src/kernel/guide.test.ts` holds to their sources) and the
+  `packages/sdk/src/guide.test.ts` holds to their sources) and the
   matching page under `packages/website/src/content/docs/` in the same PR.
   Their `@xandreed/*` imports in code blocks are compiled against the packed
   packages (`verify:packages`); generated pages are never edited by hand.
@@ -121,7 +119,7 @@ release previews use the maintainer-owned PR handoff below.
 - Every release's journal fixture is kept, byte-identical to its tag, as
   historical evidence of what a kernel host stored with that release
   (`packages/sdk/fixtures/journal-<version>.json`).
-  `packages/sdk/src/kernel/node/journal-compat.test.ts` replays the fixtures
+  `packages/sdk/src/node/journal-compat.test.ts` replays the fixtures
   of the current `JOURNAL_FORMAT` with this release's definitions through a
   directory journal, and checks that a journal of any other format is
   refused and left byte for byte: there is no migration or compatibility
@@ -139,7 +137,7 @@ release previews use the maintainer-owned PR handoff below.
   someone using the packages. Use its headings: `### Migration` (what a
   user must do), `### Breaking`, `### Added`, `### Fixed` and
   `### Repository` (changes to this repository only). Start a package's
-  entry with its name and entry (`` `@xandreed/sdk/kernel`: ``).
+  entry with its name and entry (`` `@xandreed/sdk`: ``).
 
 ## Publishing
 

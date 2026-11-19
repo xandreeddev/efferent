@@ -8,6 +8,20 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Changed
+
+- The kernel is each package's root (ADR 0036): `@xandreed/core` is core's
+  kernel, `@xandreed/sdk` the sdk's, and `@xandreed/sdk/node` its Node entry.
+  `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and
+  `@xandreed/sdk/kernel/node` are gone: drop `/kernel` from each import. The
+  entries below still name the kernel's subpaths as they were added. Service
+  keys keep their prefix (`@xandreed/core/kernel/Memory`), since a key is
+  public and never renamed. The repository follows: each kernel folder is its
+  package's `src`, the gates' layers keep their names over the new paths,
+  `./node` is the sdk layer's restricted subpath, the API snapshot of the
+  Node entry is `api/sdk--node.api.txt`, and the guides, the docs site and
+  the lessons' shown sources import the roots.
+
 ### Added
 
 - `@xandreed/sdk/kernel`: a store of images and other bytes for the model

@@ -1,7 +1,7 @@
 # ADR 0008: A memory keeps what it derived as a record of its own, and asks the host for a model's work
 
 - **Status:** accepted, 14 November 2026
-- **Applies to:** `@xandreed/sdk/kernel`, every memory that keeps state, and every host that provides a `Summarizer`
+- **Applies to:** `@xandreed/sdk`, every memory that keeps state, and every host that provides a `Summarizer`
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

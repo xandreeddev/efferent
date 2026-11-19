@@ -11,8 +11,8 @@ check` (tsc over the learn code, the build, the link check) and
 
 ## The learn track (`src/learn`, `src/content/learn`, `src/components/learn`)
 
-- **The kernel alone.** The track runs on `@xandreed/core/kernel` and
-  `@xandreed/sdk/kernel`; `src/learn/imports.test.ts`
+- **The kernel alone.** The track runs on `@xandreed/core` and
+  `@xandreed/sdk`; `src/learn/imports.test.ts`
   fails on any other `@xandreed/` specifier, in the page's code or in a
   source a lesson shows. Lessons 13 and 19 alone may also name the eval
   package, `@xandreed/evals` and `@xandreed/evals/stats`, each in its own

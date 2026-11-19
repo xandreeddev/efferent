@@ -1,7 +1,7 @@
 # ADR 0007: A tool reaches the turn its call runs in through `CurrentTurn`
 
 - **Status:** accepted, 14 November 2026
-- **Applies to:** `@xandreed/sdk/kernel`, every host's loop and every tool that must reach its session
+- **Applies to:** `@xandreed/sdk`, every host's loop and every tool that must reach its session
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context
@@ -20,7 +20,7 @@ service provided around `toolkit.handle` reaches the handler.
 
 ## Decision
 
-`CurrentTurn` (`@xandreed/sdk/kernel`, key `@xandreed/sdk/kernel/CurrentTurn`) is the `OpenSession` a tool
+`CurrentTurn` (`@xandreed/sdk`, key `@xandreed/sdk/kernel/CurrentTurn`) is the `OpenSession` a tool
 call runs in.
 
 - **The loop provides it.** The host's loop runs each call with

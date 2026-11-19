@@ -10,9 +10,9 @@
 // of the mdx is pinned here as it is worded.
 import { afterEach, describe, expect, setDefaultTimeout, spyOn, test } from "bun:test"
 import { Option, Result } from "effect"
-import { SessionId } from "@xandreed/core/kernel"
-import { knowledgeOf, KNOWLEDGE_OWNER, meaningKey, meaningTexts } from "@xandreed/sdk/kernel"
-import type { KnowledgeRecalledData } from "@xandreed/sdk/kernel"
+import { SessionId } from "@xandreed/core"
+import { knowledgeOf, KNOWLEDGE_OWNER, meaningKey, meaningTexts } from "@xandreed/sdk"
+import type { KnowledgeRecalledData } from "@xandreed/sdk"
 import { emptyRecalls, heardRecall, pickedRecall, recallsStartedOver, recallViewOf } from "../../graph-model.ts"
 import type { RecallBoard } from "../../graph-model.ts"
 import { applyExperiment } from "../../lesson.ts"

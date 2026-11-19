@@ -28,7 +28,7 @@ describe("declarationImportProblems", () => {
         `import type { Brand } from "effect/Brand"`,
         `import { sha256 } from "@noble/hashes/sha2.js"`,
         `export { x } from "./x.js"`,
-        `export type { Inner } from "@xandreed/core/kernel"`,
+        `export type { Inner } from "@xandreed/core"`,
         `import type { Stats } from "node:fs"`,
         `import type { Readable } from "stream"`,
         `import type { Database } from "bun:sqlite"`,

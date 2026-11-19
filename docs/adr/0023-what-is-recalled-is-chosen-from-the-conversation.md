@@ -1,7 +1,7 @@
 # ADR 0023: What is recalled is chosen from the conversation
 
 - **Status:** accepted, 18 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the knowledge contract's curation step `curate`, `curateAgain`,
+- **Applies to:** `@xandreed/sdk` (the knowledge contract's curation step `curate`, `curateAgain`,
   `knowledgeSession` and `knowledgeJournal`; its recall `askedOf`, `seedsOf`, `keywordScores`, `recallKnowledge`,
   `knowledgeNote`, `knowledgeRecalledOf` and the live event `plugin.knowledge.recalled`; the memory wrapper
   `withKnowledge`)

@@ -15,9 +15,9 @@ import { CHAT as LESSON_1_CHAT } from "../tools/chat.source.ts"
 export const REPLACED: ReadonlyArray<readonly [string, string]> = [
   ['import { Context, Effect, Layer, Queue, Stream } from "effect"', 'import { Context, Effect, Exit, Layer, Queue, Stream } from "effect"'],
   [
-    'import type { SessionId } from "@xandreed/core/kernel"\n',
-    `import type { SessionId } from "@xandreed/core/kernel"
-import type { TaskReport } from "@xandreed/sdk/kernel"
+    'import type { SessionId } from "@xandreed/core"\n',
+    `import type { SessionId } from "@xandreed/core"
+import type { TaskReport } from "@xandreed/sdk"
 
 // What comes into the conversation: a message you sent, or a task's report. One queue holds both,
 // in the order they came.

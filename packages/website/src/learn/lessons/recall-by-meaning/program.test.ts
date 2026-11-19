@@ -11,8 +11,8 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Clock, Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import { LanguageModel } from "effect/ai"
-import { Embedder, EmbedFailed, inMemoryVectors, scriptedModel } from "@xandreed/sdk/kernel"
-import type { EmbedAs, ModelScript, VectorStore } from "@xandreed/sdk/kernel"
+import { Embedder, EmbedFailed, inMemoryVectors, scriptedModel } from "@xandreed/sdk"
+import type { EmbedAs, ModelScript, VectorStore } from "@xandreed/sdk"
 import { applyExperiment } from "../../lesson.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_AGENT as WORDS_AGENT, IMPORTS as WORDS_IMPORTS, MEMORY_LINE, PAGE_GIVES_CURATOR } from "../connected-memory/agent.source.ts"
@@ -185,7 +185,7 @@ describe("lesson 20's displayed program", () => {
   test("memory.ts is lesson 18's with withKnowledgeByMeaning in place of withKnowledge, and two more options, pool and weights; the stop words and the speaker's words are lesson 18's", () => {
     for (const [from] of REPLACED_MEMORY) expect({ from, held: WORDS_MEMORY.split(from).length - 1 }).toEqual({ from, held: 1 })
     for (const [from] of REPLACED_MEMORY_IMPORTS) expect({ from, held: WORDS_MEMORY_IMPORTS.split(from).length - 1 }).toEqual({ from, held: 1 })
-    expect(MEMORY_IMPORTS).toBe('import { flatMemory, withKnowledgeByMeaning } from "@xandreed/sdk/kernel"')
+    expect(MEMORY_IMPORTS).toBe('import { flatMemory, withKnowledgeByMeaning } from "@xandreed/sdk"')
     expect(DEFAULT_MEMORY.split("\n").filter((line) => /^\s*[A-Za-z]+: |^export |^\}\)/.test(line))).toEqual([
       "export const memory = withKnowledgeByMeaning({", "  limit: 8,", "  walk: 3,", "  pool: 50,", "  weights: { seed: 1, words: 0.5, meaning: 1.5 },",
       '  speaker: ["i", "me", "my", "mine", "myself"],', "  stopWords: common.split(/\\s+/),", "})(flatMemory)",

@@ -6,8 +6,8 @@
 // the `Prompt` trace, as the Context tab reads it.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Option } from "effect"
-import { dataOf, turnEndedEvent } from "@xandreed/core/kernel"
-import { loadedOf } from "@xandreed/sdk/kernel"
+import { dataOf, turnEndedEvent } from "@xandreed/core"
+import { loadedOf } from "@xandreed/sdk"
 import { chatRowsOf, emptyChat, hear, sent } from "../../chat-model.ts"
 import type { ChatBoard, ChatRow } from "../../chat-model.ts"
 import { loadEcho } from "../../models/mock.ts"

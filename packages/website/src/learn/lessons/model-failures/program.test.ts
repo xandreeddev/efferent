@@ -10,8 +10,8 @@ import { fileURLToPath } from "node:url"
 import { Deferred, Effect, Fiber, Option, Ref } from "effect"
 import type { Layer } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { scriptedModel } from "@xandreed/sdk/kernel"
-import type { ModelScript } from "@xandreed/sdk/kernel"
+import { scriptedModel } from "@xandreed/sdk"
+import type { ModelScript } from "@xandreed/sdk"
 import { BASE_AGENT, IMPORTS as BASE_IMPORTS } from "../base/agent.source.ts"
 import { CHAT } from "../tools/chat.source.ts"
 import { DEFAULT_MEMORY, memoryModuleOf } from "../tools/memory.source.ts"
@@ -42,7 +42,7 @@ const write = (name: string, agent: string = DEFAULT_AGENT, failures: string = D
   writeFileSync(new URL("./memory.ts", at), memoryModuleOf(DEFAULT_MEMORY))
   writeFileSync(new URL("./tools.ts", at), toolsModuleOf(DEFAULT_TOOLS))
   writeFileSync(new URL("./failures.ts", at), failuresDocumentOf(failures))
-  writeFileSync(new URL("./fails.ts", at), `import type { ScriptedAnswer } from "@xandreed/sdk/kernel"
+  writeFileSync(new URL("./fails.ts", at), `import type { ScriptedAnswer } from "@xandreed/sdk"
 import { failures } from "./failures.ts"
 
 type Fails = Omit<Extract<ScriptedAnswer, { readonly _tag: "Fails" }>, "_tag">
@@ -129,8 +129,8 @@ describe("lesson 14's displayed program", () => {
     expect(DEFAULT_AGENT.indexOf("const plan = ExecutionPlan.make(")).toBeLessThan(DEFAULT_AGENT.indexOf("const turn = (message) =>"))
     // The imports gain Effect's plan and schedule, and the kernel's planned and retryable.
     expect(changed(BASE_IMPORTS, IMPORTS)).toEqual({
-      gone: ['import { Effect, Stream } from "effect"', 'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk/kernel"'],
-      come: ['import { Effect, ExecutionPlan, Schedule, Stream } from "effect"', 'import { callTool, inProcessJournal, Memory, modelAnswer, planned, retryable, sessions } from "@xandreed/sdk/kernel"'],
+      gone: ['import { Effect, Stream } from "effect"', 'import { callTool, inProcessJournal, Memory, modelAnswer, sessions } from "@xandreed/sdk"'],
+      come: ['import { Effect, ExecutionPlan, Schedule, Stream } from "effect"', 'import { callTool, inProcessJournal, Memory, modelAnswer, planned, retryable, sessions } from "@xandreed/sdk"'],
     })
     // `spare` is named by no import: it is the page's, as `pane` and `model` are, and main's comment says so.
     expect(IMPORTS).not.toContain("spare")

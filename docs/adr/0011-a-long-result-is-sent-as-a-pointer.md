@@ -1,7 +1,7 @@
 # ADR 0011: A long result is sent as a pointer, by a rule that reads only the record
 
 - **Status:** accepted, 14 November 2026
-- **Applies to:** `@xandreed/core/kernel` (the tool result's record), `@xandreed/sdk/kernel` (the memory contract, `callTool`, the stock memories, the `readResult` tool)
+- **Applies to:** `@xandreed/core` (the tool result's record), `@xandreed/sdk` (the memory contract, `callTool`, the stock memories, the `readResult` tool)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

@@ -1,12 +1,12 @@
 import { describe, expect, test } from "bun:test"
 import { Effect, Fiber, Layer, Option, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { kernel, Seq, SessionId, Sessions, toolResult, TurnNumber } from "@xandreed/core/kernel"
+import { kernel, Seq, SessionId, Sessions, toolResult, TurnNumber } from "@xandreed/core"
 import {
   APPROVAL_REFUSED, catalogue, curate, curationPrompt, Curator, defineSkill, FactId, factsNote, FactText, inProcessJournal, knowledgeNote, knowledgeOf, knowledgeSession, pointed,
   promptMessage, reportText, reviewPrompt, sessions, TaskId,
-} from "@xandreed/sdk/kernel"
-import type { CurationOutcome, Knowledge } from "@xandreed/sdk/kernel"
+} from "@xandreed/sdk"
+import type { CurationOutcome, Knowledge } from "@xandreed/sdk"
 import { answerFromNote, CURATION_HEAD, MEMORY_RELATIONS, memoriesIn, namesIn } from "./echo-curation.ts"
 import { callIds } from "./call-ids.ts"
 import { chromeAvailability, loadChrome, promptApiOf, splitForPrompt } from "./chrome-prompt.ts"

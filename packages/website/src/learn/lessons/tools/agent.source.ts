@@ -6,8 +6,8 @@
 /** Read-only: what the program imports. */
 export const IMPORTS = `import { Effect, Option, Stream } from "effect"
 import { LanguageModel, Prompt } from "effect/ai"
-import { assistantMessage, Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core/kernel"
-import { inProcessJournal, Memory, sessions } from "@xandreed/sdk/kernel"
+import { assistantMessage, Core, kernel, Sessions, toolResult, turnStartedEvent, userMessage } from "@xandreed/core"
+import { inProcessJournal, Memory, sessions } from "@xandreed/sdk"
 import { Chat, chatOn } from "./chat.ts"
 import { flatMemory } from "./memory.ts"
 import { tools, toolsLive } from "./tools.ts"`

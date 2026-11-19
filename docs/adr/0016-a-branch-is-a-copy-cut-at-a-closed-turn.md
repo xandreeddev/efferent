@@ -1,8 +1,8 @@
 # ADR 0016: A branch is a copy, cut at a closed turn
 
 - **Status:** accepted, 15 November 2026
-- **Applies to:** `@xandreed/core/kernel` (`SessionHeader.branch`, `JournalStorage.fork`, `Sessions.fork`, both
-  kits), the stock stores and the session plugin of `@xandreed/sdk/kernel`
+- **Applies to:** `@xandreed/core` (`SessionHeader.branch`, `JournalStorage.fork`, `Sessions.fork`, both
+  kits), the stock stores and the session plugin of `@xandreed/sdk`
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

@@ -1,7 +1,7 @@
 # ADR 0017: A workspace is the world an agent acts on, not a store of the agent
 
 - **Status:** accepted, 16 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the `Files` contract, its kit, `inMemoryFiles`, the file tools)
+- **Applies to:** `@xandreed/sdk` (the `Files` contract, its kit, `inMemoryFiles`, the file tools)
 - **Amends:** skill `kernel-architecture`'s "Do not add" list; notes on ADR 0003 and ADR 0012
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 

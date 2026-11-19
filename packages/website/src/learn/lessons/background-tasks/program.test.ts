@@ -11,9 +11,9 @@ import { mkdirSync, rmSync, writeFileSync } from "node:fs"
 import { fileURLToPath } from "node:url"
 import { Deferred, Effect, Fiber, Layer, Option, Ref } from "effect"
 import type { LanguageModel } from "effect/ai"
-import { SessionId } from "@xandreed/core/kernel"
-import { reportText, scriptedModel, TaskId, TaskReports } from "@xandreed/sdk/kernel"
-import type { ModelScript, TaskReport } from "@xandreed/sdk/kernel"
+import { SessionId } from "@xandreed/core"
+import { reportText, scriptedModel, TaskId, TaskReports } from "@xandreed/sdk"
+import type { ModelScript, TaskReport } from "@xandreed/sdk"
 import { BASE_AGENT, IMPORTS as BASE_IMPORTS, typedModule } from "../base/agent.source.ts"
 import { formatRegion } from "../../format.ts"
 import { CHAT as LESSON_1_CHAT } from "../tools/chat.source.ts"
@@ -41,9 +41,9 @@ export const hold: Effect.Effect<void> = Deferred.await(gate)
  * then what `inputs` and `drain` give, in turn.
  */
 const PROBE = `import { Effect, Stream } from "effect"
-import { kernel } from "@xandreed/core/kernel"
-import { inProcessJournal, sessions } from "@xandreed/sdk/kernel"
-import type { TaskReport } from "@xandreed/sdk/kernel"
+import { kernel } from "@xandreed/core"
+import { inProcessJournal, sessions } from "@xandreed/sdk"
+import type { TaskReport } from "@xandreed/sdk"
 import { Chat, chatOn } from "./chat.ts"
 import type { ChatPane } from "./chat.ts"
 
@@ -74,7 +74,7 @@ export const probe = (report: TaskReport) => {
 
 /** helper.ts as a test compiles it to hold it: its wait is the hold of the file the test writes. */
 const heldModuleOf = (helper: string): string =>
-  helperModuleOf(helper).replace('import type { OpenSession } from "@xandreed/core/kernel"\n', 'import type { OpenSession } from "@xandreed/core/kernel"\nimport { hold } from "./hold.ts"\n').replace(WAIT, "    yield* hold\n")
+  helperModuleOf(helper).replace('import type { OpenSession } from "@xandreed/core"\n', 'import type { OpenSession } from "@xandreed/core"\nimport { hold } from "./hold.ts"\n').replace(WAIT, "    yield* hold\n")
 
 const write = (name: string, agent: string = DEFAULT_AGENT, helper: string = DEFAULT_HELPER, held = false) => {
   const at = new URL(`./${name}/`, dir)
@@ -193,7 +193,7 @@ describe("lesson 17's displayed program", () => {
     // Its imports beside the base's.
     expect(IMPORTS.split("\n").filter((line) => !BASE_IMPORTS.split("\n").includes(line))).toEqual([
       'import { LanguageModel, Prompt, Toolkit } from "effect/ai"',
-      'import { callTool, inProcessJournal, Memory, modelAnswer, sessions, taskHandlers, taskReport, tasks, taskTools } from "@xandreed/sdk/kernel"',
+      'import { callTool, inProcessJournal, Memory, modelAnswer, sessions, taskHandlers, taskReport, tasks, taskTools } from "@xandreed/sdk"',
       'import { helper } from "./helper.ts"',
     ])
     // `reportsOn` is named by no import: it is the page's, and main's comment says so.

@@ -1,7 +1,7 @@
 # ADR 0020: A model call's cost is held before it is sent
 
 - **Status:** accepted, 17 November 2026
-- **Applies to:** `@xandreed/core/kernel` (the `ModelSpend` contract, `modelSpendMemory`, `modelSpendConformance`),
+- **Applies to:** `@xandreed/core` (the `ModelSpend` contract, `modelSpendMemory`, `modelSpendConformance`),
   `@xandreed/evals` (a run's spend ledger)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
@@ -20,7 +20,7 @@ store beside the journal.
 ## Decision
 
 - **The contract is in core's kernel.** `ModelSpend` (`reserve`, `settle`, `release`, `totals`), its data, the
-  ledger in memory and its kit sit in `@xandreed/core/kernel`, beside the journal's contracts. It is the one contract
+  ledger in memory and its kit sit in `@xandreed/core`, beside the journal's contracts. It is the one contract
   there that no turn needs. It sits there because the eval packages take it and nothing else of the framework, and
   must not depend on the sdk (root `AGENTS.md`). `./kernel` is granted to them for it.
 - **A call's worst case is held before it is sent, and settled after.** Whoever sends a model call reserves the
@@ -48,7 +48,7 @@ store beside the journal.
 
 ## Consequences
 
-- The eval packages import `@xandreed/core/kernel` and not core's root, so the learn track's evals lessons no longer
+- The eval packages import `@xandreed/core` and not core's root, so the learn track's evals lessons no longer
   load the old engine in the browser.
 - An eval run's `--budget-usd` caps nothing a first-party provider sends until the kernel's model providers charge
   the ledger. The release waits for them.

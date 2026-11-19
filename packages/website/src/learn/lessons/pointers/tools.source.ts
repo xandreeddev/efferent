@@ -6,7 +6,7 @@
 /** Read-only: what the tools import. */
 export const TOOLS_IMPORTS = `import { Effect, Schema } from "effect"
 import { Tool, Toolkit } from "effect/ai"
-import { ReadResult, readResult } from "@xandreed/sdk/kernel"`
+import { ReadResult, readResult } from "@xandreed/sdk"`
 
 /** Everything before the editable part. */
 export const TOOLS_HEADER = `${TOOLS_IMPORTS}\n\n`

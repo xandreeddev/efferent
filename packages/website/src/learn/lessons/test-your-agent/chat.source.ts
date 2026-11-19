@@ -12,8 +12,8 @@ export { CHAT }
 
 /** chat.ts's imports: the page gives the names they list. */
 const IMPORTS = `import { Context, Effect, Layer, Queue, Stream } from "effect"
-import { Sessions } from "@xandreed/core/kernel"
-import type { SessionId } from "@xandreed/core/kernel"
+import { Sessions } from "@xandreed/core"
+import type { SessionId } from "@xandreed/core"
 
 `
 

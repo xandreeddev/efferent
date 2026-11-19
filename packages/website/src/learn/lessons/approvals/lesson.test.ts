@@ -6,9 +6,9 @@
 // `runtime.decide`, as the chat's buttons answer them.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Option } from "effect"
-import { dataOf, toolResultEvent, turnEndedEvent } from "@xandreed/core/kernel"
-import { APPROVAL_REFUSED, decidedEvent, grantsOf } from "@xandreed/sdk/kernel"
-import type { Decision } from "@xandreed/sdk/kernel"
+import { dataOf, toolResultEvent, turnEndedEvent } from "@xandreed/core"
+import { APPROVAL_REFUSED, decidedEvent, grantsOf } from "@xandreed/sdk"
+import type { Decision } from "@xandreed/sdk"
 import { chatRowsOf, emptyChat, hear, questionsWaiting, sent } from "../../chat-model.ts"
 import type { ChatBoard, ChatRow } from "../../chat-model.ts"
 import { loadEcho } from "../../models/mock.ts"

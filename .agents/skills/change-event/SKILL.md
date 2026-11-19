@@ -55,9 +55,9 @@ journal with an unknown record read both ways (`unknown-records.test.ts`).
   say it in the CHANGELOG.
 - Changing a record's data (a key, a type, an optionality, a check), or the
   envelope: a journal of today's format must still decode, record by record,
-  with today's definitions (`packages/sdk/src/kernel/node/journal-compat.test.ts`
+  with today's definitions (`packages/sdk/src/node/journal-compat.test.ts`
   replays every fixture of `JOURNAL_FORMAT`). A change it cannot decode bumps
-  `JOURNAL_FORMAT` (`packages/core/src/kernel/session.entity.ts`) by one: a
+  `JOURNAL_FORMAT` (`packages/core/src/session.entity.ts`) by one: a
   turn then opens only on a journal of the new format, an older one is
   refused (`FormatMismatch`) and left as it is. Never add a migration or
   compatibility decoding. Name the new format in a CHANGELOG **Breaking**
@@ -84,4 +84,4 @@ Its table test holds the new record, and one it must pass over.
 - [ ] A stored-data change still decodes the fixtures of `JOURNAL_FORMAT`, or bumps it with a Breaking entry
 - [ ] Recorder and compatibility test cover a new stock record
 - [ ] Folds pass over what they do not know; CHANGELOG entry
-- [ ] `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/core/src/kernel packages/sdk/src/kernel`
+- [ ] `env -u HTTP_PROXY -u HTTPS_PROXY bun test packages/core/src packages/sdk/src`

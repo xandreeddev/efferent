@@ -173,9 +173,9 @@ await writeFile(join(consumer, "bun-imports.mjs"), entryImports(entriesOf(() => 
 const bunImports = Bun.spawn(["bun", "bun-imports.mjs"], { cwd: consumer, stdout: "inherit", stderr: "inherit" })
 if (await bunImports.exited !== 0) process.exit(1)
 if (Bun.which("node") !== null) {
-  if (!existsSync(join(consumer, "node_modules/@xandreed/core/dist/kernel/ids.entity.js"))) { console.error("The packed core holds no dist/kernel/ids.entity.js to try a deep import of"); process.exit(1) }
+  if (!existsSync(join(consumer, "node_modules/@xandreed/core/dist/ids.entity.js"))) { console.error("The packed core holds no dist/ids.entity.js to try a deep import of"); process.exit(1) }
   await writeFile(join(consumer, "node-imports.mjs"), entryImports(entriesOf((manifest) => manifest.engines?.node !== undefined), "Node") + `
-const deepImport = await import("@xandreed/core/dist/kernel/ids.entity.js").then(() => "loaded", (error) => error.code)
+const deepImport = await import("@xandreed/core/dist/ids.entity.js").then(() => "loaded", (error) => error.code)
 if (deepImport !== "ERR_PACKAGE_PATH_NOT_EXPORTED") { console.error("A deep import of @xandreed/core was not refused: " + deepImport); process.exit(1) }
 console.log("core refuses a deep import on Node")
 `)

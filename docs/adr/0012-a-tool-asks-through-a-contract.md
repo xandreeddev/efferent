@@ -1,7 +1,7 @@
 # ADR 0012: A tool asks through a contract the host provides; the answer is a record
 
 - **Status:** accepted, 15 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (the approval contract, `callTool`, the `autoApprove` wrapper)
+- **Applies to:** `@xandreed/sdk` (the approval contract, `callTool`, the `autoApprove` wrapper)
 - **Skill:** `kernel-architecture` loads this record before an architectural change
 
 ## Context

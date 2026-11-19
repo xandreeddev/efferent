@@ -1,8 +1,8 @@
 # ADR 0028: The workspace's ports are the app's to plug in: files on a disk, a shell, a search
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel/node` (new: `diskFiles`, `DiskFilesOptions`, `DEFAULT_IGNORE`,
-  `DEFAULT_MAX_BYTES`, `processShell`, `ProcessShellOptions`), `@xandreed/sdk/kernel` (new: the `Shell` contract, its
+- **Applies to:** `@xandreed/sdk/node` (new: `diskFiles`, `DiskFilesOptions`, `DEFAULT_IGNORE`,
+  `DEFAULT_MAX_BYTES`, `processShell`, `ProcessShellOptions`), `@xandreed/sdk` (new: the `Shell` contract, its
   kit and `scriptedShell`, the tool `runCommand`; the `Search` contract, its kit, `filesSearch` and the tool
   `searchFiles`; `recoverTurns` gives a `Recovery`)
 - **Amends:** ADR 0017 (the kernel now ships a disk, on the Node entry; the search's adapter holds `Files` for its

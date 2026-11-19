@@ -3,11 +3,10 @@
   "version": "0.22.0",
   "engines": { "node": ">=24", "bun": ">=1.3.0" },
   "type": "module",
-  "main": "./src/kernel/index.ts",
+  "main": "./src/index.ts",
   "exports": {
-    ".": "./src/kernel/index.ts",
-    "./kernel": "./src/kernel/index.ts",
-    "./kernel/node": "./src/kernel/node/index.ts"
+    ".": "./src/index.ts",
+    "./node": "./src/node/index.ts"
   },
   "dependencies": {
     "@xandreed/core": "workspace:*",

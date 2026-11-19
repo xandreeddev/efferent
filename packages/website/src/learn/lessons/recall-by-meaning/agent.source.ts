@@ -43,5 +43,5 @@ export const documentOf = (agent: string): string => `${HEADER}${agent}\n`
 export const moduleOf = (agent: string): string =>
   typedModule(IMPORTS, agent).replace(
     "export const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>): Effect.Effect<unknown, unknown> => {",
-    "import type { Embedder, VectorStore } from \"@xandreed/sdk/kernel\"\n\nexport const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>, curatorModel: Layer.Layer<LanguageModel.LanguageModel>, embedder: Layer.Layer<Embedder>, vectors: Layer.Layer<VectorStore>): Effect.Effect<unknown, unknown> => {",
+    "import type { Embedder, VectorStore } from \"@xandreed/sdk\"\n\nexport const run = (pane: ChatPane, model: Layer.Layer<LanguageModel.LanguageModel>, curatorModel: Layer.Layer<LanguageModel.LanguageModel>, embedder: Layer.Layer<Embedder>, vectors: Layer.Layer<VectorStore>): Effect.Effect<unknown, unknown> => {",
   )

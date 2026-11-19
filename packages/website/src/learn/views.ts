@@ -4,9 +4,9 @@
 // every record of the chat's session each time and changes only what changed.
 // Cells are model-written, so everything is drawn as text, never as markup.
 import { Match } from "effect"
-import { viewsOf } from "@xandreed/sdk/kernel"
-import type { Shown, View } from "@xandreed/sdk/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
+import { viewsOf } from "@xandreed/sdk"
+import type { Shown, View } from "@xandreed/sdk"
+import type { StoredEvent } from "@xandreed/core"
 
 const el = (tag: string, className: string, text?: string): HTMLElement => {
   const made = document.createElement(tag)

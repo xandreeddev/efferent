@@ -9,8 +9,8 @@ import { replaced } from "../base/agent.source.ts"
 
 /** Read-only: where each name the checks use comes from. */
 export const CHECKS_IMPORTS = `import { Effect, Fiber, Option, Queue } from "effect"
-import { ConformanceFailure, kernel, Sessions } from "@xandreed/core/kernel"
-import { inProcessJournal, scriptedModel, sessions, turnsOf } from "@xandreed/sdk/kernel"
+import { ConformanceFailure, kernel, Sessions } from "@xandreed/core"
+import { inProcessJournal, scriptedModel, sessions, turnsOf } from "@xandreed/sdk"
 import { program } from "./agent.ts"
 import { Chat, chatOn } from "./chat.ts"
 import { flatMemory } from "./memory.ts"
@@ -220,8 +220,8 @@ export const TYPED: ReadonlyArray<readonly [string, string]> = [
 export const checksModuleOf = (checks: string): string => `${CHECKS_IMPORTS}
 import type { Layer } from "effect"
 import type { LanguageModel } from "effect/ai"
-import type { ConformanceCheck } from "@xandreed/core/kernel"
-import type { ModelScript, TurnRead } from "@xandreed/sdk/kernel"
+import type { ConformanceCheck } from "@xandreed/core"
+import type { ModelScript, TurnRead } from "@xandreed/sdk"
 import type { ChatPane } from "./chat.ts"
 
 export const checksWith = (model: Layer.Layer<LanguageModel.LanguageModel>) => {

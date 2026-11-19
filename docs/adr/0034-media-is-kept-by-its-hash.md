@@ -1,9 +1,9 @@
 # ADR 0034: Media is kept by its hash
 
 - **Status:** accepted, 19 November 2026
-- **Applies to:** `@xandreed/sdk/kernel` (new: `MediaStore`, `MediaHash`, `MediaRefused`, `MediaRefusedBecause`,
+- **Applies to:** `@xandreed/sdk` (new: `MediaStore`, `MediaHash`, `MediaRefused`, `MediaRefusedBecause`,
   `MediaUnavailable`, `MediaDamaged`, `MEDIA_LIMIT`, `mediaHashOf`, `checkedBytes`, `mediaStoreConformance`,
-  `MediaStoreSubject`, `inMemoryMedia`, `InMemoryMediaOptions`), `@xandreed/sdk/kernel/node` (new: `directoryMedia`,
+  `MediaStoreSubject`, `inMemoryMedia`, `InMemoryMediaOptions`), `@xandreed/sdk/node` (new: `directoryMedia`,
   `DirectoryMediaOptions`)
 - **Amends:** ADR 0028 (the media it left "in its own cut": the store comes first, alone)
 - **Skill:** `kernel-architecture` loads this record before an architectural change

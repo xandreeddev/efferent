@@ -3,7 +3,7 @@
 // the model's text matches by role and text; a tool call and its result by
 // the call's id, since they have no text of their own.
 import { Match } from "effect"
-import type { Message } from "@xandreed/core/kernel"
+import type { Message } from "@xandreed/core"
 import type { Said } from "./runtime.ts"
 
 const json = (value: unknown): string => JSON.stringify(value) ?? ""

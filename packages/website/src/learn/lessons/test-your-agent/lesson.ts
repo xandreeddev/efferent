@@ -8,8 +8,8 @@
 // check.
 import { Context, Effect, Fiber, Layer, Option, Queue, Result, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
-import { ConformanceFailure, CONVERSATION_VOCABULARY, Core, kernel, messageOf, readJournal, Sessions, turnStartedEvent, userMessage, vocabularyOf } from "@xandreed/core/kernel"
-import { callTool, inProcessJournal, Memory, modelAnswer, paired, promptMessage, scriptedModel, sessions, turnsOf } from "@xandreed/sdk/kernel"
+import { ConformanceFailure, CONVERSATION_VOCABULARY, Core, kernel, messageOf, readJournal, Sessions, turnStartedEvent, userMessage, vocabularyOf } from "@xandreed/core"
+import { callTool, inProcessJournal, Memory, modelAnswer, paired, promptMessage, scriptedModel, sessions, turnsOf } from "@xandreed/sdk"
 import { named, programOf, run, runStatements } from "../../evaluate.ts"
 import type { KitCheck, Lesson, LessonKit, PageParts, Sources } from "../../lesson.ts"
 import { Chat } from "../../page-chat.ts"

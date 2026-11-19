@@ -8,9 +8,9 @@
 // of its three seconds.
 import { afterEach, describe, expect, setDefaultTimeout, test } from "bun:test"
 import { Effect, Option, Result } from "effect"
-import { dataOf, SessionId, turnEndedEvent } from "@xandreed/core/kernel"
-import type { StoredEvent } from "@xandreed/core/kernel"
-import { DEFAULT_RUNNING, REPORT_LIMIT, reportText, TASK_LIMIT, TaskId, turnsOf } from "@xandreed/sdk/kernel"
+import { dataOf, SessionId, turnEndedEvent } from "@xandreed/core"
+import type { StoredEvent } from "@xandreed/core"
+import { DEFAULT_RUNNING, REPORT_LIMIT, reportText, TASK_LIMIT, TaskId, turnsOf } from "@xandreed/sdk"
 import { emptyChat, hear, sent } from "../../chat-model.ts"
 import type { ChatBoard, ChatRow } from "../../chat-model.ts"
 import { applyExperiment } from "../../lesson.ts"

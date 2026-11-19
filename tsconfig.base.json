@@ -26,10 +26,7 @@
     "baseUrl": ".",
     "paths": {
       "@xandreed/core": [
-        "packages/core/src/kernel/index.ts"
-      ],
-      "@xandreed/core/kernel": [
-        "packages/core/src/kernel/index.ts"
+        "packages/core/src/index.ts"
       ],
       "@xandreed/foundry": [
         "packages/foundry/src/index.ts"
@@ -44,13 +41,10 @@
         "packages/website/src/index.ts"
       ],
       "@xandreed/sdk": [
-        "packages/sdk/src/kernel/index.ts"
+        "packages/sdk/src/index.ts"
       ],
-      "@xandreed/sdk/kernel": [
-        "packages/sdk/src/kernel/index.ts"
-      ],
-      "@xandreed/sdk/kernel/node": [
-        "packages/sdk/src/kernel/node/index.ts"
+      "@xandreed/sdk/node": [
+        "packages/sdk/src/node/index.ts"
       ],
       "@xandreed/evals": [
         "packages/evals/src/index.ts"

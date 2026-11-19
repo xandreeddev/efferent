@@ -1,7 +1,7 @@
 # ADR 0003: The journal holds the conversation; records carry tags; memory builds the context; the kernel has no loop
 
 - **Status:** accepted, 13 November 2026
-- **Applies to:** `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and every plugin written for them
+- **Applies to:** `@xandreed/core`, `@xandreed/sdk` and every plugin written for them
 - **Supersedes:** in [ADR 0001](0001-kernel-plugin-composition.md), the stored request, the rule
   that memory sends every message-bearing record whichever plugin wrote it, and replacing
   the loop as a way to take part; in [ADR 0002](0002-core-owns-state-plugins-own-workflows.md),

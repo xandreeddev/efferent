@@ -14,7 +14,7 @@ import {
   Seq,
   SessionHeader,
   StoredEvent,
-} from "@xandreed/core/kernel"`
+} from "@xandreed/core"`
 
 /** What the learner edits: the store. */
 export const DEFAULT_STORE = `// The store: where every record is kept. It is one more module, with five calls, and this one
@@ -147,4 +147,4 @@ export const TYPED: ReadonlyArray<readonly [string, string]> = [
 
 /** The same file as a module a test can compile: the learner's text with its parameters typed. */
 export const storeModuleOf = (store: string): string =>
-  `${STORE_IMPORTS}\nimport type { SessionId } from "@xandreed/core/kernel"\nimport type { KeyValueStore } from "@xandreed/sdk/kernel"\n\n${TYPED.reduce((text, [from, to]) => text.replace(from, to), store)}\n`
+  `${STORE_IMPORTS}\nimport type { SessionId } from "@xandreed/core"\nimport type { KeyValueStore } from "@xandreed/sdk"\n\n${TYPED.reduce((text, [from, to]) => text.replace(from, to), store)}\n`
