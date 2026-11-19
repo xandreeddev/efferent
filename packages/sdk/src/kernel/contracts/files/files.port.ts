@@ -4,7 +4,8 @@ import type { Expected, FileChanged, FileNotFound, FilePath, FilesRefused, Files
 
 /**
  * The workspace (ADR 0017): the files an agent acts on, which the host provides: a page's in memory or in its
- * storage, a test's in memory, a command line's on a disk. The kernel ships one in memory and no disk.
+ * storage, a test's in memory, a command line's on a disk. The kernel ships one in memory (`inMemoryFiles`), and one
+ * in a folder of the disk on its Node entry (`diskFiles`, ADR 0028).
  *
  * - `read(path)`: the file's text.
  * - `list(folder)`: every file in the folder and the folders in it, or in the whole workspace for none, ordered by

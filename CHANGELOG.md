@@ -720,7 +720,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   - `recoverTurns` (`@xandreed/sdk/kernel`): the host's recovery step once it
     holds a store, closing every turn left open as `Abandoned`, in every
     session of the store. A process killed inside a turn no longer leaves
-    its session busy after a restart.
+    its session busy after a restart. It gives a `Recovery`, `{ closed,
+    unreadable }`: `closed`, the turns it closed, and `unreadable`, the
+    sessions it passed over because
+    the store could not read them (a damaged line), each with the store's
+    words; the sessions after one are recovered all the same.
 - `@xandreed/sdk/kernel/node`: model providers that charge the kernel's
   spend ledger (ADR 0026, which amends ADR 0020), each a layer that gives
   Effect AI's `LanguageModel` and needs `ModelSpend`, so an eval run's
@@ -748,6 +752,42 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     answer cut part way are; a refused key, no credit and a refused request
     are not. An answer whose stream ends before its finish fails rather than
     being taken as whole.
+- The kernel's workspace on a disk, a shell and a search, each a layer a host
+  plugs in or leaves out, and none of whose tools asks anyone: permission is
+  the app's (ADR 0028).
+  - `diskFiles({ root, maxBytes?, ignore? })` (`@xandreed/sdk/kernel/node`):
+    the `Files` contract over a folder. A path whose real path leads outside
+    the root, through a link, is declined; a file that is not UTF-8, or is
+    over `maxBytes` (1 MiB), is declined in words; a write is whole (a
+    temporary file renamed over the old one, its mode kept), and its compare
+    and set holds within the process. A listing passes over `.git`,
+    `node_modules` (`ignore` replaces them), names that make no path, links
+    that lead outside, to nothing or to a folder, and a write's temporary
+    files.
+  - The `Shell` contract (`@xandreed/sdk/kernel`): `run({ command, cwd?,
+    timeoutMs? })` gives the end of stdout and stderr, the bytes cut before
+    each, and how the command ended (`Exited`, `TimedOut`, `Killed`). Its
+    kit, `shellConformance`, checks among others that a background process
+    a command started is gone after a timeout, the command's return, an
+    interruption and the shell's close. `scriptedShell(script)` answers a
+    script for tests. `processShell({ cwd, env?, shell?, outputBytes?,
+    timeoutMs? })` (`@xandreed/sdk/kernel/node`) runs `/bin/sh -c`,
+    keeping the last 8 KiB of each stream by default, with
+    exactly the variables of `env` (none by default; it never reads the
+    host process's environment) and stops a command's whole process group,
+    on Node 24 and on Bun. The tool `runCommand` (`RunCommand`,
+    `shellTools`, `shellHandlers`) takes the command and `timeoutSeconds`.
+  - The `Search` contract (`@xandreed/sdk/kernel`): `find({ pattern, regex?,
+    folder?, glob?, limit })` gives the lines that hold a text or match a
+    JavaScript regular expression, by path then line, with `more` and the
+    files it could not read counted; a pattern that repeats a group holding
+    a choice or a repetition (`(a|aa)+`, `(a+)+`) is refused; its kit is
+    `searchConformance`. `filesSearch(options?)` implements it over any
+    `Files`, in a page as on a disk; a regular expression the check misses
+    can still hold the process, so `filesSearch({ regex: false })` keeps a
+    search to text as written;
+    the tool `searchFiles` (`SearchFiles`, `searchTools`, `searchHandlers`)
+    gives at most 50 matches.
 
 ### Removed
 

@@ -12,3 +12,8 @@ export { openAiCompatibleModel } from "./model-openai-compatible/openai-compatib
 export type { OpenAiCompatibleOptions } from "./model-openai-compatible/openai-compatible.entity.js"
 export { anthropicModel } from "./model-anthropic/anthropic.adapter.js"
 export type { AnthropicOptions } from "./model-anthropic/anthropic.entity.js"
+export { processShell } from "./shell-process/process-shell.adapter.js"
+export type { ProcessShellOptions } from "./shell-process/process-shell.entity.js"
+export { diskFiles } from "./files-disk/disk-files.adapter.js"
+export { DEFAULT_IGNORE, DEFAULT_MAX_BYTES } from "./files-disk/disk-files.entity.js"
+export type { DiskFilesOptions } from "./files-disk/disk-files.entity.js"

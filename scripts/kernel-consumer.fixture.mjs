@@ -1,14 +1,14 @@
 import assert from "node:assert/strict"
 import { spawn } from "node:child_process"
 import { createServer } from "node:http"
-import { mkdtempSync, rmSync } from "node:fs"
+import { mkdirSync, mkdtempSync, realpathSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
-import { join } from "node:path"
+import { dirname, join } from "node:path"
 import { Context, Effect, Layer, Redacted, Schema, Stream } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { assistantMessage, Core, inspectionOf, JournalStorage, journalStorageConformance, kernel, ModelSpend, modelSpendMemory, Sessions, sessionsConformance, userMessage } from "@xandreed/core/kernel"
-import { callTool, Embedder, embedderConformance, Files, filesConformance, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, sessions, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
-import { anthropicModel, directoryJournal, isSpendRefusal, openAiCompatibleModel, sqliteJournal } from "@xandreed/sdk/kernel/node"
+import { callTool, Embedder, embedderConformance, Files, filesConformance, filesSearch, flatMemory, Inbox, inbox, inMemoryFiles, inMemoryVectors, inProcessJournal, Memory, memoryConformance, modelAnswer, recordedEmbedder, recoverTurns, scriptedModel, Search, searchConformance, sessions, Shell, shellConformance, VectorStore, vectorStoreConformance, webStorageJournal, windowMemory } from "@xandreed/sdk/kernel"
+import { anthropicModel, directoryJournal, diskFiles, isSpendRefusal, openAiCompatibleModel, processShell, sqliteJournal } from "@xandreed/sdk/kernel/node"
 
 const system = "You are a kit."
 const budgetTokens = 200
@@ -51,6 +51,26 @@ const durableSubject = (kind) => ({
   pair: Effect.suspend(() => { const path = fresh(durable[kind].file); return Effect.all([durableOver(kind, path), durableOver(kind, path)], { concurrency: 1 }) }),
 })
 
+/** A fresh folder under the scratch folder, by its real path (what `pwd -P` prints). */
+const folder = () => { const path = fresh("workspace"); mkdirSync(path, { recursive: true }); return realpathSync(path) }
+/** The workspace's ports of the Node entry (ADR 0028): a folder of the disk, the search over it, and a shell. */
+const shellEnv = { KIT_GIVEN: "given value", PATH: "/usr/bin:/bin" }
+const shellFolder = folder()
+const workspaceKits = {
+  diskFiles: filesConformance({ open: Effect.suspend(() => built(Files, diskFiles({ root: folder() }), Layer.empty)) }),
+  diskSearch: searchConformance({
+    open: (files) => Effect.suspend(() => {
+      const root = folder()
+      for (const [path, text] of Object.entries(files)) {
+        mkdirSync(dirname(join(root, path)), { recursive: true })
+        writeFileSync(join(root, path), text)
+      }
+      return built(Search, filesSearch(), diskFiles({ root }))
+    }),
+  }),
+  processShell: shellConformance({ open: built(Shell, processShell({ cwd: shellFolder, env: shellEnv, outputBytes: 1000 }), Layer.empty), folder: shellFolder, env: shellEnv, outputBytes: 1000 }),
+}
+
 const kits = {
   storage: journalStorageConformance({ open: built(JournalStorage, inProcessJournal(), Layer.empty) }),
   // A store that outlives its handle is also asked what a second handle on the same storage reads.
@@ -75,6 +95,7 @@ const kits = {
   sqliteStorage: journalStorageConformance(durableSubject("sqlite")),
   sessionsOverDirectory: sessionsConformance({ open: (core) => sessionsOver(core, durable.directory.layer(fresh("journal"))) }),
   sessionsOverSqlite: sessionsConformance({ open: (core) => sessionsOver(core, durable.sqlite.layer(fresh("journal.db"))) }),
+  ...workspaceKits,
 }
 /** Run a kit's checks one after another: how many ran, and what each failure said. */
 const run = (checks) => Effect.runPromise(Effect.forEach(checks, (check) => Effect.map(Effect.result(check.run), (result) =>
@@ -267,15 +288,15 @@ for (const kind of Object.keys(durable)) {
   assert.ok(typeof line.session === "string", `the ${kind} holder said ${JSON.stringify(line)}`)
   await kill(child)
   crashes[kind] = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
-    const closed = yield* recoverTurns
+    const { closed, unreadable } = yield* recoverTurns
     const sessionsOf = yield* Sessions
     const turn = yield* sessionsOf.turn(line.session, (open) => Effect.succeed(open.turn))
     const second = yield* Effect.promise(() => spawnHolder(kind, path))
     yield* Effect.promise(() => kill(second.child))
     const journal = yield* sessionsOf.read(line.session)
-    return { closed: closed.map((one) => [one.session === line.session, one.turn]), turn, refused: second.line.refused, outcomes: journal.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data.outcome._tag) }
+    return { closed: closed.map((one) => [one.session === line.session, one.turn]), unreadable, turn, refused: second.line.refused, outcomes: journal.events.filter((event) => event.name === "core.session.turn.ended").map((event) => event.data.outcome._tag) }
   }).pipe(Effect.provide(sessions().pipe(Layer.provideMerge(durable[kind].layer(path)), Layer.provideMerge(kernel()))))).pipe(Effect.timeout("30 seconds")))
-  assert.deepEqual(crashes[kind], { closed: [[true, 1]], turn: 2, refused: "Held", outcomes: ["Abandoned", "Completed"] }, `the ${kind} journal after a crash`)
+  assert.deepEqual(crashes[kind], { closed: [[true, 1]], unreadable: [], turn: 2, refused: "Held", outcomes: ["Abandoned", "Completed"] }, `the ${kind} journal after a crash`)
 }
 
 class Notes extends Context.Service()("consumer/Notes") {}
@@ -356,5 +377,6 @@ console.log(`kernel ${JSON.stringify({
   crashRecovered: true,
   layersComposed: true,
   modelProviders: true,
+  workspaceKits: true,
   checks: Object.fromEntries(Object.entries(ran).map(([name, kit]) => [name, kit.checks])),
 })}`)
