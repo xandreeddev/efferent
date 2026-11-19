@@ -199,7 +199,7 @@ kernel's rules:
   and must not depend on the sdk. It holds no conversation and calls no
   model: whoever sends a model call reserves. It has the total cap alone; a
   per-turn cap comes with the provider that names a turn and forgets it.
-- Service keys are `@xandreed/core/kernel/<Name>`. The kits use the
+- Service keys are `@xandreed/core/<Name>`. The kits use the
   kernel's own helpers (`conformance.entity.ts` and its functions, which
   are not exported), not core's `src/conformance.functions.ts`. A check
   has an `id`, the one its kit's doc comment lists, and a failure names

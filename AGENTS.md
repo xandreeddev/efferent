@@ -29,7 +29,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 
 - `core` (`src`): the kernel's core: ids, messages, the event envelope, the conversation's records, the `JournalStorage` and `Sessions` contracts with their kits, `Core` (events), and the `ModelSpend` ledger. Effect alone; no loop, no memory, no IO.
 - `sdk` → core (`src`): the workflow contracts (memory, tools and their turn, approvals, skills, facts, knowledge, tasks, the inbox, files, shell, search, ranking by meaning, a store of bytes for the model) with their kits, and the stock plugins, each a plain Effect layer; `src/node`, the ports that need a runtime's modules (the durable journals, the model providers and a remote embedder that charge the ledger, a media folder, a disk workspace and a process shell, OTLP export). There is no loop: the host's program is the loop (`docs/kernel.md`).
-- The kernel is each package's `src` and root entry: `@xandreed/core`, `@xandreed/sdk` and the sdk's Node entry `@xandreed/sdk/node` (ADR 0036). Service keys keep the prefix they were declared with (`@xandreed/core/kernel/Memory`).
+- The kernel is each package's `src` and root entry: `@xandreed/core`, `@xandreed/sdk` and the sdk's Node entry `@xandreed/sdk/node` (ADR 0036).
 - `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core's kernel for the `ModelSpend` ledger a run shares across its trials, nothing else.
 - `foundry` runs the gates (development tooling); `website` is the docs site and the learn track. Neither is published.
 
@@ -162,9 +162,11 @@ Naming (skill `effect-idioms` §7 has the span policy and names):
 - Service methods and exported effectful functions at a service boundary are
   `Effect.fn("area.op")`, named like the spans `session.turn` and
   `tool.call`; hot internal helpers use `Effect.fnUntraced`.
-- Service keys are `@xandreed/core/kernel/<Name>` and
-  `@xandreed/sdk/kernel/<Name>`. A key is public: never rename one, a port
-  that moved included (`Memory` is still `@xandreed/core/kernel/Memory`).
+- Service keys are `@xandreed/<package>/<Name>`, for the package that
+  declares the port (`@xandreed/core/Sessions`, `@xandreed/sdk/Memory`; a
+  port of the Node entry `@xandreed/sdk/node/<Name>`). They freeze at
+  0.23.0, their first release: after it a key is never renamed, a port
+  that moves included.
 
 ## Model-facing text
 

@@ -47,7 +47,7 @@ export const tagsOf = (tags: ReadonlyArray<DefinitionTag>, plugin?: string): Rea
 }
 
 /** The mark of a definition this module made: a key every copy of the kernel shares, on a property no copy carries over. */
-const DEFINED = Symbol.for("@xandreed/core/kernel/EventDefinition")
+const DEFINED = Symbol.for("@xandreed/core/EventDefinition")
 
 /** Mark a definition as made here: `stored` makes a record only from such a definition. */
 const defined = <Definition extends EventDefinition<Schema.Json>>(definition: Definition): Definition => {
@@ -93,7 +93,7 @@ export const liveEvent = <D extends E, E extends Schema.Json>(
 ): LiveDefinition<D> => defined({ kind: "live", name: nameOf(plugin, event), data: spec.data, tags: tagsOf(spec.tags, plugin) })
 
 /** The mark of a draft `stored` made: a key every copy of the kernel shares, on a property no copy or store carries over. */
-const MADE = Symbol.for("@xandreed/core/kernel/StoredDraft")
+const MADE = Symbol.for("@xandreed/core/StoredDraft")
 
 /**
  * An event of a stored definition, ready for `session.append`, with the

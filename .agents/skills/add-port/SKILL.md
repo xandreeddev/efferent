@@ -37,7 +37,7 @@ implementations proved by one runnable kit. Worked example: `Shell`
 export class Thing extends Context.Service<Thing, {
   /** <one line per method> */
   readonly doIt: (input: ThingInput) => Effect.Effect<ThingResult, ThingError>
-}>()("@xandreed/sdk/kernel/Thing") {}
+}>()("@xandreed/sdk/Thing") {}
 ```
 
 - Name intents (`Shell.run`, `Files.read`), never a provider or SDK. Give it
@@ -48,11 +48,12 @@ export class Thing extends Context.Service<Thing, {
   `ShellUnavailable`). Absence: `Option`. Outcomes the caller reads (a
   non-zero exit, a timeout) are results, not errors. The doc comment says
   which, as `shell.port.ts` does.
-- Key: a new port uses `@xandreed/core/kernel/<Name>` or
-  `@xandreed/sdk/kernel/<Name>`. NEVER rename an existing key: a port that
-  moves keeps its key (`Memory`, now the sdk's, is still
-  `@xandreed/core/kernel/Memory`). A rename is a CHANGELOG **Breaking**
-  entry with a migration note.
+- Key: `@xandreed/<package>/<Name>`, the package that declares the port
+  (`@xandreed/core/<Name>`, `@xandreed/sdk/<Name>`; a port of the Node
+  entry `@xandreed/sdk/node/<Name>`). Keys freeze at 0.23.0, their first
+  release: from then on NEVER rename an existing key, and a port that
+  moves keeps its key. A rename is a CHANGELOG **Breaking** entry with a
+  migration note.
 - Implement methods with `Effect.fn("<thing>.<method>")` so each call is a
   named span (skill `effect-idioms`).
 
@@ -100,7 +101,7 @@ export class Thing extends Context.Service<Thing, {
 
 - [ ] Contract in a `.port.ts`; the doc comment states results vs errors
 - [ ] Schemas and errors in the entity file; `R = never`; `Option` for absence
-- [ ] New key under `@xandreed/core/kernel/` or `@xandreed/sdk/kernel/`; no existing key renamed
+- [ ] New key under `@xandreed/core/` or `@xandreed/sdk/`; no existing key renamed
 - [ ] Methods are `Effect.fn("<thing>.<method>")`
 - [ ] Kit exported from the kernel's entry and self-tested against careless adapters
 - [ ] Every adapter runs its kit, and the packed consumer runs it on Node and Bun

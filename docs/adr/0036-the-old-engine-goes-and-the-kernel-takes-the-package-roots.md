@@ -10,8 +10,8 @@
 - **Amends:** ADR 0024 (the Node entry becomes `@xandreed/sdk/node` when the kernel moves to the package roots; until
   then it stays `./kernel/node`)
 - **Amended:** 19 November 2026, by its second step: each kernel folder is its package's `src`, the entries are
-  `@xandreed/core`, `@xandreed/sdk` and `@xandreed/sdk/node`, and `./kernel` and `./kernel/node` are gone
-  ("The second step" below)
+  `@xandreed/core`, `@xandreed/sdk` and `@xandreed/sdk/node`, `./kernel` and `./kernel/node` are gone, and the service
+  keys are `@xandreed/<package>/<Name>`, frozen from 0.23.0 ("The second step" below)
 - **Skill:** `kernel-architecture` and `release` load this record before a change to the release line or the
   package roots
 
@@ -70,7 +70,7 @@ Each of `@xandreed/core` and `@xandreed/sdk` needs a root entry: the boundaries 
 among the published ones. With the old roots gone, `.` names the kernel's index now, beside `./kernel` (and the sdk's
 `./kernel/node`), so this change moves no file and renames no specifier. The next change makes each kernel folder its
 package's `src`, renames every `@xandreed/sdk/kernel` specifier to `@xandreed/sdk` (and `./kernel/node` to `./node`) and
-drops `./kernel`. Service keys are public and never renamed: `Memory` stays `@xandreed/core/kernel/Memory`. Since
+drops `./kernel`. This step kept the service keys (`@xandreed/core/kernel/Memory`); the second step renamed them, before any release had them. Since
 `./kernel` names the same module as `.`, the API snapshot lists each kernel once, under the root: core's kernel API is
 `api/core.api.txt` (ADR 0002's rule now reads that file) and the sdk's `api/sdk.api.txt`; the Node entry keeps
 `api/sdk--kernel--node.api.txt`.
@@ -102,9 +102,14 @@ the ADRs before this one, the docs site and the lessons' shown sources: `@xandre
 names it decided under; the changelog's Unreleased entries and the pending changesets keep theirs until the
 release's notes are rewritten as the kernel that ships.
 
-- Service keys are public and keep the prefix they were declared with (`@xandreed/core/kernel/Memory`,
-  `@xandreed/sdk/kernel/Curator`, `@xandreed/sdk/kernel/node/CallReach`); a new key keeps that prefix too, so the
-  keys stay one family.
+- Service keys lose the segment too: a key is `@xandreed/<package>/<Name>` for the package that declares the port
+  (`@xandreed/core/Sessions`, `@xandreed/sdk/Curator`), and `@xandreed/sdk/node/<Name>` on the Node entry
+  (`@xandreed/sdk/node/CallReach`); test keys follow. `Memory`, declared by the sdk under core's prefix when it moved
+  there, is `@xandreed/sdk/Memory`. The first step kept the keys on the rule that a public key is never renamed, but
+  no release had shipped them (0.22.0 had no kernel), so they were not public yet; left as they were, they would have
+  frozen at their first release with a `/kernel/` segment naming a path that no longer exists. They freeze at 0.23.0.
+  No key is stored: no journal record, recorded fixture, lesson data or page storage key holds one, so nothing was
+  re-recorded.
 - The layers keep their names (`core-kernel`, `sdk-kernel-*`), now over `packages/core/src/**` and
   `packages/sdk/src/**`: renaming them would touch the config, the guides and these records for nothing a reader
   needs. `./node` is the `restricted` subpath of `sdk-kernel`, granted to the eval tests as `sdk-kernel/node`.

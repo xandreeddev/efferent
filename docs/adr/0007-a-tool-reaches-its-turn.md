@@ -20,7 +20,7 @@ service provided around `toolkit.handle` reaches the handler.
 
 ## Decision
 
-`CurrentTurn` (`@xandreed/sdk`, key `@xandreed/sdk/kernel/CurrentTurn`) is the `OpenSession` a tool
+`CurrentTurn` (`@xandreed/sdk`, key `@xandreed/sdk/CurrentTurn`) is the `OpenSession` a tool
 call runs in.
 
 - **The loop provides it.** The host's loop runs each call with

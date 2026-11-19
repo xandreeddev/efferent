@@ -40,4 +40,4 @@ export class JournalStorage extends Context.Service<JournalStorage, {
    * to publish.
    */
   readonly fork: (header: SessionHeader & { readonly branch: Branch }) => Effect.Effect<void, JournalStorageError>
-}>()("@xandreed/core/kernel/JournalStorage") {}
+}>()("@xandreed/core/JournalStorage") {}

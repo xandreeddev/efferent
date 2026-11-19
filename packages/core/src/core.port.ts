@@ -95,4 +95,4 @@ export class Core extends Context.Service<Core, {
   ) => Effect.Effect<void, never, Scope.Scope>
   /** Every event, live, from the moment the stream is run. */
   readonly events: Stream.Stream<KernelEvent>
-}>()("@xandreed/core/kernel/Core") {}
+}>()("@xandreed/core/Core") {}

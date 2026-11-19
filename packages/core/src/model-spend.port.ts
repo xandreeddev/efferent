@@ -21,4 +21,4 @@ export class ModelSpend extends Context.Service<ModelSpend, {
   readonly release: (hold: SpendHold) => Effect.Effect<void, ModelSpendUnavailable>
   /** What the ledger has settled, and what its open holds still reserve. */
   readonly totals: Effect.Effect<SpendTotals, ModelSpendUnavailable>
-}>()("@xandreed/core/kernel/ModelSpend") {}
+}>()("@xandreed/core/ModelSpend") {}

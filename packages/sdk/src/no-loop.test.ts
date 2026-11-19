@@ -37,7 +37,7 @@ describe("core with no loop", () => {
         inspection: inspectionOf(journal),
       }
     })).pipe(Effect.timeout("5 seconds")))
-    expect(result.services).toEqual(["@xandreed/core/kernel/Core", "@xandreed/core/kernel/JournalStorage", "@xandreed/core/kernel/Sessions"])
+    expect(result.services).toEqual(["@xandreed/core/Core", "@xandreed/core/JournalStorage", "@xandreed/core/Sessions"])
     expect(result.names).toEqual(["core.session.turn.started", "plugin.notes.noted", "plugin.notes.noted", "core.session.turn.ended"])
     expect(result.data).toEqual([{ turn: 1 }, { text: "first" }, { text: "second" }, { turn: 1, outcome: { _tag: "Completed" } }])
     expect(Result.map(result.inspection, (inspection) => inspection.state)).toEqual(Result.succeed({ _tag: "Free", turns: 1 }))

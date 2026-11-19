@@ -20,9 +20,9 @@ lets the parts of an agent be written, replaced and tested apart. Nothing in
 it imports a runtime module, so it runs in a browser as it is, its Node
 entry aside (`@xandreed/sdk/node`: the stores on a disk, the model
 providers, a disk workspace and a shell, OTLP export). Core's kernel is
-`@xandreed/core` and the sdk's is `@xandreed/sdk`; a service's key keeps the
-prefix it was declared with (`@xandreed/core/kernel/Memory`), since a key is
-public and never renamed. [What it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
+`@xandreed/core` and the sdk's is `@xandreed/sdk`; a service's key is
+`@xandreed/<package>/<Name>` (`@xandreed/sdk/Memory`, and on the Node entry
+`@xandreed/sdk/node/<Name>`), frozen from 0.23.0, its first release. [What it leaves out](#what-the-first-cut-leaves-out-and-the-order-it-returns)
 is listed below.
 
 ## Core, and plugins as layers
@@ -701,7 +701,7 @@ is a contract the host provides:
 // A contract, so the tool does not know how.
 export class Helper extends Context.Service<Helper, {
   readonly ask: (task: string) => Effect.Effect<{ readonly answer: string; readonly session: string }, string, CurrentTurn>
-}>()("@xandreed/sdk/kernel/testing/Helper") {}
+}>()("@xandreed/sdk/testing/Helper") {}
 ```
 
 The tool, and the helper the host provides:
@@ -1731,7 +1731,7 @@ it runs for each message, and needs what that turn needs.
 export class Inbox extends Context.Service<Inbox, {
   /** Queue a message for the session. Returns at once, in call order, with its ticket and its reply. */
   readonly enqueue: (session: SessionId, message: string) => Effect.Effect<Queued, InboxRefused>
-}>()("@xandreed/sdk/kernel/Inbox") {}
+}>()("@xandreed/sdk/Inbox") {}
 ```
 
 A program that reads messages from a stream needs no inbox: the stream is

@@ -18,7 +18,7 @@ this cut gives the kernel the store, and only the store.
 
 ## Decision
 
-### The contract (`contracts/media`, key `@xandreed/sdk/kernel/MediaStore`)
+### The contract (`contracts/media`, key `@xandreed/sdk/MediaStore`)
 
 - **`put(bytes)` gives the bytes' key, `get(hash)` gives them back.** The key is their SHA-256 in lowercase hexadecimal
   (`MediaHash`, 64 digits), so the same bytes have the same key in every store and a key names content, granting

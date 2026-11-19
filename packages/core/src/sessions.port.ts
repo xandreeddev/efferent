@@ -103,4 +103,4 @@ export class Sessions extends Context.Service<Sessions, {
    * stored.
    */
   readonly fork: (id: SessionId, options?: { readonly through?: TurnNumber }) => Effect.Effect<SessionId, SessionRefused | JournalStorageError>
-}>()("@xandreed/core/kernel/Sessions") {}
+}>()("@xandreed/core/Sessions") {}

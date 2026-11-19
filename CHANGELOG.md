@@ -15,8 +15,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `@xandreed/core/kernel`, `@xandreed/sdk/kernel` and
   `@xandreed/sdk/kernel/node` are gone: drop `/kernel` from each import. The
   entries below still name the kernel's subpaths as they were added. Service
-  keys keep their prefix (`@xandreed/core/kernel/Memory`), since a key is
-  public and never renamed. The repository follows: each kernel folder is its
+  keys lose the segment too: `@xandreed/<package>/<Name>`, and
+  `@xandreed/sdk/node/<Name>` on the Node entry (`Memory`, declared by the
+  sdk, is `@xandreed/sdk/Memory`). No release had them, and they freeze at
+  this one. The repository follows: each kernel folder is its
   package's `src`, the gates' layers keep their names over the new paths,
   `./node` is the sdk layer's restricted subpath, the API snapshot of the
   Node entry is `api/sdk--node.api.txt`, and the guides, the docs site and

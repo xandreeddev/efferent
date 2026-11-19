@@ -391,7 +391,7 @@ describe("kernel", () => {
       yield* core.publish(tick(7))
       return { keys: Array.from(built.mapUnsafe.keys()).filter((key) => !key.startsWith("effect/")), heard: yield* Deferred.await(heard) }
     }).pipe(Effect.timeout("2 seconds")))
-    expect(result).toEqual({ keys: ["@xandreed/core/kernel/Core"], heard: 7 })
+    expect(result).toEqual({ keys: ["@xandreed/core/Core"], heard: 7 })
   })
 })
 

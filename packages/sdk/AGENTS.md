@@ -326,7 +326,7 @@ imports `node:path` and must be caught.
   source)` makes the records over the knowledge as it stands when they are
   stored (all three in `knowledge-curation.entity.functions.ts`). A check
   added to `staged` gets a test that fails without it. `Curator`
-  (`curator.port.ts`, key `@xandreed/sdk/kernel/Curator`:
+  (`curator.port.ts`, key `@xandreed/sdk/Curator`:
   `curate({ prompt, job })` to the reply's text, `CurationJob` naming the
   source, the try and the purpose, `extract` or `review`; `CurationFailed`)
   is the host's, with its kit (`curatorConformance`, `CuratorSubject`:
@@ -404,9 +404,10 @@ imports `node:path` and must be caught.
   plugin; a plugin imports contracts and core's kernel, never another
   plugin's folder: the boundaries gate refuses both. The memory kit builds
   its checks with `contracts/conformance.entity.functions.ts`, a copy of
-  core's kernel helpers, which core does not export. A port that moved
-  keeps its key: `Memory` is still `@xandreed/core/kernel/Memory`, as it
-  was declared; a new one is `@xandreed/sdk/kernel/<Name>`, as `Inbox` is.
+  core's kernel helpers, which core does not export. A key is
+  `@xandreed/sdk/<Name>` (`Memory`, `Inbox`), and a Node port's
+  `@xandreed/sdk/node/<Name>`; keys freeze at 0.23.0, their first release,
+  and a port that moves after it keeps its key.
 - Every plugin is a plain Effect `Layer`, its type saying what it needs,
   and the host composes them with `Layer.provideMerge` over core's
   `kernel({ capacity? })`, which provides `Core` alone, or provides them to
@@ -514,7 +515,7 @@ imports `node:path` and must be caught.
   the host's turn does, through Effect AI's `LanguageModel` and `Toolkit`
   (ADR 0004: no tool service in the kernel).
 - The inbox (`plugins/inbox`) implements the contract in
-  `contracts/inbox` (`inbox.port.ts`, key `@xandreed/sdk/kernel/Inbox`):
+  `contracts/inbox` (`inbox.port.ts`, key `@xandreed/sdk/Inbox`):
   core does not know it. `inbox(turn)` and `inboxOf(turn, options)` take
   the host's turn function (`InboxTurn<R>`: a session and a message to a
   reply's text), run it for each message they take, and need what it
