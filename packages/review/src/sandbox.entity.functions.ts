@@ -1,5 +1,5 @@
 import { Match, Option, Result } from "effect"
-import { ETC_ALWAYS, ETC_NETWORK, INNER_PATH, INNER_WORK, TOOL_BIN, TOOL_ROOT } from "./sandbox.entity.js"
+import { ETC_ALWAYS, ETC_NETWORK, INNER_HOME, INNER_PATH, INNER_WORK, TOOL_BIN, TOOL_ROOT } from "./sandbox.entity.js"
 import type { Bind, HostEntry, HostLayout, Limits, SandboxPlan, ToolBind } from "./sandbox.entity.js"
 
 const bindArgs = (bind: Bind): ReadonlyArray<string> => [bind.writable ? "--bind" : "--ro-bind", bind.host, bind.inner]
@@ -16,14 +16,19 @@ const topArgs = (entry: HostEntry): ReadonlyArray<string> => Match.valueTags(ent
  */
 export const limitedArgv = (command: string, limits: Limits): ReadonlyArray<string> => [
   "/bin/sh", "-c",
-  `ulimit -c 0 && ulimit -v ${Math.floor(limits.memoryBytes / 1024)} && ulimit -f ${Math.floor(limits.fileBytes / 512)} && exec /bin/sh -c "$1"`,
+  [
+    "ulimit -c 0",
+    ...(limits.memoryBytes === undefined ? [] : [`ulimit -v ${Math.floor(limits.memoryBytes / 1024)}`]),
+    `ulimit -f ${Math.floor(limits.fileBytes / 512)}`,
+    `exec /bin/sh -c "$1"`,
+  ].join(" && "),
   "sh", command,
 ]
 
 /**
  * `bwrap`'s arguments for one command (the program itself left out): every namespace unshared (the network shared
  * back only when the plan says), the sandbox ended with its parent and in a session of its own, an empty environment
- * but `PATH` (fixed, `INNER_PATH`) and `HOME` (`/work`), `/usr` and the system's top folders read-only, the `/etc` files
+ * but `PATH` (fixed, `INNER_PATH`) and `HOME` (`INNER_HOME`, made in the fresh `/tmp`), `/usr` and the system's top folders read-only, the `/etc` files
  * the plan needs, a fresh `/proc`, `/dev` and `/tmp`, the toolchain read-only under `/opt/tool` with a link to each
  * program in `/opt/tool/bin`, the plan's binds, the work folder at `/work` (the only writable bind but the plan's),
  * then the command in `cwd` under the limits. Every path is an argument of its own: none is ever a shell's text.
@@ -37,13 +42,14 @@ export const bwrapArgv = (layout: HostLayout, plan: SandboxPlan, cwd: string, co
     "--new-session",
     "--clearenv",
     "--setenv", "PATH", INNER_PATH,
-    "--setenv", "HOME", INNER_WORK,
+    "--setenv", "HOME", INNER_HOME,
     "--ro-bind", "/usr", "/usr",
     ...layout.top.flatMap(topArgs),
     ...layout.etc.filter((file) => etc.some((wanted) => wanted === file.path)).flatMap((file) => ["--ro-bind", file.real, file.path]),
     "--proc", "/proc",
     "--dev", "/dev",
     "--tmpfs", "/tmp",
+    "--dir", INNER_HOME,
     ...layout.tools.flatMap((tool) => [...tool.binds.flatMap(bindArgs), ...(tool.program === `${TOOL_BIN}/${tool.name}` ? [] : ["--symlink", tool.program, `${TOOL_BIN}/${tool.name}`])]),
     ...plan.binds.flatMap(bindArgs),
     "--bind", plan.workDir, INNER_WORK,

@@ -51,7 +51,7 @@ describe("bwrapShell, the isolation probe", () => {
     const ran = await inSandbox(offline(work("env")), "for f in /proc/[0-9]*/environ; do tr '\\0' '\\n' < $f; done; echo; env")
     expect(exitOf(ran)).toBe(0)
     expect(ran.stdout).not.toContain(SECRET)
-    expect(ran.stdout).toContain("HOME=/work")
+    expect(ran.stdout).toContain("HOME=/tmp/home")
     // The control: bwrap started with the secret in its own environment keeps it for its first process inside.
     if (layout === undefined) return
     const leaked = execFileSync(layout.bwrap, [...probeArgv(layout).slice(0, -2), "--", "/bin/sh", "-c", "tr '\\0' '\\n' < /proc/1/environ"], { env: { REVIEW_PROBE_SECRET: SECRET } }).toString()
@@ -114,6 +114,8 @@ describe("bwrapShell, the isolation probe", () => {
     expect(existsSync(join(dir, "postinstall-ran"))).toBe(false)
     await inSandbox(offline(dir), "bun install --frozen-lockfile")
     expect(existsSync(join(dir, "postinstall-ran"))).toBe(true)
+    // HOME is the sandbox's own /tmp: what bun caches there never lands in the clone.
+    expect(existsSync(join(dir, ".bun"))).toBe(false)
   })
 
   test.skipIf(skip)("a timeout stops every process the command started, one in a session of its own too, and so does the command's return", async () => {
@@ -127,8 +129,14 @@ describe("bwrapShell, the isolation probe", () => {
     expect(["timed", "returned"].map((name) => readFileSync(join(dir, name), "utf8"))).toEqual(first)
   })
 
-  test.skipIf(skip)("each command runs under its limits: no core files, the address space and file size bounded", async () => {
+  test.skipIf(skip)("each command runs under its limits: no core files and the file size bounded; the address space only when a host sets it", async () => {
     const ran = await inSandbox(offline(work("limits")), "ulimit -c; ulimit -v; ulimit -f")
-    expect(ran.stdout).toBe(`0\n${8 * 1024 * 1024}\n${4 * 1024 * 1024}\n`)
+    expect(ran.stdout).toBe(`0\nunlimited\n${4 * 1024 * 1024}\n`)
+    if (layout === undefined) return
+    const bounded = await Effect.runPromise(Effect.scoped(Effect.gen(function* () {
+      const shell = yield* bwrapShell({ layout, plan: offline(work("limits")), limits: { memoryBytes: 8 * 1024 ** 3, fileBytes: 1024 ** 3 } })
+      return yield* shell.run({ command: "ulimit -v; ulimit -f" })
+    })))
+    expect(bounded.stdout).toBe(`${8 * 1024 * 1024}\n${2 * 1024 * 1024}\n`)
   })
 })

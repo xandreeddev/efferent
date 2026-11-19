@@ -17,11 +17,11 @@ describe("bwrapArgv", () => {
   test("offline: every namespace unshared, an empty environment but PATH and HOME, the work folder the one writable bind, the command an argument", () => {
     expect(bwrapArgv(layout, { workDir: "/cache/clone", network: false, binds: [] }, "/work", "echo 'a'; b", limits)).toEqual([
       "--unshare-all", "--die-with-parent", "--new-session", "--clearenv",
-      "--setenv", "PATH", INNER_PATH, "--setenv", "HOME", "/work",
+      "--setenv", "PATH", INNER_PATH, "--setenv", "HOME", "/tmp/home",
       "--ro-bind", "/usr", "/usr",
       "--symlink", "usr/bin", "/bin", "--ro-bind", "/lib64", "/lib64",
       "--ro-bind", "/etc/ld.so.cache", "/etc/ld.so.cache",
-      "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp",
+      "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp", "--dir", "/tmp/home",
       "--ro-bind", "/home/user/.bun/bin/bun", "/opt/tool/bun/bun", "--symlink", "/opt/tool/bun/bun", "/opt/tool/bin/bun",
       "--bind", "/cache/clone", "/work",
       "--chdir", "/work",
@@ -36,8 +36,9 @@ describe("bwrapArgv", () => {
     expect(argv.join(" ")).toContain("--bind /cache/pkg/bun /cache --bind /c /work --chdir /work/sub --")
   })
 
-  test("the limits are set by the sandbox's shell, the command passed as $1 and never spliced", () => {
+  test("the limits are set by the sandbox's shell, the command passed as $1 and never spliced; the address space only when given", () => {
     expect(limitedArgv("a\"; $(b)", limits)).toEqual(["/bin/sh", "-c", `ulimit -c 0 && ulimit -v ${8 * 1024 * 1024} && ulimit -f ${2 * 1024 * 1024} && exec /bin/sh -c "$1"`, "sh", "a\"; $(b)"])
+    expect(limitedArgv("x", { fileBytes: 1024 })).toEqual(["/bin/sh", "-c", `ulimit -c 0 && ulimit -f 2 && exec /bin/sh -c "$1"`, "sh", "x"])
   })
 })
 

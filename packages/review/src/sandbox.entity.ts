@@ -10,8 +10,14 @@ export class SandboxUnavailable extends Schema.TaggedError<SandboxUnavailable>()
   message: Schema.String,
 }) {}
 
-/** Where the work folder is inside the sandbox: its one writable folder, and `HOME`. */
+/** Where the work folder is inside the sandbox: its one writable folder but the tmpfs `/tmp`. */
 export const INNER_WORK = "/work"
+
+/**
+ * The sandbox's `HOME`: in its own `/tmp`, a tmpfs gone when the command ends, so what a tool caches under the home
+ * (bun's transpiler cache, npm's logs) never lands in the clone, where it would dirty the tree a check reads.
+ */
+export const INNER_HOME = "/tmp/home"
 
 /** Where the toolchain is bound inside the sandbox, read-only, each tool under its name. */
 export const TOOL_ROOT = "/opt/tool"
@@ -86,18 +92,20 @@ export const SandboxPlan = Schema.Struct({
 export type SandboxPlan = typeof SandboxPlan.Type
 
 /**
- * The bounds a command runs under inside the sandbox, set with the shell's `ulimit` before it starts: its virtual
- * memory and the largest file it may write, in bytes; no core files.
+ * The bounds a command runs under inside the sandbox, set with the shell's `ulimit` before it starts: the largest file
+ * it may write, in bytes, and, when given, its address space; no core files. The address space is no memory bound for
+ * the JavaScript runtimes: bun reserves far more than it uses (its type check dies under 8 GiB), so it is off unless a
+ * host sets it; bounding memory needs a cgroup.
  */
 export const Limits = Schema.Struct({
-  memoryBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  memoryBytes: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
   fileBytes: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type Limits = typeof Limits.Type
 
-/** The defaults: 5 minutes a command, 8 GiB of address space (the JavaScript runtimes reserve much of it), 2 GiB a file, 4 MiB of each stream. */
+/** The defaults: 5 minutes a command, 2 GiB a file and no bound on the address space, 4 MiB of each stream. */
 export const SANDBOX_DEFAULTS = {
   timeoutMs: 300_000,
-  limits: { memoryBytes: 8 * 1024 ** 3, fileBytes: 2 * 1024 ** 3 },
+  limits: { fileBytes: 2 * 1024 ** 3 },
   outputBytes: 4 * 1024 * 1024,
 } as const
