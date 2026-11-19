@@ -749,6 +749,33 @@ section into the new version. Releases before 0.11.0 are not recorded here.
     are not. An answer whose stream ends before its finish fails rather than
     being taken as whole.
 
+### Removed
+
+- `@xandreed/sdk/kernel`: the graph contract and its plugin (ADR 0019) and
+  recall by meaning over facts and links (ADR 0021's amendment), before any
+  release shipped them. Gone are `withGraph`, the `linkThings`,
+  `unlinkThings` and `followThings` tools (`graphTools`, `graphHandlers`),
+  `graphSession`, `knownLinks`, `saidLinks`, the graph session's records
+  (`plugin.graph.linked`, `plugin.graph.unlinked`, `plugin.graph.restated`)
+  and its live `plugin.graph.recalled`, with `linksOf`, `near`, `walked`,
+  `namedIn`, `normalName`, `saidOf`, `weightOf`, `linksNote` and their types;
+  `withRecall`, `recallNote`, `recallItems`, `recallKey`, `recallText`,
+  `ReorderInvalid` and the live `plugin.recall.recalled`; and the facts'
+  `learnedOf` (`LearnedFact`), which only recall read. Memory kept by a
+  curator and recalled from what the conversation names replaces both
+  (`curate`, `withKnowledge`, ADRs 0022 and 0023). The `Embedder` and
+  `VectorStore` contracts, their kits, `recordedEmbedder` and
+  `inMemoryVectors` stay, as do the facts and `withFacts`. The knowledge
+  contract's `folded`, the fold it compares names and quotes with, is now
+  exported. ADRs 0019 and 0021 stay as records. The recorded vectors the
+  recall tests read (`fixtures/recall-vectors.json`) go with them, and so
+  does the website's script that recorded them.
+- Docs site: Echo's rules for links (`linkThings`, `followThings`,
+  `unlinkThings` and the note of links) and the Context tab's graph session
+  ("Graph"), which no lesson used since lesson 18 moved to the curator.
+  Lesson 18's Load the world compares names with the kernel's `folded` in
+  place of `normalName`; its counts are unchanged.
+
 ### Repository
 
 - Docs site, lesson 18, "A memory that connects", rebuilt around a

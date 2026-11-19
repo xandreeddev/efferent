@@ -16,7 +16,7 @@ export const memoryAmong = (headers: ReadonlyArray<SessionHeader>): Option.Optio
 
 /**
  * The memory session's journal (ADR 0014), or none when there is no memory session: reading stores nothing, and no
- * session is created. What a reader of facts folds (`factsOf`, `learnedOf`), whichever plugin reads them.
+ * session is created. What a reader of facts folds (`factsOf`), whichever plugin reads them.
  */
 export const memoryJournal: Effect.Effect<ReadonlyArray<StoredEvent>, JournalStorageError, Sessions> = Effect.gen(function* () {
   const sessions = yield* Sessions

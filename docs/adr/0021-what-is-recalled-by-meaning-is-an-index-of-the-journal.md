@@ -1,6 +1,9 @@
 # ADR 0021: What is recalled by meaning is an index of the journal
 
 - **Status:** accepted, 18 November 2026
+- **Superseded, in part:** the recall wrapper of "Amended: the recall wrapper" (`withRecall`, the recall contract,
+  `learnedOf`) was removed on 19 November 2026 by the knowledge module, ADRs 0022 and 0023; the `Embedder` and
+  `VectorStore` contracts, their kits, `recordedEmbedder` and `inMemoryVectors` stay. This record is kept as history
 - **Applies to:** `@xandreed/sdk/kernel` (the `Embedder` and `VectorStore` contracts, their kits
   `embedderConformance` and `vectorStoreConformance`, `recordedEmbedder`, `inMemoryVectors`)
 - **Takes up:** the part ADR 0014 left out ("an `Embedder` contract, and a wrapper over it") and ADR 0019's
