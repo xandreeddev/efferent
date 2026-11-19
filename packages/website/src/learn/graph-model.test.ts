@@ -10,7 +10,7 @@ import { SessionId, stored, TurnNumber } from "@xandreed/core/kernel"
 import type { StoredEvent } from "@xandreed/core/kernel"
 import { curatedEvent, curationFailedEvent, EntityId, entityEvent, knowledgeOf, memoryEndedEvent, memoryEvent, MemoryId, memoryRestatedEvent, SourceId, sourceEvent } from "@xandreed/sdk/kernel"
 import type { StoredDraft } from "@xandreed/core/kernel"
-import { COLUMN_ROWS, latestCuration, memoryViewOf, MOST_SAID, namedBy, NEIGHBOURS, ordinal } from "./graph-model.ts"
+import { COLUMN_ROWS, curationCutLine, latestCuration, memoryViewOf, MOST_SAID, namedBy, NEIGHBOURS, ordinal } from "./graph-model.ts"
 import { worldDrafts } from "./lessons/connected-memory/load-world.ts"
 
 /** Drafts as the journal stores them, each at its own time and place. */
@@ -100,6 +100,10 @@ describe("the Graph tab's latest curation", () => {
     }))
     const failed = [...TURNS, ...journalOf([{ draft: stored(curationFailedEvent, { source: s2, attempt: 2, reason: "the model gave no reply" }), at: DAY }], TURNS.length)]
     expect(latestCuration(failed)).toEqual(Option.some({ heading: "Source s2: try 2 failed.", lines: ["the model gave no reply", "The program's next turn takes it up again."], memories: [] }))
+  })
+
+  test("the status line's words when a curation is cut short", () => {
+    expect(curationCutLine("s1")).toBe("Curating stopped: s1 was not kept yet, and the next turn takes it up.")
   })
 
   test("ranks in words", () => {

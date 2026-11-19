@@ -1208,14 +1208,15 @@ body.app {
 @keyframes foot-flash {
   from { background: color-mix(in srgb, var(--accent) 22%, var(--surface)); }
 }
+/* The status line wraps, never cut: a curation's line (lesson 18) says what was dropped, and who curated, at its end. */
 .chat-status {
   font-family: var(--font-mono);
   font-size: 0.74rem;
+  line-height: 1.35;
   color: var(--accent-3);
-  white-space: nowrap;
-  overflow: hidden;
-  text-overflow: ellipsis;
+  overflow-wrap: anywhere;
   min-width: 0;
+  flex: 1 1 auto;
 }
 .chat-status:not(:empty)::before {
   content: "● ";

@@ -17,8 +17,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   cut it short, or a try failed) with `curateAgain`, then stores the turn as a
   source and curates it with the kernel's `curate`, before the next message
   is taken; the page leaves review off (`review: false`, an experiment turns
-  it on), since on DeepSeek a curated turn took about 18 seconds with it and
-  about 10 without. memory.ts is `withKnowledge({ limit: 8, walk: 3, speaker,
+  it on), since on DeepSeek a turn with something to keep took 18 and 19 seconds
+  to curate with it (2 runs), and 5 to 25, most near 10, without (6 runs). memory.ts is `withKnowledge({ limit: 8, walk: 3, speaker,
   stopWords })(flatMemory)`, the speaker's words and the stop words written
   out in the file. The curator asks the page's curator model: the model
   picked when it is Echo or a gateway model, else the page's own Echo, which

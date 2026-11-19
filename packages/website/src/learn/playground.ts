@@ -30,7 +30,7 @@ import { mountGraders } from "./panes/graders.ts"
 import type { GradersPane } from "./panes/graders.ts"
 import { mountFiles } from "./panes/files.ts"
 import { LATEST, mountGraph } from "./panes/graph.ts"
-import { emptyRecalls, heardRecall, latestCuration, memoryViewOf, namedBy, NO_RECALL, NOTHING_KEPT, pickedRecall, recallLabel, recallsStartedOver, recallViewOf } from "./graph-model.ts"
+import { curationCutLine, emptyRecalls, heardRecall, latestCuration, memoryViewOf, namedBy, NO_RECALL, NOTHING_KEPT, pickedRecall, recallLabel, recallsStartedOver, recallViewOf } from "./graph-model.ts"
 import type { CurationView, MemoryView, RecallBoard, RecallPick, RecallView, Showing } from "./graph-model.ts"
 import { mountModels, setModelName } from "./panes/models.ts"
 import { mountTrace } from "./panes/trace.ts"
@@ -382,6 +382,10 @@ function boot(root: HTMLElement, lesson: Lesson) {
         statusBox.textContent = event.text
         programStatus = undefined
         underWorkspace = undefined
+        break
+      // Lesson 18: a curation cut short leaves no "Curating…" behind.
+      case "CurationCut":
+        statusBox.textContent = curationCutLine(event.source)
         break
       case "Ended":
         state.alive = false

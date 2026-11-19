@@ -25,7 +25,7 @@ export const CURATOR_HEADER = `${CURATOR_IMPORTS}\n\n`
 export const REVIEW_LINE = `// Whether a second call checks the curator's reply against the turn before anything is stored.
 // The kernel has it on: measured on a real model, 39 of 40 turns were kept right with it, 36
 // without. This page has it off: on the gateway's DeepSeek, a turn with something to keep took
-// about 18 seconds to curate with it, and about 10 without.
+// 18 and 19 seconds to curate with it (2 runs), and 5 to 25, most near 10, without (6 runs).
 const options = { review: false }`
 
 /** The curator: the model call the curation step makes for each job. */

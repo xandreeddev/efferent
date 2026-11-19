@@ -276,7 +276,7 @@ describe("lesson 18 on the page", () => {
     expect(labels(15)).toEqual(["Turn opened", "Kept: 556 memories, 98 said again, 3 ended, 369 entities, 2 other names, 554 sources, 554 curated", "Turn closed"])
     // The Graph tab after the world, with this conversation's one question asked before it: the user, whom it named, and
     // the user's one neighbour.
-    expect(tab().memory.counts).toBe(`The knowledge session holds ${world.entities.length} entities and ${world.memories.length} memories, 4 of them ended.`)
+    expect(tab().memory.counts).toBe("The knowledge session holds 375 entities and 560 memories, 4 of them ended.")
     expect(tab().memory.things.map((thing) => thing.label)).toEqual(["the user", "Porto"])
     expect(tab().memory.heading).toBe("The user and what the conversation named, with their neighbours, at most 6 each, the most said first: 2 entities. The picture starts on the left from what your latest message named, a column for each memory further.")
 

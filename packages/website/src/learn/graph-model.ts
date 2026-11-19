@@ -82,6 +82,12 @@ export const recallLabel = (board: RecallBoard, heard: HeardRecall): string => {
   return calls > 1 ? `Turn ${heard.turn}, model call ${heard.call} of ${calls}` : `Turn ${heard.turn}`
 }
 
+/**
+ * What the chat's status line says when Stop, Rebuild or Clear context cut a curation short (lesson 18): the program's
+ * "Curating…" would otherwise stay, though nothing curates.
+ */
+export const curationCutLine = (source: string): string => `Curating stopped: ${source} was not kept yet, and the next turn takes it up.`
+
 /** What the tab says while the knowledge session holds no memory. */
 export const NOTHING_KEPT = "Nothing is kept yet. Send a message that says something, such as the first button under the chat: once the chat has answered, the curator keeps what the turn said, and it is drawn here. Or press Load the world."
 
