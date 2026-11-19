@@ -5,7 +5,7 @@ import { assistantMessage, dataOf, JOURNAL_FORMAT, JournalStorage, kernel, messa
 import type { OpenSession, SessionId, StoredEvent } from "@xandreed/core"
 import {
   callTool, factHandlers, factsOf, factTools, FACTS_OWNER, flatMemory, ForgetFact, forgottenEvent, inProcessJournal, learnedEvent, Memory, memorySession, memoryWrapperConformance,
-  modelAnswer, rememberedFacts, RememberFact, scriptedModel, sessions, summaryMemory, Summarizer, webStorageJournal, windowMemory, withFacts,
+  modelAnswer, rememberedFacts, RememberFact, scriptedModel, sessions, summaryMemory, Summarizer, webStorageJournal, withFacts,
 } from "./index.js"
 import type { KeyValueStore, ModelScript } from "./index.js"
 import { learned } from "./contracts/facts/facts.entity.functions.js"
@@ -324,9 +324,9 @@ describe("facts", () => {
         const context = yield* Effect.flatMap(Memory, (one) => one.context(session)).pipe(Effect.provide(memoryLayer))
         return context.map(promptMessageText)
       }))
-      return [yield* read(flatMemory), yield* read(windowMemory({ budgetTokens: 1000 })), yield* read(summaryMemory({ budgetTokens: 1000 }).pipe(Layer.provide(summarizer)))]
+      return [yield* read(flatMemory), yield* read(summaryMemory({ budgetTokens: 1000 }).pipe(Layer.provide(summarizer)))]
     }).pipe(Effect.provide(sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())))))
-    expect(contexts).toEqual([["Hello."], ["Hello.", "Hello."], ["Hello.", "Hello.", "Hello."]])
+    expect(contexts).toEqual([["Hello."], ["Hello.", "Hello."]])
     expect(String(learnedEvent.name)).toBe("plugin.facts.learned")
   })
 })

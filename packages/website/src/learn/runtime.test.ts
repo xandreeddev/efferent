@@ -11,7 +11,7 @@ import { turnEndedEvent } from "@xandreed/core"
 import { loadEcho } from "./models/mock.ts"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
-import { withoutMemory, writeLastN, writeSystem } from "./lessons/your-first-agent/config-edit.ts"
+import { withoutMemory, writeSystem } from "./lessons/your-first-agent/config-edit.ts"
 import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { kitLine } from "./lesson.ts"
 import type { Lesson } from "./lesson.ts"
@@ -171,17 +171,6 @@ describe("lesson 1 on the page (the kernel, Echo)", () => {
     runtime.send("fresh")
     await next
     expect(after.flatMap((trace) => (trace._tag === "Reply" ? [trace] : []))).toEqual([{ _tag: "Reply", turn: 1, text: "You said: \"fresh\". This is the start of the conversation." }])
-  })
-
-  test("with memory.ts keeping the last two messages, the third prompt sends two after the system text", async () => {
-    const { runtime, heard } = await start({ ...SOURCES, memory: Option.getOrThrow(writeLastN(DEFAULT_MEMORY, 2)) })
-    // One by one: each sent once the one before has its answer.
-    for (const text of ["a", "b", "c"]) {
-      const done = replies(runtime)
-      runtime.send(text)
-      await done
-    }
-    expect(prompts(heard).map((prompt) => prompt.messages.length)).toEqual([2, 3, 3])
   })
 
   test("main without its memory runs, and stops at the first message with the missing service, in words", async () => {

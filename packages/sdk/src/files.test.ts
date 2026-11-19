@@ -7,7 +7,7 @@ import { dataOf, kernel, messageOf, Sessions, toolResult, TurnNumber, userMessag
 import type { OpenSession, SessionId, StoredEvent } from "@xandreed/core"
 import {
   Approval, approveIn, callTool, decidedEvent, fileHandlers, Files, FilesRefused, fileTools, flatMemory, inMemoryFiles, inProcessJournal, Memory, modelAnswer, scriptedModel,
-  sessions, summaryMemory, windowMemory, withFacts, workspacePath,
+  sessions, summaryMemory, flatMemoryWith, withFacts, workspacePath,
 } from "./index.js"
 import type { Decision, FilePath, ModelScript, ModelToolCall } from "./index.js"
 
@@ -124,14 +124,14 @@ describe("a workspace", () => {
   test("type-level: no stock memory, memory wrapper or the session plugin requires Files", () => {
     type Free<L extends Layer.Any> = [Files] extends [Layer.Services<L>] ? "requires Files" : "free"
     const flat: Free<typeof flatMemory> = "free"
-    const window: Free<ReturnType<typeof windowMemory>> = "free"
+    const pointing: Free<ReturnType<typeof flatMemoryWith>> = "free"
     const summary: Free<ReturnType<typeof summaryMemory>> = "free"
     const wrapped = withFacts({ limit: 3 })(flatMemory)
     const facts: Free<typeof wrapped> = "free"
     const session: Free<ReturnType<typeof sessions>> = "free"
     // The control: a layer that needs `Files` is told apart.
     const control: Free<Layer.Layer<never, never, Files>> = "requires Files"
-    expect([flat, window, summary, facts, session, control]).toEqual(["free", "free", "free", "free", "free", "requires Files"])
+    expect([flat, pointing, summary, facts, session, control]).toEqual(["free", "free", "free", "free", "free", "requires Files"])
   })
 
   test("no part of the kernel outside the files contract and its tools imports the files contract", () => {
@@ -147,10 +147,10 @@ describe("a workspace", () => {
     const offenders = sources(root).map((path) => relative(root, path)).filter((path) => !allowed(path) && reachesFiles(path, readFileSync(join(root, path), "utf8")))
     expect(offenders).toEqual([])
     // The controls: an import of the contract from a memory plugin, or from a contract beside it, would be caught.
-    expect(reachesFiles(join("plugins", "memory-window", "window.adapter.ts"), `import { Files } from "../../contracts/files/files.port.js"`)).toBe(true)
+    expect(reachesFiles(join("plugins", "memory-flat", "flat.adapter.ts"), `import { Files } from "../../contracts/files/files.port.js"`)).toBe(true)
     expect(reachesFiles(join("contracts", "memory", "memory.entity.functions.ts"), `import { Files } from "../files/files.port.js"`)).toBe(true)
     expect(reachesFiles(join("contracts", "memory", "memory.entity.functions.ts"), `import { pageAt } from "./pointer.entity.functions.js"`)).toBe(false)
-    expect(sources(root).some((path) => relative(root, path) === join("plugins", "memory-window", "window.adapter.ts"))).toBe(true)
+    expect(sources(root).some((path) => relative(root, path) === join("plugins", "memory-flat", "flat.adapter.ts"))).toBe(true)
   })
 
   test("an interrupted write leaves the file changed and the call with no result: the next prompt does not send the call", async () => {

@@ -597,7 +597,7 @@ describe("the repository profile", () => {
       "contracts/loop/request.entity.functions.test.ts", "contracts/loop/testing.ts", "contracts/memory/memory.testing.ts",
       "contracts/inbox/testing.port.ts", "contracts/inbox/testing/fixtures.ts", "contracts/loop/loop.bench.ts",
       "plugins/session/sessions.adapter.test.ts", "plugins/session/testing.ts", "plugins/inbox/queue.testing.ts",
-      "plugins/loop/testing/fixtures.ts", "plugins/memory-window/testing.port.ts", "plugins/journal-in-process/journal.bench.ts",
+      "plugins/loop/testing/fixtures.ts", "plugins/memory-flat/testing.port.ts", "plugins/journal-in-process/journal.bench.ts",
     ]
     expect(scaffolding.map(layerOf)).toEqual(scaffolding.map(() => "sdk-kernel-tests"))
     // The source beside it stays in its folder's own layer.

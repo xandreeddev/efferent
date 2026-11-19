@@ -64,7 +64,7 @@ is listed below.
 | `webStorageJournal(storage, { prefix })` | sdk, `plugins/journal-web-storage` | keeps journals in a browser's `localStorage`, or any value with its five members: they outlive the page |
 | `sessions()` | sdk, `plugins/session` | owns turns and the journal's order; stores, then publishes |
 | `flatMemory` | sdk, `plugins/memory-flat` | every message of the conversation, oldest first |
-| `windowMemory({ budgetTokens })` | sdk, `plugins/memory-window` | the conversation within a budget; drops whole turns, oldest first |
+| `flatMemoryWith({ pointers })` | sdk, `plugins/memory-flat` | the same, a long tool result sent as its start and a pointer |
 | `inbox(turn)` | sdk, `plugins/inbox` | queues messages per session and answers them in order, through the host's `turn` |
 | `ReadResult`, `readResult` | sdk, `plugins/tool-read-result` | the one tool the kernel ships, and its handler: reads on from a pointer to a long result |
 | The approval contract | sdk, `contracts/approval` | `Approval`, which the host provides; `approve`, `approveIn`, `grantsOf`; the `plugin.approval.decided` record |
@@ -349,9 +349,10 @@ were asked, as a loop that runs them one after another stores them, and a
 call with no result is not sent. The journal keeps every record; `paired` decides only what is sent. The
 memory kit holds a memory to it (`pairs`): an answered call is sent with its
 result right after it, and an unanswered one not at all, also when its id
-was asked again later and answered, or twice in one answer. The window memory drops
-whole turns only, so one long tool turn can go over its budget: it fails
-with `OverBudget` like any turn that alone does not fit (ADR 0004).
+was asked again later and answered, or twice in one answer. The summary memory folds
+whole turns only, never the open one, so one long tool turn can go over its
+budget: it fails with `OverBudget` like any turn that alone does not fit
+(ADR 0004).
 
 The loop runs each call in its turn: `CurrentTurn`, provided around the call,
 is the open session it runs in (ADR 0007). A tool whose handler must reach
@@ -579,8 +580,8 @@ is loaded. Each argument of `skills` keeps its own type: a skill annotated
 `Skill`, or a base annotated `Toolkit.Any`, has lost its tools and what they
 declare, and is refused where it is passed.
 
-A memory that drops old messages can drop a load's result: a window, or a
-compaction that folds it into a summary. The skill is still loaded and its
+A memory that drops old messages can drop a load's result: one a host writes
+that leaves old turns out, or a compaction that folds it into a summary. The skill is still loaded and its
 tools are still offered. `skillSet.withReloadNote(memory)` wraps the memory
 (ADR 0005): while a loaded skill's instructions are not in the context, it
 adds one note for the request, last, naming those skills and saying that
@@ -833,8 +834,6 @@ when its writer has them.
 | `conversation.user.message` | whoever runs the turn | stored; bears the message | `conversation` |
 | `conversation.assistant.message` | whoever runs the turn | stored; bears the message (its text and the tool calls it made), its data the model and the usage | `conversation` |
 | `conversation.tool.result` | whoever runs the turn, after running a call | stored; bears the result, or the failure, and the call it answers | `conversation` |
-| `plugin.window.dropped` | the window memory, when whole turns leave the window | stored; may be skipped | `memory` |
-| `plugin.window.pressure` | the window memory, when a context came close to the budget | live only | `memory` |
 | `plugin.knowledge.source` | the curation step (`curate`), before a curator is asked: what was said, in parts | stored, in the knowledge session | `memory` |
 | `plugin.knowledge.entity` | the same, from a checked reply: a named thing | stored | `memory` |
 | `plugin.knowledge.aliased` | the same: another name an entity bears | stored; may be skipped | `memory` |
@@ -1043,35 +1042,16 @@ export const flatMemory: Layer.Layer<Memory> = Layer.succeed(
 ```
 
 Each context starts with the one before it, so a provider's prompt cache
-reuses all of it, until the conversation outgrows the model. The window
-memory keeps to a budget: over it, it drops whole turns, oldest first, and
-records how far it dropped (`plugin.window.dropped`), so a turn once dropped
-stays dropped and the start of every later context holds. When the current
-turn alone does not fit, it fails with `OverBudget` (`isOverBudget` tells
-it). The estimate is one pure function, `estimateTokens`, a quarter of the
-characters rounded up:
-
-```ts
-export const windowMemory = (options: WindowOptions): Layer.Layer<Memory, InvalidBudget> => {
-  // How a record's message is read: as stored, or a long result as its pointer. Options that are none throw here.
-  const sent = options.pointers === undefined ? messageOf : pointed(options.pointers)
-  return Layer.effect(Memory, Effect.gen(function* () {
-    const budget = yield* Effect.fromResult(budgetOf(options.budgetTokens))   // InvalidBudget fails the layer
-
-    return Memory.of({
-      // Nothing is kept between turns: each context is built from the journal as it stands.
-      context: Effect.fn("window_memory.context")(function* (session: OpenSession) {
-        const journal = yield* Effect.fromResult(readJournal(WINDOW_VOCABULARY)(yield* session.journal))
-        const fitted  = yield* Effect.fromResult(fitToBudget(journal, budget, sent))   // whole turns, oldest dropped first
-        if (Option.isSome(fitted.dropped)) yield* session.append(windowDropped(fitted.dropped.value))
-        // React: announce pressure, so any plugin can act on it.
-        if (nearlyFull(fitted, options.pressureAt)) yield* session.publish(windowPressureEvent, pressureOf(fitted))
-        return paired(fitted.messages).map(promptMessage)
-      }),
-    })
-  }))
-}
-```
+reuses all of it, until the conversation outgrows the model: the flat
+memory keeps the whole conversation and has no budget. The summary memory
+(below) is the bounded one. A memory that slides, dropping the oldest turn
+whenever a new one comes in, changes the start of the context on every
+message, and a provider's cache misses on every message (ADR 0037): the
+kernel ships none. A memory with a budget fails with `OverBudget` when the
+current turn alone does not fit (`isOverBudget` tells it), and with
+`InvalidBudget` where its layer is made when the budget is no finite number
+of at least one token. The estimate is one pure function, `estimateTokens`,
+a quarter of the characters rounded up.
 
 A memory written in a few lines:
 
@@ -1089,7 +1069,8 @@ const goldfish = Layer.succeed(Memory, Memory.of({
 
 ### Compaction: a memory with state
 
-The window forgets what it drops. The summary memory keeps it, in short:
+The flat memory keeps everything, and a long conversation outgrows the
+model. The summary memory keeps to a budget and forgets nothing outright:
 over its budget, it folds the oldest closed turns, with the summary so far,
 into a new summary, and stores it once as `plugin.summary.summarized`,
 tagged `memory`, the summary its record's message and the place of the last
@@ -1186,6 +1167,22 @@ const pointingMemory = Layer.succeed(Memory, Memory.of({
 }))
 ```
 
+The kernel ships that memory as `flatMemoryWith({ pointers })`, beside
+`flatMemory`, which sends every result as stored:
+
+```ts
+export const flatMemoryWith = (options: FlatOptions): Layer.Layer<Memory> => {
+  // How a record's message is read: a long result as its pointer. Options that are none throw here.
+  const sent = pointed(options.pointers)
+  return Layer.succeed(Memory, Memory.of({
+    context: Effect.fn("flat_memory.context")(function* (session: OpenSession) {
+      const conversation = yield* Effect.fromResult(readJournal(FLAT_VOCABULARY)(yield* session.journal))
+      return paired(conversation.flatMap((record) => Option.toArray(sent(record)))).map(promptMessage)
+    }),
+  }))
+}
+```
+
 The rule reads the record and nothing else. A result is sent the same way in
 the turn that fetched it and in every later one, so the start of a prompt a
 provider cached never changes, and nothing is stored by pointing. The
@@ -1237,11 +1234,11 @@ as `whole`. A page `readResult` itself returned, by its name, so a loop that
 stores results by hand cannot point a page at itself. And a result the
 pointer would not make shorter.
 
-The stock memories with a budget take the rule as an option,
-`windowMemory({ budgetTokens, pointers })` and `summaryMemory({ …, pointers })`:
-a long result is read as its pointer before anything is counted, so the
-budget counts what is sent, and the summary memory's summarizer is handed
-what the model was. `flatMemory` sends everything, by definition. Pointer
+The summary memory takes the rule as an option, `summaryMemory({ …,
+pointers })`: a long result is read as its pointer before anything is
+counted, so the budget counts what is sent, and its summarizer is handed
+what the model was. `flatMemory` sends everything, by definition, and
+`flatMemoryWith({ pointers })` everything with long results pointed. Pointer
 options that are none (a number that is not finite or under one token, a
 preview not shorter than the size) are refused where they are written:
 `pointed` throws, as a definition does. The memory kit holds a memory that
@@ -2628,7 +2625,7 @@ fail on a careless plugin written for it.
 ## What the first cut leaves out, and the order it returns
 
 This cut keeps journals in the process, in a browser's storage, in a directory or in a SQLite file, and has one
-session plugin and three memories. A host's turn runs tools itself, through Effect AI's `Toolkit`
+session plugin and two memories, flat (with or without pointers) and summary. A host's turn runs tools itself, through Effect AI's `Toolkit`
 (see "Tools: the turn becomes a loop"). What follows returns in this order.
 
 1. **Views beyond the first four.** A client draws `Text`, `List`, `Table`

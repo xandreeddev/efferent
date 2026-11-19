@@ -43,3 +43,4 @@ record it amends or supersedes. The guide,
 | [0032](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0032-a-remote-embedder-charges-the-ledger-as-a-model-does.md) | A remote embedder charges the ledger as a model does | accepted |
 | [0034](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0034-media-is-kept-by-its-hash.md) | Media is kept by its hash | accepted |
 | [0036](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0036-the-old-engine-goes-and-the-kernel-takes-the-package-roots.md) | The old engine goes, and the kernel takes the package roots | accepted |
+| [0037](https://github.com/xandreeddev/efferent/blob/main/docs/adr/0037-the-window-memory-goes.md) | The window memory goes: a memory that slides one turn at a time misses the cache on every message | accepted |

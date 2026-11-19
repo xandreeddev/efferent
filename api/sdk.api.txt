@@ -190,8 +190,6 @@ const ViewId
 const WORDS_WEIGHTS
 const WRITE_FILE
 const WRITE_LIMIT
-const WindowDroppedData
-const WindowPressureData
 const WriteFile
 const WrittenData
 const aliasedEvent
@@ -232,6 +230,7 @@ const fileTools
 const filesConformance
 const filesSearch
 const flatMemory
+const flatMemoryWith
 const folded
 const forgottenEvent
 const framed
@@ -314,9 +313,6 @@ const vectorStoreConformance
 const viewEvent
 const viewsOf
 const webStorageJournal
-const windowDroppedEvent
-const windowMemory
-const windowPressureEvent
 const withFacts
 const withKnowledge
 const withKnowledgeByMeaning
@@ -337,6 +333,7 @@ interface Ended
 interface FactsOptions
 interface FilesSearchOptions
 interface FilesSubject
+interface FlatOptions
 interface FoundText
 interface FusedMemory
 interface InMemoryMediaOptions
@@ -392,7 +389,6 @@ interface TurnSourceOptions
 interface VectorStoreSubject
 interface WalkedMemory
 interface WebStorageJournalOptions
-interface WindowOptions
 type About
 type AliasedData
 type ApprovalRefusal
@@ -490,6 +486,4 @@ type VectorKey
 type View
 type ViewData
 type ViewId
-type WindowDroppedData
-type WindowPressureData
 type WrittenData

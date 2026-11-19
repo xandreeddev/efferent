@@ -12,7 +12,7 @@ wrote it, so its name, tags and data are a stored format.
 
 ## 1. Decide what it is
 
-- Published and never stored (progress, a pressure reading, a trace of side
+- Published and never stored (progress, a model call's attempt, a trace of side
   work): `liveEvent(plugin, event, { data, tags })`, named
   `plugin.<plugin>.<event>`, published through the open session or the
   turn (`publish(definition, data)`).
@@ -27,7 +27,7 @@ wrote it, so its name, tags and data are a stored format.
 
 - The name says who owns the contract that defines it: `core.` for core's
   own (`core.session.turn.started`), `conversation.` for the conversation's
-  records, `plugin.<plugin>.<what>` for a plugin's (`plugin.window.dropped`,
+  records, `plugin.<plugin>.<what>` for a plugin's (`plugin.summary.summarized`,
   `plugin.knowledge.memory`). A body's append of a `core.` record is
   refused (`ReservedName`).
 - Tags say what a record is for, so a reader takes only what it rebuilds

@@ -4,11 +4,14 @@ import { Layer } from "effect"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { SessionId } from "@xandreed/core"
 import type { Response } from "effect/ai"
-import { isOverBudget, messageText, windowMemory } from "./index.js"
+import { isOverBudget, messageText, Summarizer, summaryMemory } from "./index.js"
 import { answer, answering, counting, modelDown, open, recording, scripted, stack, SYSTEM as system, pieceEvent } from "./testing.js"
 
 type Agent = Effect.Success<ReturnType<typeof open>>
 const FOUR = ["core.session.turn.started", "conversation.user.message", "conversation.assistant.message", "core.session.turn.ended"]
+
+/** The summary memory, the stock memory with a budget, over a summarizer that answers in a word. */
+const budgeted = (budgetTokens: number) => Layer.provide(summaryMemory({ budgetTokens }), Layer.succeed(Summarizer, Summarizer.of({ summarize: () => Effect.succeed("Earlier.") })))
 
 const run = <A, E>(effect: Effect.Effect<A, E, never>) => Effect.runPromise(effect)
 
@@ -89,30 +92,19 @@ describe("every exit closes the turn with its outcome, and the next send works",
   test("a turn that alone is over the budget: memory's own error, with the estimate and the budget", async () => {
     const result = await run(Effect.scoped(Effect.gen(function* () {
       const { model, received } = yield* answering("Hi.")
-      const agent = yield* open(stack(model, { memory: windowMemory({ budgetTokens: 1 }) }))
+      const agent = yield* open(stack(model, { memory: budgeted(1) }))
       const session = yield* agent.createSession({ owner: "learner" })
       const refused = yield* Effect.flip(agent.send(session, "Hello"))
       const afterRefusal = yield* journalOf(agent, session)
       const calls = (yield* received).length
-      const reply = yield* agent.send(session, "Hi")
-      return { refused, afterRefusal, calls, reply, journal: yield* journalOf(agent, session), received: yield* received }
+      return { refused, afterRefusal, calls }
     })))
     // 2 tokens of message under a budget of 1: the budget is the history's, the system text the loop's. The error is the plugin's own, told by its guard.
     expect(isOverBudget(result.refused) ? { estimatedTokens: Number(result.refused.estimatedTokens), budgetTokens: Number(result.refused.budgetTokens) } : result.refused._tag).toEqual({ estimatedTokens: 2, budgetTokens: 1 })
     expect(result.calls).toBe(0)
+    // The open turn is never folded: nothing is asked of the summarizer, nothing is stored, and the turn closes as failed.
     expect(result.afterRefusal.names).toEqual(["core.session.turn.started", "conversation.user.message", "core.session.turn.ended"])
     expect(result.afterRefusal.ends).toEqual([{ turn: 1, outcome: { _tag: "Failed", reason: expect.stringContaining("OverBudget") } }])
-    // The next turn fits once the refused turn's message leaves the window, which the window records.
-    expect(result.reply).toEqual("Hi.")
-    expect(result.journal.names.slice(3)).toEqual([
-      "core.session.turn.started",
-      "conversation.user.message",
-      "plugin.window.dropped",
-      "conversation.assistant.message",
-      "core.session.turn.ended",
-    ])
-    expect(result.journal.events[5]).toMatchObject({ skippable: true, tags: ["memory"], data: { through: 2 } })
-    expect(result.received).toEqual([[{ role: "system", text: system }, { role: "user", text: "Hi" }]])
   })
 
   test("a second send during a turn is refused, and stores nothing", async () => {
@@ -204,10 +196,10 @@ describe("what the stock parts refuse before a turn starts", () => {
     expect(result.reply).toEqual("Hi.")
   })
 
-  test("a window memory with a budget that is none fails its layer with a typed error, not a crash", async () => {
+  test("a memory with a budget that is none fails its layer with a typed error, not a crash", async () => {
     const defined = (budgetTokens: number) => run(Effect.scoped(Effect.gen(function* () {
       const { model } = yield* answering("Hi.")
-      return yield* Effect.result(open(stack(model, { memory: windowMemory({ budgetTokens }) })))
+      return yield* Effect.result(open(stack(model, { memory: budgeted(budgetTokens) })))
     })).pipe(Effect.map((result) => result._tag === "Failure" ? result.failure._tag : "defined")))
     expect(await Promise.all([Number.NaN, Number.POSITIVE_INFINITY, 0, -5, 0.5].map(defined))).toEqual(["InvalidBudget", "InvalidBudget", "InvalidBudget", "InvalidBudget", "InvalidBudget"])
     expect(await Promise.all([1, 8.9, 3000].map(defined))).toEqual(["defined", "defined", "defined"])

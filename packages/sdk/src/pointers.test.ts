@@ -3,7 +3,7 @@ import { Effect, Layer, Option, Ref, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { CONVERSATION_VOCABULARY, kernel, messageOf, readJournal, Sessions, userMessage, vocabularyOf } from "@xandreed/core"
 import type { SessionId } from "@xandreed/core"
-import { callTool, estimateContext, inProcessJournal, Memory, messageText, modelAnswer, paired, pointed, promptMessage, ReadResult, readResult, scriptedModel, sessions, Summarizer, summaryMemory, webStorageJournal, windowMemory } from "./index.js"
+import { callTool, estimateContext, inProcessJournal, Memory, messageText, modelAnswer, paired, pointed, promptMessage, ReadResult, readResult, scriptedModel, sessions, Summarizer, summaryMemory, webStorageJournal, flatMemoryWith } from "./index.js"
 import type { KeyValueStore, ModelScript } from "./index.js"
 
 /*
@@ -104,11 +104,27 @@ describe("pointers", () => {
     // #endregion read
   })
 
-  test("a stock memory given pointers counts what it sends: the article alone is over the budget, its pointer is not", async () => {
-    // The article is 328 tokens by memory's estimate, the budget 200.
+  test("flatMemoryWith sends the pointer the memory written by hand sends, in the same words, in every prompt", async () => {
+    const byHand = await Effect.runPromise(run(story, ["Tell me about tides.", "Thanks."]).pipe(Effect.provide(over(pointingMemory))))
+    const shipped = await Effect.runPromise(run(story, ["Tell me about tides.", "Thanks."]).pipe(Effect.provide(over(flatMemoryWith({ pointers: { overTokens: 100, previewTokens: 20 } })))))
+    const pointer = "<tool-result-preview>\nLine 1 of the article on tides.\nLine 2 of the article on tides.\nLine 3 of the ar\n</tool-result-preview>\n[Host note: the result above is cut short: it is 1310 characters long and its first 80 are shown. To read on, call readResult with result 4 and from 80.]"
+    expect(shipped.calls[1]?.at(-1)).toEqual({ role: "tool", text: `→ ${JSON.stringify(pointer)}` })
+    expect(shipped.calls).toEqual(byHand.calls)
+    expect(shipped.sizes).toEqual(byHand.sizes)
+    expect(shipped.journal.map((record) => record.message)).toEqual(byHand.journal.map((record) => record.message))
+  })
+
+  test("flatMemoryWith refuses pointer options that are none where the layer is made", () => {
+    expect(() => flatMemoryWith({ pointers: { overTokens: 20, previewTokens: 20 } })).toThrow()
+    expect(() => flatMemoryWith({ pointers: { overTokens: Number.NaN, previewTokens: 1 } })).toThrow()
+  })
+
+  test("the summary memory given pointers counts what it sends: the article alone is over the budget, its pointer is not", async () => {
+    // The article is 328 tokens by memory's estimate, the budget 200. The open turn is never folded, so nothing is asked of the summarizer.
+    const unasked = Layer.succeed(Summarizer, Summarizer.of({ summarize: () => Effect.die("nothing closed to fold") }))
     const turns = (memory: Layer.Layer<Memory, unknown>) => Effect.runPromise(Effect.result(run(story, ["Tell me about tides."]).pipe(Effect.provide(over(Layer.orDie(memory))))))
-    expect(await turns(windowMemory({ budgetTokens: 200 }))).toMatchObject({ _tag: "Failure", failure: { _tag: "OverBudget", estimatedTokens: 349, budgetTokens: 200 } })
-    const pointing = await turns(windowMemory({ budgetTokens: 200, pointers: { overTokens: 100, previewTokens: 20 } }))
+    expect(await turns(Layer.provide(summaryMemory({ budgetTokens: 200 }), unasked))).toMatchObject({ _tag: "Failure", failure: { _tag: "OverBudget", estimatedTokens: 349, budgetTokens: 200 } })
+    const pointing = await turns(Layer.provide(summaryMemory({ budgetTokens: 200, pointers: { overTokens: 100, previewTokens: 20 } }), unasked))
     expect(pointing).toMatchObject({ _tag: "Success", success: { sizes: [5, 83, 137] } })
   })
 

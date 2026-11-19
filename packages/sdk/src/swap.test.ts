@@ -4,7 +4,7 @@ import type { LanguageModel } from "effect/ai"
 import { assistantMessageEvent, Core, inspectionOf, kernel, Sessions } from "@xandreed/core"
 import { Memory } from "./contracts/memory/memory.port.js"
 import type { SessionId } from "@xandreed/core"
-import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, windowMemory } from "./index.js"
+import { Inbox, inbox, inProcessJournal, scriptedModel, sessions, Summarizer, summaryMemory } from "./index.js"
 import type { InvalidBudget } from "./index.js"
 import { testTurn } from "./testing.js"
 
@@ -23,8 +23,11 @@ describe("a session over a shared base", () => {
 
       /** The kernel, a journal kept in the process and the session plugin, over the model: the part built once. */
       const Base = sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel()), Layer.provideMerge(model))
-      /** A window memory with a listener of its own, which notes, under `name`, each answer it hears of. */
-      const noting = (name: string, budgetTokens: number): Layer.Layer<Memory, InvalidBudget, Core> => windowMemory({ budgetTokens }).pipe(
+      /** The host's summarizer: the conversation here fits either budget, so it is never asked. */
+      const summarizer = Layer.succeed(Summarizer, Summarizer.of({ summarize: () => Effect.die("the conversation fits: no summary is asked for") }))
+      /** A summary memory with a listener of its own, which notes, under `name`, each answer it hears of. */
+      const noting = (name: string, budgetTokens: number): Layer.Layer<Memory, InvalidBudget, Core> => summaryMemory({ budgetTokens }).pipe(
+        Layer.provide(summarizer),
         Layer.provideMerge(Layer.effectDiscard(Effect.flatMap(Core, (core) => core.on(assistantMessageEvent, () => Ref.update(heard, (all) => [...all, name]), { name, wait: true })))),
       )
       /** The parts above the base: the inbox over the tests' turn, with its system text, and a memory. */

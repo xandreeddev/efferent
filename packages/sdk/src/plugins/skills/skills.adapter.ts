@@ -54,7 +54,7 @@ export interface SkillSet<Tools extends Record<string, Tool.Any>> {
   readonly offered: (journal: ReadonlyArray<StoredEvent>) => Offered<Tools>
   /**
    * A wrapper of `Memory` (ADR 0005): when a loaded skill's instructions are no longer in the context the memory
-   * below returned (a compaction folded them, a window dropped them), it adds one note for the request, last,
+   * below returned (a compaction folded them, a memory of the host's left them out), it adds one note for the request, last,
    * naming those skills and how to read them again. It stores nothing and holds no instructions.
    */
   readonly withReloadNote: <E, R>(memory: Layer.Layer<Memory, E, R>) => Layer.Layer<Memory, E, R>

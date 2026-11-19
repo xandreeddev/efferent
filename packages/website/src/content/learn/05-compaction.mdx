@@ -12,7 +12,7 @@ import Experiments from '../../components/learn/compaction/Experiments.astro'
 
 Until now, memory sent the whole conversation. That stops working as the conversation grows: every turn costs more, and at some point the prompt no longer fits the model.
 
-Lesson 1's "last n" cut old turns and broke the cache on every request. This lesson's memory does better. It keeps every message while the conversation fits a **budget**, the most tokens of conversation it sends. Past it, it **compacts** the conversation: it **folds** the oldest turns into a **summary**, a short text a model writes in their place, stores the summary once, and starts every later context with it. Between two compactions, each prompt starts as the one before did, so a provider's cache can reuse it.
+A memory that dropped the oldest turn with every new message would change the start of every prompt, and the cache would miss on every request. This lesson's memory does not. It keeps every message while the conversation fits a **budget**, the most tokens of conversation it sends. Past it, it **compacts** the conversation: it **folds** the oldest turns into a **summary**, a short text a model writes in their place, stores the summary once, and starts every later context with it. Between two compactions, each prompt starts as the one before did, so a provider's cache can reuse it.
 
 The memory now has **state**: the summary, kept in the journal as a record of its own. And it needs a model to write that summary, which no kernel plugin calls. Your program gives it a **summarizer**.
 

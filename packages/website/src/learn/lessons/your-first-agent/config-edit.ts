@@ -9,9 +9,6 @@ import { Option, Schema } from "effect"
  */
 const systemLine = /(const system =\s*)("(?:[^"\\\n]|\\.)*")/
 
-/** memory.ts's last line: every message, or the last n of them. */
-const contextLine = /return messages(?:\.slice\(-(\d+)\))?\.map\(promptMessage\)/
-
 /** A string literal as written (the controls write it with JSON.stringify), read back. */
 const quoted = Schema.decodeUnknownOption(Schema.fromJsonString(Schema.String))
 
@@ -20,16 +17,6 @@ export const readSystem = (agent: string): Option.Option<string> =>
 
 export const writeSystem = (agent: string, text: string): Option.Option<string> =>
   systemLine.test(agent) ? Option.some(agent.replace(systemLine, (_all, head: string) => `${head}${JSON.stringify(text)}`)) : Option.none()
-
-/** How many messages memory.ts keeps: 0 for all of them. */
-export const readLastN = (memory: string): Option.Option<number> =>
-  Option.map(Option.fromNullishOr(contextLine.exec(memory)), (match) => match[1] === undefined ? 0 : Number(match[1]))
-
-/** memory.ts keeping the last `n` messages, or all of them for 0. */
-export const writeLastN = (memory: string, n: number): Option.Option<string> =>
-  contextLine.test(memory) && Number.isInteger(n) && n >= 0
-    ? Option.some(memory.replace(contextLine, n === 0 ? "return messages.map(promptMessage)" : `return messages.slice(-${n}).map(promptMessage)`))
-    : Option.none()
 
 /** Replace one exact piece of code, or None when it is not there. */
 const swap = (from: string, to: string) => (source: string): Option.Option<string> =>

@@ -8,7 +8,7 @@ import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { kernel, ModelSpend, modelSpendMemory, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId } from "@xandreed/core"
-import { callTool, Memory, modelAnswer, recoverTurns, sessions, turnsOf, windowMemory } from "../index.js"
+import { callTool, flatMemory, Memory, modelAnswer, recoverTurns, sessions, turnsOf } from "../index.js"
 import { directoryJournal, openAiCompatibleModel } from "./index.js"
 import { scratch } from "./testing.js"
 
@@ -62,7 +62,7 @@ const program = (message: string) => Effect.gen(function* () {
 })
 
 // The parts, each a layer whose type says what it needs. The journal is a folder, so the next run remembers.
-const agent = (directory: string) => Layer.mergeAll(windowMemory({ budgetTokens: 8_000 }), toolsLive, model).pipe(
+const agent = (directory: string) => Layer.mergeAll(flatMemory, toolsLive, model).pipe(
   Layer.provideMerge(sessions()),
   Layer.provideMerge(directoryJournal({ directory })),
   Layer.provideMerge(Layer.merge(kernel(), modelSpendMemory)),

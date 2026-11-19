@@ -100,11 +100,7 @@ A memory is a **layer**, the way a module is packaged so that `Effect.provide` c
 
 It reads the journal with a **vocabulary**: the record names it knows, grouped by **prefix**, the start of a name such as `conversation.`. It answers for three prefixes (the kernel's own, the conversation's and the memory's) and the names it knows under them. A record it knows is kept. One it does not know, under one of those prefixes, is passed over if the record says it may be skipped, and refused if not. Records under other prefixes, other parts' own, are not its concern. `messageOf` turns a record into a message, and `promptMessage` into what a prompt sends.
 
-<p class="learn-try"><button class="btn btn-primary" type="button" data-exp="last-two">Keep only the last two messages</button></p>
-
-That adds `.slice(-2)`. Send a few messages and open the **Context** tab: older records are now **left out by memory** (struck through), though the journal keeps them all. Ask "What did I just say?" a few turns later: Echo can no longer see it.
-
-Now look at the green bar: only the system text is the same as the prompt before, because the window slides every turn and the start of the prompt moves. A memory that drops messages breaks the cache on every request. Better memories are the next lessons: one that keeps the latest turns and drops older ones whole, and rarely; one that sums up older turns in a few lines; one that sends a long result as a short note the model can follow to read the rest.
+This memory sends the whole conversation. The journal only grows at its end, so each prompt is the one before it with the new turn added, and a provider's cache reuses all of it on every message. A conversation that outgrows the model needs a memory with a limit: the kernel's folds the oldest turns into a **summary**, a few lines written in their place, all at once and rarely, so the prompts between two folds still start the same way ([compaction](/learn/compaction/), lesson 5). Lesson 8 sends a long result as a short note the model can follow to read the rest.
 
 A **kit** is a set of checks that any module of one kind must pass. The memory kit (`memoryConformance`) checks the memories that come with the kernel, and yours too. This flat memory passes every check but one, `pairs`, about **tools**, which let the model ask your program to do something. This lesson has no tools: lesson 2 adds them, and the rule that passes the check.
 

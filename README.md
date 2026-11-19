@@ -29,7 +29,7 @@ Workspace packages share version `0.23.0`.
 ## A first program
 
 An agent that keeps its conversation in a folder, asks a model that charges a
-ledger capped at ten cents, sends what fits a memory's budget, and runs a
+ledger capped at ten cents, sends it the whole conversation, and runs a
 tool when the model asks for one:
 
 ```ts
@@ -37,7 +37,7 @@ import { Config, Effect, Layer, Schema } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { kernel, modelSpendMemory, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId } from "@xandreed/core"
-import { callTool, Memory, modelAnswer, recoverTurns, sessions, windowMemory } from "@xandreed/sdk"
+import { callTool, flatMemory, Memory, modelAnswer, recoverTurns, sessions } from "@xandreed/sdk"
 import { directoryJournal, openAiCompatibleModel } from "@xandreed/sdk/node"
 
 // A tool: what it does, what it takes and what it gives. It is code, offered with every call and never stored.
@@ -89,7 +89,7 @@ const program = (message: string) => Effect.gen(function* () {
 })
 
 // The parts, each a layer whose type says what it needs. The journal is a folder, so the next run remembers.
-const agent = (directory: string) => Layer.mergeAll(windowMemory({ budgetTokens: 8_000 }), toolsLive, model).pipe(
+const agent = (directory: string) => Layer.mergeAll(flatMemory, toolsLive, model).pipe(
   Layer.provideMerge(sessions()),
   Layer.provideMerge(directoryJournal({ directory })),
   Layer.provideMerge(Layer.merge(kernel(), modelSpendMemory)),
@@ -108,8 +108,10 @@ Each run takes the folder (one writer at a time), closes a turn a killed
 run left open, and goes on with the same conversation: ask "And times 4?"
 next and the model reads the first turn back. Every part is a layer you swap:
 `sqliteJournal` for the folder, `anthropicModel` for the endpoint,
-`summaryMemory` or `withKnowledge` for the window. A test runs the same
-program over `scriptedModel`, which calls no provider.
+`summaryMemory` for the flat memory, which keeps the whole conversation:
+the summary memory keeps to a budget by folding old turns into a summary in
+one batch, so the prefix a provider cached holds between folds. A test runs
+the same program over `scriptedModel`, which calls no provider.
 
 ## Learn more
 

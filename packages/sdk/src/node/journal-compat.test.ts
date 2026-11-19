@@ -10,7 +10,6 @@ import type { StoredDefinition } from "@xandreed/core"
 import {
   aliasedEvent, curatedEvent, curationFailedEvent, decidedEvent, entityEvent, factsOf, FACTS_OWNER, forgottenEvent, grantsOf, KNOWLEDGE_OWNER, knowledgeOf, learnedEvent, Memory,
   memoryEndedEvent, memoryEvent, memoryRestatedEvent, recoverTurns, sessions, sourceEvent, standing, summarizedEvent, Summarizer, summaryMemory, turnsOf, viewEvent,
-  windowDroppedEvent,
 } from "../index.js"
 import { DIRECTORY_LAYOUT, DIRECTORY_STORE } from "./journal-directory/directory-journal.entity.js"
 import { fileNameOf, lineOf } from "./journal-directory/directory-journal.entity.functions.js"
@@ -44,7 +43,7 @@ const fixtures = await Effect.runPromise(Effect.forEach(files, (file) => Effect.
 /** Every record a stock part of today's kernel stores, by name. */
 const definitions: ReadonlyMap<string, StoredDefinition<Schema.Json>> = new Map<string, StoredDefinition<Schema.Json>>([
   userMessageEvent, assistantMessageEvent, toolResultEvent, turnStartedEvent, turnEndedEvent, listenerFailedEvent, decidedEvent, learnedEvent, forgottenEvent,
-  summarizedEvent, windowDroppedEvent, viewEvent, sourceEvent, entityEvent, aliasedEvent, memoryEvent, memoryRestatedEvent, memoryEndedEvent, curatedEvent,
+  summarizedEvent, viewEvent, sourceEvent, entityEvent, aliasedEvent, memoryEvent, memoryRestatedEvent, memoryEndedEvent, curatedEvent,
   curationFailedEvent,
 ].map((definition): readonly [string, StoredDefinition<Schema.Json>] => [definition.name, definition as StoredDefinition<Schema.Json>]))
 
