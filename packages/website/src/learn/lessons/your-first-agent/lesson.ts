@@ -12,7 +12,7 @@ import { Chat } from "../../page-chat.ts"
 import { DEFAULT_AGENT, documentOf, HEADER, IMPORTS } from "./agent.source.ts"
 import { CHAT } from "./chat.source.ts"
 import { DEFAULT_MEMORY, MEMORY_INTRO, memoryDocumentOf } from "./memory.source.ts"
-import { readLastN, readSystem, shouting, withoutMemory, withReminder, writeLastN, writeSystem } from "./config-edit.ts"
+import { readSystem, shouting, withoutMemory, withReminder, writeSystem } from "./config-edit.ts"
 
 /** The names memory.ts imports: all its code may use. */
 const memoryNames = { Effect, Layer, Option, CONVERSATION_VOCABULARY, messageOf, vocabularyOf, readJournal, Memory, promptMessage }
@@ -80,13 +80,11 @@ export const yourFirstAgent: Lesson = {
   fill: ["tell me about topic 1", "tell me about topic 2", "tell me about topic 3", "tell me about topic 4", "tell me about topic 5"],
   controls: {
     system: control("agent", readSystem, (source, value) => writeSystem(source, String(value))),
-    lastN: control("memory", readLastN, (source, value) => writeLastN(source, Number(value))),
   },
   experiments: {
     pirate: { file: "agent", apply: (source) => writeSystem(source, "You are a pirate. Answer in at most two short sentences, and always say arr.") },
     reminder: { file: "agent", apply: withReminder },
     shout: { file: "agent", apply: shouting },
-    "last-two": { file: "memory", apply: (source) => writeLastN(source, 2) },
     "no-memory": { file: "agent", apply: withoutMemory },
   },
   evaluate: evaluateLesson,

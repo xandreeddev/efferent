@@ -10,7 +10,7 @@ import { toolResult, userMessage } from "@xandreed/core"
 import { estimateTokens } from "@xandreed/sdk"
 import { DEFAULT_AGENT } from "./lessons/your-first-agent/agent.source.ts"
 import { DEFAULT_MEMORY } from "./lessons/your-first-agent/memory.source.ts"
-import { withReminder, writeLastN } from "./lessons/your-first-agent/config-edit.ts"
+import { withReminder } from "./lessons/your-first-agent/config-edit.ts"
 import { yourFirstAgent } from "./lessons/your-first-agent/lesson.ts"
 import { tools } from "./lessons/tools/lesson.ts"
 import { pointers } from "./lessons/pointers/lesson.ts"
@@ -125,8 +125,11 @@ describe("the Context tab's model", () => {
     expect(view.calls.at(-1)!.reusedTokens).toBeLessThan(view.calls.at(-1)!.promptTokens)
   })
 
-  test("with memory keeping the last message, the older ones are left out, and only the system text is shared", async () => {
-    const board = await boardAfter(["one", "two", "three"], { agent: DEFAULT_AGENT, memory: Option.getOrThrow(writeLastN(DEFAULT_MEMORY, 1)) })
+  test("a memory that leaves records out: they are shown left out by memory, and only the system text is shared", async () => {
+    // A memory of the test's own that sends the latest message alone: the pane's rows for what a memory leaves out.
+    const latestOnly = DEFAULT_MEMORY.replace("return messages.map(promptMessage)", "return messages.slice(-1).map(promptMessage)")
+    expect(latestOnly).not.toBe(DEFAULT_MEMORY)
+    const board = await boardAfter(["one", "two", "three"], { agent: DEFAULT_AGENT, memory: latestOnly })
     const view = viewOf(board, 3)
     expect(Option.getOrThrow(view.calls.at(-1)!.memory).map((row) => [row.text, Option.getOrNull(row.seq)])).toEqual([["three", 10]])
     expect(view.calls.at(-1)!.journal.filter((row) => row.use === "left-out").map((row) => row.seq)).toEqual([2, 3, 6, 7])
