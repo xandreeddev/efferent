@@ -580,8 +580,10 @@ describe("the repository profile", () => {
   test("every package is registered everywhere the profile names", async () => {
     const { config, rootDir } = await Effect.runPromise(loadConfig(path.join(REPO_ROOT, "foundry.config.ts")))
     const registration = Option.getOrThrow(config.registration)
-    // The gate is pointed at a non-empty set of lists, the plugin list and the curated entries included.
-    expect(registration.registries.length).toBe(6)
+    // The gate is pointed at a non-empty set of lists, the curated entries included: core's and the sdk's root entry
+    // are their kernel's index until the kernel's folders become the packages' `src`, so the boundaries and the
+    // curated entries are each read twice, once for them and once for the other packages.
+    expect(registration.registries.length).toBe(7)
     expect(registration.registries.some((registry) => registry.source === "const" && registry.name === "CURATED_ENTRIES")).toBe(true)
     const findings = await Effect.runPromise(makeRegistrationGate(config, registration).run({ rootDir, files: [] }))
     expect(findings.map((f) => f.message)).toEqual([])
