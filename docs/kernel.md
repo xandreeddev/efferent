@@ -2486,6 +2486,67 @@ that wants no cap gives `modelSpendMemory` and names none. The kit,
 `modelSpendConformance`, holds any ledger to the contract: a shared one in a
 database passes the same checks as the one in memory.
 
+### Model providers that charge it
+
+The kernel calls no model, but its Node entry has two providers that do, each
+a layer that gives Effect AI's `LanguageModel` and needs `ModelSpend`
+([ADR 0026](adr/0026-a-model-provider-charges-the-ledger-it-is-given.md)):
+`openAiCompatibleModel`, one adapter for OpenAI, Gemini's OpenAI-compatible
+endpoint and the Vercel AI Gateway, and `anthropicModel`, Anthropic's own
+Messages API through Effect AI's Anthropic client, with prompt caching. The
+host gives each its prices; before a call is sent it holds the call's worst
+case (the request's size and its output cap, at the model's price), and once
+the call ends it settles at what the provider reported, or at the hold when
+the request left and nothing came back. A model with no price, a call with
+no output cap and a call over the ledger's cap are refused before anything is
+sent; `isSpendRefusal` tells the cap's refusal from every other failure:
+
+<!-- pinned: packages/sdk/src/kernel/node/models.test.ts#gateway -->
+
+```ts
+import { Config, Effect, Layer } from "effect"
+import { LanguageModel } from "effect/ai"
+import { ModelSpend, modelSpendMemory } from "@xandreed/core/kernel"
+import { isSpendRefusal, openAiCompatibleModel } from "@xandreed/sdk/kernel/node"
+
+const DEEPSEEK = "deepseek/deepseek-v4.1-flash-1017"
+
+/**
+ * DeepSeek V4.1 Flash through the Vercel AI Gateway, asked of Baseten first. The key is the host's configuration's,
+ * read as a secret (`Config.Redacted`), never written in the code. Each call holds its worst case (its request's
+ * size and its 1,024 tokens of output, at the price given) in the ledger before it is sent, and is settled at what
+ * the gateway billed.
+ */
+const gateway = Layer.unwrap(Effect.map(Config.Redacted("VERCEL_API_KEY"), (apiKey) => openAiCompatibleModel({
+  model: DEEPSEEK,
+  baseUrl: "https://ai-gateway.vercel.sh/v1",
+  apiKey,
+  maxOutputTokens: 1024,
+  extra: { providerOptions: { gateway: { order: ["baseten"] } } },
+  spend: { prices: { [DEEPSEEK]: { input: 0.3, output: 1.2, cacheRead: 0.007 } }, caps: { total: 0.05 } },
+})))
+
+/** One ledger for every call of the program: what they cost together stays under five cents. */
+const stack = gateway.pipe(Layer.provideMerge(modelSpendMemory))
+
+/** A question answered; a call the cap refused is told apart from every other failure. */
+const ask = (question: string) => LanguageModel.generateText({ prompt: question }).pipe(
+  Effect.map((response) => response.text),
+  Effect.catchIf(isSpendRefusal, () => Effect.succeed("The budget is spent.")),
+)
+
+const twoQuestions = Effect.gen(function* () {
+  const first = yield* ask("What does a ledger do?")
+  const second = yield* ask("And a budget?")
+  return { first, second, totals: yield* (yield* ModelSpend).totals }
+}).pipe(Effect.provide(stack))
+```
+
+A failure is an `AiError` whose reason says whether another try is worth it
+(`retryable`, so a planned call retries a rate limit or a provider's own
+error, and not a refused key). The providers send over `fetch`, on Node and
+on Bun; a test gives its own with `FetchHttpClient.Fetch`.
+
 ## Replacing a part
 
 A part is replaced by giving the program a different layer for it: the

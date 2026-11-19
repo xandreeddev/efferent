@@ -829,9 +829,11 @@ imports none of it (`browser-bundle.test.ts` finds no module of `node/` in
 that entry's graph, with a control, `fixtures/kernel-node-entry-import.ts`,
 that does). Each folder is a layer of its own, before `sdk-kernel`:
 `sdk-kernel-node-writer` (`writer/`, the one-writer lock the stores share),
-one per port (`journal-directory/`, `journal-sqlite/`), which imports core's
-kernel and the lock and never another port's folder, and `sdk-kernel-node`,
-the entry. `./kernel/node` is a `restricted` subpath. A new port is a folder
+`sdk-kernel-node-model-spend` (`model-spend/`, the charge the model
+providers share), one per port (`journal-directory/`, `journal-sqlite/`,
+`model-openai-compatible/`, `model-anthropic/`), which imports core's kernel
+and the folder it shares and never another port's folder, and
+`sdk-kernel-node`, the entry. `./kernel/node` is a `restricted` subpath. A new port is a folder
 here with its layer, its name in the entry's `canImport` and in
 `SDK_KERNEL_TESTS`, its exports in `node/index.ts` and, when it has a kit, the
 kit run over it in its tests and in `scripts/kernel-consumer.fixture.mjs` on
@@ -881,6 +883,39 @@ the package roots.
 - `JournalOpenFailed` (`reason`: `Held`, `Format`, `Unavailable`; `store`, the
   path given) is the error of each store's layer; `JournalStorageError` is
   unchanged.
+- The model providers (ADR 0026), each a `Layer<LanguageModel, never,
+  ModelSpend>` over `fetch` (`FetchHttpClient`; a test gives its own with
+  `FetchHttpClient.Fetch`) that charges the ledger in context when the layer
+  is built (an eval host builds it under each trial's account), a layer of
+  its own that imports the shared charge
+  (`model-spend/`, `sdk-kernel-node-model-spend`) and never the other's
+  folder: `openAiCompatibleModel` (`model-openai-compatible/`,
+  `OpenAiCompatibleOptions`): chat completions, streamed, on its own wire
+  (`chat-wire.entity.ts` and its functions, written again from the learn
+  track's gateway wire; `@effect/ai-openai` speaks the Responses API alone),
+  one adapter for OpenAI, Gemini's OpenAI-compatible endpoint and the
+  gateway, a host's body fields given opaque (`extra`) and a field a request
+  is made of refused; a user's file part and a structured answer are refused
+  before they are sent. `anthropicModel` (`model-anthropic/`,
+  `AnthropicOptions`): Effect AI's Anthropic provider, the only layer here
+  that names a provider package (`@effect/ai-anthropic`), its client's two
+  sends wrapped by the charge, prompt caching by the API's top-level
+  `cache_control` (`cache`), and a stream that ends before `message_stop`
+  failed (the provider would end it as whole).
+- The charge (`model-spend/`): `ModelPrice` (USD per million tokens, the
+  cache's reads and writes on their own, `maxOutput`) and `SpendOptions`
+  (`prices` by model id, `uncapped`, `caps`, `bytesPerToken`); the pure rules
+  (`chargeOf`, `worstCaseOf`, `costOf`, `settlementOf`, `isRefusalStatus`,
+  `neverConnected`), held to a table; `holdIn`, the hold taken as the
+  acquire of an `acquireRelease` in the call's scope and closed by its
+  finalizer at what was reported, else at the hold once the request left
+  (`Reach`, which `reaching` marks per call through `CallReach`), else
+  released; `chargedStream`, `chargedEffect` and `chargedSend` around the
+  three shapes a provider sends in. A refusal is an `AiError`
+  (`InvalidRequestError`, not retryable) carrying the ledger's
+  `ModelSpendExceeded` in its reason's metadata (`spendRefused`): Effect AI
+  makes an `AiError`'s `cause` its reason. `isSpendRefusal` and
+  `spendRefusalOf` read it.
 - Tests: `journal-directory/*.test.ts` (the storage kit with `reopens` and the
   sessions kit; a reopen; a torn tail left out and cut; a damaged line; the
   directories refused; file names), `journal-sqlite/*.test.ts` (the kits; a
@@ -892,8 +927,24 @@ the package roots.
   none) and `durable.test.ts` (on each store, a process killed with `SIGKILL`
   inside a turn, recovered by the next and a new turn taken; a host's turns
   read back by the next process; the region `docs/kernel.md` quotes). The
-  killed processes run `fixtures/kernel-store-holder.ts`. Run: `bun test
-  packages/sdk/src/kernel/node`.
+  killed processes run `fixtures/kernel-store-holder.ts`. The providers:
+  `model-spend/*.test.ts` (the worst case, the cost, how a hold is closed as
+  a table, a refusal and its guard; the lifecycle over `scriptedModel`: held
+  while it streams, settled at what was reported, a shared ledger refusing,
+  a ledger that caps each reservation itself as an eval run's account does,
+  a stream cut and an interruption after the request left settled at the
+  hold, a call failed or interrupted before it left released),
+  `model-openai-compatible/*.test.ts` and `model-anthropic/*.test.ts` (over a
+  fake `fetch` shaped like each provider's stream: text, tool calls, usage,
+  the cache's shares, each failure's reason, a stream cut, an interruption,
+  a connection refused, the timeouts, the cap and a missing price refusing
+  before anything is sent, an answer asked for whole, and a kernel host's
+  turn with `modelAnswer` and `callTool`), and `models.test.ts` (the region
+  `docs/kernel.md` quotes: the gateway's model under a ledger capped at
+  five cents). `scripts/kernel-consumer.fixture.mjs` runs one call of each
+  over a local HTTP server, one the cap refuses and one to a closed port,
+  released, on Node and on Bun.
+  Run: `bun test packages/sdk/src/kernel/node`.
 
 ## Public surface
 
@@ -903,7 +954,7 @@ the package roots.
 - `quality/exports-have-consumers` runs on both entries (`CURATED_ENTRIES`): each export is imported from `@xandreed/sdk` (or `./conformance`) by another package, a script or a doc code block, or is tagged `@public`: the sdk's own declarations at the declaration, a re-export of core at its specifier in `src/index.ts`.
 - `@xandreed/sdk/conformance` (`src/conformance/index.ts`): `toolRegistryConformance(make)` (`ToolRegistryLimits`), the `ToolRegistry` kit. It runs each check in a turn over `TurnLive` with a writer of its own that keeps the turn in memory: a kit ships in the build, which leaves test code out (`*.test.*`, `testing` modules and folders: `scripts/build-check.ts`), so it cannot import `recordingTurnWriter` (`src/turn/testing.ts`). It runs here, over the tool discovery plugin's registry, with its self-tests (`src/tool-registry.conformance.test.ts`).
 - `@xandreed/sdk/kernel` (`src/kernel/index.ts`): the workflow contracts (memory's: `Memory` (`MemoryFailure`), `memoryConformance` (`MemorySubject`), `memoryWrapperConformance` (`MemoryWrapperSubject`), `Tokens`, `estimateTokens`, `estimateContext`, `messageText`, `promptMessage`, `paired`, `hostNote`, `framed`, `clipTo`, `clippedMarker`, `questionOf`, `OverBudget`, `isOverBudget`, `InvalidBudget`, `pointed` (`PointerOptions`), `resultText`, `ResultPage`, `READ_RESULT`, `READ_RESULT_PAGE`; the tool call's: `CurrentTurn`, `callTool` (`ModelToolCall`, `ToolNeeds`, `OwnTools`), `SentWhole`, `planned`, `retryable`, `AnswerCut`, `attemptEvent` (`AttemptData`), `turnsOf` (`TurnRead`, `StepRead`, `CallRead`, `ResultRead`, `MessageRead`, `ClosedRead`), and the tool `ReadResult` with its handler `readResult`; asking before acting: `Approval`, `approve`, `approveIn`, `grantsOf`, `ApprovalRequest`, `Decision`, `DecidedData`, `decidedEvent`, `APPROVAL_REFUSED` (`ApprovalRefusal`, the type `approve` fails with), `DETAIL_LIMIT`, and the wrapper `autoApprove`; skills: `defineSkill` (`Skill`, `SkillOptions`), `SkillId`, `catalogue`, `loadedOf`, `LoadedSkill`, `LOAD_SKILL`, the tool `LoadSkill`, and `skills(base, ...skills)` (`SkillSet`, `SkillTools`, `Offered`, `OwnSkills`), the one value over a host's tools and skills; the facts': `Fact`, `FactId`, `FactText`, `FACT_LIMIT`, `FACTS_OWNER`, `learnedEvent` (`LearnedData`), `forgottenEvent` (`ForgottenData`), `factsOf`, `relevant`, `factsNote`, `REMEMBER_FACT`, `FORGET_FACT`, `RememberedFact`, `FactsOptions`, and from the plugin the tools `RememberFact` and `ForgetFact`, `factTools`, `factHandlers`, `memorySession`, `rememberedFacts` and `withFacts`; the graph's: `Link`, `LinkId`, `ThingName`, `Relation`, `NAME_LIMIT`, `RELATION_LIMIT`, `GRAPH_OWNER`, `linkedEvent` (`LinkedData`), `unlinkedEvent` (`UnlinkedData`), `linksOf`, `normalName`, `namedIn`, `near`, `linksNote`, `LINK_THINGS`, `UNLINK_THINGS`, `FOLLOW_THINGS`, `FOLLOW_LIMIT`, `LinkedThings`, `LinkShown`, `Followed`, `Speaker`, `GraphOptions`, `Naming`, `RestatedData`, `restatedEvent`, `SaidLink`, `saidOf`, `saidText`, `Weights`, `weightOf`, `walked`, `Walked`, `NamedThing`, `RecalledData`, `recalledEvent`, `recalledOf`, `RECALL_SHOWN`, `QUESTION_SHOWN`, and from the plugin the tools `LinkThings`, `UnlinkThings` and `FollowThings`, `graphTools`, `graphHandlers`, `graphSession`, `knownLinks`, `saidLinks` and `withGraph`; the summary's: `Summarizer`, `SummaryFailed`, `summarizerConformance` (`SummarizerSubject`); what the UI shows: `View`, `TextView`, `ListView`, `TableView`, `CardView`, `ViewId`, `ViewData`, `viewEvent`, `showView`, `ProgressData`, `progressEvent`, `viewsOf` (`Shown`); the inbox's: `Inbox`, the types `InboxTurn`, `InboxTurnFailure` and `Queued`, `Ticket`, `InboxRefused`, `InboxClosed`, `inboxQueuedEvent` and its data), and the stock plugins, each a layer, with what a host needs beside them: `inProcessJournal`, `sessions` (`SessionsOptions`), `flatMemory`, `windowMemory` (`WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data), `summaryMemory` (`SummaryOptions`, `summarizedEvent` and its data `SummarizedData`), `scriptedModel` (`ModelScript`, `ScriptedAnswer` with its `Calls` answer and its `Fails`, worth another try or not, before anything or after some pieces, `ScriptedCalls`), the model that follows a script, for kits and tests, the inbox: `inbox`, `inboxOf` (`InboxOptions`), and the workspace: `Files`, `FilePath`, `workspacePath`, `Expected`, `FileNotFound`, `FileChanged`, `FilesRefused`, `FilesUnavailable`, `FilePage`, `FileList`, `FileWritten`, `WrittenData`, `writtenEvent`, `FILE_PAGE`, `WRITE_LIMIT`, `LIST_LIMIT`, `PATH_LIMIT`, `READ_FILE`, `LIST_FILES`, `WRITE_FILE`, `EDIT_FILE`, `filesConformance` (`FilesSubject`), `inMemoryFiles`, and the tools `ReadFile`, `ListFiles`, `WriteFile`, `EditFile` with `fileTools` and `fileHandlers`, ranking by meaning: `Embedder`, `EmbedAs`, `EmbedFailed`, `Vector`, `cosine`, `embedderConformance` (`EmbedderSubject`), `recordedEmbedder` (`RecordedOptions`, `RecordedVectors`), `VectorStore`, `VectorKey`, `VectorEntry`, `Scored`, `SearchOptions`, `RefusedBecause`, `VectorsRefused`, `VectorsUnavailable`, `KEY_LIMIT`, `vectorStoreConformance` (`VectorStoreSubject`) and `inMemoryVectors`, recall by meaning: `RecallItem`, `RecallOptions`, `MODEL_LIMIT`, `recallItems`, `recallText`, `recallKey`, `recallNote`, `RecallEntry`, `RecallList`, `RecalledByMeaningData`, `recalledByMeaningEvent`, `recalledByMeaningOf`, the facts' `learnedOf` (`LearnedFact`), and the wrapper `withRecall` with its `ReorderInvalid`, knowledge kept by a curator: `Curator`, `CurationJob`, `CurationFailed`, `curatorConformance` (`CuratorSubject`), the ids and texts `SourceId`, `EntityId`, `MemoryId`, `USER_ENTITY`, `USER_NAME`, `USER_ALIASES`, `EntityName`, `EntityKind`, `ENTITY_KINDS`, `ENTITY_NAME_LIMIT`, `MemoryText`, `MemoryKind`, `MemoryDay`, `MEMORY_LIMIT`, `Quote`, `QUOTE_LIMIT`, `SourceText`, `SOURCE_LIMIT`, `SourceContext`, `CONTEXT_LIMIT`, `SaidBy`, `SourcePart`, `SourceCall`, the records `sourceEvent` (`SourceData`), `entityEvent` (`EntityData`), `aliasedEvent` (`AliasedData`), `memoryEvent` (`MemoryData`), `memoryRestatedEvent` (`MemoryRestatedData`), `memoryEndedEvent` (`MemoryEndedData`, `EndedWhy`), `curatedEvent` (`CuratedData`, `Dropped`, `DROPPED_SHOWN`), `curationFailedEvent` (`CurationFailedData`), `KNOWLEDGE_OWNER`, `KNOWLEDGE_VOCABULARY`, `KNOWLEDGE_PROMPT`, `KNOWLEDGE_CHECKS`, the fold `knowledgeOf` (`Knowledge`, `KnownEntity`, `KnownMemory`, `Ended`, `KnownSource`, `SourceState`), `standing`, `endedBy`, `nextIds` (`NextIds`), `sourceText`, `turnSource` (`TurnSource`, `TurnSourceOptions`, `TURN_MESSAGE_SHOWN`, `TURN_RESULT_SHOWN`), `shownFor` (`ShownKnowledge`, `ShownLimits`, `SHOWN_LIMITS`), `curationPrompt` (`CurationOptions`), `reviewPrompt`, `curationOf` (`ReadCuration`, `Curation`, `CurationRef`), `staged` (`Staged`, `About`), `draftsOf`, the curation step `curate` and `curateAgain` (`NewSource`, `CurateOptions`, `CurationOutcome`, `CurationCalls`, `NOT_CURATED`), `knowledgeSession`, `knowledgeJournal`, `keptFrom` (`KeptRecords`), recall from the knowledge: `askedOf` (`Asked`), `seedsOf` (`Seed`, `SeedWay`), `keywordScores` (`ScoredMemory`), `recallKnowledge` (`KnowledgeRecall`, `FusedMemory`, `ListPlace`, `WalkedMemory`, `Bridge`, `SentMemory`), `knowledgeNote`, `knowledgeRecalledOf`, `knowledgeRecalledEvent` (`KnowledgeRecalledData`, `RecalledWhy`), `checkedKnowledgeOptions` (`KnowledgeOptions`, `KnowledgeRecallOptions`, `KNOWLEDGE_RECALL`), `KNOWLEDGE_SHOWN`, `ASKED_SHOWN`, `BEFORE_SHOWN`, and the wrapper `withKnowledge`, and background tasks: `Tasks`, `TaskReports`, `TaskId`, `TaskReport`, `TaskOutcome`, `StartedTask`, `TaskRefused`, `TasksOptions`, `taskReport`, `TASKS_OWNER`, `TASK_LIMIT`, `REPORT_LIMIT`, `DEFAULT_RUNNING`, `START_TASK`, `CANCEL_TASK`, `tasks` (`TaskRun`), and the tools `StartTask`, `CancelTask` with `taskTools` and `taskHandlers`. No loop and no tool service: the host writes its turn over these, core's conversation records and Effect AI's `Toolkit` (ADRs 0003 and 0004). A first cut: it changes as the parts it leaves out return.
-- `@xandreed/sdk/kernel/node` (`src/kernel/node/index.ts`): `directoryJournal` (`DirectoryJournalOptions`, `DirectoryMarker`, `DIRECTORY_STORE`, `DIRECTORY_LAYOUT`), `sqliteJournal` (`SqliteJournalOptions`, `SQLITE_SCHEMA`, `SQLITE_APPLICATION_ID`) and `JournalOpenFailed` (`OpenRefusal`); the browser entry adds `recoverTurns` and `RecoveredTurn`.
+- `@xandreed/sdk/kernel/node` (`src/kernel/node/index.ts`): `directoryJournal` (`DirectoryJournalOptions`, `DirectoryMarker`, `DIRECTORY_STORE`, `DIRECTORY_LAYOUT`), `sqliteJournal` (`SqliteJournalOptions`, `SQLITE_SCHEMA`, `SQLITE_APPLICATION_ID`) and `JournalOpenFailed` (`OpenRefusal`); the model providers `openAiCompatibleModel` (`OpenAiCompatibleOptions`) and `anthropicModel` (`AnthropicOptions`), with `ModelPrice`, `SpendOptions`, `Timeouts`, `isSpendRefusal` and `spendRefusalOf`; the browser entry adds `recoverTurns` and `RecoveredTurn`.
 - Plugins: none exported. `Agent.define` adds `@xandreed/sdk/host-contributions` (runtime, contributes `efferent/Capabilities`) for `AgentConfig.capabilities`.
 
 ## Model-facing text

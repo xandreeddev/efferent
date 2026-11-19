@@ -13,6 +13,7 @@
   "dependencies": {
     "@xandreed/core": "workspace:*",
     "effect": "4.0.7",
+    "@effect/ai-anthropic": "4.0.7",
     "@xandreed/runtime": "workspace:*"
   },
   "devDependencies": {
