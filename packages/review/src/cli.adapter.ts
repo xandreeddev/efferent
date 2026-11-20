@@ -210,7 +210,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const finder = yield* Option.match(one(line, "--finder"), { onNone: () => Effect.succeed<Finder>("candidates"), onSome: finderOf })
   const focus = yield* Option.match(one(line, "--focus"), { onNone: () => Effect.succeed<Focus>(DEFAULT_FOCUS), onSome: oneOf("--focus", Focus.literals) })
   // A flag of the other focus would do nothing: refused, never ignored.
-  // `--vote` too: in a focused review each file is read by one pass, so no bucket can get a second vote.
+  // `--vote` too: in a focused review a group is one pass's, so a second vote would come from a pass that wandered into its files, not from agreement.
   const otherFocus = focus === "groups"
     ? [...["--passes", "--max-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--vote"].filter((flag) => line.switches.has(flag))][0]
     : [...["--group-steps", "--group-order"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-pass"].filter((flag) => line.switches.has(flag))][0]

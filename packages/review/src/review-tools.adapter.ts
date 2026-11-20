@@ -6,7 +6,7 @@ import { CLAIM_LIMIT, EVIDENCE_LIMIT, FindingKind, LineNumber, QUOTE_LIMIT, REAS
 import { Findings } from "./findings.port.js"
 import type { Reviewed } from "./review-tools.entity.js"
 import { DIFF_PAGE, GLOB_LIMIT, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, READ_LINES_LIMIT, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN, VERDICT } from "./review-tools.entity.js"
-import { checkedReport, diffPage, GIT_FAILED, globRefusal, judgedText, linesPage, listText, NOT_CHECKING_NOW, NOT_FINDING_NOW, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, tooLarge, treePath } from "./review-tools.entity.functions.js"
+import { checkedReport, diffPage, GIT_FAILED, globRefusal, judgedText, keptReport, keptVerdict, linesPage, listText, NOT_CHECKING_NOW, NOT_FINDING_NOW, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, tooLarge, treePath } from "./review-tools.entity.functions.js"
 import type { CheckoutError } from "./checkout.port.js"
 
 /** A git command of a tool's that failed: logged whole for the host, and answered in fixed words, never git's. */
@@ -72,8 +72,8 @@ export const ReportFinding = Tool.make(REPORT_FINDING, {
     endLine: Schema.optionalKey(LineNumber.annotate({ description: "The last line, when the problem spans more than one. Left out, line." })),
     kind: FindingKind.annotate({ description: "bug, security or rule (a rule the repository's instructions state)." }),
     severity: Severity.annotate({ description: "high, medium or low: how much harm the problem does if it is merged." }),
-    claim: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(CLAIM_LIMIT)).annotate({ description: `What is wrong and what it causes, in one or two sentences, at most ${CLAIM_LIMIT} characters.` }),
-    evidence: Schema.String.check(Schema.isMaxLength(EVIDENCE_LIMIT)).annotate({ description: `The lines the claim rests on, quoted exactly from the file, at most ${EVIDENCE_LIMIT} characters.` }),
+    claim: Schema.String.check(Schema.isMinLength(1)).annotate({ description: `What is wrong and what it causes, in one to three sentences; past ${CLAIM_LIMIT} characters it is cut.` }),
+    evidence: Schema.String.annotate({ description: `The lines the claim rests on, quoted exactly from the file; past ${EVIDENCE_LIMIT} characters only the first whole lines are kept.` }),
   }),
   success: Schema.String,
   failure: Schema.String,
@@ -85,8 +85,8 @@ export const Verdict = Tool.make(VERDICT, {
   description: `Give your verdict on the finding you were asked to check, once, after reading the lines you need. Only when you check a finding; to report a problem, use ${REPORT_FINDING}.`,
   parameters: Schema.Struct({
     outcome: VerdictOutcome.annotate({ description: "confirmed: the problem is real and the pull request brings it in; refuted: it is not; unsure: you cannot tell from what you read." }),
-    reason: Schema.String.check(Schema.isMinLength(1), Schema.isMaxLength(REASON_LIMIT)).annotate({ description: `Why, in one to three sentences, at most ${REASON_LIMIT} characters.` }),
-    quote: Schema.String.check(Schema.isMaxLength(QUOTE_LIMIT)).annotate({ description: `The lines of the file the finding cites that your verdict rests on, quoted exactly as they are at the commit under review, without line numbers, at most ${QUOTE_LIMIT} characters.` }),
+    reason: Schema.String.check(Schema.isMinLength(1)).annotate({ description: `Why, in one to three sentences; past ${REASON_LIMIT} characters it is cut.` }),
+    quote: Schema.String.annotate({ description: `The lines of the file the finding cites that your verdict rests on, quoted exactly as they are at the commit under review, without line numbers; past ${QUOTE_LIMIT} characters only the first whole lines are kept.` }),
   }),
   success: Schema.String,
   failure: Schema.String,
@@ -149,12 +149,12 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
     }),
     readDiff: ({ path, page }) => Effect.fromResult(diffPage(reviewed.files, path, page ?? 1)),
     reportFinding: (report) => Match.valueTags(reviewed.stage, {
-      Find: ({ pass }) => Effect.flatMap(Effect.fromResult(checkedReport(report, reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, pass, checked), recordedText)),
+      Find: ({ pass }) => Effect.flatMap(Effect.fromResult(checkedReport(keptReport(report), reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, pass, checked), recordedText)),
       Verify: () => Effect.fail(NOT_FINDING_NOW),
     }),
     verdict: (report) => Match.valueTags(reviewed.stage, {
       Find: () => Effect.fail(NOT_CHECKING_NOW),
-      Verify: ({ check }) => Effect.map(findings.judge(reviewed.run, check, report), judgedText),
+      Verify: ({ check }) => Effect.map(findings.judge(reviewed.run, check, keptVerdict(report)), judgedText),
     }),
   })
 }))

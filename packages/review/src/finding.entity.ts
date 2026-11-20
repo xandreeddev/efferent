@@ -14,10 +14,13 @@ export type Severity = typeof Severity.Type
 /** The order findings are shown in: `high`, then `medium`, then `low`. */
 export const SEVERITY_RANK: Readonly<Record<Severity, number>> = { high: 0, medium: 1, low: 2 }
 
-/** The longest a finding's claim may be, in characters. */
-export const CLAIM_LIMIT = 600
+/**
+ * The longest a finding's claim is kept, in characters: a longer one is cut (`keptReport`), never refused, since a
+ * refused report in a pass's closing call is lost (41% of the live passes' reports were refused at the old 600).
+ */
+export const CLAIM_LIMIT = 1_500
 
-/** The longest a finding's quoted evidence may be, in characters. */
+/** The longest a finding's quoted evidence is kept, in characters: a longer one keeps its first whole lines (`keptReport`). */
 export const EVIDENCE_LIMIT = 1_000
 
 /** Which pass of a review found something, from 1. */
@@ -56,10 +59,10 @@ export type CheckNumber = typeof CheckNumber.Type
 export const VerdictOutcome = Schema.Literals(["confirmed", "refuted", "unsure"])
 export type VerdictOutcome = typeof VerdictOutcome.Type
 
-/** The longest a verdict's reason may be, in characters. */
-export const REASON_LIMIT = 600
+/** The longest a verdict's reason is kept, in characters: a longer one is cut (`keptVerdict`), never refused. */
+export const REASON_LIMIT = 1_500
 
-/** The longest a verdict's quote may be, in characters. */
+/** The longest a verdict's quote is kept, in characters: a longer one keeps its first whole lines (`keptVerdict`). */
 export const QUOTE_LIMIT = 1_000
 
 /**

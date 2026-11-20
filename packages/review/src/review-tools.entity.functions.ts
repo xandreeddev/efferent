@@ -3,6 +3,7 @@ import { clipTo } from "@xandreed/sdk"
 import { GREP_TIMEOUT_MS } from "./checkout.entity.js"
 import type { GrepHit, TreeEntry } from "./checkout.entity.js"
 import type { FileDiff } from "./diff.entity.js"
+import { CLAIM_LIMIT, EVIDENCE_LIMIT, QUOTE_LIMIT, REASON_LIMIT } from "./finding.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
 import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN, VERDICT } from "./review-tools.entity.js"
 
@@ -246,6 +247,37 @@ export const checkedReport = <R extends { readonly path: string; readonly line: 
   if (endLine - report.line + 1 > FINDING_LINES) return Result.fail(`A finding cites at most ${FINDING_LINES} lines: give the problem's first line and an endLine at most ${FINDING_LINES - 1} lines after it.`)
   return Result.succeed({ ...report, path: path.success })
 }
+
+/**
+ * A quote in at most `max` characters: itself when it fits, else its first whole lines that fit together (a quote is
+ * checked line by line against the file, so a line cut in half would prove nothing), or, when its first line alone
+ * does not fit, that line cut with `clipTo`.
+ */
+export const wholeLinesWithin = (text: string, max: number): string => {
+  if (text.length <= max) return text
+  const lines = text.split("\n")
+  let kept = 0
+  let length = 0
+  while (kept < lines.length && length + lines[kept]!.length + (kept > 0 ? 1 : 0) <= max) {
+    length += lines[kept]!.length + (kept > 0 ? 1 : 0)
+    kept += 1
+  }
+  return kept === 0 ? clipTo(lines[0] ?? "", max) : lines.slice(0, kept).join("\n")
+}
+
+/** A report as it is kept: its claim cut at `CLAIM_LIMIT` (`clipTo`), its evidence's first whole lines within `EVIDENCE_LIMIT`. */
+export const keptReport = <R extends { readonly claim: string; readonly evidence: string }>(report: R): R => ({
+  ...report,
+  claim: clipTo(report.claim, CLAIM_LIMIT),
+  evidence: wholeLinesWithin(report.evidence, EVIDENCE_LIMIT),
+})
+
+/** A verdict as it is kept: its reason cut at `REASON_LIMIT` (`clipTo`), its quote's first whole lines within `QUOTE_LIMIT`. */
+export const keptVerdict = <R extends { readonly reason: string; readonly quote: string }>(report: R): R => ({
+  ...report,
+  reason: clipTo(report.reason, REASON_LIMIT),
+  quote: wholeLinesWithin(report.quote, QUOTE_LIMIT),
+})
 
 /** What `verdict` answers: kept, or refused because the check already gave one. */
 export const judgedText = (kept: boolean): string => (kept ? "recorded your verdict" : "Your first verdict stands: a check gives one.")

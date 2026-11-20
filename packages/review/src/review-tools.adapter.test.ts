@@ -39,7 +39,7 @@ beforeAll(async () => {
   }).pipe(Effect.provide(checkoutLayer)))
 })
 
-/** Make each call in order in one turn, over the fixture's head: what each stored (its result and whether it failed), and the findings kept. */
+/** Make each call in order in one turn, over the fixture's head: what each stored (its result and whether it failed), the findings kept, and the first check's verdict. */
 const calls = (made: ReadonlyArray<readonly [string, unknown]>, stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(1) }) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const all = yield* Sessions
@@ -48,7 +48,8 @@ const calls = (made: ReadonlyArray<readonly [string, unknown]>, stage: ReviewSta
     const toolkit = yield* reviewTools
     const stored = yield* Effect.forEach(made, ([name, params], index) =>
       Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
-    return { stored, findings: yield* (yield* Findings).all("run-1") }
+    const kept = yield* Findings
+    return { stored, findings: yield* kept.all("run-1"), verdict: yield* kept.verdictOf("run-1", CheckNumber.make(1)) }
   }).pipe(Effect.provide(Layer.mergeAll(
     reviewToolHandlers({ run: "run-1", repo, at: head, files, stage }),
     sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
@@ -135,8 +136,8 @@ describe("the review's tools say what they do, in fixed words", () => {
         endLine: { type: "integer", minimum: 1, maximum: 9007199254740991, description: "The last line, when the problem spans more than one. Left out, line." },
         kind: { type: "string", enum: ["bug", "security", "rule"], description: "bug, security or rule (a rule the repository's instructions state)." },
         severity: { type: "string", enum: ["high", "medium", "low"], description: "high, medium or low: how much harm the problem does if it is merged." },
-        claim: { type: "string", minLength: 1, maxLength: 600, description: "What is wrong and what it causes, in one or two sentences, at most 600 characters." },
-        evidence: { type: "string", maxLength: 1000, description: "The lines the claim rests on, quoted exactly from the file, at most 1000 characters." },
+        claim: { type: "string", minLength: 1, description: "What is wrong and what it causes, in one to three sentences; past 1500 characters it is cut." },
+        evidence: { type: "string", description: "The lines the claim rests on, quoted exactly from the file; past 1000 characters only the first whole lines are kept." },
       },
       required: ["path", "line", "kind", "severity", "claim", "evidence"],
       additionalProperties: true,
@@ -152,8 +153,8 @@ describe("the review's tools say what they do, in fixed words", () => {
       type: "object",
       properties: {
         outcome: { type: "string", enum: ["confirmed", "refuted", "unsure"], description: "confirmed: the problem is real and the pull request brings it in; refuted: it is not; unsure: you cannot tell from what you read." },
-        reason: { type: "string", minLength: 1, maxLength: 600, description: "Why, in one to three sentences, at most 600 characters." },
-        quote: { type: "string", maxLength: 1000, description: "The lines of the file the finding cites that your verdict rests on, quoted exactly as they are at the commit under review, without line numbers, at most 1000 characters." },
+        reason: { type: "string", minLength: 1, description: "Why, in one to three sentences; past 1500 characters it is cut." },
+        quote: { type: "string", description: "The lines of the file the finding cites that your verdict rests on, quoted exactly as they are at the commit under review, without line numbers; past 1000 characters only the first whole lines are kept." },
       },
       required: ["outcome", "reason", "quote"],
       additionalProperties: true,
@@ -207,6 +208,23 @@ describe("each tool in its stage", () => {
       [["There is no finding to check in this review: report each problem with reportFinding.", true]],
       [["You are checking a finding, not reporting new ones: call verdict with your verdict on it.", true], ["recorded your verdict", false], ["Your first verdict stands: a check gives one.", false]],
       [],
+    ])
+  })
+
+  test("a 2,000-character claim is recorded cut, never refused; its long evidence keeps its first whole lines", async () => {
+    const lines = Array.from({ length: 40 }, (_, index) => `line ${String(index).padStart(2, "0")} ${"x".repeat(41)}`)
+    const ran = await calls([["reportFinding", { ...FINDING, claim: "c".repeat(2_000), evidence: lines.join("\n") }]])
+    expect<unknown>([ran.stored, ran.findings]).toEqual([
+      [["recorded finding 1", false]],
+      [{ ...FINDING, claim: `${"c".repeat(1_472)}\n[… 528 characters clipped]`, evidence: lines.slice(0, 20).join("\n"), pass: 1, number: 1 }],
+    ])
+  })
+
+  test("a 2,000-character reason is judged, cut, never refused", async () => {
+    const ran = await calls([["verdict", { ...VERDICT, reason: "r".repeat(2_000) }]], { _tag: "Verify", check: CheckNumber.make(1) })
+    expect<unknown>([ran.stored, ran.verdict]).toEqual([
+      [["recorded your verdict", false]],
+      Option.some({ ...VERDICT, reason: `${"r".repeat(1_472)}\n[… 528 characters clipped]`, check: 1 }),
     ])
   })
 })

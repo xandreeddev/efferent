@@ -21,8 +21,8 @@ export const DEFAULT_PASSES = 1
  */
 export const DEFAULT_CLOSING_RESERVE = 0.1
 
-/** The most model calls one check makes by default. */
-export const DEFAULT_VERIFY_STEPS = 6
+/** The most model calls one check makes by default: at 6, checks that read four or five files reached it (2026-11-20). */
+export const DEFAULT_VERIFY_STEPS = 12
 
 /** How many checks run at once by default. */
 export const DEFAULT_VERIFY_CONCURRENCY = 3

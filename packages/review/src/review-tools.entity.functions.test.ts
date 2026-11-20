@@ -1,7 +1,47 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
 import type { FileDiff } from "./diff.entity.js"
-import { diffPage, globMatches, linesPage, listText, patternRefusal, searchText, treePath } from "./review-tools.entity.functions.js"
+import { diffPage, globMatches, keptReport, keptVerdict, linesPage, listText, patternRefusal, searchText, treePath, wholeLinesWithin } from "./review-tools.entity.functions.js"
+
+describe("what a report and a verdict keep: cut, never refused", () => {
+  test.each([
+    ["a quote that fits is itself", "total += value", 40, "total += value"],
+    ["one exactly at the limit is itself", "aaaa\nbbbbb", 10, "aaaa\nbbbbb"],
+    ["past it, its first whole lines that fit together", "aaaa\nbbbb\ncccc", 10, "aaaa\nbbbb"],
+    ["a line that would not fit whole is left out, never cut in half", "aaaa\nbbbbbb\nc", 10, "aaaa"],
+    ["a first line over the limit alone is cut with clipTo's marker", `${"x".repeat(60)}\nshort`, 40, `${"x".repeat(14)}\n[… 46 characters clipped]`],
+  ])("wholeLinesWithin: %s", (_, text, max, kept) => {
+    expect(wholeLinesWithin(text, max)).toBe(kept)
+  })
+
+  const lines = Array.from({ length: 40 }, (_, index) => `line ${String(index).padStart(2, "0")} ${"x".repeat(41)}`)
+
+  test("keptReport: a claim past 1,500 characters cut with the marker, evidence past 1,000 its first whole lines, or its one long line cut; the rest as given", () => {
+    const report = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "It multiplies by one.", evidence: "total += value * 1" }
+    expect([
+      keptReport(report),
+      keptReport({ ...report, claim: "c".repeat(2_000), evidence: lines.join("\n") }),
+      keptReport({ ...report, evidence: "e".repeat(1_200) }),
+    ]).toEqual([
+      report,
+      { ...report, claim: `${"c".repeat(1_472)}\n[… 528 characters clipped]`, evidence: lines.slice(0, 20).join("\n") },
+      { ...report, evidence: `${"e".repeat(972)}\n[… 228 characters clipped]` },
+    ])
+  })
+
+  test("keptVerdict: a reason past 1,500 characters cut with the marker, a quote past 1,000 its first whole lines, or its one long line cut; the rest as given", () => {
+    const verdict = { outcome: "confirmed", reason: "It multiplies by one.", quote: "total += value * 1" }
+    expect([
+      keptVerdict(verdict),
+      keptVerdict({ ...verdict, reason: "r".repeat(2_000), quote: lines.join("\n") }),
+      keptVerdict({ ...verdict, quote: "q".repeat(1_200) }),
+    ]).toEqual([
+      verdict,
+      { ...verdict, reason: `${"r".repeat(1_472)}\n[… 528 characters clipped]`, quote: lines.slice(0, 20).join("\n") },
+      { ...verdict, quote: `${"q".repeat(972)}\n[… 228 characters clipped]` },
+    ])
+  })
+})
 
 describe("treePath", () => {
   test.each([

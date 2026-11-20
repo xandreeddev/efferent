@@ -28,7 +28,7 @@ import { CommitMissing } from "./checkout.entity.js"
 import { Checkout } from "./checkout.port.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import type { PassResult } from "./review-pass.entity.js"
-import { FIND_TAIL } from "./review-prompt.entity.js"
+import { FOCUS_TAIL } from "./review-prompt.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 import { reportText } from "./review-report.entity.functions.js"
 
@@ -159,7 +159,7 @@ describe("reviewPullRequest", () => {
     // The one check runs alone, so it keeps back its closing call's reserve.
     expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6, reserve: 0.1 }, finds[0]?.prompt.prefix, true])
     expect<unknown>([report.promptVersion, report.toolsVersion, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
-      "review-prompt-7", "review-tools-4", 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
+      "review-prompt-8", "review-tools-5", 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
     ])
     expect<unknown>([report.reported.map((one) => [one.path, one.line, one.votes, one.checked]), report.stages.find, report.stages.verify.calls]).toEqual([
       [["src/sum.ts", 4, 3, "It does multiply by one."]], { input: 30, cached: 12, output: 6, cost: 0.003, calls: 3 }, 1,
@@ -223,7 +223,7 @@ describe("reviewPullRequest", () => {
       report.groups.map((run) => [run.group.number, run.group.package, Option.isSome(run.pass), run.notReviewed]),
       finds.length,
       events.filter((event) => event.endsWith("started")).length,
-      finds.every((input) => input.prompt.tail === FIND_TAIL.candidates && input.prompt.prefix.length === 3 && input.onFirstAnswer === undefined),
+      finds.every((input) => input.prompt.tail === FOCUS_TAIL.candidates && input.prompt.prefix.length === 3 && input.onFirstAnswer === undefined),
       finds[0]?.options,
       report.passesAsked,
     ]).toEqual(["groups", report.groups.map((run, index) => [index + 1, ".", true, ""]), report.groups.length, report.groups.length, true, { maxSteps: DEFAULT_GROUP_STEPS, reserve: DEFAULT_GROUP_RESERVE }, report.groups.length])
@@ -257,13 +257,14 @@ describe("reviewPullRequest", () => {
     expect([hold > 0.004 && hold < 0.02, await run(2 * hold - 0.0005), await run(2 * hold + 0.0005)]).toEqual([true, [[false, NOT_REVIEWED_BECAUSE.spent]], [[true, ""]]])
   })
 
-  test("focused, on a budget: passes that settle $0.03 each run groups 1 to 4 under $0.15, and the rest are listed as not reviewed", async () => {
+  test("focused, on a budget: passes that settle $0.03 each run groups 1 to 3 under $0.15, and the rest are listed as not reviewed", async () => {
     const { started, layer } = charging(0.03, { _tag: "Answered", summary: "" }, true)
     // Input free, so every first call holds its output alone (4,096 tokens at $1.20 a million, about $0.005) whatever its group's size.
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, groups: ONE_A_GROUP, budget: { total: 0.5, find: 0.15, verify: 0.2 }, price: { ...REVIEW_OPTIONS.price, input: 0 } })
-    // The reserve is $0.05: rooms of $0.15, $0.12, $0.09 and $0.06 fit it and the first call, $0.03 does not.
+    // The reserve is $0.10, at most half the $0.15 stage: $0.075. Rooms of $0.15, $0.12 and $0.09 fit it and the first
+    // call ($0.08), $0.06 does not.
     expect<unknown>([report.groups.length >= 5, started.length, report.groups.map((run) => [Option.isSome(run.pass), run.notReviewed]), report.stages.find.cost]).toEqual([
-      true, 4, report.groups.map((_, index) => (index < 4 ? [true, ""] : [false, NOT_REVIEWED_BECAUSE.spent])), 0.12,
+      true, 3, report.groups.map((_, index) => (index < 3 ? [true, ""] : [false, NOT_REVIEWED_BECAUSE.spent])), 0.09,
     ])
   })
 

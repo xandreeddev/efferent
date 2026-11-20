@@ -87,6 +87,16 @@ describe("mergeFindings", () => {
     const [first] = mergeFindings([finding(2, 1, 5, { evidence: "nowhere" }), finding(1, 4, 5, { evidence: "elsewhere" })], [FILE], { vote: false })
     expect<ReadonlyArray<number | undefined>>([matched?.best.pass, first?.best.pass]).toEqual([3, 1])
   })
+
+  test("the best-worded finding is the most severe first: a medium one with short evidence stands for a bucket over a low one with longer evidence the diff holds", () => {
+    const [bucket] = mergeFindings([
+      finding(2, 3, 5, { severity: "low", evidence: "  6 + added(5)\n  7   kept(7)" }),
+      finding(4, 1, 6, { severity: "medium", evidence: "added(5)" }),
+      finding(5, 1, 5, { severity: "medium", evidence: "not in the file" }),
+    ], [FILE], { vote: false })
+    // The medium ones first; among them the one whose evidence the diff holds; the low one's longer evidence loses.
+    expect<ReadonlyArray<number | string | undefined>>([bucket?.best.pass, bucket?.best.severity, bucket?.votes]).toEqual([4, "medium", 3])
+  })
 })
 
 describe("the quotes", () => {
