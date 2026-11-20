@@ -5,7 +5,7 @@ import { renderDiff, shownPath } from "./diff.entity.functions.js"
 import { DROPPED_BECAUSE, LOCKFILE_MANIFESTS } from "./file-verdict.entity.js"
 import { nameOf } from "./file-verdict.entity.functions.js"
 import { DROPPED_SHOWN, SMALL_CONFIG_LINES } from "./packed-diff.entity.js"
-import type { DroppedFile, FileKind, PackedDiff } from "./packed-diff.entity.js"
+import type { DroppedFile, FileKind, PackedDiff, PackRanking } from "./packed-diff.entity.js"
 
 const DOCS = /\.(md|mdx|markdown|rst|adoc|txt)$/i
 const CONFIG = /\.(json|jsonc|ya?ml|toml|ini|cfg|conf|lock|env\.example)$/i
@@ -24,22 +24,47 @@ export const fileKind = (path: string): FileKind => {
   return "code"
 }
 
-/** Where a file is packed: manifests and small config first, then code, then large config, then docs. */
+/** Whether a path is a test's: under a `test`, `tests`, `__tests__` or `spec` folder, or named `*.test.*`, `*.spec.*`, `*.bench.*`, `*.testing.*` or `testing.*`. */
+export const isTestPath = (path: string): boolean =>
+  /(^|\/)(__tests__|tests?|spec)\//.test(path) || /\.(test|spec|bench|testing)\.[^/]+$/.test(path) || /(^|\/)testing\.[^/]+$/.test(path)
+
+/** Whether a path is a page or prose rather than source: docs by extension, an `.astro` file, or under a `pages` or `docs` folder. */
+export const isPageOrDocs = (path: string): boolean =>
+  fileKind(path) === "docs" || /\.astro$/.test(path) || /(^|\/)(pages|docs)\//.test(path)
+
+/** Whether a path is source code: code by `fileKind`, not a test's and not a page's or docs'. */
+export const isSourcePath = (path: string): boolean => fileKind(path) === "code" && !isTestPath(path) && !isPageOrDocs(path)
+
+/**
+ * Where a file is packed: manifests, CI files and small config first (0), then source code (1), then tests (2), then
+ * large config (3), then pages and docs (4).
+ */
 const rankOf = (file: FileDiff): number => {
   const kind = fileKind(file.path)
   if (kind === "manifest" || (kind === "config" && file.additions + file.deletions <= SMALL_CONFIG_LINES)) return 0
-  return { manifest: 0, config: 2, code: 1, docs: 3 }[kind]
+  if (isPageOrDocs(file.path)) return 4
+  if (kind === "config") return 3
+  return isTestPath(file.path) ? 2 : 1
 }
 
 /**
  * The order files are packed in: by `rankOf`; the first rank smallest first (many small manifests before one big
- * one), the others largest first; then by path in code-unit order.
+ * one); the source in git's order (`git`, the order `files` gives) or largest first (`largest`); the others largest
+ * first; then by path in code-unit order.
  */
-const packingOrder: Order.Order<FileDiff> = Order.combineAll([
-  Order.mapInput(Order.Number, rankOf),
-  Order.mapInput(Order.Number, (file: FileDiff) => (rankOf(file) === 0 ? 1 : -1) * (file.additions + file.deletions)),
-  Order.mapInput(Order.String, (file: FileDiff) => file.path),
-])
+const packingOrder = (files: ReadonlyArray<FileDiff>, ranking: PackRanking): Order.Order<FileDiff> => {
+  const listed = new Map(files.map((file, index) => [file, index]))
+  const size = (file: FileDiff) => file.additions + file.deletions
+  return Order.combineAll([
+    Order.mapInput(Order.Number, rankOf),
+    Order.mapInput(Order.Number, (file: FileDiff) => {
+      const rank = rankOf(file)
+      if (rank === 0) return size(file)
+      return rank === 1 && ranking === "git" ? (listed.get(file) ?? 0) : -size(file)
+    }),
+    Order.mapInput(Order.String, (file: FileDiff) => file.path),
+  ])
+}
 
 /** The line naming a file left out of the diff, with its counts and its reason in words. */
 const droppedLine = (file: DroppedFile): string => `- ${shownPath(file.path)} (+${file.additions} -${file.deletions}): ${DROPPED_BECAUSE[file.reason]}`
@@ -79,18 +104,19 @@ export const droppedLines = (dropped: ReadonlyArray<DroppedFile>, changedPaths: 
 }
 
 /**
- * Pack the files a verdict kept under a token budget: in `packingOrder` (manifests and CI files first), each file whose rendered text fits in what
- * the budget has left is kept, and one that does not is left out as `over-budget` (a smaller file after it may still
- * fit). The text is the kept files rendered (`renderDiff`), in that order, then `Left out of this diff:` and the
+ * Pack the files a verdict kept under a token budget: in `packingOrder` (manifests and CI files first, then the source
+ * in git's order or, with `ranking` `largest`, largest first, then tests, large config, pages and docs), each file
+ * whose rendered text fits in what the budget has left is kept, and one that does not is left out as `over-budget` (a
+ * smaller file after it may still fit). The text is the kept files rendered (`renderDiff`), in that order, then `Left out of this diff:` and the
  * files left out (`droppedLines`): first those dropped before packing (`earlier`, in the order given), then those over
  * the budget, the first `DROPPED_SHOWN` by name and the rest counted by reason. The budget bounds the kept files'
  * text; `tokens` estimates the whole text.
  */
-export const packDiff = (files: ReadonlyArray<FileDiff>, budgetTokens: number, earlier: ReadonlyArray<DroppedFile> = []): PackedDiff => {
+export const packDiff = (files: ReadonlyArray<FileDiff>, budgetTokens: number, earlier: ReadonlyArray<DroppedFile> = [], ranking: PackRanking = "git"): PackedDiff => {
   const kept: Array<FileDiff> = []
   const over: Array<DroppedFile> = []
   let left = budgetTokens
-  for (const file of Arr.sort(files, packingOrder)) {
+  for (const file of Arr.sort(files, packingOrder(files, ranking))) {
     // Each kept file after the first is separated from the one before by a blank line.
     const cost = estimateTokens(`${kept.length > 0 ? "\n\n" : ""}${renderDiff([file])}`)
     if (cost <= left) {

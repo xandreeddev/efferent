@@ -36,12 +36,25 @@ describe("packDiff", () => {
   const workflow = file(".github/workflows/ci.yml", 1)
   const bigConfig = file("data/fixture.json", 300)
 
-  test("packs manifests, CI files and small config first (smallest first), then code largest first, then large config, then docs", () => {
+  test("packs manifests, CI files and small config first (smallest first), then the source in git's order, then large config, then docs", () => {
     const packed = packDiff([docs, small, bigConfig, large, manifest, workflow], 100_000)
-    expect(packed.kept).toEqual([".github/workflows/ci.yml", "packages/app/package.json", "src/large.ts", "src/small.ts", "data/fixture.json", "README.md"])
+    expect(packed.kept).toEqual([".github/workflows/ci.yml", "packages/app/package.json", "src/small.ts", "src/large.ts", "data/fixture.json", "README.md"])
     expect(packed.dropped).toEqual([])
-    expect(packed.text).toBe(renderDiff([workflow, manifest, large, small, bigConfig, docs]))
+    expect(packed.text).toBe(renderDiff([workflow, manifest, small, large, bigConfig, docs]))
     expect(packed.tokens).toBe(Number(estimateTokens(packed.text)))
+  })
+
+  test("source first: the source (git's order, or largest first with ranking largest), then tests largest first, then large config, then pages and docs", () => {
+    const test1 = file("src/small.test.ts", 5)
+    const test2 = file("test/large.ts", 50)
+    const page = file("site/pages/index.astro", 4)
+    const guide = file("docs/guide.ts", 3)
+    const given = [page, test1, small, guide, bigConfig, test2, large, manifest]
+    expect(packDiff(given, 100_000).kept).toEqual(["packages/app/package.json", "src/small.ts", "src/large.ts", "test/large.ts", "src/small.test.ts", "data/fixture.json", "site/pages/index.astro", "docs/guide.ts"])
+    expect(packDiff(given, 100_000, [], "largest").kept.slice(1, 3)).toEqual(["src/large.ts", "src/small.ts"])
+    // The budget goes to the source before a test of the same size.
+    const budget = Number(estimateTokens(renderDiff([small]))) + 5
+    expect(packDiff([file("src/a.test.ts", 2), small], budget).kept).toEqual(["src/small.ts"])
   })
 
   test("a file the budget has no room for is left out, and a smaller one after it still fits", () => {

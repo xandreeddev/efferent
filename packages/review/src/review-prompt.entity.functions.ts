@@ -3,10 +3,10 @@ import { clipTo, framed, hostNote } from "@xandreed/sdk"
 import type { FileDiff } from "./diff.entity.js"
 import { shownPath } from "./diff.entity.functions.js"
 import type { Finding } from "./finding.entity.js"
-import { fileKind } from "./packed-diff.entity.functions.js"
+import { droppedLines, fileKind, isTestPath, packDiff } from "./packed-diff.entity.functions.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FIND_TAIL, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
-import type { FindTailOptions, PromptPart, ReviewPrompt, WalkedFile } from "./review-prompt.entity.js"
+import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, GROUP_INTRO, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
+import type { Finder, FindTailOptions, PromptPart, ReviewPrompt, WalkedFile } from "./review-prompt.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import type { ReviewStage } from "./review-tools.entity.js"
 
@@ -82,20 +82,59 @@ export const ciText = (prepared: PreparedReview): string =>
  * (`pull-request`, clipped), the packed diff with its left-out lines (`pull-request-diff`) and the CI's digest
  * (`ci-digest`), each framed, after the words that say what it is.
  */
-export const reviewPrefix = (prepared: PreparedReview): ReadonlyArray<PromptPart> => {
+export const reviewPrefix = (prepared: PreparedReview): ReadonlyArray<PromptPart> =>
+  prefixWith(prepared, [DIFF_INTRO, framed("pull-request-diff", prepared.diff.text.length === 0 ? "(no file left to show)" : prepared.diff.text)])
+
+/** The system text, then one user message: the rules, the title and description, `changes` (the diff or the file list), the CI's digest. */
+const prefixWith = (prepared: PreparedReview, changes: ReadonlyArray<string>): ReadonlyArray<PromptPart> => {
   const pull = prepared.pullRequest
   const context = [
     RULES_INTRO,
     framed("repo-rules", rulesText(prepared.rules, prepared.files.map((file) => file.path))),
     PULL_INTRO,
     framed("pull-request", `Title: ${clipTo(pull.title, TITLE_SHOWN)}\n\n${clipTo(pull.body.trim().length === 0 ? "(no description)" : pull.body.trim(), BODY_SHOWN)}`),
-    DIFF_INTRO,
-    framed("pull-request-diff", prepared.diff.text.length === 0 ? "(no file left to show)" : prepared.diff.text),
+    ...changes,
     CI_INTRO,
     framed("ci-digest", ciText(prepared)),
   ].join("\n\n")
   return [{ role: "system", content: REVIEW_SYSTEM }, { role: "user", content: context }]
 }
+
+/**
+ * Every changed file as a focused review lists it: each file a review reads (`- <path> (+A -D)`, in git's order, the
+ * first `FILES_SHOWN`, the rest `- N more files (+A -D)`), then `Left out of the review:` and the files the verdict
+ * left out (`droppedLines`: each lockfile's line, then each file with its reason, itself bounded).
+ */
+export const filesText = (prepared: PreparedReview, shown: number = FILES_SHOWN): string => {
+  const earlier = prepared.diff.dropped.filter((file) => file.reason !== "over-budget")
+  const left = new Set(earlier.map((file) => file.path))
+  const reads = prepared.files.filter((file) => !left.has(file.path))
+  const rest = reads.slice(shown)
+  const sum = (pick: (file: FileDiff) => number) => rest.reduce((total, file) => total + pick(file), 0)
+  const read = [
+    ...reads.slice(0, shown).map((file) => `- ${shownPath(file.path)} (+${file.additions} -${file.deletions})`),
+    ...(rest.length > 0 ? [`- ${rest.length} more ${rest.length === 1 ? "file" : "files"} (+${sum((file) => file.additions)} -${sum((file) => file.deletions)})`] : []),
+  ]
+  return [
+    ...(read.length > 0 ? [read.join("\n")] : ["(no file left to review)"]),
+    ...(earlier.length > 0 ? [["Left out of the review:", ...droppedLines(earlier, prepared.files.map((file) => file.path))].join("\n")] : []),
+  ].join("\n\n")
+}
+
+/**
+ * A focused pass's prefix (`groups` focus), shared byte for byte by the checks of its group's findings: the system text;
+ * one user message with the rules, the title and description, every changed file (`filesText`, framed
+ * `pull-request-files`, in place of the packed diff, so this message is the same for every group) and the CI's digest;
+ * then the group's message, `GROUP_INTRO` and the group's diffs packed under `budgetTokens` (`packDiff`; a file with no
+ * room is named, for `readDiff`), framed `files-under-review`.
+ */
+export const focusPrefix = (prepared: PreparedReview, group: ReadonlyArray<FileDiff>, budgetTokens: number): ReadonlyArray<PromptPart> => [
+  ...prefixWith(prepared, [FILES_INTRO, framed("pull-request-files", filesText(prepared))]),
+  { role: "user", content: `${GROUP_INTRO}\n\n${framed("files-under-review", packDiff(group, budgetTokens).text)}` },
+]
+
+/** A focused pass's prompt: its group's prefix (`focusPrefix`) and its finder's words (`FIND_TAIL`), with no walk: its files are the group's. */
+export const focusPrompt = (prefix: ReadonlyArray<PromptPart>, finder: Finder): ReviewPrompt => ({ prefix, tail: FIND_TAIL[finder] })
 
 /**
  * A pass's prompt: the prefix (`reviewPrefix`) and the tail, what the pass is asked (`FIND_TAIL` of its finder), then
@@ -128,10 +167,6 @@ export const verifyPrompt = (prefix: ReadonlyArray<PromptPart>, finding: Finding
 
 /** The host's note after a pass's or a check's last allowed step: `STEP_CAP_NOTE` of its stage, as a host note. */
 export const stepCapNote = (stage: ReviewStage): string => hostNote(STEP_CAP_NOTE[stage._tag])
-
-/** Whether a path is a test's: under a `test`, `tests`, `__tests__` or `spec` folder, or named `*.test.*`, `*.spec.*`, `*.bench.*`, `*.testing.*` or `testing.*`. */
-export const isTestPath = (path: string): boolean =>
-  /(^|\/)(__tests__|tests?|spec)\//.test(path) || /\.(test|spec|bench|testing)\.[^/]+$/.test(path) || /(^|\/)testing\.[^/]+$/.test(path)
 
 /** The group a changed file is walked in: code first, then tests, then manifests and config, then docs. */
 const walkGroupOf = (path: string): number => {

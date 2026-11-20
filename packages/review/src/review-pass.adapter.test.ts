@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Layer, Option, Redacted } from "effect"
+import { Deferred, Effect, Layer, Option, Redacted } from "effect"
 import type { Context } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { JournalStorage, ModelSpend, modelSpendMemory } from "@xandreed/core"
@@ -19,6 +19,9 @@ import { BranchName, CommitSha, FetchRef, RepoName } from "./pull-request.entity
 import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
 import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
+import { withEffort } from "./review-model.entity.functions.js"
+import { REQUEST_SLACK_BYTES } from "./file-group.entity.js"
+import { firstCallBytes } from "./file-group.entity.functions.js"
 import { kernelPasses } from "./review-pass.adapter.js"
 import type { KernelPassesOptions } from "./review-pass.adapter.js"
 import { PassJournalFailed } from "./review-pass.entity.js"
@@ -64,20 +67,26 @@ const says = (text: string, finish = "stop") => sse([{ choices: [{ delta: { cont
 interface Sent {
   readonly messages: ReadonlyArray<{ readonly role: string; readonly content: unknown }>
   readonly tools: ReadonlyArray<string>
+  /** The body's `reasoning` field, as sent (none: absent). */
+  readonly reasoning: unknown
+  /** The body's size in bytes, as the ledger counts it. */
+  readonly bytes?: number
 }
 
 /** A request's body, read loosely: the test's own fake wire. */
 const sentOf = (body: unknown): Sent => {
   const messages = typeof body === "object" && body !== null && "messages" in body && Array.isArray(body.messages) ? body.messages : []
   const tools = typeof body === "object" && body !== null && "tools" in body && Array.isArray(body.tools) ? body.tools.map((tool: { readonly function?: { readonly name?: string } }) => tool.function?.name ?? "") : []
-  return { messages, tools }
+  const reasoning = typeof body === "object" && body !== null && "reasoning" in body ? body.reasoning : undefined
+  return { messages, tools, reasoning }
 }
 
 /** An endpoint that answers each request with the script's next answer (the last one again past its end), and keeps what it was sent. */
 const endpoint = (script: ReadonlyArray<string | { readonly status: number; readonly body: string }>) => {
   const kept: Array<Sent> = []
   const fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    kept.push(sentOf(JSON.parse(await new Response(init?.body ?? "").text())))
+    const body = await new Response(init?.body ?? "").text()
+    kept.push({ ...sentOf(JSON.parse(body)), bytes: new TextEncoder().encode(body).length })
     const next = script[Math.min(kept.length, script.length) - 1] ?? says("")
     return typeof next === "string"
       ? new Response(next, { status: 200, headers: { "content-type": "text/event-stream" } })
@@ -97,6 +106,10 @@ interface PassOptionsForTest {
   readonly reserve?: number
   /** Whether the input carries `onFirstAnswer`, as the first pass's does (the default). */
   readonly waitedOn?: boolean
+  /** The prompt, `PROMPT` by default. */
+  readonly prompt?: { readonly prefix: ReadonlyArray<{ readonly role: "system" | "user"; readonly content: string }>; readonly tail: string }
+  /** Whether the input asks its first call once more after a failure worth another try without `onFirstAnswer`. */
+  readonly retryFirstCall?: boolean
 }
 
 const testModel = (options: PassOptionsForTest) =>
@@ -115,11 +128,12 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
     const root = yield* ModelSpend
     const spend = yield* stageSpend(root, Option.none())
     const result = yield* (yield* ReviewPasses).run({
-      prompt: PROMPT,
+      prompt: options.prompt ?? PROMPT,
       reviewed: { run: "run-1", repo, at: head, files, stage },
       journalAt,
       options: { maxSteps: options.maxSteps ?? 16, reserve: options.reserve ?? 0 },
       spend,
+      ...(options.retryFirstCall === undefined ? {} : { retryFirstCall: options.retryFirstCall }),
       ...(options.waitedOn === false ? {} : {
         onFirstAnswer: (answered: boolean) => Effect.sync(() => {
           signals.push([answered, kept.length])
@@ -133,6 +147,27 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
 }
 
 const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "Multiplying by one changes nothing.", evidence: "total += value * 1" }
+
+describe("a focused pass and its check on the wire", () => {
+  const group = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "The pull request and every changed file." }, { role: "user" as const, content: "The files under review here: src/sum.ts." }]
+
+  test("a check's request starts with its pass's first three messages, byte for byte; only the tail after them differs", async () => {
+    const found = await pass([asks(["reportFinding", FINDING]), says("One.")], { prompt: { prefix: group, tail: "Find." } })
+    const checked = await pass([asks(["verdict", { outcome: "confirmed", reason: "r", quote: "total += value * 1" }])], { prompt: { prefix: group, tail: "Check." }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const first = (sent: ReadonlyArray<Sent>) => JSON.stringify(sent[0]?.messages.slice(0, 3))
+    expect([first(found.kept), first(found.kept) === first(checked.kept), found.kept[0]?.messages[3], checked.kept[0]?.messages[3]]).toEqual([
+      JSON.stringify(group.map((part) => ({ role: part.role, content: part.content }))), true, { role: "user", content: "Find." }, { role: "user", content: "Check." },
+    ])
+  })
+
+  test("the checks' model is the passes' unless given: another effort is sent by the checks alone", async () => {
+    const none = reviewModel(withEffort({ ...DEFAULT_REVIEW_MODEL, model: "m" }, "none"), Redacted.make("test-key"), 0.05)
+    const found = await pass([says("Nothing.")], { passes: { verifyModel: none } })
+    const checked = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { passes: { verifyModel: none }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const same = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    expect([found.kept[0]?.reasoning, checked.kept[0]?.reasoning, same.kept[0]?.reasoning]).toEqual([undefined, { enabled: false }, undefined])
+  })
+})
 
 describe("a pass over the kernel", () => {
   test("the model reads, reports, and answers: the finding recorded, each call's tokens and cost, the files opened, the journal kept", async () => {
@@ -183,6 +218,22 @@ describe("a pass over the kernel", () => {
     expect([twice.result.ended._tag, twice.signals, twice.sent.length]).toEqual(["ModelFailed", [[false, 2]], 2])
     expect([refused.result.ended._tag, refused.signals, refused.sent.length]).toEqual(["ModelFailed", [[false, 1]], 1])
     expect([alone.result.ended._tag, alone.sent.length]).toEqual(["ModelFailed", 1])
+  })
+
+  test("a focused group's pass (retryFirstCall, no one waiting) asks its first call once more after a 503, and not after a 400", async () => {
+    const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
+    const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
+    const blip = await pass([unavailable, says("Done.")], { waitedOn: false, retryFirstCall: true })
+    const refused = await pass([refusedCall, says("Done.")], { waitedOn: false, retryFirstCall: true })
+    expect([blip.result.ended._tag, blip.sent.length, refused.result.ended._tag, refused.sent.length]).toEqual(["Answered", 2, "ModelFailed", 1])
+  })
+
+  test("firstCallBytes counts at least the first request's body the ledger holds on, for a newline- and quote-heavy prompt", async () => {
+    const prompt = { prefix: [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: `${"a line\n".repeat(4_000)}${"\"q\" ".repeat(2_000)}` }], tail: "Review it." }
+    const ran = await pass([says("Done.")], { prompt, waitedOn: false })
+    const sent = ran.kept[0]?.bytes ?? 0
+    // Within the slack it keeps for the tools: never under the body, and not far over it.
+    expect([sent > 40_000, firstCallBytes(prompt) >= sent, firstCallBytes(prompt) - sent < REQUEST_SLACK_BYTES]).toEqual([true, true, true])
   })
 
   test("a spend refusal mid-pass, with a reserve kept back from the start: the reserve released, the host's note, and the closing call's finding kept", async () => {
@@ -304,14 +355,57 @@ describe("three passes at once under the review's budget", () => {
   // plus 4,096 tokens of output at $1.20 a million; each call billed $0.0025, so sixteen calls settle $0.04.
   const PREFIX = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "x".repeat(300_000) }]
   const billed = (answer: string) => answer.replace(/"cost":[0-9.]+/, "\"cost\":0.0025")
-  /** An endpoint for several passes at once: each request answered by how far its own conversation is, a call for its first fifteen steps, then words. */
-  const steady = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    const asked = sentOf(JSON.parse(await new Response(init?.body ?? "").text())).messages.filter((message) => message.role === "assistant").length
-    return new Response(billed(asked < 15 ? asks(["listFiles", { glob: "src/*" }]) : says("Done.")), { status: 200, headers: { "content-type": "text/event-stream" } })
-  }, { preconnect: () => {} })
+  /**
+   * An endpoint for several passes at once: each request answered by how far its own conversation is, a call for its
+   * first `calls` steps, then words. With `lockstep`, the requests go in rounds of `lockstep`: each waits until its
+   * round is full (or `LOCKSTEP_FALLBACK_MS` passed, which only frees the passes left once one has ended), so every
+   * pass's call of a round is open at once, whatever the scheduler does.
+   */
+  const steady = (calls = 15, lockstep = 0) => {
+    let arrived = 0
+    // Once a round has waited past the fallback, a pass has ended: the rounds are over and no request waits again.
+    let freed = false
+    const waiting: Array<{ readonly until: number; readonly go: () => void }> = []
+    return Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const asked = sentOf(JSON.parse(await new Response(init?.body ?? "").text())).messages.filter((message) => message.role === "assistant").length
+      if (lockstep > 0 && !freed) {
+        const until = (Math.floor(arrived / lockstep) + 1) * lockstep
+        arrived += 1
+        for (const one of waiting.filter((entry) => entry.until <= arrived)) one.go()
+        if (until > arrived) await new Promise<void>((go) => {
+          waiting.push({ until, go })
+          setTimeout(() => {
+            freed = true
+            for (const one of waiting) one.go()
+          }, LOCKSTEP_FALLBACK_MS)
+        })
+      }
+      return new Response(billed(asked < calls ? asks(["listFiles", { glob: "src/*" }]) : says("Done.")), { status: 200, headers: { "content-type": "text/event-stream" } })
+    }, { preconnect: () => {} })
+  }
+  const LOCKSTEP_FALLBACK_MS = 2_000
 
-  /** `count` passes at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back: how each ended and what was settled. */
-  const passesAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0) => {
+  /**
+   * A stage whose calls wait until `count` passes have kept their reserve back, so every reserve is held before any
+   * call is asked, whatever order the passes start in.
+   */
+  const keptFirst = (stage: StageLedger, count: number): Effect.Effect<StageLedger> => Effect.map(Deferred.make<void>(), (allKept) => {
+    let kept = 0
+    return {
+      ...stage,
+      keepBack: (amount: number) => Effect.tap(stage.keepBack(amount), () => Effect.suspend(() => {
+        kept += 1
+        return kept >= count ? Deferred.succeed(allKept, undefined) : Effect.void
+      })),
+      reserve: (request) => Effect.flatMap(Deferred.await(allKept), () => stage.reserve(request)),
+    }
+  })
+
+  /**
+   * `count` passes at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back
+   * and capped at `maxSteps`, on the `endpoint`: how each ended and what was settled.
+   */
+  const passesAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0, endpoint = steady(), maxSteps = 16) => {
     const layers = kernelPasses({ model: testModel({ maxCost: DEFAULT_MAX_COST }) }).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)))
     const folder = mkdtempSync(join(fixture.root, "three-"))
     return Effect.runPromise(Effect.gen(function* () {
@@ -322,11 +416,11 @@ describe("three passes at once under the review's budget", () => {
         prompt: { prefix: PREFIX, tail: "Review it." },
         reviewed: { run: "run-1", repo, at: head, files, stage: { _tag: "Find", pass: PassNumber.make(number) } },
         journalAt: join(folder, `pass-${number}`),
-        options: { maxSteps: 16, reserve },
+        options: { maxSteps, reserve },
         spend: stage,
       }), { concurrency: "unbounded" })
       return { ended: results.map((result) => result.ended._tag), settled: Math.round((yield* root.totals).settled * 1e6) / 1e6, held: (yield* root.totals).reserved }
-    }).pipe(Effect.provide(layers), Effect.provideService(FetchHttpClient.Fetch, steady)))
+    }).pipe(Effect.provide(layers), Effect.provideService(FetchHttpClient.Fetch, endpoint)))
   }
   const defaultStages = (root: Context.Service.Shape<typeof ModelSpend>) => Effect.flatMap(stageSpend(root, Option.some(DEFAULT_BUDGET.total)), (total) => stageSpend(total, Option.some(DEFAULT_BUDGET.find)))
 
@@ -336,7 +430,10 @@ describe("three passes at once under the review's budget", () => {
   }, 60_000)
 
   test("why passes beside each other keep nothing back: three each keeping a sixth of the find stage crowd out each other's calls and end refused", async () => {
-    const ran = await passesAtOnce(defaultStages, 3, DEFAULT_BUDGET.find / 6)
+    // Every reserve is held before any call (`keptFirst`), and each pass makes 24 calls: whatever the interleaving, no
+    // pass ends (giving its sixth back) before 23 calls have settled $0.0575, and then $0.15 kept back and a call's
+    // hold of about $0.097 pass the find stage's $0.30, so the next call is refused.
+    const ran = await passesAtOnce((root) => Effect.flatMap(defaultStages(root), (stage) => keptFirst(stage, 3)), 3, DEFAULT_BUDGET.find / 6, steady(23), 24)
     expect([ran.ended.includes("SpendRefused"), ran.held]).toEqual([true, 0])
   }, 60_000)
 
@@ -346,7 +443,9 @@ describe("three passes at once under the review's budget", () => {
   }, 60_000)
 
   test("control: on the same cap, a ledger that refuses whatever open holds crowd out ends a pass on a refusal", async () => {
-    const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }))
+    // In lockstep, the three calls of a round are open at once: three holds of about $0.097 and what the rounds before
+    // settled pass $0.30 by the third round, and the last call of it is refused.
+    const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)
 })

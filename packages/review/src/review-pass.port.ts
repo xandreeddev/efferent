@@ -11,7 +11,8 @@ import type { Reviewed } from "./review-tools.entity.js"
  * options, the ledger of its stage, which every call it makes is charged to (`spend`), and what to do once its first
  * model call returns (`onFirstAnswer`, given whether it answered, once: also with `false` when the pass ends before
  * any call returned; the review starts its other passes on an answer, once the first has written the provider's
- * cache, and none on a failure).
+ * cache, and none on a failure), and whether its first call is asked once more after a failure worth another try
+ * (`retryFirstCall`; always so when `onFirstAnswer` is given): a focused group's pass, whose group is lost on one blip.
  */
 export interface PassInput {
   readonly prompt: ReviewPrompt
@@ -20,6 +21,7 @@ export interface PassInput {
   readonly options: PassOptions
   readonly spend: StageLedger
   readonly onFirstAnswer?: (answered: boolean) => Effect.Effect<void>
+  readonly retryFirstCall?: boolean
 }
 
 /**

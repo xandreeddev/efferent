@@ -72,6 +72,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   review keeps, in a folder of its own, its prepared review, its report (its
   sessions, each call's tokens, cached tokens and cost) and its pass's
   journal, for offline scoring.
+- `efferent-review review` reviews in focused groups by default
+  (`--focus groups`; `--focus whole` for the passes over the whole pull
+  request): the changed code files (tests, pages and `.astro` files
+  included) grouped by package, a large package cut by file stem, at most
+  6,000 tokens of diff and 8 files a group, the riskiest groups first
+  (`--group-order git` keeps git's order); one pass a group in turn, 8 calls
+  each (`--group-steps`), while the find stage has room for a pass's first
+  call (sized from its prompt) and its closing call, the rest listed as not
+  reviewed (about seven groups fit the stock $0.30 find stage), as is a
+  group whose pass answered no call, which stops the rest; config, CI,
+  lockfiles and docs get no pass unless `--config-pass`, and the report
+  names each file in no group; a pull request with nothing to group is
+  reviewed whole. `--vote` is refused with groups, and `--find-cost` or
+  `--verify-cost` above `--max-cost` is refused. Each pass sends the pull
+  request with every changed file listed and its group's diffs as a message
+  of its own, which the checks of its findings start with too, so they can
+  read the same cache. `--passes` and `--max-steps` are flags of
+  `--focus whole` only. The packed diff now puts the source first, in git's order,
+  then the tests, large config, pages and docs. `--effort-find` and
+  `--effort-check` ask a stage's model at another reasoning effort (`none`
+  turns reasoning off). The report shows each group's pass, cost and
+  findings, and `review.json` keeps the focus, the groups and the efforts.
 - `efferent-review review` runs several passes and checks what they find.
   `--passes` (1 by default, until an evaluation shows more find more)
   passes, the first alone until its first call returns, then the others

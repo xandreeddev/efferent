@@ -97,7 +97,8 @@ describe("prepareReview", () => {
   test("a same-repository writer's pull request: the diff packed, the base's rules, the failed CI digested, the commands run at the head", async () => {
     const { review, asked } = await prepared(pullOf(true, "write"))
     // Code, the most lines changed first, then docs: a file that only loses lines is kept; the rules file the head rewrote is docs, last.
-    expect(review.diff.kept).toEqual(["src/big.ts", ":!neg/b.ts", ":(glob)odd/a.ts", "src/sum.ts", "src/a file's $(echo no).ts", "src/run.sh", "docs/old.md", "src/AGENTS.md"])
+    // The source in git's order, then docs largest first.
+    expect(review.diff.kept).toEqual([":!neg/b.ts", ":(glob)odd/a.ts", "src/a file's $(echo no).ts", "src/big.ts", "src/run.sh", "src/sum.ts", "docs/old.md", "src/AGENTS.md"])
     expect(review.diff.dropped.map((file) => [file.path, file.reason])).toEqual([["bun.lock", "lockfile"], ["docs/gone.md", "deleted"], ["gen/out.ts", "generated"], [FORGED_NAME, "binary"]])
     expect<unknown>(review.rules).toEqual([
       { path: "AGENTS.md", text: "Root rules.\n", from: fixture.left },
