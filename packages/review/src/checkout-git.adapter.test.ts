@@ -1,5 +1,6 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync } from "node:fs"
+import { execFileSync } from "node:child_process"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, statSync, writeFileSync } from "node:fs"
 import { join } from "node:path"
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect"
 import { gitCheckout } from "./checkout-git.adapter.js"
@@ -41,14 +42,31 @@ const failureTag = <A, E>(exit: Exit.Exit<A, E>) => {
 }
 
 describe("gitArgv", () => {
-  test("no hooks, no monitor, only the transports given, literal paths, then -C and the command", () => {
+  test("no hooks, no monitor, no host attributes or lfs filter, only the transports given, literal paths, then -C and the command", () => {
+    const quiet = ["-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "core.attributesFile=/dev/null", "-c", "filter.lfs.process=", "-c", "filter.lfs.smudge=", "-c", "filter.lfs.clean=", "-c", "filter.lfs.required=false"]
     expect(gitArgv(["https"], "/cache/o/r/mirror.git", ["ls-tree", "-z", "HEAD", "--", ":!x"])).toEqual([
-      "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
+      "git", ...quiet, "-c", "protocol.allow=never", "-c", "protocol.https.allow=always",
       "--literal-pathspecs", "-C", "/cache/o/r/mirror.git", "ls-tree", "-z", "HEAD", "--", ":!x",
     ])
     expect(gitArgv(["file"], null, ["clone"])).toEqual([
-      "git", "-c", "core.hooksPath=/dev/null", "-c", "core.fsmonitor=false", "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "--literal-pathspecs", "clone",
+      "git", ...quiet, "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "--literal-pathspecs", "clone",
     ])
+  })
+
+  test("a clone's checkout runs no lfs filter and reads no attributes file of the host's; plain git, the control, does run it", async () => {
+    const marker = join(fixture.root, "lfs-ran")
+    const attributes = join(fixture.root, "host-attributes")
+    writeFileSync(attributes, "* filter=lfs\n")
+    const env = { ...fixture.env, GIT_CONFIG_COUNT: "2", GIT_CONFIG_KEY_0: "core.attributesFile", GIT_CONFIG_VALUE_0: attributes, GIT_CONFIG_KEY_1: "filter.lfs.smudge", GIT_CONFIG_VALUE_1: `touch ${marker}; cat` }
+    const layer = gitCheckout({ cacheRoot: freshCache(), remoteUrl: () => fixture.remote, transports: ["file"] }).pipe(Layer.provide(hostShell({ cwd: fixture.root, env })))
+    const exit = await Effect.runPromiseExit(Effect.gen(function* () {
+      const checkout = yield* Checkout
+      yield* checkout.fetch(repo, base, head)
+      return yield* Effect.scoped(checkout.clone(repo, head.sha))
+    }).pipe(Effect.provide(layer)))
+    expect([Exit.isSuccess(exit), existsSync(marker)]).toEqual([true, false])
+    execFileSync("git", ["clone", "--quiet", fixture.remote, join(fixture.root, "plain-clone")], { env })
+    expect(existsSync(marker)).toBe(true)
   })
 })
 
