@@ -109,7 +109,9 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     const bucket = byBucket.get(check.bucket)
     const finding = byMember.get(`${check.finding.pass}/${check.finding.number}`)
     if (bucket === undefined || finding === undefined) return []
-    const checked = Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason })
+    // A verdict counted unsure by the host (its quote not found) says so before the check's own reason.
+    const reason = Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason })
+    const checked = check.why.length > 0 ? `${check.why}: ${reason}` : reason
     return [{ ...finding, bucket: bucket.number, votes: bucket.votes, checked, restatesCi: restatesCi(finding, input.prepared.failing) }]
   })
   // A bucket is shown once: with the first of its findings a check confirmed; else, apart, its first a check was unsure of.

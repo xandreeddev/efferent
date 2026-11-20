@@ -14,7 +14,7 @@ const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 export const FINDINGS_SHOWN = 6
 
 /** The line above the findings no check settled, in the report a person reads. */
-export const UNSETTLED_HEAD = "Unsettled: a check could not tell whether these are real; read them before trusting either way."
+export const UNSETTLED_HEAD = "Unsettled: no check confirmed these and none refuted them (a check could not tell, or its quote was not found); read them before trusting either way."
 
 /** The longest a finding's quoted evidence is shown in the report, in characters. */
 export const EVIDENCE_SHOWN = 400
@@ -80,9 +80,10 @@ export type ReviewUsage = typeof ReviewUsage.Type
  * (its session, how it ended, its calls with what each used, the files it opened); every finding of every pass; every
  * bucket, kept or not, with its votes; every check; the findings shown (`reported`: confirmed by a check, or the kept
  * buckets' when no check ran, sorted by severity, then path, then line); the findings no check settled (`unsettled`:
- * of each bucket no check confirmed and one judged unsure, its first unsure finding with the check's reason, sorted
- * the same, kept apart from the confirmed: on #644's full run the gold leak's check was unsure, and the report said
- * nothing); the files in the packed diff against those
+ * of each bucket no check confirmed and one judged unsure, its first unsure finding with the check's reason, the
+ * host's why first when the host made it unsure, sorted the same, kept apart from the confirmed: checked alone, #644's
+ * gold leak got one confirmed and one unsure verdict in two draws, and an unsure one used to be dropped); the files in
+ * the packed diff against those
  * changed; what each stage's calls and all of them used; and the wall time.
  */
 export const ReviewReport = Schema.Struct({

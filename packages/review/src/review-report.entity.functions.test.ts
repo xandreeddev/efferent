@@ -110,11 +110,11 @@ describe("the review's report", () => {
       "    checked: Reason 7.",
       "1 more finding not shown.",
       "",
-      "Unsettled: a check could not tell whether these are real; read them before trusting either way.",
+      "Unsettled: no check confirmed these and none refuted them (a check could not tell, or its quote was not found); read them before trusting either way.",
       "f.ts:2 high bug — Claim 9. (1/3 passes)",
       "    > line 2",
       "    > next",
-      "    checked: Reason 9.",
+      "    checked: its quote is not in the file near the cited lines: Reason 9.",
       "Not checked (the spend cap refused a model call): g.ts:2 high bug — Claim 10.",
       "",
       "Pass 1: Seven problems.",
@@ -216,17 +216,17 @@ describe("the review's report", () => {
   })
 
   test("reportText: findings no check settled are shown apart, under their own line, never as no finding", () => {
-    // Bucket 9's check was unsure (its quote not found); no confirmed finding is shown.
+    // Bucket 9's check confirmed it but its quote was not found, so the host made it unsure and says why first.
     expect<unknown>([REPORT.unsettled.map((one) => [one.bucket, one.claim, one.checked]), reportText({ ...REPORT, reported: [], verdicts: [] }).split("\n").slice(2, 10)]).toEqual([
-      [[9, "Claim 9.", "Reason 9."]],
+      [[9, "Claim 9.", "its quote is not in the file near the cited lines: Reason 9."]],
       [
         "No confirmed findings.",
         "",
-        "Unsettled: a check could not tell whether these are real; read them before trusting either way.",
+        "Unsettled: no check confirmed these and none refuted them (a check could not tell, or its quote was not found); read them before trusting either way.",
         "f.ts:2 high bug — Claim 9. (1/3 passes)",
         "    > line 2",
         "    > next",
-        "    checked: Reason 9.",
+        "    checked: its quote is not in the file near the cited lines: Reason 9.",
         "",
       ],
     ])

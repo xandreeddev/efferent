@@ -176,8 +176,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`BucketCheck.finding`). A finding no check confirmed but one judged
   unsure is no longer dropped: the report lists it apart, under
   `UNSETTLED_HEAD` (`ReviewReport.unsettled`), and says `No confirmed
-  findings.` instead of `No findings.`; on #644's full run the gold leak's
-  check was unsure and the report said nothing. A check is told that docs,
+  findings.` instead of `No findings.`; checked alone, #644's gold leak got
+  one confirmed and one unsure verdict in two draws, and an unsure one used
+  to be dropped. A bucket whose findings are one defect reported by several
+  passes now gets up to three tries, and one confirmation reports it: with
+  verdicts that flip between draws, that trades some precision for recall,
+  and false findings per review are not measured yet. A check is told that docs,
   comments and a description the pull request itself adds are its author's
   claims, never proof the code is right (`VERIFY_TAIL`, `REVIEW_PROMPT`
   `review-prompt-9`): on #657 the check refuted the unsandboxed commands
