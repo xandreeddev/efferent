@@ -12,6 +12,12 @@ export const CHANGED_SLACK = 2
 /** How near the cited lines a verdict's quote must be found in the head's file. */
 export const QUOTE_SLACK = 3
 
+/** The most lines from a finding's first that count: for its bucket's place and for where its check's quote is looked for. */
+export const SPAN_COUNTED = 40
+
+/** The fewest characters other than white space a quoted line needs, with a name in it, to stand for the code it quotes. */
+export const QUOTE_LINE_CHARS = 12
+
 /** Which bucket of a review's merged findings, from 1, in path and line order. */
 export const BucketNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("BucketNumber"))
 export type BucketNumber = typeof BucketNumber.Type
@@ -29,10 +35,12 @@ export const BucketMember = Schema.Struct({ pass: PassNumber, number: Schema.Int
 export type BucketMember = typeof BucketMember.Type
 
 /**
- * The findings of several passes about one problem: one file, one kind, lines that overlap or are near
- * (`NEAR_LINES`). Its lines span its findings'; its votes are the distinct passes that found it; `best` is the
- * finding whose words stand for it (the longest evidence the file's diff holds, else the first); `kept` and `why` say
- * whether it goes to the checks. Every bucket is recorded, kept or not, for offline scoring.
+ * The findings of several passes about one place: one file, each finding starting within `NEAR_LINES` of the first
+ * finding's lines (its anchor, counted at most `SPAN_COUNTED` lines), at most one finding a pass, whatever kind each
+ * says. Its lines span its findings' (each counted at most `SPAN_COUNTED` lines); its votes are its findings, one a
+ * pass; `best` is the finding whose words stand for it (the longest evidence the file's diff holds, else the first),
+ * and its kind is the best's; `kept` and `why` say whether it goes to the checks. Every bucket is recorded, kept or
+ * not, for offline scoring.
  */
 export const Bucket = Schema.Struct({
   number: BucketNumber,

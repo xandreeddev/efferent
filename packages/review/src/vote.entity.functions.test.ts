@@ -38,20 +38,39 @@ describe("changedLinesOf", () => {
 })
 
 describe("mergeFindings", () => {
-  test("near findings of one kind share a bucket, its votes its distinct passes; another kind or a far line is another bucket", () => {
-    const buckets = mergeFindings([
+  /** Each bucket as `line-endLine kind [pass.number…] votes why`. */
+  const shown = (buckets: ReturnType<typeof mergeFindings>) =>
+    buckets.map((bucket) => `${bucket.line}-${bucket.endLine} ${bucket.kind} [${bucket.members.map((member) => `${member.pass}.${member.number}`).join(" ")}] ${bucket.votes} ${bucket.why}`)
+
+  test("a bucket is anchored at its first finding: those of other passes starting within three lines of it join, each pass once, whatever kind each says", () => {
+    expect(shown(mergeFindings([
       finding(1, 1, 5), finding(2, 1, 8), finding(2, 2, 6), finding(3, 1, 10, { kind: "security" }), finding(3, 2, 15),
-    ], [FILE], { vote: false })
-    expect(buckets.map((bucket) => [bucket.number, bucket.kind, bucket.line, bucket.endLine, bucket.members.map((member) => `${member.pass}.${member.number}`), bucket.votes, bucket.why])).toEqual([
-      [1, "bug", 5, 8, ["1.1", "2.2", "2.1"], 2, "kept"],
-      [2, "bug", 15, 15, ["3.2"], 1, "kept"],
-      [3, "security", 10, 10, ["3.1"], 1, "kept"],
+    ], [FILE], { vote: false }))).toEqual([
+      "5-6 bug [1.1 2.2] 2 kept",
+      "8-10 bug [2.1 3.1] 2 kept",
+      "15-15 bug [3.2] 1 kept",
     ])
   })
 
-  test("with the vote on: two passes, or one for a security problem; the rest recorded as left out by the vote", () => {
-    const buckets = mergeFindings([finding(1, 1, 5), finding(2, 1, 6), finding(1, 2, 15), finding(3, 1, 10, { kind: "security" })], [FILE], { vote: true })
-    expect(buckets.map((bucket) => [bucket.line, bucket.kind, bucket.why, bucket.kept])).toEqual([[5, "bug", "kept", true], [15, "bug", "one-vote", false], [10, "security", "kept", true]])
+  test("two findings of one pass never share a bucket, however near", () => {
+    expect(shown(mergeFindings([finding(1, 1, 5), finding(1, 2, 5), finding(1, 3, 6)], [FILE], { vote: false }))).toEqual(["5-5 bug [1.1] 1 kept", "5-5 bug [1.2] 1 kept", "6-6 bug [1.3] 1 kept"])
+  })
+
+  test("no chaining: a finding near the last one joined, but not near the anchor, starts a bucket of its own", () => {
+    expect(shown(mergeFindings([finding(1, 1, 5), finding(2, 1, 8), finding(3, 1, 10)], [FILE], { vote: false }))).toEqual(["5-8 bug [1.1 2.1] 2 kept", "10-10 bug [3.1] 1 kept"])
+  })
+
+  test("a finding's span counts at most forty lines: a 400-line one neither swallows the findings after it nor counts as on a changed line far down", () => {
+    const wide = { ...FILE, hunks: FILE.hunks.map((hunk) => ({ ...hunk, newCount: 500, lines: [...hunk.lines, { _tag: "Added" as const, line: 380, text: "late()" }] })) }
+    expect(shown(mergeFindings([finding(1, 1, 5, { endLine: 405 }), finding(2, 1, 60), finding(3, 1, 100, { endLine: 400 })], [wide], { vote: false }))).toEqual([
+      "5-44 bug [1.1] 1 kept", "60-60 bug [2.1] 1 off-changed-lines", "100-139 bug [3.1] 1 off-changed-lines",
+    ])
+  })
+
+  test("with the vote on: two passes, or one of them saying security; the rest recorded as left out by the vote", () => {
+    expect(shown(mergeFindings([finding(1, 1, 5), finding(2, 1, 6, { kind: "security" }), finding(1, 2, 15), finding(3, 1, 10, { kind: "security" })], [FILE], { vote: true }))).toEqual([
+      "5-6 bug [1.1 2.1] 2 kept", "10-10 security [3.1] 1 kept", "15-15 bug [1.2] 1 one-vote",
+    ])
   })
 
   test("a finding off the changed lines (more than two from one) is bucketed apart and never kept", () => {
@@ -80,15 +99,32 @@ describe("the quotes", () => {
   })
 
   test("quoteWithin: the quote is in the file within the cited lines and three around them; elsewhere, or empty, it is not", () => {
-    const text = Array.from({ length: 30 }, (_, index) => `line ${index + 1};`).join("\n")
+    const text = Array.from({ length: 30 }, (_, index) => `const value${index + 1} = compute(${index + 1});`).join("\n")
     expect([
-      quoteWithin(text, "line 10;\n  line 11;", 10, 10),
-      quoteWithin(text, "line 13;", 10, 10),
-      quoteWithin(text, "line 14;", 10, 10),
-      quoteWithin(text, "line 7;", 10, 10),
-      quoteWithin(text, "line 6;", 10, 10),
-      quoteWithin(text, "  12| line 12;", 10, 10),
+      quoteWithin(text, "const value10 = compute(10);\n  const value11 = compute(11);", 10, 10),
+      quoteWithin(text, "const value13 = compute(13);", 10, 10),
+      quoteWithin(text, "const value14 = compute(14);", 10, 10),
+      quoteWithin(text, "const value7 = compute(7);", 10, 10),
+      quoteWithin(text, "const value6 = compute(6);", 10, 10),
+      quoteWithin(text, "  12| const value12 = compute(12);", 10, 10),
       quoteWithin(text, "", 10, 10),
     ]).toEqual([true, true, false, true, false, true, false])
+  })
+
+  test("quoteWithin: a quote must hold a whole line that stands for code; a brace, a keyword or part of a line is not enough", () => {
+    const text = ["export const run = (input: Input) => {", "  if (input.ready) {", "    return start(input.name)", "  }", "  return", "}"].join("\n")
+    expect([
+      quoteWithin(text, "}", 1, 6),
+      quoteWithin(text, "return", 1, 6),
+      quoteWithin(text, "  }\n  return", 1, 6),
+      quoteWithin(text, "start(input", 1, 6),
+      quoteWithin(text, "return start(input.name)", 1, 6),
+      quoteWithin(text, "  if (input.ready) {\n    return start(", 1, 6),
+    ]).toEqual([false, false, false, false, true, true])
+  })
+
+  test("quoteWithin: the window never runs past forty lines from the cited first line, whatever endLine says", () => {
+    const text = Array.from({ length: 1_000 }, (_, index) => `const value${index + 1} = compute(${index + 1});`).join("\n")
+    expect([quoteWithin(text, "const value43 = compute(43);", 1, 1_000), quoteWithin(text, "const value44 = compute(44);", 1, 1_000), quoteWithin(text, "const value900 = compute(900);", 1, 1_000)]).toEqual([true, false, false])
   })
 })

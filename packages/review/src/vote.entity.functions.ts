@@ -2,7 +2,7 @@ import { Array as Arr, Order } from "effect"
 import type { FileDiff } from "./diff.entity.js"
 import { SEVERITY_RANK } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
-import { BucketNumber, CHANGED_SLACK, NEAR_LINES, QUOTE_SLACK } from "./vote.entity.js"
+import { BucketNumber, CHANGED_SLACK, NEAR_LINES, QUOTE_LINE_CHARS, QUOTE_SLACK, SPAN_COUNTED } from "./vote.entity.js"
 import type { Bucket, BucketWhy, MergeOptions } from "./vote.entity.js"
 
 /**
@@ -48,43 +48,48 @@ export const evidenceMatches = (evidence: string, file: FileDiff | undefined): b
   return quoted.every((line) => shown.some((text) => text.includes(line)))
 }
 
+/** Whether a normalized line stands for code: `QUOTE_LINE_CHARS` characters or more other than white space, a name of three or more among them. */
+const telling = (line: string): boolean => line.replace(/\s/g, "").length >= QUOTE_LINE_CHARS && /[A-Za-z_$][\w$]{2,}/.test(line)
+
 /**
- * Whether a verdict's quote is in the head's file within the cited lines and `QUOTE_SLACK` around them: its lines,
- * normalized (`normalizedLine`) and joined by a space, held by those of the file's lines, normalized and joined the
- * same way. An empty quote is not.
+ * Whether a verdict's quote is in the head's file near the lines the check was shown: the window is from `line` to
+ * `endLine`, at most `SPAN_COUNTED` lines whatever `endLine` says, and `QUOTE_SLACK` around them. The quote's lines,
+ * normalized (`normalizedLine`) and joined by a space, must be held by the window's lines normalized and joined the
+ * same way, and one of them must be a whole line of the window that stands for code (`telling`): a brace, a
+ * `return` or an empty quote is not one.
  */
 export const quoteWithin = (text: string, quote: string, line: number, endLine: number): boolean => {
-  const quoted = quotedLines(quote).join(" ")
+  const quoted = quotedLines(quote)
   if (quoted.length === 0) return false
+  const last = Math.min(Math.max(line, endLine), line + SPAN_COUNTED - 1)
   const lines = text.split("\n")
-  const window = lines.slice(Math.max(0, line - 1 - QUOTE_SLACK), Math.min(lines.length, Math.max(line, endLine) + QUOTE_SLACK))
-  return window.map(normalizedLine).filter((one) => one.length > 0).join(" ").includes(quoted)
+  const window = lines.slice(Math.max(0, line - 1 - QUOTE_SLACK), Math.min(lines.length, last + QUOTE_SLACK)).map(normalizedLine).filter((one) => one.length > 0)
+  return window.join(" ").includes(quoted.join(" ")) && quoted.some((one) => telling(one) && window.includes(one))
 }
 
-/** The last line a finding cites. */
-const lastOf = (finding: Finding): number => Math.max(finding.line, finding.endLine ?? finding.line)
+/** The last line of a finding that counts: its `endLine`, at most `SPAN_COUNTED` lines from its first, never before it. */
+const lastOf = (finding: Finding): number => Math.min(Math.max(finding.line, finding.endLine ?? finding.line), finding.line + SPAN_COUNTED - 1)
 
 const BY_PLACE: Order.Order<Finding> = Order.combineAll([
   Order.mapInput(Order.String, (finding: Finding) => finding.path),
-  Order.mapInput(Order.String, (finding: Finding) => finding.kind),
   Order.mapInput(Order.Number, (finding: Finding) => finding.line),
   Order.mapInput(Order.Number, (finding: Finding) => finding.pass),
   Order.mapInput(Order.Number, (finding: Finding) => finding.number),
 ])
 
-/** Findings in place order, grouped: one file, one kind, each starting within `NEAR_LINES` of the group's span so far. */
+/**
+ * Findings in place order, grouped around anchors: a finding joins the first group of its file whose anchor (its
+ * first finding, its lines counted by `lastOf`) it starts within `NEAR_LINES` of and that holds no finding of its
+ * pass; else it anchors a group of its own. An anchor never moves, so groups do not chain, and kinds do not split them.
+ */
 const grouped = (findings: ReadonlyArray<Finding>): ReadonlyArray<Arr.NonEmptyReadonlyArray<Finding>> => {
   const groups: Array<Arr.NonEmptyArray<Finding>> = []
-  let end = 0
   for (const finding of Arr.sort(findings, BY_PLACE)) {
-    const group = groups.at(-1)
-    if (group !== undefined && group[0].path === finding.path && group[0].kind === finding.kind && finding.line <= end + NEAR_LINES) {
-      group.push(finding)
-      end = Math.max(end, lastOf(finding))
-    } else {
-      groups.push([finding])
-      end = lastOf(finding)
-    }
+    const joins = groups.find((group) => group[0].path === finding.path
+      && finding.line >= group[0].line - NEAR_LINES && finding.line <= lastOf(group[0]) + NEAR_LINES
+      && !group.some((member) => member.pass === finding.pass))
+    if (joins === undefined) groups.push([finding])
+    else joins.push(finding)
   }
   return groups
 }
@@ -98,10 +103,11 @@ const bestOf = (group: Arr.NonEmptyReadonlyArray<Finding>, file: FileDiff | unde
 
 /**
  * Merge the findings of a review's passes into buckets (`Bucket`), pure. A finding off the pull request's changed
- * lines (`changedLinesOf`, within `CHANGED_SLACK`) is bucketed apart and not kept (`off-changed-lines`); the others
- * are grouped by file, kind and near lines (`NEAR_LINES`), each bucket's votes its distinct passes. With the vote off,
- * every bucket on changed lines is kept; on, one with at least two votes or of kind `security` (`one-vote` otherwise).
- * Buckets are numbered from 1 in file, kind and line order.
+ * lines (`changedLinesOf`, within `CHANGED_SLACK`, its lines counted by `lastOf`) is bucketed apart and not kept
+ * (`off-changed-lines`); the others are grouped by place (`grouped`: one file, near an anchor, one finding a pass,
+ * kinds together), each bucket's votes its findings. With the vote off, every bucket on changed lines is kept; on,
+ * one with at least two votes or with a finding of kind `security` (`one-vote` otherwise). Buckets are numbered from 1
+ * in file and line order.
  */
 export const mergeFindings = (findings: ReadonlyArray<Finding>, files: ReadonlyArray<FileDiff>, options: MergeOptions): ReadonlyArray<Bucket> => {
   const byPath = new Map(files.map((file) => [file.path, file]))
@@ -114,13 +120,14 @@ export const mergeFindings = (findings: ReadonlyArray<Finding>, files: ReadonlyA
   type Entry = { readonly group: Arr.NonEmptyReadonlyArray<Finding>; readonly on: boolean }
   const placed = Arr.sort(groups, Order.combineAll([
     Order.mapInput(Order.String, (entry: Entry) => entry.group[0].path),
-    Order.mapInput(Order.String, (entry: Entry) => entry.group[0].kind),
     Order.mapInput(Order.Number, (entry: Entry) => entry.group[0].line),
+    Order.mapInput(Order.Boolean, (entry: Entry) => !entry.on),
   ]))
   return placed.map(({ group, on }, index): Bucket => {
     const best = bestOf(group, byPath.get(group[0].path))
     const votes = new Set(group.map((finding) => finding.pass)).size
-    const why: BucketWhy = !on ? "off-changed-lines" : !options.vote || votes >= 2 || best.kind === "security" ? "kept" : "one-vote"
+    const security = group.some((finding) => finding.kind === "security")
+    const why: BucketWhy = !on ? "off-changed-lines" : !options.vote || votes >= 2 || security ? "kept" : "one-vote"
     return {
       number: BucketNumber.make(index + 1),
       path: best.path,
