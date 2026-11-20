@@ -181,7 +181,8 @@ const tallies = (report: ReviewReport): ReadonlyArray<string> => {
 /**
  * The report a person reads: the pull request and the commit reviewed; at most `FINDINGS_SHOWN` findings in their
  * order, each with its evidence, how many passes found it and the check's reason, and how many more there are, or
- * `No findings.`; `incomplete: <why>` for each pass that stopped before it answered, else its summary; the passes and
+ * `No findings.`; each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
+ * so an unchecked finding is never read as none; `incomplete: <why>` for each pass that stopped before it answered, else its summary; the passes and
  * how the buckets and checks came out; the files in the pack against those changed and the files the passes opened;
  * each stage's calls, tokens (the cached share) and cost, the total and the wall time.
  */
@@ -189,11 +190,18 @@ export const reportText = (report: ReviewReport): string => {
   const shown = report.reported.slice(0, FINDINGS_SHOWN)
   const more = report.reported.length - shown.length
   const opened = Arr.dedupe(report.passes.flatMap((pass) => pass.opened))
+  const byBucket = new Map(report.buckets.map((bucket) => [bucket.number, bucket]))
+  const unchecked = report.verdicts.flatMap((check) => {
+    const bucket = byBucket.get(check.bucket)
+    return check.outcome === "unchecked" && bucket !== undefined ? [`Not checked (${check.why}): ${shownPath(bucket.path)}:${bucket.line} ${bucket.best.severity} ${bucket.kind} — ${printable(bucket.best.claim)}`] : []
+  })
   return [
     `Review of #${report.number} in ${report.repo} at ${report.at.sha.slice(0, 12)}, ${AT_SOURCE_WORDS[report.at.source]}`,
     "",
     ...(shown.length === 0 ? ["No findings."] : shown.flatMap((finding) => findingLines(finding, report.passes.length))),
     ...(more > 0 ? [`${more} more ${more === 1 ? "finding" : "findings"} not shown.`] : []),
+    ...unchecked.slice(0, FINDINGS_SHOWN),
+    ...(unchecked.length > FINDINGS_SHOWN ? [`${unchecked.length - FINDINGS_SHOWN} more not checked.`] : []),
     "",
     ...report.passes.map((pass, index) => Option.match(incompleteOf(pass.ended), {
       onSome: (why) => `Pass ${index + 1}: incomplete: ${why}`,

@@ -106,7 +106,9 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     })
   })
   const firstAnswered = yield* Deferred.make<void>()
-  const first = yield* Effect.forkChild(find(0, Deferred.succeed(firstAnswered, undefined).pipe(Effect.asVoid)))
+  // Whatever becomes of the first pass (a folder that cannot be made, a defect), the others are let go, and its
+  // failure is the review's when it is joined.
+  const first = yield* Effect.forkChild(find(0, Deferred.succeed(firstAnswered, undefined).pipe(Effect.asVoid)).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, undefined))))
   yield* Deferred.await(firstAnswered)
   const others = yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index), { concurrency: "unbounded" })
   const found = [yield* Fiber.join(first), ...others]

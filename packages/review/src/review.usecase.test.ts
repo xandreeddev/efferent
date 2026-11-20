@@ -1,7 +1,7 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { existsSync, readFileSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Layer, Option, Schema } from "effect"
+import { Effect, Exit, Layer, Option, Schema } from "effect"
 import { modelSpendMemory, SessionId } from "@xandreed/core"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import type { CiRun } from "./forge.entity.js"
@@ -15,6 +15,8 @@ import type { PrepareOptions } from "./prepare-review.entity.js"
 import { prepareReview } from "./prepare-review.usecase.js"
 import { BranchName, CommitSha, PullRequest, RepoName } from "./pull-request.entity.js"
 import { directoryLogs } from "./review-logs.adapter.js"
+import { LogsUnavailable } from "./review-logs.entity.js"
+import { ReviewLogs } from "./review-logs.port.js"
 import type { PassInput } from "./review-pass.port.js"
 import { ReviewPasses } from "./review-pass.port.js"
 import { ReviewReport } from "./review-report.entity.js"
@@ -134,6 +136,18 @@ describe("reviewPullRequest", () => {
   test("a confirmed verdict whose quote is not in the file near the cited lines counts as unsure, and is not reported", async () => {
     const report = await reviewWith(scripted("return total * 2").layer)
     expect<unknown>([report.verdicts.map((check) => [check.outcome, check.quoteHolds, check.why]), report.reported]).toEqual([[["unsure", false, "its quote is not in the file near the cited lines"]], []])
+  })
+
+  test("a first pass that fails before it answers fails the review, and never leaves it waiting", async () => {
+    const failing = Layer.effect(ReviewLogs, Effect.gen(function* () {
+      const logs = yield* ReviewLogs
+      return ReviewLogs.of({ keep: logs.keep, folder: (name) => (name.endsWith("/pass-1") ? Effect.fail(new LogsUnavailable({ name, message: "the disk is full" })) : logs.folder(name)) })
+    }))
+    const exit = await Effect.runPromiseExit(reviewPullRequest(repo, PULL.number, REVIEW_OPTIONS).pipe(
+      Effect.provide(scripted("q").layer.pipe(Layer.provideMerge(Layer.mergeAll(failing.pipe(Layer.provideMerge(layers)), modelSpendMemory)))),
+      Effect.timeout("5 seconds"),
+    ))
+    expect([Exit.isFailure(exit), JSON.stringify(exit).includes("the disk is full")]).toEqual([true, true])
   })
 
   test("with the vote on, a bucket one pass found is left out; with checks off, the kept buckets are reported unchecked", async () => {

@@ -98,6 +98,7 @@ describe("the review's report", () => {
       "    > next",
       "    checked: Reason 7.",
       "1 more finding not shown.",
+      "Not checked (the spend cap refused a model call): g.ts:2 high bug — Claim 10.",
       "",
       "Pass 1: Seven problems.",
       "Pass 2: incomplete: the pass reached its step cap (16); Two more.",
@@ -111,7 +112,7 @@ describe("the review's report", () => {
   })
 
   test("reportText: no findings, and a pass that stopped before it answered says why", () => {
-    const stopped = { ...REPORT, reported: [], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "SpendRefused" as const, message: "the ledger's total cap of 0.1 refused 0.04" } })) }
+    const stopped = { ...REPORT, reported: [], verdicts: [], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "SpendRefused" as const, message: "the ledger's total cap of 0.1 refused 0.04" } })) }
     expect(reportText(stopped).split("\n").slice(0, 5)).toEqual([
       "Review of #7 in owner/project at bbbbbbbbbbbb, its head",
       "",
@@ -131,7 +132,7 @@ describe("the review's report", () => {
 
   test("reportText: the model's claim, evidence, reason and summary are printed plain, escape sequences and control characters stripped", () => {
     const sneaky = finding("src/a.ts", 3, "high", 1, { claim: "Bad\u001b[2J\u001b[31m red\u0007 claim.", evidence: "ok\u001b]8;;http://x\u0007link\u001b]8;;\u0007 line" })
-    const report = { ...REPORT, reported: [{ ...sneaky, bucket: BucketNumber.make(1), votes: 1, checked: "Real\u001b[1A.", restatesCi: false }], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "Answered" as const, summary: "Done\u001b[1A\rover" } })) }
+    const report = { ...REPORT, verdicts: [], reported: [{ ...sneaky, bucket: BucketNumber.make(1), votes: 1, checked: "Real\u001b[1A.", restatesCi: false }], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "Answered" as const, summary: "Done\u001b[1A\rover" } })) }
     expect(reportText(report).split("\n").slice(2, 7)).toEqual([
       "src/a.ts:3 high bug — Bad red claim. (1/1 pass)",
       "    > oklink line",
@@ -139,6 +140,11 @@ describe("the review's report", () => {
       "",
       "Pass 1: Doneover",
     ])
+  })
+
+  test("reportText: a kept bucket no check gave a verdict on is listed, never read as no finding", () => {
+    const none = { ...REPORT, reported: [] }
+    expect(reportText(none).split("\n").slice(2, 4)).toEqual(["No findings.", "Not checked (the spend cap refused a model call): g.ts:2 high bug — Claim 10."])
   })
 
   test("runNameOf: a run named by the UTC time it started, safe in a folder's name", () => {

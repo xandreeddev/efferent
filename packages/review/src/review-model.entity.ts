@@ -44,7 +44,8 @@ export const DEFAULT_REVIEW_MODEL: ReviewModel = {
  * request (about 300 KB) held about $0.093, plus $0.005 for 4,096 tokens of output. Three passes settle about $0.12
  * and hold at most three such requests at once, which a stage's ledger lets wait for each other (`stageSpend`) rather
  * than refuse, so $0.30 never refuses a call that settled spend leaves room for. A check's request is about the pack's
- * size (about $0.05 held) and settles near $0.005 once the pack is cached: $0.20 holds three at once with room.
+ * size (about $0.05 held); measured, a check that gave its verdict settled about $0.010 (#645, two checks in 13
+ * calls), and one that reasoned four calls without one $0.022 (#595): $0.20 holds three at once and checks about ten.
  */
 export const DEFAULT_BUDGET = { total: 0.5, find: 0.3, verify: 0.2 } as const
 
