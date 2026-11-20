@@ -219,7 +219,7 @@ export const SEARCH_TOO_BIG = "The search found more than can be read: narrow it
 /** A git command of a tool's that failed otherwise: fixed words, since git's own may name a host path. */
 export const GIT_FAILED = "git could not read the commit under review for this call: try it again, or go on without it."
 
-/** What `reportFinding` answers: the finding's number in its pass. */
+/** What `reportFinding` answers: the finding's number in its turn. */
 export const recordedText = (number: number): string => `recorded finding ${number}`
 
 /** The most changed files a refusal of `reportFinding`'s path names; the rest are counted. */
@@ -285,5 +285,5 @@ export const judgedText = (kept: boolean): string => (kept ? "recorded your verd
 /** What `reportFinding` answers while a finding is being checked: the check gives a verdict instead. */
 export const NOT_FINDING_NOW = `You are checking a finding, not reporting new ones: call ${VERDICT} with your verdict on it.`
 
-/** What `verdict` answers while a pass is finding: there is no finding to check. */
+/** What `verdict` answers while a finder turn is finding: there is no finding to check. */
 export const NOT_CHECKING_NOW = `There is no finding to check in this review: report each problem with ${REPORT_FINDING}.`

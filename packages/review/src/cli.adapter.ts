@@ -19,11 +19,11 @@ import { DEFAULT_FOCUS, DEFAULT_GROUP_STEPS, Focus, GroupOrder } from "./file-gr
 import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, Effort } from "./review-model.entity.js"
 import { withEffort } from "./review-model.entity.functions.js"
 import type { Finder } from "./review-prompt.entity.js"
-import { DEFAULT_CLOSING_RESERVE, DEFAULT_GROUP_OPTIONS, DEFAULT_PASSES, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
+import { DEFAULT_CLOSING_RESERVE, DEFAULT_GROUP_OPTIONS, DEFAULT_TURNS, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
 import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
-import { kernelPasses } from "./review-pass.adapter.js"
-import { DEFAULT_MAX_STEPS } from "./review-pass.entity.js"
+import { kernelTurns } from "./review-turn.adapter.js"
+import { DEFAULT_MAX_STEPS } from "./review-turn.entity.js"
 import { ReviewReport } from "./review-report.entity.js"
 import { reportText } from "./review-report.entity.functions.js"
 import { reviewPullRequest } from "./review.usecase.js"
@@ -58,9 +58,9 @@ export const validationLayers = (repo: RepoName, roots: { readonly cache: string
   )
 
 /** The flags that take a value; `--workflow` may be given more than once, the others once. */
-const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--run", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
+const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--turns", "--finder", "--model", "--price", "--run", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
 const REPEATED = ["--workflow", "--run"]
-const SWITCHES = ["--json", "--validate", "--vote", "--no-verify", "--config-pass"]
+const SWITCHES = ["--json", "--validate", "--vote", "--no-verify", "--config-turn"]
 
 /** A parsed command line: the positional words, each valued flag's values in order, and the switches given. */
 interface Line {
@@ -116,10 +116,10 @@ const wholeNumber = (text: string, what: string) => {
 }
 
 /** The flags only `review` reads. */
-const REVIEW_ONLY = ["--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
+const REVIEW_ONLY = ["--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--turns", "--finder", "--model", "--price", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
 
 /** The switches only `review` reads. */
-const REVIEW_SWITCHES = ["--vote", "--no-verify", "--config-pass"]
+const REVIEW_SWITCHES = ["--vote", "--no-verify", "--config-turn"]
 
 /** `--finder`: `strict` or `candidates`. */
 const finderOf = (text: string): Effect.Effect<Finder, UsageError> =>
@@ -154,16 +154,16 @@ const COMMANDS = ["prepare", "review"]
 /**
  * The command line. `prepare <number> --repo <owner/name>` reads the pull request, prepares it (`prepareReview`) and
  * prints a short summary, or the whole prepared review as JSON with `--json`. `review <number> --repo <owner/name>`
- * prepares it and reviews it (`reviewPullRequest`): with `--focus groups` (`DEFAULT_FOCUS`) one pass a group of changed
- * source and test files, each capped at `--group-steps` (`DEFAULT_GROUP_STEPS`), `--config-pass` adding a group of the
- * other files but pages and docs; with `--focus whole` `--passes` passes (`DEFAULT_PASSES`) over the whole pull request,
+ * prepares it and reviews it (`reviewPullRequest`): with `--focus groups` (`DEFAULT_FOCUS`) one turn a group of changed
+ * source and test files, each capped at `--group-steps` (`DEFAULT_GROUP_STEPS`), `--config-turn` adding a group of the
+ * other files but pages and docs; with `--focus whole` `--turns` turns (`DEFAULT_TURNS`) over the whole pull request,
  * each capped at `--max-steps` (`DEFAULT_MAX_STEPS`); either finding as `--finder` says (`candidates` by default, or
- * `strict`), the passes' and the checks' model asked at `--effort-find` and `--effort-check` (`default`: nothing
+ * `strict`), the finder turns' and the checks' model asked at `--effort-find` and `--effort-check` (`default`: nothing
  * sent; `none`, `low`, `medium`, `high`, `withEffort`); the findings merged, the
  * vote filtering them only with `--vote`; each kept bucket checked unless `--no-verify`, each check capped at
  * `--verify-steps` (`DEFAULT_VERIFY_STEPS`). The model is `DEFAULT_REVIEW_MODEL`, its key read from the environment
  * variable it names (another id of its endpoint with `--model` and its `--price`), every call charged to one ledger
- * capped at `--max-cost` (`DEFAULT_MAX_COST`), the passes within `--find-cost` and the checks within `--verify-cost`
+ * capped at `--max-cost` (`DEFAULT_MAX_COST`), the finder turns within `--find-cost` and the checks within `--verify-cost`
  * (`DEFAULT_BUDGET`'s, at most the total); it prints the report, or the report as JSON with `--json`. `--at` reviews
  * the head (the default), the first head (`first`) or a commit by its sha. Clones and worktrees go under `--cache`
  * (`~/.efferent-review` by default; never inside a repository); logs and each review's records under `--records`
@@ -206,14 +206,14 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const verifyCost = yield* Option.match(one(line, "--verify-cost"), { onNone: () => Effect.succeed(Math.min(DEFAULT_BUDGET.verify, maxCost)), onSome: costOf("--verify-cost") })
   const maxSteps = yield* Option.match(one(line, "--max-steps"), { onNone: () => Effect.succeed(DEFAULT_MAX_STEPS), onSome: (text) => wholeNumber(text, "--max-steps") })
   const verifySteps = yield* Option.match(one(line, "--verify-steps"), { onNone: () => Effect.succeed(DEFAULT_VERIFY_STEPS), onSome: (text) => wholeNumber(text, "--verify-steps") })
-  const passes = yield* Option.match(one(line, "--passes"), { onNone: () => Effect.succeed(DEFAULT_PASSES), onSome: (text) => wholeNumber(text, "--passes") })
+  const turns = yield* Option.match(one(line, "--turns"), { onNone: () => Effect.succeed(DEFAULT_TURNS), onSome: (text) => wholeNumber(text, "--turns") })
   const finder = yield* Option.match(one(line, "--finder"), { onNone: () => Effect.succeed<Finder>("candidates"), onSome: finderOf })
   const focus = yield* Option.match(one(line, "--focus"), { onNone: () => Effect.succeed<Focus>(DEFAULT_FOCUS), onSome: oneOf("--focus", Focus.literals) })
   // A flag of the other focus would do nothing: refused, never ignored.
-  // `--vote` too: in a focused review a group is one pass's, so a second vote would come from a pass that wandered into its files, not from agreement.
+  // `--vote` too: in a focused review a group is one turn's, so a second vote would come from a turn that wandered into its files, not from agreement.
   const otherFocus = focus === "groups"
-    ? [...["--passes", "--max-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--vote"].filter((flag) => line.switches.has(flag))][0]
-    : [...["--group-steps", "--group-order"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-pass"].filter((flag) => line.switches.has(flag))][0]
+    ? [...["--turns", "--max-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--vote"].filter((flag) => line.switches.has(flag))][0]
+    : [...["--group-steps", "--group-order"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-turn"].filter((flag) => line.switches.has(flag))][0]
   if (otherFocus !== undefined) return yield* Effect.fail(usage(`${otherFocus} is a flag of --focus ${focus === "groups" ? "whole" : "groups"}, not of --focus ${focus}`))
   // A stage's cap above the total would promise what the total refuses: refused, never clamped.
   const overTotal = ([["--find-cost", findCost], ["--verify-cost", verifyCost]] as const).find(([, cost]) => cost > maxCost)
@@ -228,16 +228,16 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   )
   const base = asked ? validationLayers(repo, roots, host) : reviewLayers(repo, roots, host)
   const needs = Layer.mergeAll(base, findingsInMemory, modelSpendMemory)
-  const layers = kernelPasses({
+  const layers = kernelTurns({
     model: reviewModel(withEffort(model, effortFind), apiKey, maxCost),
     verifyModel: reviewModel(withEffort(model, effortCheck), apiKey, maxCost),
   }).pipe(Layer.provideMerge(needs))
   const report = yield* reviewPullRequest(repo, number, {
     prepare: options,
     focus,
-    passes,
-    pass: { maxSteps, reserve: DEFAULT_CLOSING_RESERVE },
-    groups: { ...DEFAULT_GROUP_OPTIONS, steps: groupSteps, order: groupOrder, config: line.switches.has("--config-pass") },
+    turns,
+    turn: { maxSteps, reserve: DEFAULT_CLOSING_RESERVE },
+    groups: { ...DEFAULT_GROUP_OPTIONS, steps: groupSteps, order: groupOrder, config: line.switches.has("--config-turn") },
     effort: { find: effortFind, check: effortCheck },
     finder,
     vote: line.switches.has("--vote"),

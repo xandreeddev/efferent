@@ -15,7 +15,7 @@ const inside = (root: string, name: string) => {
 
 /**
  * Logs in a folder of the disk: each under its name in `root`, which must be absolute; a folder made under its name
- * for a part that keeps files of its own (a pass's journal); a fresh folder made only when none is there (`fresh`, a
+ * for a part that keeps files of its own (a turn's journal); a fresh folder made only when none is there (`fresh`, a
  * run's own). A log is written whole or not at all: to a temporary file beside it, then renamed over it, so a reader
  * never finds half a record. A name that is absolute or leads out of the folder is refused.
  */

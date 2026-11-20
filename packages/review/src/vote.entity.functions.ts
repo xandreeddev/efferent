@@ -77,21 +77,21 @@ const lastOf = (finding: Finding): number => Math.min(Math.max(finding.line, fin
 const BY_PLACE: Order.Order<Finding> = Order.combineAll([
   Order.mapInput(Order.String, (finding: Finding) => finding.path),
   Order.mapInput(Order.Number, (finding: Finding) => finding.line),
-  Order.mapInput(Order.Number, (finding: Finding) => finding.pass),
+  Order.mapInput(Order.Number, (finding: Finding) => finding.turn),
   Order.mapInput(Order.Number, (finding: Finding) => finding.number),
 ])
 
 /**
  * Findings in place order, grouped around anchors: a finding joins the first group of its file whose anchor (its
  * first finding, its lines counted by `lastOf`) it starts within `NEAR_LINES` of and that holds no finding of its
- * pass; else it anchors a group of its own. An anchor never moves, so groups do not chain, and kinds do not split them.
+ * turn; else it anchors a group of its own. An anchor never moves, so groups do not chain, and kinds do not split them.
  */
 const grouped = (findings: ReadonlyArray<Finding>): ReadonlyArray<Arr.NonEmptyReadonlyArray<Finding>> => {
   const groups: Array<Arr.NonEmptyArray<Finding>> = []
   for (const finding of Arr.sort(findings, BY_PLACE)) {
     const joins = groups.find((group) => group[0].path === finding.path
       && finding.line >= group[0].line - NEAR_LINES && finding.line <= lastOf(group[0]) + NEAR_LINES
-      && !group.some((member) => member.pass === finding.pass))
+      && !group.some((member) => member.turn === finding.turn))
     if (joins === undefined) groups.push([finding])
     else joins.push(finding)
   }
@@ -99,13 +99,13 @@ const grouped = (findings: ReadonlyArray<Finding>): ReadonlyArray<Arr.NonEmptyRe
 }
 
 /**
- * The finding whose words stand for a group, the one its check is shown: the most severe (two passes may name two
+ * The finding whose words stand for a group, the one its check is shown: the most severe (two turns may name two
  * mechanisms on the same lines, and the check should try the more harmful: on #644 a medium finding of the gold leak
  * shared a bucket with a low one of another reading, and only the low one, chosen for its longer evidence, was
  * checked); among those, one whose evidence its file's diff holds, the longest; else the first found.
  */
 const bestOf = (group: Arr.NonEmptyReadonlyArray<Finding>, file: FileDiff | undefined): Finding => {
-  const first = Arr.sort(group, Order.combine(Order.mapInput(Order.Number, (finding: Finding) => finding.pass), Order.mapInput(Order.Number, (finding: Finding) => finding.number)))
+  const first = Arr.sort(group, Order.combine(Order.mapInput(Order.Number, (finding: Finding) => finding.turn), Order.mapInput(Order.Number, (finding: Finding) => finding.number)))
   const rank = Math.min(...first.map((finding) => SEVERITY_RANK[finding.severity]))
   const severest = Arr.filter(first, (finding) => SEVERITY_RANK[finding.severity] === rank)
   const matching = severest.filter((finding) => evidenceMatches(finding.evidence, file))
@@ -113,9 +113,9 @@ const bestOf = (group: Arr.NonEmptyReadonlyArray<Finding>, file: FileDiff | unde
 }
 
 /**
- * Merge the findings of a review's passes into buckets (`Bucket`), pure. A finding off the pull request's changed
+ * Merge the findings of a review's turns into buckets (`Bucket`), pure. A finding off the pull request's changed
  * lines (`changedLinesOf`, within `CHANGED_SLACK`, its lines counted by `lastOf`) is bucketed apart and not kept
- * (`off-changed-lines`); the others are grouped by place (`grouped`: one file, near an anchor, one finding a pass,
+ * (`off-changed-lines`); the others are grouped by place (`grouped`: one file, near an anchor, one finding a turn,
  * kinds together), each bucket's votes its findings. With the vote off, every bucket on changed lines is kept; on,
  * one with at least two votes or with a finding of kind `security` (`one-vote` otherwise). Buckets are numbered from 1
  * in file and line order.
@@ -136,7 +136,7 @@ export const mergeFindings = (findings: ReadonlyArray<Finding>, files: ReadonlyA
   ]))
   return placed.map(({ group, on }, index): Bucket => {
     const best = bestOf(group, byPath.get(group[0].path))
-    const votes = new Set(group.map((finding) => finding.pass)).size
+    const votes = new Set(group.map((finding) => finding.turn)).size
     const security = group.some((finding) => finding.kind === "security")
     const why: BucketWhy = !on ? "off-changed-lines" : !options.vote || votes >= 2 || security ? "kept" : "one-vote"
     return {
@@ -145,7 +145,7 @@ export const mergeFindings = (findings: ReadonlyArray<Finding>, files: ReadonlyA
       kind: best.kind,
       line: Math.min(...group.map((finding) => finding.line)),
       endLine: Math.max(...group.map(lastOf)),
-      members: group.map((finding) => ({ pass: finding.pass, number: finding.number })),
+      members: group.map((finding) => ({ turn: finding.turn, number: finding.number })),
       votes,
       best,
       kept: why === "kept",
@@ -162,17 +162,17 @@ export const CHECK_ORDER: Order.Order<Bucket> = Order.combineAll([
   Order.mapInput(Order.Number, (bucket: Bucket) => bucket.line),
 ])
 
-/** A bucket's findings in the order they are checked: its best first, then the more severe, then in pass and number order. */
+/** A bucket's findings in the order they are checked: its best first, then the more severe, then in turn and number order. */
 const claimsOf = (bucket: Bucket, byMember: ReadonlyMap<string, Finding>): ReadonlyArray<Finding> => {
-  const isBest = (finding: Finding) => finding.pass === bucket.best.pass && finding.number === bucket.best.number
+  const isBest = (finding: Finding) => finding.turn === bucket.best.turn && finding.number === bucket.best.number
   const members = bucket.members.flatMap((member) => {
-    const finding = byMember.get(`${member.pass}/${member.number}`)
+    const finding = byMember.get(`${member.turn}/${member.number}`)
     return finding === undefined ? [] : [finding]
   })
   return Arr.sort(members, Order.combineAll([
     Order.mapInput(Order.Boolean, (finding: Finding) => !isBest(finding)),
     Order.mapInput(Order.Number, (finding: Finding) => SEVERITY_RANK[finding.severity]),
-    Order.mapInput(Order.Number, (finding: Finding) => finding.pass),
+    Order.mapInput(Order.Number, (finding: Finding) => finding.turn),
     Order.mapInput(Order.Number, (finding: Finding) => finding.number),
   ]))
 }
@@ -184,7 +184,7 @@ const claimsOf = (bucket: Bucket, byMember: ReadonlyMap<string, Finding>): Reado
  * second. The review runs a later round's check only for a bucket no check has confirmed yet.
  */
 export const checkRounds = (buckets: ReadonlyArray<Bucket>, findings: ReadonlyArray<Finding>, perBucket: number): ReadonlyArray<ReadonlyArray<CheckTarget>> => {
-  const byMember = new Map(findings.map((finding) => [`${finding.pass}/${finding.number}`, finding]))
+  const byMember = new Map(findings.map((finding) => [`${finding.turn}/${finding.number}`, finding]))
   const kept = Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER).map((bucket) => ({ bucket, claims: claimsOf(bucket, byMember).slice(0, perBucket) }))
   const rounds: Array<ReadonlyArray<CheckTarget>> = []
   for (let round = 0; kept.some(({ claims }) => claims.length > round); round++) {

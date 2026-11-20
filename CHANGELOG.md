@@ -195,6 +195,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `review-prompt-9`): on #657 the check refuted the unsandboxed commands
   twice by citing a rule the pull request had added to its own `AGENTS.md`;
   told so, it confirmed once in two.
+- `efferent-review` says turn for what it called a pass, the kernel's word:
+  a review is made of turns (one finder turn a group, or each turn over the
+  whole pull request, and one check turn a finding checked), each made of
+  steps. The flags are `--turns` and `--config-turn` (`--passes` and
+  `--config-pass` are gone), each finder turn's journal is kept in
+  `turn-N/`, `review.json` names its fields `turns`, `turnsAsked` and
+  `turn`, the report says `Turn 1: …` and `(V/K turns)`, and the port is
+  `ReviewTurns` (`kernelTurns`, `TurnInput`, `TurnResult`, `TurnEnded`).
+  The text the model reads is unchanged (`REVIEW_PROMPT` `review-prompt-9`,
+  `REVIEW_TOOLS_VERSION` `review-tools-5`).
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

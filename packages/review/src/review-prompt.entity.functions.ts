@@ -77,7 +77,7 @@ export const ciText = (prepared: PreparedReview): string =>
       : clipTo(prepared.failing.map(failingText).join("\n\n"), CI_SHOWN)
 
 /**
- * The prompt's prefix, a pure function of the prepared review and the same for every pass and check of it: the system
+ * The prompt's prefix, a pure function of the prepared review and the same for every turn of it, finder's or check's: the system
  * text (`REVIEW_SYSTEM`), then one user message: the instruction files (`repo-rules`), the title and description
  * (`pull-request`, clipped), the packed diff with its left-out lines (`pull-request-diff`) and the CI's digest
  * (`ci-digest`), each framed, after the words that say what it is.
@@ -122,7 +122,7 @@ export const filesText = (prepared: PreparedReview, shown: number = FILES_SHOWN)
 }
 
 /**
- * A focused pass's prefix (`groups` focus), shared byte for byte by the checks of its group's findings: the system text;
+ * A focused turn's prefix (`groups` focus), shared byte for byte by the checks of its group's findings: the system text;
  * one user message with the rules, the title and description, every changed file (`filesText`, framed
  * `pull-request-files`, in place of the packed diff, so this message is the same for every group) and the CI's digest;
  * then the group's message, `GROUP_INTRO` and the group's diffs packed under `budgetTokens` (`packDiff`; a file with no
@@ -133,11 +133,11 @@ export const focusPrefix = (prepared: PreparedReview, group: ReadonlyArray<FileD
   { role: "user", content: `${GROUP_INTRO}\n\n${framed("files-under-review", packDiff(group, budgetTokens).text)}` },
 ]
 
-/** A focused pass's prompt: its group's prefix (`focusPrefix`) and its finder's focused words (`FOCUS_TAIL`), with no walk: its files are the group's. */
+/** A focused turn's prompt: its group's prefix (`focusPrefix`) and its finder's focused words (`FOCUS_TAIL`), with no walk: its files are the group's. */
 export const focusPrompt = (prefix: ReadonlyArray<PromptPart>, finder: Finder): ReviewPrompt => ({ prefix, tail: FOCUS_TAIL[finder] })
 
 /**
- * A pass's prompt: the prefix (`reviewPrefix`) and the tail, what the pass is asked (`FIND_TAIL` of its finder), then
+ * A finder turn's prompt: the prefix (`reviewPrefix`) and the tail, what the turn is asked (`FIND_TAIL` of its finder), then
  * `TAIL_ORDER` and the files framed (`changed-files`), one a line, each marked shown (`IN_THE_DIFF`) or left out
  * (`LEFT_OUT`) before its path, as `shownPath` shows it.
  */
@@ -148,8 +148,8 @@ export const reviewPrompt = (prepared: PreparedReview, options: FindTailOptions)
 }
 
 /**
- * A check's prompt: the same prefix as the passes', and the tail `VERIFY_TAIL`, then the finding framed
- * (`reported-problem`): its file, lines, kind, severity, claim and evidence, the model's words of another pass.
+ * A check's prompt: the same prefix as the finder turns', and the tail `VERIFY_TAIL`, then the finding framed
+ * (`reported-problem`): its file, lines, kind, severity, claim and evidence, the model's words of another turn.
  */
 export const verifyPrompt = (prefix: ReadonlyArray<PromptPart>, finding: Finding): ReviewPrompt => {
   const lines = finding.endLine !== undefined && finding.endLine > finding.line ? `${finding.line} to ${finding.endLine}` : `${finding.line}`
@@ -165,10 +165,10 @@ export const verifyPrompt = (prefix: ReadonlyArray<PromptPart>, finding: Finding
   return { prefix, tail: `${VERIFY_TAIL}\n\n${framed("reported-problem", problem)}` }
 }
 
-/** The host's note after a pass's or a check's last allowed step: `STEP_CAP_NOTE` of its stage, as a host note. */
+/** The host's note after a finder turn's or a check's last allowed step: `STEP_CAP_NOTE` of its stage, as a host note. */
 export const stepCapNote = (stage: ReviewStage): string => hostNote(STEP_CAP_NOTE[stage._tag])
 
-/** The host's note after a pass answers in words, as a host note: report what was weighed and not reported (`HARVEST_NOTE`). */
+/** The host's note after a finder turn answers in words, as a host note: report what was weighed and not reported (`HARVEST_NOTE`). */
 export const harvestNote = (): string => hostNote(HARVEST_NOTE)
 
 /** The group a changed file is walked in: code first, then tests, then manifests and config, then docs. */
@@ -178,18 +178,18 @@ const walkGroupOf = (path: string): number => {
   return kind === "docs" ? 3 : 2
 }
 
-/** A group dealt to `passes` passes from pass `pass`'s seat: its share (every `passes`-th item from `pass`), then the next pass's share, and so on around. */
-const dealt = <A>(items: ReadonlyArray<A>, pass: number, passes: number): ReadonlyArray<A> =>
-  Arr.range(0, passes - 1).flatMap((seat) => items.filter((_, index) => index % passes === (pass + seat) % passes))
+/** A group dealt to `turns` turns from turn `turn`'s seat: its share (every `turns`-th item from `turn`), then the next turn's share, and so on around. */
+const dealt = <A>(items: ReadonlyArray<A>, turn: number, turns: number): ReadonlyArray<A> =>
+  Arr.range(0, turns - 1).flatMap((seat) => items.filter((_, index) => index % turns === (turn + seat) % turns))
 
 /**
- * The order each of `passes` passes walks the changed files in: the files the model reads (those the packed diff
+ * The order each of `turns` finder turns walks the changed files in: the files the model reads (those the packed diff
  * shows and those it left out for the budget alone), grouped code, tests, manifests and config, docs, each group
- * largest first, then by path; each group dealt out like cards (`dealt`), so pass `p` (from 0) walks every
- * `passes`-th file from the `p`-th first, then the others' shares: the passes begin in different files of every size
+ * largest first, then by path; each group dealt out like cards (`dealt`), so turn `t` (from 0) walks every
+ * `turns`-th file from the `t`-th first, then the others' shares: the turns begin in different files of every size
  * and together cover the pull request before any walks a file another started with.
  */
-export const walkOrders = (prepared: PreparedReview, passes: number): ReadonlyArray<ReadonlyArray<WalkedFile>> => {
+export const walkOrders = (prepared: PreparedReview, turns: number): ReadonlyArray<ReadonlyArray<WalkedFile>> => {
   const shown = new Set(prepared.diff.kept)
   const overBudget = new Set(prepared.diff.dropped.filter((file) => file.reason === "over-budget").map((file) => file.path))
   const walked = prepared.files.filter((file) => shown.has(file.path) || overBudget.has(file.path))
@@ -199,7 +199,7 @@ export const walkOrders = (prepared: PreparedReview, passes: number): ReadonlyAr
     Order.mapInput(Order.String, (file: FileDiff) => file.path),
   ])
   const groups = [0, 1, 2, 3].map((group) => Arr.sort(walked, order).filter((file) => walkGroupOf(file.path) === group))
-  const count = Math.max(1, passes)
-  return Arr.range(0, count - 1).map((pass) =>
-    groups.flatMap((group) => dealt(group, pass, count)).map((file) => ({ path: file.path, inDiff: shown.has(file.path) })))
+  const count = Math.max(1, turns)
+  return Arr.range(0, count - 1).map((turn) =>
+    groups.flatMap((group) => dealt(group, turn, count)).map((file) => ({ path: file.path, inDiff: shown.has(file.path) })))
 }

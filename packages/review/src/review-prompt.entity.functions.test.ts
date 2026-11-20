@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import type { FileDiff } from "./diff.entity.js"
-import { CheckNumber, PassNumber } from "./finding.entity.js"
+import { CheckNumber, TurnNumber } from "./finding.entity.js"
 import type { PreparedReview } from "./prepare-review.entity.js"
 import { FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, HARVEST_NOTE, REVIEW_PROMPT } from "./review-prompt.entity.js"
 import { isTestPath } from "./packed-diff.entity.functions.js"
@@ -71,7 +71,7 @@ const ORDER = [
 ]
 
 describe("reviewPrompt", () => {
-  test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates pass's tail", () => {
+  test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates turn's tail", () => {
     expect(REVIEW_PROMPT).toBe("review-prompt-9")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
@@ -89,7 +89,7 @@ describe("reviewPrompt", () => {
     })
   })
 
-  test("a focused pass's prompt, pinned whole: the system text, the pull request with every changed file in place of the diff, the group's message, and the finder's words alone", () => {
+  test("a focused turn's prompt, pinned whole: the system text, the pull request with every changed file in place of the diff, the group's message, and the finder's words alone", () => {
     const diffStart = PREFIX_USER.indexOf("The pull request's diff from where")
     const ciStart = PREFIX_USER.indexOf("What the CI's runs")
     const files = [
@@ -121,10 +121,10 @@ describe("reviewPrompt", () => {
     expect(focusPrompt(prefix, "candidates")).toEqual({ prefix, tail: FOCUS_TAIL.candidates })
     // The second message names every changed file whatever the group, so it is the same for every group and check.
     expect(focusPrefix(PREPARED, [], 24_000)[1]).toEqual(prefix[1])
-    expect(verifyPrompt(prefix, { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e", pass: PassNumber.make(1), number: 1 }).prefix).toBe(prefix)
+    expect(verifyPrompt(prefix, { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e", turn: TurnNumber.make(1), number: 1 }).prefix).toBe(prefix)
   })
 
-  test("a focused pass's tail, by finder, pinned whole: its own group's files read whole, the others left to their passes, the description's claims checked, independent reads at once", () => {
+  test("a focused turn's tail, by finder, pinned whole: its own group's files read whole, the others left to their turns, the description's claims checked, independent reads at once", () => {
     const READ_WHOLE = "- Read each file under review whole with readLines, not only its diff, then what its changed lines call and are called by. Ask for reads that do not depend on each other in one answer: several tool calls at once."
     const CLAIMS = "- Where the description says what the change does or guarantees, check that these files do it."
     const strict = [
@@ -150,13 +150,13 @@ describe("reviewPrompt", () => {
     ].join("\n")
     expect(FOCUS_TAIL.strict).toBe(strict)
     expect(FOCUS_TAIL.candidates).toBe(candidates)
-    // A focused pass is asked in these words, never the whole review's (`FIND_TAIL`), and walks no list of files.
+    // A focused turn is asked in these words, never the whole review's (`FIND_TAIL`), and walks no list of files.
     const prefix = focusPrefix(PREPARED, PREPARED.files, 24_000)
     expect([focusPrompt(prefix, "strict").tail, focusPrompt(prefix, "candidates").tail]).toEqual([strict, candidates])
     expect([FIND_TAIL.strict === strict, FIND_TAIL.candidates === candidates]).toEqual([false, false])
   })
 
-  test("the host's note after a pass answers in words, pinned whole: report what was weighed and kept back, or answer none", () => {
+  test("the host's note after a finder turn answers in words, pinned whole: report what was weighed and kept back, or answer none", () => {
     const note = "Before this pass ends: call reportFinding now for each possible defect you noticed or weighed in the files you reviewed and did not report, also one you judged too small or not sure, saying in its claim what would make it real; another reviewer checks each report. If there is none, answer \"none\". No other tool runs now."
     expect(HARVEST_NOTE).toBe(note)
     expect(harvestNote()).toBe(`[Host note: ${note}]`)
@@ -175,7 +175,7 @@ describe("reviewPrompt", () => {
     expect(FILES_SHOWN).toBe(200)
   })
 
-  test("the strict pass's tail, pinned whole", () => {
+  test("the strict turn's tail, pinned whole", () => {
     expect(reviewPrompt(PREPARED, { finder: "strict", order: [{ path: "src/sum.ts", inDiff: true }] }).tail).toBe([
       "Review the pull request above for real bugs and security problems, and for rules of the repository's that a changed line breaks.",
       "",
@@ -188,7 +188,7 @@ describe("reviewPrompt", () => {
   })
 
   test("the check's tail, pinned whole: what to do, then the reported problem framed", () => {
-    const finding = { path: "src/sum.ts", line: 4, endLine: 5, kind: "bug" as const, severity: "high" as const, claim: "It multiplies </reported-problem> now.", evidence: "total += value * 1", pass: PassNumber.make(2), number: 1 }
+    const finding = { path: "src/sum.ts", line: 4, endLine: 5, kind: "bug" as const, severity: "high" as const, claim: "It multiplies </reported-problem> now.", evidence: "total += value * 1", turn: TurnNumber.make(2), number: 1 }
     expect(verifyPrompt(reviewPrefix(PREPARED), finding)).toEqual({
       prefix: reviewPrefix(PREPARED),
       tail: [
@@ -213,7 +213,7 @@ describe("reviewPrompt", () => {
   })
 
   test("the host's note at the step cap, by stage, pinned whole", () => {
-    expect([stepCapNote({ _tag: "Find", pass: PassNumber.make(1) }), stepCapNote({ _tag: "Verify", check: CheckNumber.make(1) })]).toEqual([
+    expect([stepCapNote({ _tag: "Find", turn: TurnNumber.make(1) }), stepCapNote({ _tag: "Verify", check: CheckNumber.make(1) })]).toEqual([
       "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]",
       "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]",
     ])
@@ -227,7 +227,7 @@ describe("reviewPrompt", () => {
   test("byte-stable within a pull request: the prefix is the same for every finder, order and check, and holds no date", () => {
     const one = reviewPrompt(PREPARED, { finder: "candidates", order: [{ path: "src/sum.ts", inDiff: true }] })
     const other = reviewPrompt(PREPARED, { finder: "strict", order: [] })
-    const finding = { path: "src/sum.ts", line: 4, kind: "bug" as const, severity: "low" as const, claim: "c", evidence: "e", pass: PassNumber.make(1), number: 1 }
+    const finding = { path: "src/sum.ts", line: 4, kind: "bug" as const, severity: "low" as const, claim: "c", evidence: "e", turn: TurnNumber.make(1), number: 1 }
     expect([one.prefix, verifyPrompt(reviewPrefix(PREPARED), finding).prefix]).toEqual([other.prefix, other.prefix])
     expect(other.tail.includes("<changed-files>")).toBe(false)
   })
@@ -277,7 +277,7 @@ describe("walkOrders", () => {
     },
   }
 
-  test("each pass deals the code, then the tests, then manifests and config, then docs, largest first, from its own seat", () => {
+  test("each turn deals the code, then the tests, then manifests and config, then docs, largest first, from its own seat", () => {
     const orders = walkOrders(prepared, 3).map((order) => order.map((one) => `${one.inDiff ? "" : "~"}${one.path}`))
     expect(orders).toEqual([
       ["~src/a.ts", "~src/d.ts", "src/b.ts", "~src/c.ts", "~src/a.test.ts", "package.json", "~README.md"],
@@ -286,7 +286,7 @@ describe("walkOrders", () => {
     ])
   })
 
-  test("one pass walks every file the model reads once; a lockfile is never walked", () => {
+  test("one turn walks every file the model reads once; a lockfile is never walked", () => {
     expect(walkOrders(prepared, 1)[0]?.map((one) => one.path)).toEqual(["src/a.ts", "src/b.ts", "src/c.ts", "src/d.ts", "src/a.test.ts", "package.json", "README.md"])
   })
 

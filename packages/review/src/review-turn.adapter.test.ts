@@ -10,7 +10,7 @@ import { gitCheckout } from "./checkout-git.adapter.js"
 import { Checkout } from "./checkout.port.js"
 import type { FileDiff } from "./diff.entity.js"
 import { parseUnifiedDiff } from "./diff.entity.functions.js"
-import { CheckNumber, PassNumber } from "./finding.entity.js"
+import { CheckNumber, TurnNumber } from "./finding.entity.js"
 import { findingsInMemory } from "./findings.adapter.js"
 import { Findings } from "./findings.port.js"
 import { gitFixture } from "./git-fixture.testing.js"
@@ -22,10 +22,10 @@ import { reviewModel } from "./review-model.adapter.js"
 import { withEffort } from "./review-model.entity.functions.js"
 import { REQUEST_SLACK_BYTES } from "./file-group.entity.js"
 import { firstCallBytes } from "./file-group.entity.functions.js"
-import { kernelPasses } from "./review-pass.adapter.js"
-import type { KernelPassesOptions } from "./review-pass.adapter.js"
-import { PassJournalFailed } from "./review-pass.entity.js"
-import { ReviewPasses } from "./review-pass.port.js"
+import { kernelTurns } from "./review-turn.adapter.js"
+import type { KernelTurnsOptions } from "./review-turn.adapter.js"
+import { TurnJournalFailed } from "./review-turn.entity.js"
+import { ReviewTurns } from "./review-turn.port.js"
 import type { ReviewStage } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
 import type { StageLedger } from "./stage-spend.port.js"
@@ -97,14 +97,14 @@ const endpoint = (script: ReadonlyArray<string | { readonly status: number; read
 
 const PROMPT = { prefix: [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "The pull request." }], tail: "Review it." }
 
-interface PassOptionsForTest {
+interface TurnOptionsForTest {
   readonly maxSteps?: number
   readonly maxCost?: number
   readonly price?: ReviewModel["price"]
-  readonly passes?: Omit<KernelPassesOptions, "model">
+  readonly turns?: Omit<KernelTurnsOptions, "model">
   readonly stage?: ReviewStage
   readonly reserve?: number
-  /** Whether the input carries `onFirstAnswer`, as the first pass's does (the default). */
+  /** Whether the input carries `onFirstAnswer`, as the first turn's does (the default). */
   readonly waitedOn?: boolean
   /** The prompt, `PROMPT` by default. */
   readonly prompt?: { readonly prefix: ReadonlyArray<{ readonly role: "system" | "user"; readonly content: string }>; readonly tail: string }
@@ -112,22 +112,22 @@ interface PassOptionsForTest {
   readonly retryFirstCall?: boolean
 }
 
-const testModel = (options: PassOptionsForTest) =>
+const testModel = (options: TurnOptionsForTest) =>
   reviewModel({ ...DEFAULT_REVIEW_MODEL, model: "m", price: options.price ?? DEFAULT_REVIEW_MODEL.price }, Redacted.make("test-key"), options.maxCost ?? 0.05)
 
-/** One pass over the fixture's head with the scripted endpoint: its result, the findings, the ledger's settled total and the requests. */
-const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptionsForTest = {}) => {
+/** One turn over the fixture's head with the scripted endpoint: its result, the findings, the ledger's settled total and the requests. */
+const turn = async (script: Parameters<typeof endpoint>[0], options: TurnOptionsForTest = {}) => {
   const { fetch, kept } = endpoint(script)
-  const journalAt = join(mkdtempSync(join(fixture.root, "review-")), "pass-1")
+  const journalAt = join(mkdtempSync(join(fixture.root, "review-")), "turn-1")
   const needs = Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)
-  const layers = kernelPasses({ model: testModel(options), ...options.passes }).pipe(Layer.provideMerge(needs))
-  const stage = options.stage ?? { _tag: "Find", pass: PassNumber.make(1) }
+  const layers = kernelTurns({ model: testModel(options), ...options.turns }).pipe(Layer.provideMerge(needs))
+  const stage = options.stage ?? { _tag: "Find", turn: TurnNumber.make(1) }
   /** Each first-answer signal, with how many requests had been sent when it came. */
   const signals: Array<readonly [boolean, number]> = []
   const ran = await Effect.runPromise(Effect.gen(function* () {
     const root = yield* ModelSpend
     const spend = yield* stageSpend(root, Option.none())
-    const result = yield* (yield* ReviewPasses).run({
+    const result = yield* (yield* ReviewTurns).run({
       prompt: options.prompt ?? PROMPT,
       reviewed: { run: "run-1", repo, at: head, files, stage },
       journalAt,
@@ -148,32 +148,32 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
 
 const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "Multiplying by one changes nothing.", evidence: "total += value * 1" }
 
-describe("a focused pass and its check on the wire", () => {
+describe("a focused turn and its check on the wire", () => {
   const group = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "The pull request and every changed file." }, { role: "user" as const, content: "The files under review here: src/sum.ts." }]
 
-  test("a check's request starts with its pass's first three messages, byte for byte; only the tail after them differs", async () => {
-    const found = await pass([asks(["reportFinding", FINDING]), says("One.")], { prompt: { prefix: group, tail: "Find." } })
-    const checked = await pass([asks(["verdict", { outcome: "confirmed", reason: "r", quote: "total += value * 1" }])], { prompt: { prefix: group, tail: "Check." }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+  test("a check's request starts with its turn's first three messages, byte for byte; only the tail after them differs", async () => {
+    const found = await turn([asks(["reportFinding", FINDING]), says("One.")], { prompt: { prefix: group, tail: "Find." } })
+    const checked = await turn([asks(["verdict", { outcome: "confirmed", reason: "r", quote: "total += value * 1" }])], { prompt: { prefix: group, tail: "Check." }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     const first = (sent: ReadonlyArray<Sent>) => JSON.stringify(sent[0]?.messages.slice(0, 3))
     expect([first(found.kept), first(found.kept) === first(checked.kept), found.kept[0]?.messages[3], checked.kept[0]?.messages[3]]).toEqual([
       JSON.stringify(group.map((part) => ({ role: part.role, content: part.content }))), true, { role: "user", content: "Find." }, { role: "user", content: "Check." },
     ])
   })
 
-  test("the checks' model is the passes' unless given: another effort is sent by the checks alone", async () => {
+  test("the checks' model is the turns' unless given: another effort is sent by the checks alone", async () => {
     const none = reviewModel(withEffort({ ...DEFAULT_REVIEW_MODEL, model: "m" }, "none"), Redacted.make("test-key"), 0.05)
-    const found = await pass([says("Nothing.")], { passes: { verifyModel: none } })
-    const checked = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { passes: { verifyModel: none }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
-    const same = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const found = await turn([says("Nothing.")], { turns: { verifyModel: none } })
+    const checked = await turn([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { turns: { verifyModel: none }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const same = await turn([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     expect([found.kept[0]?.reasoning, checked.kept[0]?.reasoning, same.kept[0]?.reasoning]).toEqual([undefined, { enabled: false }, undefined])
   })
 })
 
-describe("a pass over the kernel", () => {
+describe("a turn over the kernel", () => {
   test("the model reads, reports, and answers: the finding recorded, each call's tokens and cost, the files opened, the journal kept", async () => {
-    const ran = await pass([asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("One bug: a multiplication by one."), says("none")])
+    const ran = await turn([asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("One bug: a multiplication by one."), says("none")])
     expect<unknown>(ran.result).toEqual({
-      stage: { _tag: "Find", pass: 1 },
+      stage: { _tag: "Find", turn: 1 },
       session: expect.objectContaining({ _tag: "Some" }),
       ended: { _tag: "Answered", summary: "One bug: a multiplication by one." },
       calls: [
@@ -183,7 +183,7 @@ describe("a pass over the kernel", () => {
       ],
       opened: ["src/sum.ts"],
     })
-    expect<unknown>(ran.findings).toEqual([{ ...FINDING, pass: 1, number: 1 }])
+    expect<unknown>(ran.findings).toEqual([{ ...FINDING, turn: 1, number: 1 }])
     expect(Math.round(ran.settled * 1e6) / 1e6).toBe(0.0008)
     // Each request starts with the prefix, unchanged; then the tail, the calls and their results, as the memory gives
     // them; the last, the harvest, after the answer in words and the host's note.
@@ -196,33 +196,33 @@ describe("a pass over the kernel", () => {
     expect(ran.journal.length).toBeGreaterThan(0)
   })
 
-  test("the step cap ends a pass that keeps asking, with the findings so far, after one more call", async () => {
-    const ran = await pass([asks(["reportFinding", FINDING]), asks(["listFiles", { glob: "src/*" }])], { maxSteps: 3 })
+  test("the step cap ends a turn that keeps asking, with the findings so far, after one more call", async () => {
+    const ran = await turn([asks(["reportFinding", FINDING]), asks(["listFiles", { glob: "src/*" }])], { maxSteps: 3 })
     expect([ran.result.ended, ran.result.calls.length, ran.findings.length, ran.sent.length]).toEqual([{ _tag: "StepCap", steps: 3, summary: "", why: "" }, 4, 1, 4])
   })
 
   test("a closing call that fails is said: the step cap with why", async () => {
-    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }], { maxSteps: 1 })
+    const ran = await turn([asks(["listFiles", { glob: "src/*" }]), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }], { maxSteps: 1 })
     expect([ran.result.ended._tag, ran.result.ended._tag === "StepCap" && ran.result.ended.why.includes("the model does not exist")]).toEqual(["StepCap", true])
   })
 
-  test("onFirstAnswer through the real loop: once, after the first call returns, true when it answered; false when it failed, or when the pass ended before any call", async () => {
-    const answered = await pass([asks(["listFiles", { glob: "src/*" }]), says("Done.")])
-    const refused = await pass([says("never sent")], { maxCost: 0.000_01 })
-    const broken = await pass([says("never sent")], { passes: { journal: () => Layer.effect(JournalStorage, Effect.fail(new PassJournalFailed({ message: "the disk is full" }))) } })
+  test("onFirstAnswer through the real loop: once, after the first call returns, true when it answered; false when it failed, or when the turn ended before any call", async () => {
+    const answered = await turn([asks(["listFiles", { glob: "src/*" }]), says("Done.")])
+    const refused = await turn([says("never sent")], { maxCost: 0.000_01 })
+    const broken = await turn([says("never sent")], { turns: { journal: () => Layer.effect(JournalStorage, Effect.fail(new TurnJournalFailed({ message: "the disk is full" }))) } })
     expect([answered.signals, refused.signals, broken.signals]).toEqual([[[true, 1]], [[false, 0]], [[false, 0]]])
   })
 
-  test("the first call the other passes wait on is asked once more after a failure worth another try; a refusal, a second failure and a pass no one waits on are not", async () => {
+  test("the first call the other turns wait on is asked once more after a failure worth another try; a refusal, a second failure and a turn no one waits on are not", async () => {
     const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
     const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
     const limited = { status: 429, body: JSON.stringify({ error: { message: "slow down" } }) }
-    // A pass that answers asks once more for what it weighed (the harvest), answered "none" here.
-    const blip = await pass([unavailable, says("Done."), says("none")])
-    const rateLimited = await pass([limited, says("Done."), says("none")])
-    const twice = await pass([unavailable, unavailable, says("Done.")])
-    const refused = await pass([refusedCall, says("Done.")])
-    const alone = await pass([unavailable, says("Done.")], { waitedOn: false })
+    // A turn that answers asks once more for what it weighed (the harvest), answered "none" here.
+    const blip = await turn([unavailable, says("Done."), says("none")])
+    const rateLimited = await turn([limited, says("Done."), says("none")])
+    const twice = await turn([unavailable, unavailable, says("Done.")])
+    const refused = await turn([refusedCall, says("Done.")])
+    const alone = await turn([unavailable, says("Done.")], { waitedOn: false })
     expect([blip.result.ended, blip.signals, blip.sent.length, blip.result.calls.map((call) => [call.step, Option.isSome(call.tokens)])]).toEqual([{ _tag: "Answered", summary: "Done." }, [[true, 2]], 3, [[1, false], [1, true], [2, true]]])
     expect([rateLimited.result.ended._tag, rateLimited.sent.length]).toEqual(["Answered", 3])
     expect([twice.result.ended._tag, twice.signals, twice.sent.length]).toEqual(["ModelFailed", [[false, 2]], 2])
@@ -230,36 +230,36 @@ describe("a pass over the kernel", () => {
     expect([alone.result.ended._tag, alone.sent.length]).toEqual(["ModelFailed", 1])
   })
 
-  test("a focused group's pass (retryFirstCall, no one waiting) asks its first call once more after a 503, and not after a 400", async () => {
+  test("a focused group's turn (retryFirstCall, no one waiting) asks its first call once more after a 503, and not after a 400", async () => {
     const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
     const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
-    const blip = await pass([unavailable, says("Done."), says("none")], { waitedOn: false, retryFirstCall: true })
-    const refused = await pass([refusedCall, says("Done.")], { waitedOn: false, retryFirstCall: true })
+    const blip = await turn([unavailable, says("Done."), says("none")], { waitedOn: false, retryFirstCall: true })
+    const refused = await turn([refusedCall, says("Done.")], { waitedOn: false, retryFirstCall: true })
     expect([blip.result.ended._tag, blip.sent.length, refused.result.ended._tag, refused.sent.length]).toEqual(["Answered", 3, "ModelFailed", 1])
   })
 
   test("firstCallBytes counts at least the first request's body the ledger holds on, for a newline- and quote-heavy prompt", async () => {
     const prompt = { prefix: [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: `${"a line\n".repeat(4_000)}${"\"q\" ".repeat(2_000)}` }], tail: "Review it." }
-    const ran = await pass([says("Done.")], { prompt, waitedOn: false })
+    const ran = await turn([says("Done.")], { prompt, waitedOn: false })
     const sent = ran.kept[0]?.bytes ?? 0
     // Within the slack it keeps for the tools: never under the body, and not far over it.
     expect([sent > 40_000, firstCallBytes(prompt) >= sent, firstCallBytes(prompt) - sent < REQUEST_SLACK_BYTES]).toEqual([true, true, true])
   })
 
-  test("a spend refusal mid-pass, with a reserve kept back from the start: the reserve released, the host's note, and the closing call's finding kept", async () => {
+  test("a spend refusal mid-turn, with a reserve kept back from the start: the reserve released, the host's note, and the closing call's finding kept", async () => {
     // Each call holds $0.004096 (4,096 tokens of output at $1 a million) and is billed $0.0004. With $0.0045 kept back
     // under a cap of $0.0089, the first call fits and the second does not; released, the reserve makes room to close.
     const closingAnswer = asks(["reportFinding", FINDING])
     const price = { input: 0, output: 1, cacheRead: 0 }
-    const kept = await pass([asks(["listFiles", { glob: "src/*" }]), closingAnswer], { maxCost: 0.0089, price, reserve: 0.0045 })
-    const none = await pass([asks(["listFiles", { glob: "src/*" }]), closingAnswer], { maxCost: 0.0089 - 0.0045, price })
+    const kept = await turn([asks(["listFiles", { glob: "src/*" }]), closingAnswer], { maxCost: 0.0089, price, reserve: 0.0045 })
+    const none = await turn([asks(["listFiles", { glob: "src/*" }]), closingAnswer], { maxCost: 0.0089 - 0.0045, price })
     expect([kept.result.ended._tag, kept.findings.length, kept.kept.length, none.result.ended._tag, none.findings.length, none.kept.length]).toEqual(["SpendRefused", 1, 2, "SpendRefused", 0, 1])
     expect(kept.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]" })
   })
 
   test("a closing call after a spend refusal that fails is said beside the refusal", async () => {
     const price = { input: 0, output: 1, cacheRead: 0 }
-    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }], { maxCost: 0.0089, price, reserve: 0.0045 })
+    const ran = await turn([asks(["listFiles", { glob: "src/*" }]), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }], { maxCost: 0.0089, price, reserve: 0.0045 })
     expect([ran.result.ended._tag, ran.result.ended._tag === "SpendRefused" && ran.result.ended.message.includes("; its closing call failed: ") && ran.result.ended.message.includes("the model does not exist")]).toEqual(["SpendRefused", true])
   })
 
@@ -271,7 +271,7 @@ describe("a pass over the kernel", () => {
       ] }, finish_reason: "tool_calls" }] },
       usage(1_000, 800, 50, 0.0004),
     ])
-    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["listFiles", { glob: "*" }]), lastAnswer], { maxSteps: 2 })
+    const ran = await turn([asks(["listFiles", { glob: "src/*" }]), asks(["listFiles", { glob: "*" }]), lastAnswer], { maxSteps: 2 })
     expect<unknown>([ran.result.ended, ran.findings.length, ran.result.opened, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 2, summary: "One more problem.", why: "" }, 1, [], 3])
     expect(ran.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]" })
     expect(ran.kept.map((one) => one.tools)).toEqual([0, 1, 2].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
@@ -279,71 +279,71 @@ describe("a pass over the kernel", () => {
 
   test("a check ends once its verdict is recorded; reportFinding is refused in a check", async () => {
     const VERDICT = { outcome: "confirmed", reason: "It multiplies by one.", quote: "total += value * 1" }
-    const ran = await pass([asks(["reportFinding", FINDING]), asks(["verdict", VERDICT]), says("never sent")], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const ran = await turn([asks(["reportFinding", FINDING]), asks(["verdict", VERDICT]), says("never sent")], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     expect<unknown>([ran.result.ended, ran.findings, ran.verdict, ran.kept.length]).toEqual([{ _tag: "Judged" }, [], Option.some({ ...VERDICT, check: 1 }), 2])
     expect(JSON.stringify(ran.kept[1]?.messages.at(-1))).toContain("You are checking a finding, not reporting new ones: call verdict with your verdict on it.")
   })
 
-  test("a check that answers in words is asked once more for its verdict: the host's note, the same tools offered; a verdict in text is never one; a pass is asked once more for reportFinding alone", async () => {
+  test("a check that answers in words is asked once more for its verdict: the host's note, the same tools offered; a verdict in text is never one; a turn is asked once more for reportFinding alone", async () => {
     const VERDICT = { outcome: "confirmed", reason: "It multiplies by one.", quote: "total += value * 1" }
     const check = { stage: { _tag: "Verify", check: CheckNumber.make(1) } } as const
-    const judged = await pass([says("Verdict: confirmed."), asks(["verdict", VERDICT]), says("never sent")], check)
-    const words = await pass([says("Verdict: confirmed."), says("Verdict: confirmed, again."), says("never sent")], check)
+    const judged = await turn([says("Verdict: confirmed."), asks(["verdict", VERDICT]), says("never sent")], check)
+    const words = await turn([says("Verdict: confirmed."), says("Verdict: confirmed, again."), says("never sent")], check)
     expect<unknown>([judged.result.ended, judged.verdict, judged.kept.length]).toEqual([{ _tag: "Judged" }, Option.some({ ...VERDICT, check: 1 }), 2])
     expect(judged.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]" })
     expect(judged.kept.map((one) => one.tools)).toEqual([0, 1].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
     expect<unknown>([words.result.ended, words.verdict, words.kept.length]).toEqual([{ _tag: "Answered", summary: "Verdict: confirmed." }, Option.none(), 2])
-    // A pass that answers in words is asked once more (the harvest), and only that answer's reportFinding calls run:
+    // A turn that answers in words is asked once more (the harvest), and only that answer's reportFinding calls run:
     // its readLines is not, so nothing is opened; it has answered, with its first words.
-    const answered = await pass([says("Done."), asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("never sent")])
+    const answered = await turn([says("Done."), asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("never sent")])
     expect<unknown>([answered.result.ended, answered.findings.length, answered.result.opened, answered.kept.length]).toEqual([{ _tag: "Answered", summary: "Done." }, 1, [], 2])
   })
 
   test("a check refused mid-way with a reserve kept back gives its verdict on the closing call and is judged", async () => {
     const VERDICT = { outcome: "refuted", reason: "Multiplying by one is harmless.", quote: "total += value * 1" }
     const price = { input: 0, output: 1, cacheRead: 0 }
-    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["verdict", VERDICT])], { maxCost: 0.0089, price, reserve: 0.0045, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const ran = await turn([asks(["listFiles", { glob: "src/*" }]), asks(["verdict", VERDICT])], { maxCost: 0.0089, price, reserve: 0.0045, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     expect<unknown>([ran.result.ended, ran.verdict, ran.kept.length]).toEqual([{ _tag: "Judged" }, Option.some({ ...VERDICT, check: 1 }), 2])
   })
 
-  test("a pass refuses verdict: there is no finding to check", async () => {
-    const ran = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }]), says("Done.")])
+  test("a turn refuses verdict: there is no finding to check", async () => {
+    const ran = await turn([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }]), says("Done.")])
     expect<unknown>([ran.result.ended, ran.verdict]).toEqual([{ _tag: "Answered", summary: "Done." }, Option.none()])
     expect(JSON.stringify(ran.kept[1]?.messages.at(-1))).toContain("There is no finding to check in this review: report each problem with reportFinding.")
   })
 
-  test("the spend cap refuses a call before it is sent: the pass ends, incomplete, with nothing spent", async () => {
-    const ran = await pass([says("never sent")], { maxCost: 0.000_01 })
+  test("the spend cap refuses a call before it is sent: the turn ends, incomplete, with nothing spent", async () => {
+    const ran = await turn([says("never sent")], { maxCost: 0.000_01 })
     expect([ran.result.ended._tag, ran.result.calls, ran.sent.length, ran.settled]).toEqual(["SpendRefused", [{ step: 1, tokens: Option.none(), cost: 0 }], 0, 0])
   })
 
-  test("an answer cut at the output cap ends the pass, incomplete, after its findings", async () => {
-    const ran = await pass([asks(["reportFinding", FINDING]), says("The second finding is", "length")])
+  test("an answer cut at the output cap ends the turn, incomplete, after its findings", async () => {
+    const ran = await turn([asks(["reportFinding", FINDING]), says("The second finding is", "length")])
     expect([ran.result.ended, ran.result.calls.length, ran.findings.length]).toEqual([{ _tag: "OutputCut" }, 2, 1])
   })
 
   test("an answer cut at the output cap still runs the calls it asked for whole: its finding is kept", async () => {
-    const ran = await pass([asksEnding("length", [["reportFinding", FINDING]])])
+    const ran = await turn([asksEnding("length", [["reportFinding", FINDING]])])
     expect([ran.result.ended, ran.result.calls.length, ran.findings.length, ran.sent.length]).toEqual([{ _tag: "OutputCut" }, 1, 1, 1])
   })
 
-  test("a spend refusal mid-pass keeps the findings and the cost of the calls before it", async () => {
+  test("a spend refusal mid-turn keeps the findings and the cost of the calls before it", async () => {
     // Each call holds its 4,096 tokens of output at $1 a million (nothing for input): $0.004096. The first fits under
     // $0.0044 and is billed $0.0004; the second would take the ledger to $0.004496, and is refused before it is sent.
-    const ran = await pass([asks(["reportFinding", FINDING]), says("never sent")], { maxCost: 0.0044, price: { input: 0, output: 1, cacheRead: 0 } })
+    const ran = await turn([asks(["reportFinding", FINDING]), says("never sent")], { maxCost: 0.0044, price: { input: 0, output: 1, cacheRead: 0 } })
     expect<unknown>([ran.result.ended._tag, ran.result.calls, ran.findings.length, ran.sent.length, Math.round(ran.settled * 1e6) / 1e6]).toEqual([
       "SpendRefused", [{ step: 1, tokens: Option.some({ input: 1_000, cached: 800, output: 50 }), cost: 0.0004 }, { step: 2, tokens: Option.none(), cost: 0 }], 1, 1, 0.0004,
     ])
   })
 
-  test("a call the provider refuses ends the pass, incomplete, in the provider's words", async () => {
-    const ran = await pass([{ status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }])
+  test("a call the provider refuses ends the turn, incomplete, in the provider's words", async () => {
+    const ran = await turn([{ status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }])
     expect([ran.result.ended._tag, ran.result.ended._tag === "ModelFailed" && ran.result.ended.message.includes("the model does not exist"), ran.result.calls.length]).toEqual(["ModelFailed", true, 1])
   })
 
-  test("a journal that cannot be opened ends the pass, incomplete, in words, with no session and no call", async () => {
-    const broken: Omit<KernelPassesOptions, "model"> = { journal: () => Layer.effect(JournalStorage, Effect.fail(new PassJournalFailed({ message: "the disk is full" }))) }
-    const ran = await pass([says("never sent")], { passes: broken })
+  test("a journal that cannot be opened ends the turn, incomplete, in words, with no session and no call", async () => {
+    const broken: Omit<KernelTurnsOptions, "model"> = { journal: () => Layer.effect(JournalStorage, Effect.fail(new TurnJournalFailed({ message: "the disk is full" }))) }
+    const ran = await turn([says("never sent")], { turns: broken })
     expect<unknown>([ran.result.ended, ran.result.session, ran.result.calls, ran.sent.length]).toEqual([{ _tag: "JournalFailed", message: "the disk is full" }, Option.none(), [], 0])
   })
 
@@ -356,7 +356,7 @@ describe("a pass over the kernel", () => {
         asked += 1
       }), inner.context(session)) })
     })).pipe(Layer.provide(flatMemory))
-    const ran = await pass([asks(["listFiles", { glob: "*" }]), says("Nothing."), says("none")], { passes: { memory } })
+    const ran = await turn([asks(["listFiles", { glob: "*" }]), says("Nothing."), says("none")], { turns: { memory } })
     expect([asked, ran.result.ended._tag, ran.sent.length]).toEqual([3, "Answered", 3])
   })
 })
@@ -365,8 +365,8 @@ describe("the closing call asked once more after a refused report", () => {
   const ELSEWHERE = { ...FINDING, path: "src/never-changed.ts" }
 
   test("a step-cap closing call whose reportFinding the tool refuses (a path the pull request does not change) is asked once more, and its second, valid report is recorded", async () => {
-    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", FINDING]), says("never sent")], { maxSteps: 1 })
-    expect<unknown>([ran.result.ended, ran.findings, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 1, summary: "", why: "" }, [{ ...FINDING, pass: 1, number: 1 }], 3])
+    const ran = await turn([asks(["listFiles", { glob: "src/*" }]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", FINDING]), says("never sent")], { maxSteps: 1 })
+    expect<unknown>([ran.result.ended, ran.findings, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 1, summary: "", why: "" }, [{ ...FINDING, turn: 1, number: 1 }], 3])
     // The second ask reads the refusal, which says what to give, with the same six tools offered.
     const refusal = ran.kept[2]?.messages.at(-1)
     expect([refusal?.role, JSON.stringify(refusal?.content).includes("src/never-changed.ts is not a file this pull request changes")]).toEqual(["tool", true])
@@ -374,15 +374,15 @@ describe("the closing call asked once more after a refused report", () => {
   })
 
   test("a second refusal ends the closing: no third call, whatever it would have reported", async () => {
-    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", FINDING])], { maxSteps: 1 })
+    const ran = await turn([asks(["listFiles", { glob: "src/*" }]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", FINDING])], { maxSteps: 1 })
     expect<unknown>([ran.result.ended, ran.findings, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 1, summary: "", why: "" }, [], 3])
   })
 })
 
-describe("the harvest: a pass that answers in words is asked once more for what it weighed", () => {
+describe("the harvest: a turn that answers in words is asked once more for what it weighed", () => {
   const HARVEST = "[Host note: Before this pass ends: call reportFinding now for each possible defect you noticed or weighed in the files you reviewed and did not report, also one you judged too small or not sure, saying in its claim what would make it real; another reviewer checks each report. If there is none, answer \"none\". No other tool runs now.]"
 
-  test("a pass that answers in words, then reports on the harvest, keeps that finding: the host's note, the same six tools, only reportFinding run, the first answer's summary", async () => {
+  test("a turn that answers in words, then reports on the harvest, keeps that finding: the host's note, the same six tools, only reportFinding run, the first answer's summary", async () => {
     const harvested = sse([
       { choices: [{ delta: { content: "One I had kept back.", tool_calls: [
         { index: 0, id: "c0", type: "function", function: { name: "readLines", arguments: JSON.stringify({ path: "src/sum.ts" }) } },
@@ -390,43 +390,43 @@ describe("the harvest: a pass that answers in words is asked once more for what 
       ] }, finish_reason: "tool_calls" }] },
       usage(1_000, 800, 50, 0.0004),
     ])
-    const ran = await pass([says("Nothing wrong."), harvested, says("never sent")])
+    const ran = await turn([says("Nothing wrong."), harvested, says("never sent")])
     expect<unknown>([ran.result.ended, ran.findings, ran.result.opened, ran.kept.length, ran.result.calls.map((call) => call.step)]).toEqual([
-      { _tag: "Answered", summary: "Nothing wrong." }, [{ ...FINDING, pass: 1, number: 1 }], [], 2, [1, 2],
+      { _tag: "Answered", summary: "Nothing wrong." }, [{ ...FINDING, turn: 1, number: 1 }], [], 2, [1, 2],
     ])
     expect(ran.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: HARVEST })
     expect(ran.kept.map((one) => one.tools)).toEqual([0, 1].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
   })
 
   test("one whose harvest answers none ends Answered with the first summary; one whose harvest call fails too", async () => {
-    const none = await pass([says("Nothing wrong."), says("none"), says("never sent")])
-    const failed = await pass([says("Nothing wrong."), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }])
+    const none = await turn([says("Nothing wrong."), says("none"), says("never sent")])
+    const failed = await turn([says("Nothing wrong."), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }])
     expect<unknown>([none.result.ended, none.findings, none.kept.length, none.kept.at(-1)?.messages.at(-1)]).toEqual([{ _tag: "Answered", summary: "Nothing wrong." }, [], 2, { role: "user", content: HARVEST }])
     expect<unknown>([failed.result.ended, failed.kept.length]).toEqual([{ _tag: "Answered", summary: "Nothing wrong." }, 2])
   })
 
   test("a check that answers in words is never harvested: its closing note asks for the verdict", async () => {
-    const ran = await pass([says("Verdict: confirmed."), says("Still confirmed.")], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const ran = await turn([says("Verdict: confirmed."), says("Still confirmed.")], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     expect(ran.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]" })
   })
 })
 
-describe("three passes at once under the review's budget", () => {
-  // A request of 700 KB, over twice the longest live single pass's last (about 300 KB), held at 1 byte a token at $0.30
+describe("three turns at once under the review's budget", () => {
+  // A request of 700 KB, over twice the longest live single turn's last (about 300 KB), held at 1 byte a token at $0.30
   // a million ($0.21) plus 4,096 tokens of output at $1.20 a million: about $0.216 a call, so three calls' holds ($0.65)
-  // pass the find stage's $0.50 and the passes' calls crowd each other out. Each call is billed $0.0025, so a pass's
+  // pass the find stage's $0.50 and the turns' calls crowd each other out. Each call is billed $0.0025, so a turn's
   // seventeen calls (sixteen, then the harvest) settle $0.0425.
   const PREFIX = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "x".repeat(700_000) }]
   const billed = (answer: string) => answer.replace(/"cost":[0-9.]+/, "\"cost\":0.0025")
   /**
-   * An endpoint for several passes at once: each request answered by how far its own conversation is, a call for its
+   * An endpoint for several turns at once: each request answered by how far its own conversation is, a call for its
    * first `calls` steps, then words. With `lockstep`, the requests go in rounds of `lockstep`: each waits until its
-   * round is full (or `LOCKSTEP_FALLBACK_MS` passed, which only frees the passes left once one has ended), so every
-   * pass's call of a round is open at once, whatever the scheduler does.
+   * round is full (or `LOCKSTEP_FALLBACK_MS` passed, which only frees the turns left once one has ended), so every
+   * turn's call of a round is open at once, whatever the scheduler does.
    */
   const steady = (calls = 15, lockstep = 0) => {
     let arrived = 0
-    // Once a round has waited past the fallback, a pass has ended: the rounds are over and no request waits again.
+    // Once a round has waited past the fallback, a turn has ended: the rounds are over and no request waits again.
     let freed = false
     const waiting: Array<{ readonly until: number; readonly go: () => void }> = []
     return Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
@@ -449,8 +449,8 @@ describe("three passes at once under the review's budget", () => {
   const LOCKSTEP_FALLBACK_MS = 2_000
 
   /**
-   * A stage whose calls wait until `count` passes have kept their reserve back, so every reserve is held before any
-   * call is asked, whatever order the passes start in.
+   * A stage whose calls wait until `count` turns have kept their reserve back, so every reserve is held before any
+   * call is asked, whatever order the turns start in.
    */
   const keptFirst = (stage: StageLedger, count: number): Effect.Effect<StageLedger> => Effect.map(Deferred.make<void>(), (allKept) => {
     let kept = 0
@@ -465,20 +465,20 @@ describe("three passes at once under the review's budget", () => {
   })
 
   /**
-   * `count` passes at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back
+   * `count` turns at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back
    * and capped at `maxSteps`, on the `endpoint`: how each ended and what was settled.
    */
-  const passesAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0, endpoint = steady(), maxSteps = 16) => {
-    const layers = kernelPasses({ model: testModel({ maxCost: DEFAULT_MAX_COST }) }).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)))
+  const turnsAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0, endpoint = steady(), maxSteps = 16) => {
+    const layers = kernelTurns({ model: testModel({ maxCost: DEFAULT_MAX_COST }) }).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)))
     const folder = mkdtempSync(join(fixture.root, "three-"))
     return Effect.runPromise(Effect.gen(function* () {
       const root = yield* ModelSpend
       const stage = yield* spend(root)
-      const passes = yield* ReviewPasses
-      const results = yield* Effect.forEach(Array.from({ length: count }, (_, index) => index + 1), (number) => passes.run({
+      const turns = yield* ReviewTurns
+      const results = yield* Effect.forEach(Array.from({ length: count }, (_, index) => index + 1), (number) => turns.run({
         prompt: { prefix: PREFIX, tail: "Review it." },
-        reviewed: { run: "run-1", repo, at: head, files, stage: { _tag: "Find", pass: PassNumber.make(number) } },
-        journalAt: join(folder, `pass-${number}`),
+        reviewed: { run: "run-1", repo, at: head, files, stage: { _tag: "Find", turn: TurnNumber.make(number) } },
+        journalAt: join(folder, `turn-${number}`),
         options: { maxSteps, reserve },
         spend: stage,
       }), { concurrency: "unbounded" })
@@ -488,27 +488,27 @@ describe("three passes at once under the review's budget", () => {
   const defaultStages = (root: Context.Service.Shape<typeof ModelSpend>) => Effect.flatMap(stageSpend(root, Option.some(DEFAULT_BUDGET.total)), (total) => stageSpend(total, Option.some(DEFAULT_BUDGET.find)))
 
   test("under the default budget's find stage, none ends on a spend refusal: a call the others' holds crowd out waits", async () => {
-    const ran = await passesAtOnce(defaultStages)
+    const ran = await turnsAtOnce(defaultStages)
     expect(ran).toEqual({ ended: ["Answered", "Answered", "Answered"], settled: 0.1275, held: 0 })
   }, 60_000)
 
-  test("why passes beside each other keep nothing back: three each keeping a sixth of the find stage crowd out each other's calls and end refused", async () => {
-    // Every reserve is held before any call (`keptFirst`), and no pass gives its sixth back (its harvest's closing call)
+  test("why turns beside each other keep nothing back: three each keeping a sixth of the find stage crowd out each other's calls and end refused", async () => {
+    // Every reserve is held before any call (`keptFirst`), and no turn gives its sixth back (its harvest's closing call)
     // before it has made 24 calls. Three sixths ($0.25) and one call's hold (about $0.216) leave the find stage's $0.50
     // room for about $0.034 settled, fourteen calls at most: whatever the interleaving, a call is refused first.
-    const ran = await passesAtOnce((root) => Effect.flatMap(defaultStages(root), (stage) => keptFirst(stage, 3)), 3, DEFAULT_BUDGET.find / 6, steady(23), 24)
+    const ran = await turnsAtOnce((root) => Effect.flatMap(defaultStages(root), (stage) => keptFirst(stage, 3)), 3, DEFAULT_BUDGET.find / 6, steady(23), 24)
     expect([ran.ended.includes("SpendRefused"), ran.held]).toEqual([true, 0])
   }, 60_000)
 
-  test("one pass keeping the default closing reserve back answers under the default budget, and its reserve is released", async () => {
-    const ran = await passesAtOnce(defaultStages, 1, DEFAULT_CLOSING_RESERVE)
+  test("one turn keeping the default closing reserve back answers under the default budget, and its reserve is released", async () => {
+    const ran = await turnsAtOnce(defaultStages, 1, DEFAULT_CLOSING_RESERVE)
     expect(ran).toEqual({ ended: ["Answered"], settled: 0.0425, held: 0 })
   }, 60_000)
 
-  test("control: on the same cap, a ledger that refuses whatever open holds crowd out ends a pass on a refusal", async () => {
+  test("control: on the same cap, a ledger that refuses whatever open holds crowd out ends a turn on a refusal", async () => {
     // In lockstep, the three calls of a round are open at once: two holds of about $0.216 fit under $0.50 and the
     // third is refused, where the stage's ledger makes it wait.
-    const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
+    const ran = await turnsAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)
 })

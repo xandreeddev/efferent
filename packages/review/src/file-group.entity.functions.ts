@@ -1,6 +1,6 @@
 import { Array as Arr, Option, Order, Predicate } from "effect"
 import { clipTo, estimateTokens } from "@xandreed/sdk"
-import type { PassEnded } from "./review-pass.entity.js"
+import type { TurnEnded } from "./review-turn.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
 import { GroupNumber, NOT_REVIEWED_BECAUSE, REQUEST_SLACK_BYTES } from "./file-group.entity.js"
@@ -32,7 +32,7 @@ export const packageOf = (path: string, roots: ReadonlySet<string>): string => {
 export const stemOf = (path: string): string => (path.split("/").at(-1) ?? path).split(".")[0] ?? ""
 
 /**
- * Whether a changed file gets a focused pass: code (`fileKind`), a test's, a page's and an `.astro` file (which holds
+ * Whether a changed file gets a focused turn: code (`fileKind`), a test's, a page's and an `.astro` file (which holds
  * script) included; never config, a manifest or docs.
  */
 export const isGrouped = (path: string): boolean => fileKind(path) === "code"
@@ -42,17 +42,17 @@ export const lookupFailedNote = (folder: string): string =>
   `The package.json of ${folder === "" ? "the root" : shownPath(folder)} could not be looked up, so its files were grouped as if it held none.`
 
 /**
- * Why a group whose pass answered no call was not reviewed: `NOT_REVIEWED_BECAUSE.noCall`, then how the pass ended,
+ * Why a group whose turn answered no call was not reviewed: `NOT_REVIEWED_BECAUSE.noCall`, then how the turn ended,
  * in its failure's words (cut at 200 characters) or its tag.
  */
-export const noCallWhy = (ended: PassEnded): string =>
+export const noCallWhy = (ended: TurnEnded): string =>
   `${NOT_REVIEWED_BECAUSE.noCall}: ${Predicate.hasProperty(ended, "message") && Predicate.isString(ended.message) && ended.message.length > 0 ? clipTo(ended.message, 200) : ended._tag}`
 
-/** The note for a check run on the prefix of a group whose pass never answered: no cache to read. */
+/** The note for a check run on the prefix of a group whose turn never answered: no cache to read. */
 export const uncachedCheckNote = (check: number, group: number): string =>
-  `Check ${check} ran on the prefix of group ${group}, whose pass never answered, so it had no cache to read.`
+  `Check ${check} ran on the prefix of group ${group}, whose turn never answered, so it had no cache to read.`
 
-/** Why a file a review reads gets no focused pass, in words, by its kind. */
+/** Why a file a review reads gets no focused turn, in words, by its kind. */
 const UNGROUPED_BECAUSE: Readonly<Record<Exclude<FileKind, "code">, string>> = {
   manifest: "a manifest or CI file",
   config: "config",
@@ -103,7 +103,7 @@ export const riskOf = (files: ReadonlyArray<FileDiff>): number =>
 
 /**
  * The groups in the order a focused review runs them, renumbered from 1. With `risk`: the groups holding source first,
- * then those of tests alone, then the config group (`--config-pass`, files no code group holds), each highest
+ * then those of tests alone, then the config group (`--config-turn`, files no code group holds), each highest
  * `riskOf` first, ties in the order given (git's); with `git`, as given.
  */
 export const orderGroups = (groups: ReadonlyArray<FileGroup>, files: ReadonlyArray<FileDiff>, order: GroupOrder): ReadonlyArray<FileGroup> => {
@@ -127,7 +127,7 @@ interface Unit {
 }
 
 /**
- * The changed files grouped for focused passes (`groups` focus): the code files (`isGrouped`) in the order
+ * The changed files grouped for focused turns (`groups` focus): the code files (`isGrouped`) in the order
  * given (git's), by package (`packageOf` over `roots`); a package whose files fit `bounds` is one group; a larger one is
  * cut into units (a stem's files in one folder, a test in a `test`, `tests`, `__tests__` or `spec` folder with the
  * source of its stem), filled in order into groups up to `bounds`, a unit too large for one cut into its files, a file

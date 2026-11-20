@@ -12,7 +12,7 @@ import type { CheckoutError } from "./checkout.port.js"
 import { CommandFailed, OutputCut } from "./host-command.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { parseUnifiedDiff, shownPath } from "./diff.entity.functions.js"
-import { CheckNumber, PassNumber } from "./finding.entity.js"
+import { CheckNumber, TurnNumber } from "./finding.entity.js"
 import { findingsInMemory } from "./findings.adapter.js"
 import { Findings } from "./findings.port.js"
 import { BIG_LINES, FORGED_NAME, gitFixture, LINK_OUT, MAGIC_FOLDERS, SUBMODULE } from "./git-fixture.testing.js"
@@ -40,7 +40,7 @@ beforeAll(async () => {
 })
 
 /** Make each call in order in one turn, over the fixture's head: what each stored (its result and whether it failed), the findings kept, and the first check's verdict. */
-const calls = (made: ReadonlyArray<readonly [string, unknown]>, stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(1) }) =>
+const calls = (made: ReadonlyArray<readonly [string, unknown]>, stage: ReviewStage = { _tag: "Find", turn: TurnNumber.make(1) }) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const all = yield* Sessions
     const session = yield* all.open(yield* all.create({ owner: "test" }))
@@ -201,10 +201,10 @@ describe("each tool in its stage", () => {
   const VERDICT = { outcome: "refuted", reason: "Not on a changed line.", quote: "total += value * 1" }
   const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e" }
 
-  test("in a pass, verdict is a failed result in fixed words; in a check, reportFinding is; a check's first verdict stands", async () => {
-    const inPass = await calls([["verdict", VERDICT]])
+  test("in a finder turn, verdict is a failed result in fixed words; in a check, reportFinding is; a check's first verdict stands", async () => {
+    const inTurn = await calls([["verdict", VERDICT]])
     const inCheck = await calls([["reportFinding", FINDING], ["verdict", VERDICT], ["verdict", { ...VERDICT, outcome: "confirmed" }]], { _tag: "Verify", check: CheckNumber.make(1) })
-    expect<unknown>([inPass.stored, inCheck.stored, inCheck.findings]).toEqual([
+    expect<unknown>([inTurn.stored, inCheck.stored, inCheck.findings]).toEqual([
       [["There is no finding to check in this review: report each problem with reportFinding.", true]],
       [["You are checking a finding, not reporting new ones: call verdict with your verdict on it.", true], ["recorded your verdict", false], ["Your first verdict stands: a check gives one.", false]],
       [],
@@ -216,7 +216,7 @@ describe("each tool in its stage", () => {
     const ran = await calls([["reportFinding", { ...FINDING, claim: "c".repeat(2_000), evidence: lines.join("\n") }]])
     expect<unknown>([ran.stored, ran.findings]).toEqual([
       [["recorded finding 1", false]],
-      [{ ...FINDING, claim: `${"c".repeat(1_472)}\n[… 528 characters clipped]`, evidence: lines.slice(0, 20).join("\n"), pass: 1, number: 1 }],
+      [{ ...FINDING, claim: `${"c".repeat(1_472)}\n[… 528 characters clipped]`, evidence: lines.slice(0, 20).join("\n"), turn: 1, number: 1 }],
     ])
   })
 
@@ -348,14 +348,14 @@ describe("listFiles and readDiff", () => {
 })
 
 describe("reportFinding", () => {
-  test("each finding recorded with its pass and its number in the pass, which the model is told", async () => {
+  test("each finding recorded with its turn and its number in the turn, which the model is told", async () => {
     const report = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "Multiplying by one changes nothing.", evidence: "total += value * 1" }
     const { stored, findings } = await calls([["reportFinding", report], ["reportFinding", { ...report, line: 2, endLine: 4, kind: "rule", severity: "medium" }], ["reportFinding", { ...report, kind: "style" }]])
     expect(stored.slice(0, 2)).toEqual([["recorded finding 1", false], ["recorded finding 2", false]])
     expect((stored[2] as ReadonlyArray<unknown>)[1]).toBe(true)
     expect<unknown>(findings).toEqual([
-      { ...report, pass: 1, number: 1 },
-      { ...report, line: 2, endLine: 4, kind: "rule", severity: "medium", pass: 1, number: 2 },
+      { ...report, turn: 1, number: 1 },
+      { ...report, line: 2, endLine: 4, kind: "rule", severity: "medium", turn: 1, number: 2 },
     ])
   })
 })
@@ -376,7 +376,7 @@ describe("a git command of a tool's that fails", () => {
       return yield* Effect.forEach(made, ([name, params], index) =>
         Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
     }).pipe(Effect.provide(Layer.mergeAll(
-      reviewToolHandlers({ run: "run-1", repo, at: head, files: [], stage: { _tag: "Find", pass: PassNumber.make(1) } }),
+      reviewToolHandlers({ run: "run-1", repo, at: head, files: [], stage: { _tag: "Find", turn: TurnNumber.make(1) } }),
       sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
     ).pipe(Layer.provideMerge(Layer.mergeAll(checkout, findingsInMemory)))))))
 

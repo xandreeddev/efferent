@@ -18,7 +18,7 @@ export const StageStep = Schema.Union([
 export type StageStep = typeof StageStep.Type
 
 /**
- * What a review may spend, in USD: in all (`total`), on its passes that find (`find`) and on its checks (`verify`).
+ * What a review may spend, in USD: in all (`total`), on its turns that find (`find`) and on its checks (`verify`).
  * Each stage's cap is inside the total; a stage waits for an open hold to close before it refuses a call that would
  * fit once that hold is settled.
  */

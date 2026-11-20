@@ -32,8 +32,8 @@ const isStage = (ledger: Ledger | StageLedger): ledger is StageLedger => Predica
 const heldOf = (state: StageState): number => state.calls + state.kept
 
 /**
- * A ledger for one stage of a review (or one pass of it) inside `parent`: every reservation is also the parent's, and
- * the stage keeps its own totals under its own `cap` (none: no cap of its own, for a pass's exact cost). A reservation
+ * A ledger for one stage of a review (or one turn of it) inside `parent`: every reservation is also the parent's, and
+ * the stage keeps its own totals under its own `cap` (none: no cap of its own, for a turn's exact cost). A reservation
  * that what the stage settled leaves no room for is refused (`ModelSpendExceeded`, its reason `total`, the stage's
  * cap); one that the stage's open calls crowd out waits, interruptibly and holding nothing, until one closes
  * (`stageStep`, which counts open calls, never a sum of amounts), so parallel calls under a tight cap run one after

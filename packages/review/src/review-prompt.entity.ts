@@ -3,7 +3,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE, VERDICT
 
 /**
  * The version of the review's prompt: its system text, the words around each part and their order, the tails of the
- * passes and of the checks. A change to any of them is a new version, kept with each review's record so results are
+ * finder turns and of the checks. A change to any of them is a new version, kept with each review's record so results are
  * compared prompt to prompt.
  */
 export const REVIEW_PROMPT = "review-prompt-9"
@@ -27,9 +27,9 @@ export const BODY_SHOWN = 6_000
 export const CI_SHOWN = 12_000
 
 /**
- * The system text: the same for every pull request, every pass and every check (no date, commit or number in it), so a
- * provider's prompt cache keeps it with everything after it that the pull request does not change. What a pass or a
- * check is asked to do is its tail's.
+ * The system text: the same for every pull request and every turn, finder's or check's (no date, commit or number in
+ * it), so a provider's prompt cache keeps it with everything after it that the pull request does not change. What a
+ * turn is asked to do is its tail's.
  */
 export const REVIEW_SYSTEM = [
   "You review a pull request: you find the real bugs and security problems its changed lines bring in, and the rules of the repository's a changed line breaks, or you check a problem another reviewer reported.",
@@ -59,17 +59,17 @@ export const FILES_INTRO = `Every file the pull request changes, with the lines 
 /** The most changed files a focused review's prefix names one by one; the rest are counted (`filesText`). */
 export const FILES_SHOWN = 200
 
-/** The words before a group's diffs, the message a focused pass and the checks of its findings share. */
+/** The words before a group's diffs, the message a focused turn and the checks of its findings share. */
 export const GROUP_INTRO = `The files under review here, with their diffs from where the pull request left its base branch: each line with its number in the new file and + for an added line, a removed line with - and no number. Review these files; read others only to confirm a claim.`
 
 /** The words before the CI's digest. */
 export const CI_INTRO = "What the CI's runs for the commit under review report: each failed check's failures, digested from its log."
 
-/** How a pass finds: only what it is sure of (`strict`), or every plausible defect, left for the checks to settle (`candidates`). */
+/** How a finder turn finds: only what it is sure of (`strict`), or every plausible defect, left for the checks to settle (`candidates`). */
 export const Finder = Schema.Literals(["strict", "candidates"])
 export type Finder = typeof Finder.Type
 
-/** What a pass is asked to do, by how it finds, before the order to walk the files in. */
+/** What a finder turn is asked to do, by how it finds, before the order to walk the files in. */
 export const FIND_TAIL: Readonly<Record<Finder, string>> = {
   strict: [
     "Review the pull request above for real bugs and security problems, and for rules of the repository's that a changed line breaks.",
@@ -92,8 +92,8 @@ export const FIND_TAIL: Readonly<Record<Finder, string>> = {
 }
 
 /**
- * What a focused pass is asked to do, by how it finds: its own group's files, read whole, the other changed files
- * left to their groups' passes, the description's claims held against the code, and independent reads asked at once.
+ * What a focused turn is asked to do, by how it finds: its own group's files, read whole, the other changed files
+ * left to their groups' turns, the description's claims held against the code, and independent reads asked at once.
  * Its words of what to look for and what to leave out are its finder's (`FIND_TAIL`).
  */
 export const FOCUS_TAIL: Readonly<Record<Finder, string>> = {
@@ -140,7 +140,7 @@ export const VERIFY_TAIL = [
 ].join("\n")
 
 /**
- * The host's note before a closing call, by stage: what to do with the one call left. A pass's comes after its last
+ * The host's note before a closing call, by stage: what to do with the one call left. A finder turn's comes after its last
  * allowed step (or a spend refusal); a check's also after an answer that gave no verdict, so it names no cause, and
  * says that a verdict in text is not counted (it has no quote to check).
  */
@@ -150,9 +150,10 @@ export const STEP_CAP_NOTE = {
 } as const
 
 /**
- * The host's note after a pass answers in words: a pass that weighed a defect and talked itself out of reporting it
- * (measured on #644's gold group: the summary named the leak, no finding did) reports it now, since the checks settle
- * every report. Its one more call runs only `reportFinding`.
+ * The host's note after a finder turn answers in words: a turn that weighed a defect and talked itself out of
+ * reporting it (measured on #644's gold group: the summary named the leak, no finding did) reports it now, since the
+ * checks settle every report. Its one more call runs only `reportFinding`. Its words still say "this pass": the text
+ * the model reads is kept as it was, with `REVIEW_PROMPT`.
  */
 export const HARVEST_NOTE = `Before this pass ends: call ${REPORT_FINDING} now for each possible defect you noticed or weighed in the files you reviewed and did not report, also one you judged too small or not sure, saying in its claim what would make it real; another reviewer checks each report. If there is none, answer "none". No other tool runs now.`
 
@@ -161,17 +162,17 @@ export const PromptPart = Schema.Struct({ role: Schema.Literals(["system", "user
 export type PromptPart = typeof PromptPart.Type
 
 /**
- * A pass's or a check's prompt: the prefix, byte-stable within a pull request (the system text, then one message with
- * the rules, the pull request, the diff and the CI's digest), sent first at every step and never stored; and the
- * tail, the pass's or the check's own message, stored as the conversation's first user message.
+ * A turn's prompt, a finder's or a check's: the prefix, byte-stable within a pull request (the system text, then one
+ * message with the rules, the pull request, the diff and the CI's digest), sent first at every step and never stored;
+ * and the tail, the turn's own message, stored as the conversation's first user message.
  */
 export const ReviewPrompt = Schema.Struct({ prefix: Schema.Array(PromptPart), tail: Schema.String })
 export type ReviewPrompt = typeof ReviewPrompt.Type
 
-/** A changed file in a pass's walk: its path, and whether the packed diff shows it. */
+/** A changed file in a finder turn's walk: its path, and whether the packed diff shows it. */
 export const WalkedFile = Schema.Struct({ path: Schema.String, inDiff: Schema.Boolean })
 export type WalkedFile = typeof WalkedFile.Type
 
-/** What a pass's tail is asked: how it finds, and the changed files in the order it walks them. */
+/** What a finder turn's tail is asked: how it finds, and the changed files in the order it walks them. */
 export const FindTailOptions = Schema.Struct({ finder: Finder, order: Schema.Array(WalkedFile) })
 export type FindTailOptions = typeof FindTailOptions.Type
