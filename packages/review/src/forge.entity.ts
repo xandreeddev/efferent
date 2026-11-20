@@ -70,6 +70,27 @@ export type BranchRun = typeof BranchRun.Type
 export const ForcePush = Schema.Struct({ at: Schema.String, before: Schema.OptionFromNullOr(Schema.String) })
 export type ForcePush = typeof ForcePush.Type
 
+/**
+ * One saved version of a pull request's description, from its edit history: when it was saved and its text (none
+ * when its author deleted that version from the history).
+ */
+export const DescriptionEdit = Schema.Struct({ editedAt: Schema.String, text: Schema.OptionFromNullOr(Schema.String) })
+export type DescriptionEdit = typeof DescriptionEdit.Type
+
+/**
+ * What the forge keeps of a pull request's description over time: the commit's time (when the commit under review
+ * was committed), the saved versions it lists (at most `DESCRIPTION_EDITS_READ`), and how many it holds in all.
+ */
+export const DescriptionHistory = Schema.Struct({
+  committedAt: Schema.String,
+  edits: Schema.Array(DescriptionEdit),
+  total: Schema.Int,
+})
+export type DescriptionHistory = typeof DescriptionHistory.Type
+
+/** The most saved versions of a description read: GitHub's largest page. */
+export const DESCRIPTION_EDITS_READ = 100
+
 /** When a pull request was opened and closed (none while open), and its head's force-pushes, oldest first. */
 export const PullTimeline = Schema.Struct({
   opened: Schema.String,

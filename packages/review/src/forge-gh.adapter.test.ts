@@ -3,7 +3,7 @@ import { Effect, Exit, Layer, Option } from "effect"
 import type { Ran } from "@xandreed/sdk"
 import { RunId } from "./forge.entity.js"
 import { Forge } from "./forge.port.js"
-import { ghForge, PULL_FIELDS, TIMELINE_QUERY } from "./forge-gh.adapter.js"
+import { DESCRIPTION_QUERY, ghForge, PULL_FIELDS, TIMELINE_QUERY } from "./forge-gh.adapter.js"
 import { commandLine } from "./host-command.entity.functions.js"
 import { HostShell } from "./host-shell.port.js"
 import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
@@ -192,5 +192,33 @@ describe("ghForge.firstHead", () => {
       { sha: "6".repeat(40), source: "before-first-force-push" },
       { sha: FIRST, source: "first-commit" },
     ])
+  })
+})
+
+describe("ghForge.descriptionHistory", () => {
+  // A sha of digits alone: given with -F, gh would send it as a number.
+  const AT = CommitSha.make("3".repeat(40))
+  const HISTORY = commandLine(["gh", "api", "graphql", "-f", `query=${DESCRIPTION_QUERY}`, "-F", "owner=owner", "-F", "name=project", "-F", "number=7", "-f", `sha=${AT}`])
+  const answer = (object: unknown) => exited(JSON.stringify({ data: { repository: { object, pullRequest: { userContentEdits: { totalCount: 3, nodes: [
+    { editedAt: "2026-11-02T08:00:00Z", diff: "lists the fixes" },
+    { editedAt: "2026-11-01T09:30:00Z", diff: null },
+    { editedAt: "2026-11-01T09:00:00Z", diff: "as opened" },
+  ] } } } } }))
+  const historyOf = (ran: Ran) => withForge({ [VIEW]: exited(pull()), [PERMISSION]: exited(JSON.stringify({ permission: "write" })), [HISTORY]: ran },
+    (forge) => Effect.flatMap(forge.pullRequest(repo, PullNumber.make(7)), (read) => forge.descriptionHistory(repo, read, AT)))
+
+  test("the commit's time and every saved version, its sha sent as a string; a commit the forge does not know has no time", async () => {
+    const known = await historyOf(answer({ committedDate: "2026-11-01T10:00:00Z" }))
+    const unknown = await historyOf(answer(null))
+    const edits = [
+      { editedAt: "2026-11-02T08:00:00Z", text: Option.some("lists the fixes") },
+      { editedAt: "2026-11-01T09:30:00Z", text: Option.none() },
+      { editedAt: "2026-11-01T09:00:00Z", text: Option.some("as opened") },
+    ]
+    expect<unknown>([known.exit, unknown.exit].map((exit) => Exit.isSuccess(exit) && exit.value)).toEqual([
+      { committedAt: "2026-11-01T10:00:00Z", edits, total: 3 },
+      { committedAt: "", edits, total: 3 },
+    ])
+    expect(known.asked.at(-1)).toBe(HISTORY)
   })
 })

@@ -72,6 +72,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   review keeps, in a folder of its own, its prepared review, its report (its
   sessions, each call's tokens, cached tokens and cost) and its pass's
   journal, for offline scoring.
+- `efferent-review` reviews any commit but the head (`--at first`, `--at
+  <sha>`) with the pull request's description as it stood when that commit
+  was committed (`Forge.descriptionHistory`, `descriptionAsOf`): the last
+  version saved by then from its edit history, else the one it was opened
+  with; the current one when it was never edited or no earlier version is
+  known. A description edited later often lists the fixes made after the
+  commit, which told a review of the first head what was wrong: seven of the
+  twenty pull requests of the review's eval had been edited so.
 - `efferent-review review` reviews in focused groups by default
   (`--focus groups`; `--focus whole` for the passes over the whole pull
   request): the changed code files (tests, pages and `.astro` files

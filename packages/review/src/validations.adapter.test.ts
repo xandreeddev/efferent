@@ -69,6 +69,7 @@ const forge = Layer.succeed(Forge, Forge.of({
   pullRequest: () => Effect.die("no pull request in these tests"),
   ciRuns: () => Effect.die("no runs in these tests"),
   firstHead: () => Effect.die("no first head in these tests"),
+  descriptionHistory: () => Effect.die("no description in these tests"),
   failedLog: () => Effect.die("no log in these tests"),
   defaultBranch: () => Effect.succeed(BranchName.make("main")),
 }))

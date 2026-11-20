@@ -1,5 +1,5 @@
 import { Array as Arr, Option, Order, Schema } from "effect"
-import type { BranchRun, FirstHead, PullTimeline } from "./forge.entity.js"
+import type { BranchRun, DescriptionHistory, FirstHead, PullTimeline } from "./forge.entity.js"
 import { CommitSha } from "./pull-request.entity.js"
 import type { PullCommit } from "./pull-request.entity.js"
 
@@ -14,6 +14,32 @@ const byStart: Order.Order<Started> = Order.combine(
   Order.mapInput(Order.String, (one: Started) => one.createdAt),
   Order.mapInput(Order.String, (one: Started) => one.sha),
 )
+
+/**
+ * A pull request's description as it stood when the commit under review was committed, from its edit history: the
+ * last version saved at or before that time, else the first version the history holds (the one it was opened with),
+ * when the history holds it whole. None when the description was never edited (the history is empty: the current
+ * text is the one it was opened with), when no version's text is kept, when a time does not read, or when every
+ * version read is later and the history holds more than were read (the one it was opened with is not among them): the
+ * caller keeps the current text then. A later edit often lists the fixes made after the commit, so a review of an
+ * earlier commit given today's description is told what is wrong.
+ */
+export const descriptionAsOf = (history: DescriptionHistory): Option.Option<string> => {
+  const at = Date.parse(history.committedAt)
+  const versions = Arr.sort(
+    history.edits.flatMap((edit) => {
+      const savedAt = Date.parse(edit.editedAt)
+      return Number.isNaN(savedAt) ? [] : Option.toArray(Option.map(edit.text, (text) => ({ savedAt, text })))
+    }),
+    Order.mapInput(Order.Number, (version: { readonly savedAt: number }) => version.savedAt),
+  )
+  if (Number.isNaN(at) || versions.length === 0) return Option.none()
+  const before = Arr.last(versions.filter((version) => version.savedAt <= at))
+  return Option.match(before, {
+    onSome: (version) => Option.some(version.text),
+    onNone: () => history.total > history.edits.length ? Option.none() : Option.map(Arr.head(versions), (version) => version.text),
+  })
+}
 
 /**
  * A pull request's first head. First, the commit of the earliest `pull_request` run of its head branch started while

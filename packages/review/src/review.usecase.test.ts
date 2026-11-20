@@ -45,9 +45,22 @@ const PULL = Schema.decodeUnknownSync(PullRequest)({
 })
 
 const ciOf: Array<string> = []
-const forge = Layer.succeed(Forge, Forge.of({
+const historyOf: Array<string> = []
+const forge =Layer.succeed(Forge, Forge.of({
   pullRequest: () => Effect.succeed(PULL),
   firstHead: () => Effect.succeed({ sha: CommitSha.make(fixture.head), source: "first-ci-run" as const }),
+  // Opened with one description, edited after the first head was committed to list the fix.
+  descriptionHistory: (_repo, _pull, at) => Effect.sync(() => {
+    historyOf.push(at)
+    return {
+      committedAt: "2026-11-01T10:00:00Z",
+      edits: [
+        { editedAt: "2026-11-02T08:00:00Z", text: Option.some("Fix the sum.\n\nReview follow-up: the multiplication by one is undone.") },
+        { editedAt: "2026-11-01T09:00:00Z", text: Option.some("Fix the sum.") },
+      ],
+      total: 2,
+    }
+  }),
   ciRuns: (_repo, head) => Effect.sync((): ReadonlyArray<CiRun> => {
     ciOf.push(head)
     return []
@@ -62,7 +75,7 @@ const layers = Layer.mergeAll(forge, gitCheckout({ cacheRoot: fixture.cacheRoot,
 const OPTIONS: PrepareOptions = { at: { _tag: "First" }, budgetTokens: 24_000, run: [], validate: false, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
 
 describe("at the first head", () => {
-  test("the commit the first run tested, its diff and rules from where its history meets the base, its own CI", async () => {
+  test("the commit the first run tested, its diff and rules from where its history meets the base, its own CI, its description as it stood then", async () => {
     const prepared = await Effect.runPromise(prepareReview(repo, PULL.number, OPTIONS).pipe(Effect.provide(layers)))
     expect<unknown>(prepared.at).toEqual({ sha: fixture.head, source: "first-ci-run", base: fixture.base })
     // The first head multiplied by one; the later commit undid it, so only the first head's diff changes src/sum.ts.
@@ -71,8 +84,13 @@ describe("at the first head", () => {
     expect(ciOf.at(-1)).toBe(fixture.head)
     // What the later commit changed, kept for scoring: it undid the multiplication in src/sum.ts.
     expect<unknown>(prepared.later).toEqual(Option.some({ head: fixture.later, paths: ["src/sum.ts"] }))
+    // The description as it stood when the first head was committed, not the later one that lists the fix.
+    expect([prepared.pullRequest.body, historyOf.at(-1)]).toEqual(["Fix the sum.", fixture.head])
+    const asked = historyOf.length
     const atHead = await Effect.runPromise(prepareReview(repo, PULL.number, { ...OPTIONS, at: { _tag: "Head" } }).pipe(Effect.provide(layers)))
     expect<unknown>([atHead.at, atHead.files.map((file) => file.path).includes("src/sum.ts"), atHead.later]).toEqual([{ sha: fixture.later, source: "head", base: fixture.left }, false, Option.none()])
+    // The head is reviewed with the current description: no history asked.
+    expect([atHead.pullRequest.body, historyOf.length]).toEqual(["", asked])
   })
 })
 

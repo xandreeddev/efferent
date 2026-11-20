@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { CiRun, FailedLog, FirstHead, ForgeUnreadable, RunId } from "./forge.entity.js"
+import type { CiRun, DescriptionHistory, FailedLog, FirstHead, ForgeUnreadable, RunId } from "./forge.entity.js"
 import type { CommandFailed, OutputCut } from "./host-command.entity.js"
 import type { BranchName, CommitSha, PullNumber, PullRequest, RepoName } from "./pull-request.entity.js"
 
@@ -15,13 +15,16 @@ export type ForgeError = CommandFailed | OutputCut | ForgeUnreadable
  * expired log is a result; an auth or repository failure is a failure with its reason. `firstHead` answers the commit
  * the pull request was first pushed at: the one its earliest `pull_request` CI run while it was open tested, else the
  * head its first force-push replaced, else its first commit, with which it was (`ForgeUnreadable` for a pull request
- * with no commit). `defaultBranch` answers the name of the repository's default branch, the one a base must be on
- * before anything of a pull request's is installed.
+ * with no commit). `descriptionHistory` answers when a commit was committed and the saved versions of the pull
+ * request's description (`DescriptionHistory`), so a review of an earlier commit reads the description as it stood
+ * then (`descriptionAsOf`). `defaultBranch` answers the name of the repository's default branch, the one a base must
+ * be on before anything of a pull request's is installed.
  */
 export class Forge extends Context.Service<Forge, {
   readonly pullRequest: (repo: RepoName, number: PullNumber) => Effect.Effect<PullRequest, ForgeError>
   readonly ciRuns: (repo: RepoName, head: CommitSha, workflows: ReadonlyArray<string>) => Effect.Effect<ReadonlyArray<CiRun>, ForgeError>
   readonly firstHead: (repo: RepoName, pull: PullRequest) => Effect.Effect<FirstHead, ForgeError>
+  readonly descriptionHistory: (repo: RepoName, pull: PullRequest, at: CommitSha) => Effect.Effect<DescriptionHistory, ForgeError>
   readonly failedLog: (repo: RepoName, run: RunId) => Effect.Effect<FailedLog, ForgeError>
   readonly defaultBranch: (repo: RepoName) => Effect.Effect<BranchName, ForgeError>
 }>()("@xandreed/review/Forge") {}
