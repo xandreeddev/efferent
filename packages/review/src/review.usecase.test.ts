@@ -20,7 +20,10 @@ import { ReviewLogs } from "./review-logs.port.js"
 import type { PassInput } from "./review-pass.port.js"
 import { ReviewPasses } from "./review-pass.port.js"
 import { ReviewReport } from "./review-report.entity.js"
+import { DEFAULT_GROUP_OPTIONS } from "./review.entity.js"
 import type { ReviewOptions } from "./review.entity.js"
+import { DEFAULT_GROUP_STEPS, GROUP_START_ROOM, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import { FIND_TAIL } from "./review-prompt.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 import { reportText } from "./review-report.entity.functions.js"
 
@@ -108,8 +111,8 @@ const scripted = (quote: string, firstFails = false) => {
 }
 
 const REVIEW_OPTIONS: ReviewOptions = {
-  prepare: OPTIONS, passes: 3, pass: { maxSteps: 4, reserve: 0.1 }, finder: "candidates", vote: false, verify: true, verifyConcurrency: 2, verifySteps: 6,
-  budget: { total: 0.5, find: 0.3, verify: 0.2 }, model: "m",
+  prepare: OPTIONS, focus: "whole", passes: 3, pass: { maxSteps: 4, reserve: 0.1 }, groups: DEFAULT_GROUP_OPTIONS, finder: "candidates", vote: false, verify: true, verifyConcurrency: 2, verifySteps: 6,
+  budget: { total: 0.5, find: 0.3, verify: 0.2 }, effort: { find: "default", check: "default" }, model: "m",
 }
 
 const reviewWith = (passes: Layer.Layer<ReviewPasses, never, Findings>, options: ReviewOptions = REVIEW_OPTIONS) =>
@@ -130,7 +133,7 @@ describe("reviewPullRequest", () => {
     // The one check runs alone, so it keeps back its closing call's reserve.
     expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6, reserve: 0.1 }, finds[0]?.prompt.prefix, true])
     expect<unknown>([report.promptVersion, report.toolsVersion, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
-      "review-prompt-5", "review-tools-4", 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
+      "review-prompt-6", "review-tools-4", 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
     ])
     expect<unknown>([report.reported.map((one) => [one.path, one.line, one.votes, one.checked]), report.stages.find, report.stages.verify.calls]).toEqual([
       [["src/sum.ts", 4, 3, "It does multiply by one."]], { input: 30, cached: 12, output: 6, cost: 0.003, calls: 3 }, 1,
@@ -180,6 +183,33 @@ describe("reviewPullRequest", () => {
       Effect.provide(layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory)))),
     ))
     expect([one.run === two.run, one.findings.length, two.findings.length, two.verdicts.length]).toEqual([false, 4, 4, 1])
+  })
+
+  test("focused: one pass a group, one after another, each with its group's prefix and its finder's words; the check starts with the prefix of the group holding its finding's file; the groups recorded", async () => {
+    const { asked, events, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups" })
+    const finds = asked.filter((input) => input.reviewed.stage._tag === "Find")
+    const checks = asked.filter((input) => input.reviewed.stage._tag === "Verify")
+    const sumGroup = report.groups.find((run) => run.group.paths.includes("src/sum.ts"))
+    const sumPass = Option.getOrElse(sumGroup?.pass ?? Option.none(), () => 0)
+    expect<unknown>([
+      report.focus,
+      report.groups.map((run) => [run.group.number, run.group.package, Option.isSome(run.pass), run.notReviewed]),
+      finds.length,
+      events.filter((event) => event.endsWith("started")).length,
+      finds.every((input) => input.prompt.tail === FIND_TAIL.candidates && input.prompt.prefix.length === 3 && input.onFirstAnswer === undefined),
+      finds[0]?.options,
+      report.passesAsked,
+    ]).toEqual(["groups", report.groups.map((run, index) => [index + 1, ".", true, ""]), report.groups.length, report.groups.length, true, { maxSteps: DEFAULT_GROUP_STEPS, reserve: 0.1 }, report.groups.length])
+    // The pass's first three messages are the check's, byte for byte.
+    expect([checks.length, checks[0]?.prompt.prefix === finds[sumPass - 1]?.prompt.prefix, JSON.stringify(checks[0]?.prompt.prefix) === JSON.stringify(finds[sumPass - 1]?.prompt.prefix)]).toEqual([1, true, true])
+    expect(finds[sumPass - 1]?.prompt.prefix[2]?.content.includes("File: src/sum.ts")).toBe(true)
+  })
+
+  test("focused: a group starts only while the find stage has room; the rest are listed as not reviewed", async () => {
+    const { asked, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, budget: { total: 0.5, find: GROUP_START_ROOM / 2, verify: 0.2 } })
+    expect<unknown>([asked.length, report.groups.map((run) => [Option.isSome(run.pass), run.notReviewed]), report.passes]).toEqual([0, report.groups.map(() => [false, NOT_REVIEWED_BECAUSE.spent]), []])
   })
 
   test("with the vote on, a bucket one pass found is left out; with checks off, the kept buckets are reported unchecked", async () => {

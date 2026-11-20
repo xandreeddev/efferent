@@ -45,6 +45,8 @@ const worthAnotherTry = (error: unknown): boolean =>
  */
 export interface KernelPassesOptions {
   readonly model: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>
+  /** The checks' model, when it differs from the passes' (another reasoning effort): `model` by default. */
+  readonly verifyModel?: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>
   readonly memory?: Layer.Layer<Memory>
   readonly tools?: typeof reviewToolHandlers
   readonly journal?: (at: string) => Layer.Layer<JournalStorage, PassJournalFailed>
@@ -200,7 +202,7 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
     return { _tag: "StepCap", steps: input.options.maxSteps, ...closed } satisfies PassEnded
   }).pipe(Effect.ensuring(releaseReserve)))
 
-  const model = parts.model.pipe(Layer.provide(Layer.succeed(ModelSpend, own)))
+  const model = (checking ? parts.verifyModel : parts.model).pipe(Layer.provide(Layer.succeed(ModelSpend, own)))
   const stack = Layer.mergeAll(parts.memory, parts.tools(input.reviewed), model).pipe(
     Layer.provideMerge(sessions()),
     Layer.provideMerge(parts.journal(input.journalAt)),
@@ -226,6 +228,7 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
 export const kernelPasses = (options: KernelPassesOptions): Layer.Layer<ReviewPasses, never, Checkout | Findings> => {
   const parts: Required<KernelPassesOptions> = {
     model: options.model,
+    verifyModel: options.verifyModel ?? options.model,
     memory: options.memory ?? flatMemory,
     tools: options.tools ?? reviewToolHandlers,
     journal: options.journal ?? folderJournal,

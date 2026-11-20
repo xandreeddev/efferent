@@ -3,6 +3,7 @@ import type { AttributeRule, FileStats } from "./file-verdict.entity.js"
 import type { FileDiff as DiffFile } from "./diff.entity.js"
 import type { Digested } from "./log-digest.entity.js"
 import type { DroppedFile } from "./packed-diff.entity.js"
+import type { FileGroup, GroupBounds } from "./file-group.entity.js"
 import { CiRun, FirstHeadSource } from "./forge.entity.js"
 import { FileVerdict } from "./file-verdict.entity.js"
 import { DigestLimits, LogDigest } from "./log-digest.entity.js"
@@ -147,9 +148,11 @@ export type PreparedReview = typeof PreparedReview.Type
  * (`STOCK_POLICIES`), so a host swaps one without touching the others. `verdict` decides which files the model reads;
  * `pack` packs them under the budget; `rulesAlong` names the instruction files to look for; `digest` shortens a log;
  * `mayRun` says whether a pull request's commands may run at all (its head and author); `failed` says whether a CI
- * run counts as failed.
+ * run counts as failed; `group` groups the changed files for a focused review (`groups` focus), given the folders
+ * that hold a `package.json`.
  */
 export interface ReviewPolicies {
+  readonly group: (files: ReadonlyArray<DiffFile>, packageFolders: ReadonlySet<string>, bounds: GroupBounds, config: boolean) => ReadonlyArray<FileGroup>
   readonly verdict: (path: string, stats: FileStats, attributes: ReadonlyArray<AttributeRule>) => FileVerdict
   readonly pack: (files: ReadonlyArray<DiffFile>, budgetTokens: number, earlier: ReadonlyArray<DroppedFile>) => PackedDiff
   readonly rulesAlong: (changedPaths: ReadonlyArray<string>) => ReadonlyArray<string>

@@ -6,7 +6,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE, VERDICT
  * passes and of the checks. A change to any of them is a new version, kept with each review's record so results are
  * compared prompt to prompt.
  */
-export const REVIEW_PROMPT = "review-prompt-5"
+export const REVIEW_PROMPT = "review-prompt-6"
 
 /** The most characters of instruction files shown whole, nearest to the changed paths first; past it, their headings. */
 export const RULES_WHOLE = 16_000
@@ -51,6 +51,12 @@ export const PULL_INTRO = "The pull request's title and description, as its auth
 
 /** The words before the packed diff. */
 export const DIFF_INTRO = `The pull request's diff from where it left its base branch: each line with its number in the new file and + for an added line, a removed line with - and no number. The files left out are listed at its end; ${READ_DIFF} reads any changed file.`
+
+/** The words before the list of every changed file, in a focused review's prefix (in place of the packed diff). */
+export const FILES_INTRO = `Every file the pull request changes, with the lines it adds and removes, then the files left out of the review and why. ${READ_DIFF} reads any changed file's diff.`
+
+/** The words before a group's diffs, the message a focused pass and the checks of its findings share. */
+export const GROUP_INTRO = `The files under review here, with their diffs from where the pull request left its base branch: each line with its number in the new file and + for an added line, a removed line with - and no number. Review these files; read others only to confirm a claim.`
 
 /** The words before the CI's digest. */
 export const CI_INTRO = "What the CI's runs for the commit under review report: each failed check's failures, digested from its log."

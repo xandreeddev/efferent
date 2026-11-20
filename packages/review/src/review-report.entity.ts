@@ -1,5 +1,7 @@
 import { Schema } from "effect"
+import { Focus, GroupRun } from "./file-group.entity.js"
 import { CheckNumber, Finding, Verdict } from "./finding.entity.js"
+import { Effort } from "./review-model.entity.js"
 import { ReviewedAt } from "./prepare-review.entity.js"
 import { PullNumber, RepoName } from "./pull-request.entity.js"
 import { PassResult } from "./review-pass.entity.js"
@@ -63,7 +65,9 @@ export type ReviewUsage = typeof ReviewUsage.Type
 /**
  * A review, as the command line prints it and keeps it beside the prepared review for offline scoring: its run (the
  * folder it is kept in), the pull request and the commit reviewed, the prompt's and the tool set's versions, the
- * model, how its passes found (`finder`), whether the vote filtered and whether checks ran; whether every stage ran
+ * model, how its passes read the pull request (`focus`) and, focused, each group with the pass that reviewed it or why
+ * none did (`groups`), how hard the model reasoned in each stage (`effort`), how its passes found (`finder`), whether
+ * the vote filtered and whether checks ran; whether every stage ran
  * (`complete`: a record kept while the review runs says false, and is replaced once a stage ends); how many passes were
  * asked for (`passesAsked`: more than ran when the first ended before its first call answered); each pass and each check
  * (its session, how it ended, its calls with what each used, the files it opened); every finding of every pass; every
@@ -79,6 +83,9 @@ export const ReviewReport = Schema.Struct({
   promptVersion: Schema.String,
   toolsVersion: Schema.String,
   model: Schema.String,
+  focus: Focus,
+  effort: Schema.Struct({ find: Effort, check: Effort }),
+  groups: Schema.Array(GroupRun),
   finder: Finder,
   vote: Schema.Boolean,
   verify: Schema.Boolean,

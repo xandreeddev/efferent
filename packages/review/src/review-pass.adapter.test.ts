@@ -19,6 +19,7 @@ import { BranchName, CommitSha, FetchRef, RepoName } from "./pull-request.entity
 import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
 import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
+import { withEffort } from "./review-model.entity.functions.js"
 import { kernelPasses } from "./review-pass.adapter.js"
 import type { KernelPassesOptions } from "./review-pass.adapter.js"
 import { PassJournalFailed } from "./review-pass.entity.js"
@@ -64,13 +65,16 @@ const says = (text: string, finish = "stop") => sse([{ choices: [{ delta: { cont
 interface Sent {
   readonly messages: ReadonlyArray<{ readonly role: string; readonly content: unknown }>
   readonly tools: ReadonlyArray<string>
+  /** The body's `reasoning` field, as sent (none: absent). */
+  readonly reasoning: unknown
 }
 
 /** A request's body, read loosely: the test's own fake wire. */
 const sentOf = (body: unknown): Sent => {
   const messages = typeof body === "object" && body !== null && "messages" in body && Array.isArray(body.messages) ? body.messages : []
   const tools = typeof body === "object" && body !== null && "tools" in body && Array.isArray(body.tools) ? body.tools.map((tool: { readonly function?: { readonly name?: string } }) => tool.function?.name ?? "") : []
-  return { messages, tools }
+  const reasoning = typeof body === "object" && body !== null && "reasoning" in body ? body.reasoning : undefined
+  return { messages, tools, reasoning }
 }
 
 /** An endpoint that answers each request with the script's next answer (the last one again past its end), and keeps what it was sent. */
@@ -97,6 +101,8 @@ interface PassOptionsForTest {
   readonly reserve?: number
   /** Whether the input carries `onFirstAnswer`, as the first pass's does (the default). */
   readonly waitedOn?: boolean
+  /** The prompt, `PROMPT` by default. */
+  readonly prompt?: { readonly prefix: ReadonlyArray<{ readonly role: "system" | "user"; readonly content: string }>; readonly tail: string }
 }
 
 const testModel = (options: PassOptionsForTest) =>
@@ -115,7 +121,7 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
     const root = yield* ModelSpend
     const spend = yield* stageSpend(root, Option.none())
     const result = yield* (yield* ReviewPasses).run({
-      prompt: PROMPT,
+      prompt: options.prompt ?? PROMPT,
       reviewed: { run: "run-1", repo, at: head, files, stage },
       journalAt,
       options: { maxSteps: options.maxSteps ?? 16, reserve: options.reserve ?? 0 },
@@ -133,6 +139,27 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
 }
 
 const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "Multiplying by one changes nothing.", evidence: "total += value * 1" }
+
+describe("a focused pass and its check on the wire", () => {
+  const group = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "The pull request and every changed file." }, { role: "user" as const, content: "The files under review here: src/sum.ts." }]
+
+  test("a check's request starts with its pass's first three messages, byte for byte; only the tail after them differs", async () => {
+    const found = await pass([asks(["reportFinding", FINDING]), says("One.")], { prompt: { prefix: group, tail: "Find." } })
+    const checked = await pass([asks(["verdict", { outcome: "confirmed", reason: "r", quote: "total += value * 1" }])], { prompt: { prefix: group, tail: "Check." }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const first = (sent: ReadonlyArray<Sent>) => JSON.stringify(sent[0]?.messages.slice(0, 3))
+    expect([first(found.kept), first(found.kept) === first(checked.kept), found.kept[0]?.messages[3], checked.kept[0]?.messages[3]]).toEqual([
+      JSON.stringify(group.map((part) => ({ role: part.role, content: part.content }))), true, { role: "user", content: "Find." }, { role: "user", content: "Check." },
+    ])
+  })
+
+  test("the checks' model is the passes' unless given: another effort is sent by the checks alone", async () => {
+    const none = reviewModel(withEffort({ ...DEFAULT_REVIEW_MODEL, model: "m" }, "none"), Redacted.make("test-key"), 0.05)
+    const found = await pass([says("Nothing.")], { passes: { verifyModel: none } })
+    const checked = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { passes: { verifyModel: none }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    const same = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    expect([found.kept[0]?.reasoning, checked.kept[0]?.reasoning, same.kept[0]?.reasoning]).toEqual([undefined, { enabled: false }, undefined])
+  })
+})
 
 describe("a pass over the kernel", () => {
   test("the model reads, reports, and answers: the finding recorded, each call's tokens and cost, the files opened, the journal kept", async () => {

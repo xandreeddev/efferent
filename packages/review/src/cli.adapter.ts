@@ -15,9 +15,11 @@ import { prepareReview } from "./prepare-review.usecase.js"
 import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
 import { directoryCache } from "./review-cache.adapter.js"
 import { directoryLogs } from "./review-logs.adapter.js"
-import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
+import { DEFAULT_FOCUS, DEFAULT_GROUP_STEPS, Focus } from "./file-group.entity.js"
+import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, Effort } from "./review-model.entity.js"
+import { withEffort } from "./review-model.entity.functions.js"
 import type { Finder } from "./review-prompt.entity.js"
-import { DEFAULT_CLOSING_RESERVE, DEFAULT_PASSES, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
+import { DEFAULT_CLOSING_RESERVE, DEFAULT_GROUP_OPTIONS, DEFAULT_PASSES, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
 import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
 import { kernelPasses } from "./review-pass.adapter.js"
@@ -56,9 +58,9 @@ export const validationLayers = (repo: RepoName, roots: { readonly cache: string
   )
 
 /** The flags that take a value; `--workflow` may be given more than once, the others once. */
-const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--run"]
+const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--run", "--focus", "--group-steps", "--effort-find", "--effort-check"]
 const REPEATED = ["--workflow", "--run"]
-const SWITCHES = ["--json", "--validate", "--vote", "--no-verify"]
+const SWITCHES = ["--json", "--validate", "--vote", "--no-verify", "--config-pass"]
 
 /** A parsed command line: the positional words, each valued flag's values in order, and the switches given. */
 interface Line {
@@ -114,14 +116,20 @@ const wholeNumber = (text: string, what: string) => {
 }
 
 /** The flags only `review` reads. */
-const REVIEW_ONLY = ["--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price"]
+const REVIEW_ONLY = ["--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--focus", "--group-steps", "--effort-find", "--effort-check"]
 
 /** The switches only `review` reads. */
-const REVIEW_SWITCHES = ["--vote", "--no-verify"]
+const REVIEW_SWITCHES = ["--vote", "--no-verify", "--config-pass"]
 
 /** `--finder`: `strict` or `candidates`. */
 const finderOf = (text: string): Effect.Effect<Finder, UsageError> =>
   text === "strict" || text === "candidates" ? Effect.succeed(text) : Effect.fail(usage(`--finder must be strict or candidates, not ${JSON.stringify(text)}`))
+
+/** A value one of `literals`, else a usage error naming them. */
+const oneOf = <A extends string>(flag: string, literals: ReadonlyArray<A>) => (text: string): Effect.Effect<A, UsageError> => {
+  const found = literals.find((literal) => literal === text)
+  return found === undefined ? Effect.fail(usage(`${flag} must be one of ${literals.join(", ")}, not ${JSON.stringify(text)}`)) : Effect.succeed(found)
+}
 
 /**
  * The model a review asks: `DEFAULT_REVIEW_MODEL`, or another id of the same endpoint (`--model`), which needs its
@@ -196,17 +204,27 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const verifySteps = yield* Option.match(one(line, "--verify-steps"), { onNone: () => Effect.succeed(DEFAULT_VERIFY_STEPS), onSome: (text) => wholeNumber(text, "--verify-steps") })
   const passes = yield* Option.match(one(line, "--passes"), { onNone: () => Effect.succeed(DEFAULT_PASSES), onSome: (text) => wholeNumber(text, "--passes") })
   const finder = yield* Option.match(one(line, "--finder"), { onNone: () => Effect.succeed<Finder>("candidates"), onSome: finderOf })
+  const focus = yield* Option.match(one(line, "--focus"), { onNone: () => Effect.succeed<Focus>(DEFAULT_FOCUS), onSome: oneOf("--focus", Focus.literals) })
+  const groupSteps = yield* Option.match(one(line, "--group-steps"), { onNone: () => Effect.succeed(DEFAULT_GROUP_STEPS), onSome: (text) => wholeNumber(text, "--group-steps") })
+  const effortFind = yield* Option.match(one(line, "--effort-find"), { onNone: () => Effect.succeed<Effort>("default"), onSome: oneOf("--effort-find", Effort.literals) })
+  const effortCheck = yield* Option.match(one(line, "--effort-check"), { onNone: () => Effect.succeed<Effort>("default"), onSome: oneOf("--effort-check", Effort.literals) })
   const model = yield* modelOf(one(line, "--model"), one(line, "--price"))
   const apiKey = yield* Config.Redacted(model.keyVariable).parse(ConfigProvider.fromEnv({ env: host.env })).pipe(
     Effect.mapError(() => usage(`review needs the model's key in the environment variable ${model.keyVariable}`)),
   )
   const base = asked ? validationLayers(repo, roots, host) : reviewLayers(repo, roots, host)
   const needs = Layer.mergeAll(base, findingsInMemory, modelSpendMemory)
-  const layers = kernelPasses({ model: reviewModel(model, apiKey, maxCost) }).pipe(Layer.provideMerge(needs))
+  const layers = kernelPasses({
+    model: reviewModel(withEffort(model, effortFind), apiKey, maxCost),
+    verifyModel: reviewModel(withEffort(model, effortCheck), apiKey, maxCost),
+  }).pipe(Layer.provideMerge(needs))
   const report = yield* reviewPullRequest(repo, number, {
     prepare: options,
+    focus,
     passes,
     pass: { maxSteps, reserve: DEFAULT_CLOSING_RESERVE },
+    groups: { ...DEFAULT_GROUP_OPTIONS, steps: groupSteps, config: line.switches.has("--config-pass") },
+    effort: { find: effortFind, check: effortCheck },
     finder,
     vote: line.switches.has("--vote"),
     verify: !line.switches.has("--no-verify"),

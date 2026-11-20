@@ -3,8 +3,9 @@ import { Option } from "effect"
 import type { FileDiff } from "./diff.entity.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { PreparedReview } from "./prepare-review.entity.js"
-import { REVIEW_PROMPT } from "./review-prompt.entity.js"
-import { isTestPath, nearestFirst, reviewPrefix, reviewPrompt, rulesText, stepCapNote, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
+import { FIND_TAIL, REVIEW_PROMPT } from "./review-prompt.entity.js"
+import { isTestPath } from "./packed-diff.entity.functions.js"
+import { focusPrefix, focusPrompt, nearestFirst, reviewPrefix, reviewPrompt, rulesText, stepCapNote, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
 import { PREPARED } from "./review-prompt.testing.js"
 
 const PREFIX_USER = [
@@ -70,7 +71,7 @@ const ORDER = [
 
 describe("reviewPrompt", () => {
   test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates pass's tail", () => {
-    expect(REVIEW_PROMPT).toBe("review-prompt-5")
+    expect(REVIEW_PROMPT).toBe("review-prompt-6")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
       tail: [
@@ -85,6 +86,41 @@ describe("reviewPrompt", () => {
         ...ORDER,
       ].join("\n"),
     })
+  })
+
+  test("a focused pass's prompt, pinned whole: the system text, the pull request with every changed file in place of the diff, the group's message, and the finder's words alone", () => {
+    const diffStart = PREFIX_USER.indexOf("The pull request's diff from where")
+    const ciStart = PREFIX_USER.indexOf("What the CI's runs")
+    const files = [
+      "Every file the pull request changes, with the lines it adds and removes, then the files left out of the review and why. readDiff reads any changed file's diff.",
+      "",
+      "<pull-request-files>",
+      "- src/sum.ts (+1 -1)",
+      "",
+      "Left out of the review:",
+      "- bun.lock changed (+1 -0); no manifest changed",
+      "</pull-request-files>",
+      "",
+      "",
+    ].join("\n")
+    const group = [
+      "The files under review here, with their diffs from where the pull request left its base branch: each line with its number in the new file and + for an added line, a removed line with - and no number. Review these files; read others only to confirm a claim.",
+      "",
+      "<files-under-review>",
+      // The prepared review by hand holds no hunks: the group's diff is rendered as `renderDiff` renders it.
+      "File: src/sum.ts (modified, +1 -1)",
+      "</files-under-review>",
+    ].join("\n")
+    const prefix = focusPrefix(PREPARED, PREPARED.files.filter((file) => file.path === "src/sum.ts"), 24_000)
+    expect(prefix).toEqual([
+      { role: "system", content: SYSTEM },
+      { role: "user", content: `${PREFIX_USER.slice(0, diffStart)}${files}${PREFIX_USER.slice(ciStart)}` },
+      { role: "user", content: group },
+    ])
+    expect(focusPrompt(prefix, "candidates")).toEqual({ prefix, tail: FIND_TAIL.candidates })
+    // The second message names every changed file whatever the group, so it is the same for every group and check.
+    expect(focusPrefix(PREPARED, [], 24_000)[1]).toEqual(prefix[1])
+    expect(verifyPrompt(prefix, { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e", pass: PassNumber.make(1), number: 1 }).prefix).toBe(prefix)
   })
 
   test("the strict pass's tail, pinned whole", () => {

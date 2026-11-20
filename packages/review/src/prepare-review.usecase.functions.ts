@@ -1,4 +1,5 @@
 import { Option } from "effect"
+import { groupFiles } from "./file-group.entity.functions.js"
 import { fileVerdict } from "./file-verdict.entity.functions.js"
 import type { CiRun } from "./forge.entity.js"
 import { digestLog } from "./log-digest.entity.functions.js"
@@ -14,13 +15,14 @@ export const PASSING: ReadonlyArray<string> = ["success", "skipped", "neutral"]
 export const WRITERS: ReadonlyArray<Permission> = ["admin", "maintain", "write"]
 
 /**
- * The stock policies: `fileVerdict`, `packDiff`, `rulesAlong` over `RULE_FILES`, `digestLog`; commands may run for a
- * head in the base repository whose author is one of `WRITERS`; a finished run whose conclusion is not one of
- * `PASSING` failed (a run still going has none and is not read yet).
+ * The stock policies: `fileVerdict`, `packDiff` (source first, in git's order), `rulesAlong` over `RULE_FILES`,
+ * `digestLog`; commands may run for a head in the base repository whose author is one of `WRITERS`; a finished run
+ * whose conclusion is not one of `PASSING` failed (a run still going has none and is not read yet); `groupFiles`.
  */
 export const STOCK_POLICIES: ReviewPolicies = {
+  group: groupFiles,
   verdict: fileVerdict,
-  pack: packDiff,
+  pack: (files, budgetTokens, earlier) => packDiff(files, budgetTokens, earlier),
   rulesAlong: (changedPaths) => rulesAlong(changedPaths),
   digest: digestLog,
   mayRun: (pull: PullRequest) => pull.sameRepo && WRITERS.includes(pull.permission),

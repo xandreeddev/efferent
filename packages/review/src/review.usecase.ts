@@ -2,8 +2,13 @@ import { Array as Arr, Cause, Clock, Deferred, Effect, Fiber, Match, Option, Ran
 import { ModelSpend } from "@xandreed/core"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
+import { GROUP_START_ROOM, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import type { GroupRun } from "./file-group.entity.js"
+import { packageFoldersToLook } from "./file-group.entity.functions.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
-import type { Verdict } from "./finding.entity.js"
+import type { Finding, Verdict } from "./finding.entity.js"
+import type { PassOptions } from "./review-pass.entity.js"
+import type { PromptPart, ReviewPrompt } from "./review-prompt.entity.js"
 import { Findings } from "./findings.port.js"
 import { PreparedReview } from "./prepare-review.entity.js"
 import type { ReviewPolicies } from "./prepare-review.entity.js"
@@ -16,7 +21,7 @@ import { INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
 import type { PassEnded, PassResult } from "./review-pass.entity.js"
 import { ReviewPasses } from "./review-pass.port.js"
 import { REVIEW_PROMPT } from "./review-prompt.entity.js"
-import { reviewPrefix, reviewPrompt, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
+import { focusPrefix, focusPrompt, reviewPrefix, reviewPrompt, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
 import { ReviewReport } from "./review-report.entity.js"
 import type { BucketCheck } from "./review-report.entity.js"
 import { reviewReport, runNameOf } from "./review-report.entity.functions.js"
@@ -93,15 +98,17 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   yield* logs.keep(`${folder}/prepared.json`, yield* jsonOf(PreparedReview, prepared))
 
   /** The report as it stands, kept as `review.json` (whole or not at all), `complete` once every stage ran. */
-  const record = (parts: Pick<ReportInput, "passes" | "checks" | "findings" | "buckets" | "verdicts" | "complete">) => Effect.gen(function* () {
+  const record = (parts: Pick<ReportInput, "passes" | "groups" | "checks" | "findings" | "buckets" | "verdicts" | "complete">) => Effect.gen(function* () {
     const report = reviewReport({
       ...parts,
       run,
       prepared,
+      focus: options.focus,
+      effort: options.effort,
       finder: options.finder,
       vote: options.vote,
       verify: options.verify,
-      passesAsked: options.passes,
+      passesAsked: options.focus === "groups" ? parts.passes.length : options.passes,
       promptVersion: REVIEW_PROMPT,
       toolsVersion: REVIEW_TOOLS_VERSION,
       model: options.model,
@@ -110,7 +117,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     yield* logs.keep(`${folder}/review.json`, yield* jsonOf(ReviewReport, report))
     return report
   })
-  yield* record({ passes: [], checks: [], findings: [], buckets: [], verdicts: [], complete: false })
+  yield* record({ passes: [], groups: [], checks: [], findings: [], buckets: [], verdicts: [], complete: false })
 
   const ledger = yield* ModelSpend
   const total = yield* stageSpend(ledger, Option.some(options.budget.total))
@@ -121,30 +128,66 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   // nothing back, since each one's reserve would crowd out the others' calls (three keeping a sixth each end refused).
   const passOptions = { ...options.pass, reserve: options.passes === 1 ? Math.min(options.pass.reserve, options.budget.find / 2) : 0 }
 
-  const find = (index: number, onFirstAnswer?: (answered: boolean) => Effect.Effect<void>) => {
+  const find = (index: number, prompt: ReviewPrompt, runAs: PassOptions, onFirstAnswer?: (answered: boolean) => Effect.Effect<void>) => {
     const stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(index + 1) }
     return Effect.gen(function* () {
       return yield* passes.run({
-        prompt: reviewPrompt(prepared, { finder: options.finder, order: orders[index] ?? [] }),
+        prompt,
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/pass-${index + 1}`),
-        options: passOptions,
+        options: runAs,
         spend: findSpend,
         ...(onFirstAnswer === undefined ? {} : { onFirstAnswer }),
       })
     }).pipe(Effect.catchCause(couldNotRun(stage)))
   }
-  const firstAnswered = yield* Deferred.make<boolean>()
-  // Whatever becomes of the first pass, the review learns whether it answered; the others start only if it did.
-  const first = yield* Effect.forkChild(find(0, (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid)).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
-  const answered = yield* Deferred.await(firstAnswered)
-  const others = answered ? yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index), { concurrency: "unbounded" }) : []
-  const found = [yield* Fiber.join(first), ...others]
+
+  // Focused: one pass a group, one after another, each with its group's prefix; a group starts only while the find
+  // stage has `GROUP_START_ROOM` unsettled and no pass before it was refused, else it is listed as not reviewed.
+  const focused = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : []
+  const groupRuns: Array<GroupRun> = []
+  const found: Array<PassResult> = []
+  if (options.focus === "groups") {
+    const runAs: PassOptions = { maxSteps: options.groups.steps, reserve: Math.min(options.pass.reserve, options.budget.find / 2) }
+    let stopped = ""
+    for (const { group, prefix } of focused) {
+      if (stopped.length === 0) {
+        const totals = yield* Effect.orDie(findSpend.totals)
+        if (options.budget.find - totals.settled - totals.reserved < GROUP_START_ROOM) stopped = NOT_REVIEWED_BECAUSE.spent
+      }
+      if (stopped.length > 0) {
+        groupRuns.push({ group, pass: Option.none(), notReviewed: stopped })
+        continue
+      }
+      const result = yield* find(found.length, focusPrompt(prefix, options.finder), runAs)
+      groupRuns.push({ group, pass: Option.some(PassNumber.make(found.length + 1)), notReviewed: "" })
+      found.push(result)
+      if (result.ended._tag === "SpendRefused") stopped = NOT_REVIEWED_BECAUSE.refused
+      yield* record({ passes: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
+    }
+  } else {
+    const firstAnswered = yield* Deferred.make<boolean>()
+    const whole = (index: number) => reviewPrompt(prepared, { finder: options.finder, order: orders[index] ?? [] })
+    // Whatever becomes of the first pass, the review learns whether it answered; the others start only if it did.
+    const first = yield* Effect.forkChild(find(0, whole(0), passOptions, (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid)).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
+    const answered = yield* Deferred.await(firstAnswered)
+    const others = answered ? yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index, whole(index), passOptions), { concurrency: "unbounded" }) : []
+    found.push(yield* Fiber.join(first), ...others)
+  }
 
   const all = yield* findings.all(run)
   const buckets = mergeFindings(all, prepared.files, { vote: options.vote })
-  yield* record({ passes: found, checks: [], findings: all, buckets, verdicts: [], complete: false })
-  const prefix = reviewPrefix(prepared)
+  yield* record({ passes: found, groups: groupRuns, checks: [], findings: all, buckets, verdicts: [], complete: false })
+  const wholePrefix = reviewPrefix(prepared)
+  /**
+   * A check's prefix: in a focused review, that of the group holding the finding's file, else of the group whose pass
+   * reported it, so the check's request starts with that pass's bytes; else the whole review's.
+   */
+  const prefixOf = (finding: Finding): ReadonlyArray<PromptPart> => {
+    const reporter = groupRuns.find((one) => Option.contains(one.pass, finding.pass))
+    const holding = focused.find((one) => one.group.paths.includes(finding.path)) ?? focused.find((one) => reporter !== undefined && one.group.number === reporter.group.number)
+    return holding === undefined ? wholePrefix : holding.prefix
+  }
   const toCheck = options.verify ? Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER) : []
   // What a check keeps back for its closing call when it runs alone (one at a time, or the only one): at most half the
   // verify stage. Checks beside each other keep nothing back, for the reason passes do: under $0.20, three checks each
@@ -155,7 +198,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     const stage: ReviewStage = { _tag: "Verify", check }
     return Effect.gen(function* () {
       const result = yield* passes.run({
-        prompt: verifyPrompt(prefix, bucket.best),
+        prompt: verifyPrompt(prefixOf(bucket.best), bucket.best),
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/check-${check}`),
         options: { maxSteps: options.verifySteps, reserve: checkReserve },
@@ -169,7 +212,32 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     })))
   }, { concurrency: options.verifyConcurrency })
 
-  return yield* record({ passes: found, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
+  return yield* record({ passes: found, groups: groupRuns, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
+})
+
+/** Whether the commit under review holds a regular `package.json` in `folder` (`""`, the root); a lookup that fails is no. */
+const holdsPackage = (repo: RepoName, at: CommitSha, folder: string) => Effect.gen(function* () {
+  const checkout = yield* Checkout
+  const path = treePath(folder === "" ? "package.json" : `${folder}/package.json`)
+  if (Result.isFailure(path)) return false
+  return (yield* checkout.entry(repo, at, path.success))._tag === "File"
+}).pipe(Effect.catch((error) => Effect.logWarning("a package.json could not be looked up", error).pipe(Effect.as(false))))
+
+/**
+ * A focused review's groups (`policies.group` over the files the verdict kept, given the folders that hold a
+ * `package.json` at the commit under review), each with its prefix (`focusPrefix`, its diffs under the preparation's
+ * token budget).
+ */
+const reviewGroups = (repo: RepoName, prepared: PreparedReview, options: ReviewOptions, policies: ReviewPolicies) => Effect.gen(function* () {
+  const left = new Set(prepared.diff.dropped.filter((file) => file.reason !== "over-budget").map((file) => file.path))
+  const read = prepared.files.filter((file) => !left.has(file.path))
+  const folders = yield* Effect.filter(packageFoldersToLook(read.map((file) => file.path)), (folder) => holdsPackage(repo, prepared.at.sha, folder), { concurrency: 4 })
+  const groups = policies.group(read, new Set(folders), options.groups.bounds, options.groups.config)
+  const byPath = new Map(read.map((file) => [file.path, file]))
+  return groups.map((group) => ({
+    group,
+    prefix: focusPrefix(prepared, group.paths.flatMap((path) => Option.toArray(Option.fromNullishOr(byPath.get(path)))), options.prepare.budgetTokens),
+  }))
 })
 
 /** How many times a run tries a fresh folder's name before it gives up. */

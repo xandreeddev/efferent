@@ -8,6 +8,8 @@ import { AT_SOURCE_WORDS } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
 import { FINISHED, INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
 import type { PassEnded, PassResult } from "./review-pass.entity.js"
+import type { Focus, GroupRun } from "./file-group.entity.js"
+import type { Effort } from "./review-model.entity.js"
 import type { Finder } from "./review-prompt.entity.js"
 import { EVIDENCE_SHOWN, FINDINGS_SHOWN } from "./review-report.entity.js"
 import type { BucketCheck, ReportedFinding, ReviewReport, ReviewUsage } from "./review-report.entity.js"
@@ -56,6 +58,9 @@ export const runNameOf = (startedMillis: number): string => new Date(startedMill
 export interface ReportInput {
   readonly run: string
   readonly prepared: PreparedReview
+  readonly focus: Focus
+  readonly effort: { readonly find: Effort; readonly check: Effort }
+  readonly groups: ReadonlyArray<GroupRun>
   readonly finder: Finder
   readonly vote: boolean
   readonly verify: boolean
@@ -115,6 +120,9 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     promptVersion: input.promptVersion,
     toolsVersion: input.toolsVersion,
     model: input.model,
+    focus: input.focus,
+    effort: input.effort,
+    groups: input.groups,
     finder: input.finder,
     vote: input.vote,
     verify: input.verify,
@@ -181,6 +189,26 @@ const notStarted = (report: ReviewReport): ReadonlyArray<string> => {
   return [`${which} did not start: the find stage stopped because pass 1 ended before its first call answered.`]
 }
 
+/**
+ * A focused review's groups, one a line: `Group N (<package>, F files): pass P, $C, K findings`, or `…: not reviewed:
+ * <why>`; none for a whole review.
+ */
+const groupLines = (report: ReviewReport): ReadonlyArray<string> => report.groups.map((run) => {
+  const head = `Group ${run.group.number} (${shownPath(run.group.package)}, ${plural(run.group.paths.length, "file", "files")})`
+  return Option.match(run.pass, {
+    onNone: () => `${head}: not reviewed: ${run.notReviewed}`,
+    onSome: (pass) => {
+      const ran = report.passes.filter((result) => Match.valueTags(result.stage, { Find: (stage) => stage.pass === pass, Verify: () => false }))
+      const found = report.findings.filter((finding) => finding.pass === pass).length
+      return `${head}: pass ${pass}, $${usageOf(ran).cost.toFixed(4)}, ${plural(found, "finding", "findings")}`
+    },
+  })
+})
+
+/** The efforts asked, when either is not the model's default: `; effort: find <e>, check <e>`. */
+const effortText = (report: ReviewReport): string =>
+  report.effort.find === "default" && report.effort.check === "default" ? "" : `; effort: find ${report.effort.find}, check ${report.effort.check}`
+
 /** What a stage's calls used, in words: calls, tokens with the cached share, output and cost. */
 const usageText = (usage: ReviewUsage): string =>
   `${plural(usage.calls, "call", "calls")}, ${usage.input} tokens in (${percent(usage.cached, usage.input)} cached), ${usage.output} out, $${usage.cost.toFixed(4)}`
@@ -227,9 +255,12 @@ export const reportText = (report: ReviewReport): string => {
       onNone: () => `Pass ${index + 1}: ${pass.ended._tag === "Answered" && pass.ended.summary.length > 0 ? printable(pass.ended.summary) : "answered"}`,
     })),
     ...notStarted(report),
+    ...groupLines(report),
     ...tallies(report),
-    `Files: ${report.packedFiles} in the pack of ${report.changedFiles} changed; opened ${opened.length}${opened.length === 0 ? "" : `: ${opened.map(shownPath).join(", ")}`}`,
+    report.focus === "groups"
+      ? `Files: ${report.groups.reduce((sum, run) => sum + run.group.paths.length, 0)} in ${plural(report.groups.length, "group", "groups")} of ${report.changedFiles} changed; opened ${opened.length}${opened.length === 0 ? "" : `: ${opened.map(shownPath).join(", ")}`}`
+      : `Files: ${report.packedFiles} in the pack of ${report.changedFiles} changed; opened ${opened.length}${opened.length === 0 ? "" : `: ${opened.map(shownPath).join(", ")}`}`,
     `Find: ${usageText(report.stages.find)}; verify: ${usageText(report.stages.verify)}`,
-    `Model: ${report.model}; ${usageText(report.usage)}; wall ${(report.wallMs / 1000).toFixed(1)} s`,
+    `Model: ${report.model}${effortText(report)}; ${usageText(report.usage)}; wall ${(report.wallMs / 1000).toFixed(1)} s`,
   ].join("\n")
 }

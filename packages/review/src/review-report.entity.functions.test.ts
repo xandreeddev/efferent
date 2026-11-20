@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { SessionId } from "@xandreed/core"
+import { GroupNumber, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
 import type { PassResult } from "./review-pass.entity.js"
@@ -54,6 +55,9 @@ const CHECK_RESULT: PassResult = {
 const REPORT = reviewReport({
   run: runNameOf(Date.UTC(2026, 10, 19, 22, 1, 51, 123)),
   prepared: PREPARED,
+  focus: "whole",
+  effort: { find: "default", check: "default" },
+  groups: [],
   finder: "candidates",
   vote: false,
   verify: true,
@@ -128,6 +132,35 @@ describe("the review's report", () => {
     expect(reportText({ ...stopped, passesAsked: 2 }).split("\n")[5]).toBe("Pass 2 did not start: the find stage stopped because pass 1 ended before its first call answered.")
   })
 
+  test("reportText: a focused review's groups, each with its pass, cost and findings or why it was not reviewed, its files and the efforts", () => {
+    const group = (number: number, paths: ReadonlyArray<string>) => ({ number: GroupNumber.make(number), package: "packages/app", paths, tokens: 900 })
+    const focused = {
+      ...REPORT,
+      focus: "groups" as const,
+      effort: { find: "none" as const, check: "default" as const },
+      passesAsked: 2,
+      passes: REPORT.passes.slice(0, 2),
+      groups: [
+        { group: group(1, ["src/a.ts", "src/a.test.ts"]), pass: Option.some(PassNumber.make(1)), notReviewed: "" },
+        { group: group(2, ["src/sum.ts"]), pass: Option.some(PassNumber.make(2)), notReviewed: "" },
+        { group: group(3, ["src/z.ts"]), pass: Option.none(), notReviewed: NOT_REVIEWED_BECAUSE.spent },
+      ],
+    }
+    const lines = reportText(focused).split("\n")
+    expect(lines.slice(lines.indexOf("Pass 1: Seven problems."))).toEqual([
+      "Pass 1: Seven problems.",
+      "Pass 2: incomplete: the pass reached its step cap (16); Two more.",
+      "Group 1 (packages/app, 2 files): pass 1, $0.0109, 10 findings",
+      "Group 2 (packages/app, 1 file): pass 2, $0.0019, 0 findings",
+      "Group 3 (packages/app, 1 file): not reviewed: the find stage's budget had no room for another pass",
+      "Passes: 2, finding candidates; buckets: 10 kept, 0 left out by the vote, 1 off the changed lines",
+      "Checks: 7 confirmed, 1 refuted, 1 unsure, 1 unchecked",
+      "Files: 4 in 3 groups of 2 changed; opened 2: src/a.ts, src/sum.ts",
+      "Find: 6 calls, 183000 tokens in (49% cached), 3900 out, $0.0147; verify: 1 call, 30000 tokens in (97% cached), 200 out, $0.0005",
+      "Model: deepseek/deepseek-v4.1-flash-1017; effort: find none, check default; 7 calls, 213000 tokens in (56% cached), 4100 out, $0.0152; wall 41.3 s",
+    ])
+  })
+
   test("reportText: a closing call that failed and a pass that could not run say why", () => {
     const ended = [{ _tag: "StepCap" as const, steps: 16, summary: "", why: "the key is wrong" }, { _tag: "Failed" as const, message: "the disk is full" }]
     const report = { ...REPORT, passesAsked: 2, passes: ended.map((one, index) => ({ ...passResult(index + 1, one, 0) })) }
@@ -138,7 +171,7 @@ describe("the review's report", () => {
   })
 
   test("reportText: with no check run, the kept buckets' findings are shown and the checks said to be none", () => {
-    const unchecked = reviewReport({ ...{ run: REPORT.run, prepared: PREPARED, finder: "strict", vote: true, verify: false, complete: true, passesAsked: 1, checks: [], findings: FINDINGS, verdicts: [] }, passes: REPORT.passes.slice(0, 1), buckets: BUCKETS.slice(0, 2), promptVersion: "p", toolsVersion: "t", model: "m", wallMs: 1 })
+    const unchecked = reviewReport({ ...{ run: REPORT.run, prepared: PREPARED, focus: "whole", effort: REPORT.effort, groups: [], finder: "strict", vote: true, verify: false, complete: true, passesAsked: 1, checks: [], findings: FINDINGS, verdicts: [] }, passes: REPORT.passes.slice(0, 1), buckets: BUCKETS.slice(0, 2), promptVersion: "p", toolsVersion: "t", model: "m", wallMs: 1 })
     const lines = reportText(unchecked).split("\n")
     expect([lines[2], lines.find((line) => line.startsWith("Passes")), lines.find((line) => line.startsWith("Checks"))]).toEqual([
       "src/sum.ts:4 high bug — Claim 2. (3/1 pass) (restates a CI failure)", "Passes: 1, finding strictly; buckets: 2 kept, 0 left out by the vote, 0 off the changed lines", "Checks: none run",

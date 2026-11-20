@@ -38,6 +38,17 @@ export const DEFAULT_REVIEW_MODEL: ReviewModel = {
 }
 
 /**
+ * How hard the model reasons in a stage: as the model does by default (`default`, nothing sent), not at all (`none`,
+ * the gateway's `reasoning: { enabled: false }`), or at an effort (`reasoning: { effort }`). Measured on DeepSeek V4.1
+ * Flash on Baseten through the gateway (2026-11-20): `none` took a call's reasoning from about 3,000 tokens to 0, and
+ * changed the prompt's template (25 tokens fewer), so its requests do not read a cache written by default ones;
+ * `reasoning_effort: "low"`, `reasoning: { effort: "low" }` and `reasoning: { max_tokens: 256 }` were accepted and
+ * changed nothing.
+ */
+export const Effort = Schema.Literals(["default", "none", "low", "medium", "high"])
+export type Effort = typeof Effort.Type
+
+/**
  * What a review may spend by default, in USD: $0.50 in all, $0.30 on its passes, $0.20 on its checks. Measured on the
  * packs of #645, #647, #650 and #658 at their first heads: a first request of 130 to 139 KB holds about $0.044 at 1
  * byte a token, and a request grows with every result read; the longest pass (16 steps) settled $0.040 and its last
