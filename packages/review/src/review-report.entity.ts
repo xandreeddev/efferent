@@ -64,7 +64,8 @@ export type ReviewUsage = typeof ReviewUsage.Type
  * A review, as the command line prints it and keeps it beside the prepared review for offline scoring: its run (the
  * folder it is kept in), the pull request and the commit reviewed, the prompt's and the tool set's versions, the
  * model, how its passes found (`finder`), whether the vote filtered and whether checks ran; whether every stage ran
- * (`complete`: a record kept while the review runs says false, and is replaced once a stage ends); each pass and each check
+ * (`complete`: a record kept while the review runs says false, and is replaced once a stage ends); how many passes were
+ * asked for (`passesAsked`: more than ran when the first ended before its first call answered); each pass and each check
  * (its session, how it ended, its calls with what each used, the files it opened); every finding of every pass; every
  * bucket, kept or not, with its votes; every check; the findings shown (`reported`: confirmed by a check, or the kept
  * buckets' when no check ran, sorted by severity, then path, then line); the files in the packed diff against those
@@ -82,6 +83,7 @@ export const ReviewReport = Schema.Struct({
   vote: Schema.Boolean,
   verify: Schema.Boolean,
   complete: Schema.Boolean,
+  passesAsked: Count,
   passes: Schema.Array(PassResult),
   checks: Schema.Array(PassResult),
   findings: Schema.Array(Finding),

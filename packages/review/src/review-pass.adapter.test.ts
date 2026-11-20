@@ -95,6 +95,8 @@ interface PassOptionsForTest {
   readonly passes?: Omit<KernelPassesOptions, "model">
   readonly stage?: ReviewStage
   readonly reserve?: number
+  /** Whether the input carries `onFirstAnswer`, as the first pass's does (the default). */
+  readonly waitedOn?: boolean
 }
 
 const testModel = (options: PassOptionsForTest) =>
@@ -118,8 +120,10 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
       journalAt,
       options: { maxSteps: options.maxSteps ?? 16, reserve: options.reserve ?? 0 },
       spend,
-      onFirstAnswer: (answered) => Effect.sync(() => {
-        signals.push([answered, kept.length])
+      ...(options.waitedOn === false ? {} : {
+        onFirstAnswer: (answered: boolean) => Effect.sync(() => {
+          signals.push([answered, kept.length])
+        }),
       }),
     })
     const findings = yield* Findings
@@ -163,6 +167,19 @@ describe("a pass over the kernel", () => {
     const refused = await pass([says("never sent")], { maxCost: 0.000_01 })
     const broken = await pass([says("never sent")], { passes: { journal: () => Layer.effect(JournalStorage, Effect.fail(new PassJournalFailed({ message: "the disk is full" }))) } })
     expect([answered.signals, refused.signals, broken.signals]).toEqual([[[true, 1]], [[false, 0]], [[false, 0]]])
+  })
+
+  test("the first call the other passes wait on is asked once more after a failure worth another try; a refusal, a second failure and a pass no one waits on are not", async () => {
+    const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
+    const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
+    const blip = await pass([unavailable, says("Done.")])
+    const twice = await pass([unavailable, unavailable, says("Done.")])
+    const refused = await pass([refusedCall, says("Done.")])
+    const alone = await pass([unavailable, says("Done.")], { waitedOn: false })
+    expect([blip.result.ended, blip.signals, blip.sent.length]).toEqual([{ _tag: "Answered", summary: "Done." }, [[true, 2]], 2])
+    expect([twice.result.ended._tag, twice.signals, twice.sent.length]).toEqual(["ModelFailed", [[false, 2]], 2])
+    expect([refused.result.ended._tag, refused.signals, refused.sent.length]).toEqual(["ModelFailed", [[false, 1]], 1])
+    expect([alone.result.ended._tag, alone.sent.length]).toEqual(["ModelFailed", 1])
   })
 
   test("a spend refusal mid-pass, with a reserve kept back from the start: the reserve released, the host's note, and the closing call's finding kept", async () => {

@@ -2,7 +2,7 @@ import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, S
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import { JournalStorage, kernel, ModelSpend, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId, SpendHold } from "@xandreed/core"
-import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, sessions } from "@xandreed/sdk"
+import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retryable, sessions } from "@xandreed/sdk"
 import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
 import { Findings } from "./findings.port.js"
@@ -31,6 +31,10 @@ const kept = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, PassJou
 
 /** Whether a failed answer is the model's (a refused, cut or failed call), not the journal's. */
 const isModels = (error: unknown): boolean => AiError.isAiError(error) || Predicate.isTagged(error, "ModelAnswerFailed")
+
+/** Whether a failed call is worth making again: the model's failure whose reason says so (`retryable`), also as a stream's error part's cause. */
+const worthAnotherTry = (error: unknown): boolean =>
+  retryable(error) || (Predicate.isTagged(error, "ModelAnswerFailed") && Predicate.hasProperty(error, "cause") && retryable(error.cause))
 
 /**
  * What a pass runs on, each a part a host may swap: the model (a layer charging the `ModelSpend` it is given: each pass
@@ -64,7 +68,9 @@ const folderJournal = (at: string): Layer.Layer<JournalStorage, PassJournalFaile
  * when the ledger refuses a later call while that reserve is held, it releases the reserve, stores the host's note
  * (`stepCapNote`) and asks once more, offering the same tools so the provider's cache holds, and runs only the calls
  * that report (`reportFinding` in a pass, `verdict` in a check); a closing call that fails is said in `StepCap`'s
- * `why`. `onFirstAnswer` is given, once, whether its first call answered (`false` when it ended before one returned).
+ * `why`. `onFirstAnswer` is given, once, whether its first call answered (`false` when it ended before one returned);
+ * when it is given, the other passes wait on that call, so a failure of it worth another try (`retryable`: a rate
+ * limit, a provider's error, a lost connection) is asked once more first.
  */
 const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Required<KernelPassesOptions>) {
   const own = yield* stageSpend(input.spend, Option.none())
@@ -118,7 +124,13 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
         })),
       )
       const before = yield* settled
-      const answered = yield* Effect.result(modelAnswer(stream, session))
+      const tried = yield* Effect.result(modelAnswer(stream, session))
+      // The call the other passes wait on is asked once more after a failure worth another try (a rate limit, a
+      // provider's error, a lost connection): one blip would otherwise end the whole find stage. A failed answer
+      // stores nothing, so the second try is the same request.
+      const answered = Result.isFailure(tried) && step === 1 && input.onFirstAnswer !== undefined && worthAnotherTry(tried.failure)
+        ? yield* Effect.logWarning("a review pass's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed")).pipe(Effect.andThen(Effect.result(modelAnswer(stream, session))))
+        : tried
       // What the pass's own ledger settled while the call ran, rounded past the float noise of a difference.
       const cost = Math.max(0, Math.round(((yield* settled) - before) * 1e12) / 1e12)
       yield* signal(Result.isSuccess(answered))

@@ -49,8 +49,9 @@ export const FINDING_ORDER: Order.Order<FindingReport> = Order.combine(
 export const runNameOf = (startedMillis: number): string => new Date(startedMillis).toISOString().replace(/[:.]/g, "-")
 
 /**
- * What a review is built from: its run, the prepared review, how it found (`finder`, `vote`, `verify`), its passes and
- * checks, every finding, every bucket, every check of a bucket, the versions, the model and the wall time.
+ * What a review is built from: its run, the prepared review, how it found (`finder`, `vote`, `verify`), how many passes
+ * it asked for and those that ran, its checks, every finding, every bucket, every check of a bucket, the versions, the
+ * model and the wall time.
  */
 export interface ReportInput {
   readonly run: string
@@ -59,6 +60,7 @@ export interface ReportInput {
   readonly vote: boolean
   readonly verify: boolean
   readonly complete: boolean
+  readonly passesAsked: number
   readonly passes: ReadonlyArray<PassResult>
   readonly checks: ReadonlyArray<PassResult>
   readonly findings: ReadonlyArray<Finding>
@@ -117,6 +119,7 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     vote: input.vote,
     verify: input.verify,
     complete: input.complete,
+    passesAsked: input.passesAsked,
     passes: input.passes,
     checks: input.checks,
     findings: input.findings,
@@ -167,6 +170,17 @@ const percent = (part: number, whole: number): string => (whole === 0 ? "0%" : `
 
 const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`
 
+/**
+ * The passes that did not start, in words, when the find stage stopped after the first pass ended before its first
+ * call answered: `Pass 2 did not start: …` or `Passes 2 to K did not start: …`; none when every pass asked for ran.
+ */
+const notStarted = (report: ReviewReport): ReadonlyArray<string> => {
+  const ran = report.passes.length
+  if (ran === 0 || report.passesAsked <= ran) return []
+  const which = report.passesAsked === ran + 1 ? `Pass ${ran + 1}` : `Passes ${ran + 1} to ${report.passesAsked}`
+  return [`${which} did not start: the find stage stopped because pass 1 ended before its first call answered.`]
+}
+
 /** What a stage's calls used, in words: calls, tokens with the cached share, output and cost. */
 const usageText = (usage: ReviewUsage): string =>
   `${plural(usage.calls, "call", "calls")}, ${usage.input} tokens in (${percent(usage.cached, usage.input)} cached), ${usage.output} out, $${usage.cost.toFixed(4)}`
@@ -185,7 +199,8 @@ const tallies = (report: ReviewReport): ReadonlyArray<string> => {
  * The report a person reads: the pull request and the commit reviewed; at most `FINDINGS_SHOWN` findings in their
  * order, each with its evidence, how many passes found it and the check's reason, and how many more there are, or
  * `No findings.` (`Incomplete: no pass finished.` when no pass answered or reached its step cap); each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
- * so an unchecked finding is never read as none; `incomplete: <why>` for each pass that stopped before it answered, else its summary; the passes and
+ * so an unchecked finding is never read as none; `incomplete: <why>` for each pass that stopped before it answered, else its summary;
+ * the passes that did not start because the first ended before its first call answered (`notStarted`); the passes and
  * how the buckets and checks came out; the files in the pack against those changed and the files the passes opened;
  * each stage's calls, tokens (the cached share) and cost, the total and the wall time.
  */
@@ -211,6 +226,7 @@ export const reportText = (report: ReviewReport): string => {
       onSome: (why) => `Pass ${index + 1}: incomplete: ${why}`,
       onNone: () => `Pass ${index + 1}: ${pass.ended._tag === "Answered" && pass.ended.summary.length > 0 ? printable(pass.ended.summary) : "answered"}`,
     })),
+    ...notStarted(report),
     ...tallies(report),
     `Files: ${report.packedFiles} in the pack of ${report.changedFiles} changed; opened ${opened.length}${opened.length === 0 ? "" : `: ${opened.map(shownPath).join(", ")}`}`,
     `Find: ${usageText(report.stages.find)}; verify: ${usageText(report.stages.verify)}`,

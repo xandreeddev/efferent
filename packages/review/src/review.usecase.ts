@@ -101,6 +101,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       finder: options.finder,
       vote: options.vote,
       verify: options.verify,
+      passesAsked: options.passes,
       promptVersion: REVIEW_PROMPT,
       toolsVersion: REVIEW_TOOLS_VERSION,
       model: options.model,

@@ -75,7 +75,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `efferent-review review` runs several passes and checks what they find.
   `--passes` (1 by default, until an evaluation shows more find more)
   passes, the first alone until its first call returns, then the others
-  beside it (none when the first's call failed or it could not run), each walking every changed file the model reads (the
+  beside it (none when the first's call failed or it could not run, which
+  the report says; that call is asked once more after a rate limit, a
+  provider's error or a lost connection), each walking every changed file the model reads (the
   ones the packed diff leaves out included, marked) in an order of its own, so
   the passes start in different files. `--finder candidates` (the default)
   asks for every plausible defect with its evidence; `--finder strict` for

@@ -165,10 +165,12 @@ describe("reviewPullRequest", () => {
     ])
   })
 
-  test("a first pass whose first call fails starts no other", async () => {
+  test("a first pass whose first call fails starts no other, and the report says the find stage stopped", async () => {
     const { asked, layer } = scripted("q", true)
     const report = await reviewWith(layer)
-    expect<unknown>([asked.length, report.passes.map((pass) => pass.ended._tag)]).toEqual([1, ["ModelFailed"]])
+    expect<unknown>([asked.length, report.passes.map((pass) => pass.ended._tag), report.passesAsked, reportText(report).split("\n").filter((line) => line.includes("did not start"))]).toEqual([
+      1, ["ModelFailed"], 3, ["Passes 2 to 3 did not start: the find stage stopped because pass 1 ended before its first call answered."],
+    ])
   })
 
   test("a layer reused across reviews never hands one run another's findings", async () => {
