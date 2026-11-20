@@ -257,13 +257,14 @@ describe("reviewPullRequest", () => {
     expect([hold > 0.004 && hold < 0.02, await run(2 * hold - 0.0005), await run(2 * hold + 0.0005)]).toEqual([true, [[false, NOT_REVIEWED_BECAUSE.spent]], [[true, ""]]])
   })
 
-  test("focused, on a budget: passes that settle $0.03 each run groups 1 to 4 under $0.15, and the rest are listed as not reviewed", async () => {
+  test("focused, on a budget: passes that settle $0.03 each run groups 1 to 3 under $0.15, and the rest are listed as not reviewed", async () => {
     const { started, layer } = charging(0.03, { _tag: "Answered", summary: "" }, true)
     // Input free, so every first call holds its output alone (4,096 tokens at $1.20 a million, about $0.005) whatever its group's size.
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, groups: ONE_A_GROUP, budget: { total: 0.5, find: 0.15, verify: 0.2 }, price: { ...REVIEW_OPTIONS.price, input: 0 } })
-    // The reserve is $0.05: rooms of $0.15, $0.12, $0.09 and $0.06 fit it and the first call, $0.03 does not.
+    // The reserve is $0.10, at most half the $0.15 stage: $0.075. Rooms of $0.15, $0.12 and $0.09 fit it and the first
+    // call ($0.08), $0.06 does not.
     expect<unknown>([report.groups.length >= 5, started.length, report.groups.map((run) => [Option.isSome(run.pass), run.notReviewed]), report.stages.find.cost]).toEqual([
-      true, 4, report.groups.map((_, index) => (index < 4 ? [true, ""] : [false, NOT_REVIEWED_BECAUSE.spent])), 0.12,
+      true, 3, report.groups.map((_, index) => (index < 3 ? [true, ""] : [false, NOT_REVIEWED_BECAUSE.spent])), 0.09,
     ])
   })
 

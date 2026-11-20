@@ -60,9 +60,10 @@ export type CallPrice = typeof CallPrice.Type
  * What a focused pass keeps back for its closing call by default, in USD: a focused request's hold with room to spare
  * (#644's gold group's seventh call asked to hold $0.040, a request of about 118 KB at 1 byte a token), less than a
  * whole review's `DEFAULT_CLOSING_RESERVE`, sized for 300 KB requests. On #644 the defect was reported on the closing
- * call, after the stage refused the seventh.
+ * call, after the stage refused the seventh. Raised from $0.05 for the 24-call guard: a pass that reads files whole
+ * grows its request, and #644's ninth pass asked to hold $0.077 late in its run, which $0.05 could not close on.
  */
-export const DEFAULT_GROUP_RESERVE = 0.05
+export const DEFAULT_GROUP_RESERVE = 0.1
 
 /** Why a group was not reviewed, in words. */
 export const NOT_REVIEWED_BECAUSE = {
