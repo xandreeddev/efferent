@@ -5,10 +5,10 @@ import { Checkout } from "./checkout.port.js"
 import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
 import type { Focus, GroupRun } from "./file-group.entity.js"
 import { firstCallHold, lookupFailedNote, noCallWhy, orderGroups, packageFoldersToLook, uncachedCheckNote, ungroupedOf } from "./file-group.entity.functions.js"
-import type { PassInput } from "./review-pass.port.js"
-import { CheckNumber, PassNumber } from "./finding.entity.js"
+import type { TurnInput } from "./review-turn.port.js"
+import { CheckNumber, TurnNumber } from "./finding.entity.js"
 import type { Finding, Verdict } from "./finding.entity.js"
-import type { PassOptions } from "./review-pass.entity.js"
+import type { TurnOptions } from "./review-turn.entity.js"
 import type { PromptPart, ReviewPrompt } from "./review-prompt.entity.js"
 import { Findings } from "./findings.port.js"
 import { PreparedReview } from "./prepare-review.entity.js"
@@ -18,9 +18,9 @@ import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import { prepareReview } from "./prepare-review.usecase.js"
 import type { PullNumber, RepoName } from "./pull-request.entity.js"
 import { ReviewLogs } from "./review-logs.port.js"
-import { INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
-import type { PassEnded, PassResult } from "./review-pass.entity.js"
-import { ReviewPasses } from "./review-pass.port.js"
+import { INCOMPLETE_BECAUSE } from "./review-turn.entity.js"
+import type { TurnEnded, TurnResult } from "./review-turn.entity.js"
+import { ReviewTurns } from "./review-turn.port.js"
 import { REVIEW_PROMPT } from "./review-prompt.entity.js"
 import { focusPrefix, focusPrompt, reviewPrefix, reviewPrompt, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
 import { ReviewReport } from "./review-report.entity.js"
@@ -42,7 +42,7 @@ const jsonOf = <A, I>(schema: Schema.Codec<A, I>, value: A) =>
   Effect.map(Effect.orDie(Schema.encodeEffect(schema)(value)), (encoded) => `${JSON.stringify(encoded, null, 2)}\n`)
 
 /** Why a check gave no verdict, in words, from how it ended. */
-const uncheckedWhy = (ended: PassEnded): string => Match.valueTags(ended, {
+const uncheckedWhy = (ended: TurnEnded): string => Match.valueTags(ended, {
   Answered: () => "it answered without a verdict",
   Judged: () => "its verdict was not kept",
   StepCap: () => INCOMPLETE_BECAUSE.StepCap,
@@ -65,8 +65,8 @@ const quoteHolds = (repo: RepoName, at: CommitSha, finding: Finding, verdict: Ve
 }).pipe(Effect.catch((error) => Effect.logWarning("a verdict's quote could not be checked", error).pipe(Effect.as(false))))
 
 /** A check's outcome: its verdict's, a confirmed one whose quote fails counting as unsure; no verdict, unchecked. */
-const checkOf = ({ bucket, finding }: CheckTarget, check: CheckNumber, result: PassResult, verdict: Option.Option<Verdict>, holds: boolean): BucketCheck => {
-  const of = { bucket: bucket.number, finding: { pass: finding.pass, number: finding.number }, check, verdict }
+const checkOf = ({ bucket, finding }: CheckTarget, check: CheckNumber, result: TurnResult, verdict: Option.Option<Verdict>, holds: boolean): BucketCheck => {
+  const of = { bucket: bucket.number, finding: { turn: finding.turn, number: finding.number }, check, verdict }
   return Option.match(verdict, {
     onNone: () => ({ ...of, quoteHolds: false, outcome: "unchecked", why: uncheckedWhy(result.ended) }),
     onSome: (given) => given.outcome === "confirmed" && !holds
@@ -78,13 +78,13 @@ const checkOf = ({ bucket, finding }: CheckTarget, check: CheckNumber, result: P
 /**
  * Review a pull request: prepare it (`prepareReview`, at the commit `options.prepare.at` names), then find, merge and
  * check, each model call charged to the review's ledger under its stage's cap (`stageSpend`: `budget.find` for the
- * passes, `budget.verify` for the checks, both inside `budget.total`).
+ * finder turns, `budget.verify` for the checks, both inside `budget.total`).
  *
- * - Find, `focus` `whole`: `passes` passes (`ReviewPasses`), each walking the changed files in its own order
+ * - Find, `focus` `whole`: `turns` finder turns (`ReviewTurns`), each walking the changed files in its own order
  *   (`walkOrders`) with the tail of `finder`; the first runs alone until its first call returns, having written the
  *   provider's cache of the shared prefix, then the others run beside it.
  * - Find, `focus` `groups`: the changed files grouped (`policies.group`, by package, given the folders holding a
- *   `package.json` at the commit under review), one pass a group in their order, one after another, each sending its
+ *   `package.json` at the commit under review), one turn a group in their order, one after another, each sending its
  *   group's prefix (`focusPrefix`) and the finder's words, capped at `groups.steps` calls and keeping its closing
  *   reserve back; a group starts only while the find stage has `GROUP_START_ROOM` neither settled nor held, else it
  *   and the rest are recorded as not reviewed.
@@ -93,18 +93,18 @@ const checkOf = ({ bucket, finding }: CheckTarget, check: CheckNumber, result: P
  *   (`checkRounds`): every bucket's best (buckets in `CHECK_ORDER`) before any bucket's next, a later round's check
  *   only for a bucket no check confirmed yet, `verifyConcurrency` at once within a round; each asked to refute its
  *   finding and answer with `verdict`, on the prefix of the group holding the
- *   finding's file (else of the group whose pass reported it; the whole review's prefix when unfocused), so its request
- *   starts with that pass's bytes; a confirmed verdict whose quote is not in
+ *   finding's file (else of the group whose turn reported it; the whole review's prefix when unfocused), so its request
+ *   starts with that turn's bytes; a confirmed verdict whose quote is not in
  *   the head's file near the cited lines counts as unsure; a check the budget refused is unchecked.
  *
  * Each run has a folder of its own (`<number>/<sha>/<run>/` in `ReviewLogs`), so a rerun never writes over one before
- * it; it keeps, for offline scoring, the prepared review (`prepared.json`), each pass's and check's journal
- * (`pass-N/`, `check-N/`) and the report (`review.json`: every finding, bucket and check, each call's tokens and cost).
+ * it; it keeps, for offline scoring, the prepared review (`prepared.json`), each finder turn's and check's journal
+ * (`turn-N/`, `check-N/`) and the report (`review.json`: every finding, bucket and check, each call's tokens and cost).
  */
 export const reviewPullRequest = Effect.fn("review.review")(function* (repo: RepoName, number: PullNumber, options: ReviewOptions, policies: ReviewPolicies = STOCK_POLICIES) {
   const started = yield* Clock.currentTimeMillis
   const logs = yield* ReviewLogs
-  const passes = yield* ReviewPasses
+  const turns = yield* ReviewTurns
   const findings = yield* Findings
   const prepared = yield* prepareReview(repo, number, options.prepare, policies)
   const { run, folder } = yield* freshRun(reviewFolderOf(prepared.pullRequest.number, prepared.at.sha), started)
@@ -114,10 +114,10 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const focus: Focus = options.focus === "groups" && grouping.focused.length > 0 ? "groups" : "whole"
   const notes: Array<string> = [...grouping.notes, ...(options.focus === "groups" && focus === "whole" ? [NO_GROUP_NOTE] : [])]
   const groupRuns: Array<GroupRun> = []
-  const found: Array<PassResult> = []
+  const found: Array<TurnResult> = []
 
   /** The report as it stands, kept as `review.json` (whole or not at all), `complete` once every stage ran. */
-  const record = (parts: Pick<ReportInput, "passes" | "groups" | "checks" | "findings" | "buckets" | "verdicts" | "complete">) => Effect.gen(function* () {
+  const record = (parts: Pick<ReportInput, "turns" | "groups" | "checks" | "findings" | "buckets" | "verdicts" | "complete">) => Effect.gen(function* () {
     const report = reviewReport({
       ...parts,
       run,
@@ -129,7 +129,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       finder: options.finder,
       vote: options.vote,
       verify: options.verify,
-      passesAsked: focus === "groups" ? parts.passes.length : options.passes,
+      turnsAsked: focus === "groups" ? parts.turns.length : options.turns,
       promptVersion: REVIEW_PROMPT,
       toolsVersion: REVIEW_TOOLS_VERSION,
       model: options.model,
@@ -138,24 +138,24 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     yield* logs.keep(`${folder}/review.json`, yield* jsonOf(ReviewReport, report))
     return report
   })
-  yield* record({ passes: [], groups: [], checks: [], findings: [], buckets: [], verdicts: [], complete: false })
+  yield* record({ turns: [], groups: [], checks: [], findings: [], buckets: [], verdicts: [], complete: false })
 
   const ledger = yield* ModelSpend
   const total = yield* stageSpend(ledger, Option.some(options.budget.total))
   const findSpend = yield* stageSpend(total, Option.some(options.budget.find))
   const verifySpend = yield* stageSpend(total, Option.some(options.budget.verify))
-  const orders = walkOrders(prepared, options.passes)
-  // What a lone pass keeps back for its closing call: at most half the find stage. Passes beside each other keep
+  const orders = walkOrders(prepared, options.turns)
+  // What a lone turn keeps back for its closing call: at most half the find stage. Turns beside each other keep
   // nothing back, since each one's reserve would crowd out the others' calls (three keeping a sixth each end refused).
-  const passOptions = { ...options.pass, reserve: options.passes === 1 ? Math.min(options.pass.reserve, options.budget.find / 2) : 0 }
+  const turnOptions = { ...options.turn, reserve: options.turns === 1 ? Math.min(options.turn.reserve, options.budget.find / 2) : 0 }
 
-  const find = (index: number, prompt: ReviewPrompt, runAs: PassOptions, first: Pick<PassInput, "onFirstAnswer" | "retryFirstCall"> = {}) => {
-    const stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(index + 1) }
+  const find = (index: number, prompt: ReviewPrompt, runAs: TurnOptions, first: Pick<TurnInput, "onFirstAnswer" | "retryFirstCall"> = {}) => {
+    const stage: ReviewStage = { _tag: "Find", turn: TurnNumber.make(index + 1) }
     return Effect.gen(function* () {
-      return yield* passes.run({
+      return yield* turns.run({
         prompt,
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
-        journalAt: yield* logs.folder(`${folder}/pass-${index + 1}`),
+        journalAt: yield* logs.folder(`${folder}/turn-${index + 1}`),
         options: runAs,
         spend: findSpend,
         ...first,
@@ -163,16 +163,16 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     }).pipe(Effect.catchCause(couldNotRun(stage)))
   }
 
-  // Focused: one pass a group, one after another, each with its group's prefix; a group starts only while the find
+  // Focused: one turn a group, one after another, each with its group's prefix; a group starts only while the find
   // stage has its closing reserve and its first call's hold (`firstCallHold`, from its prompt's size) neither settled
-  // nor held, so a pass that starts can always close and report; else it and every group after it are listed as not
-  // reviewed. A pass the stage refused does not stop the next: its own reserve, held beside its call, is what crowded it
-  // out (on #657 the second group's eighth call was refused with $0.08 of the stage left). A pass none of whose calls
+  // nor held, so a turn that starts can always close and report; else it and every group after it are listed as not
+  // reviewed. A turn the stage refused does not stop the next: its own reserve, held beside its call, is what crowded it
+  // out (on #657 the second group's eighth call was refused with $0.08 of the stage left). A turn none of whose calls
   // answered reviewed nothing: its group is listed as not reviewed, with why; when the stage refused it, the groups
   // after it too, and after any other failure the next group still runs. With no group to
   // review (a pull request of config, CI or docs alone), the review falls back to the whole focus.
   if (focus === "groups") {
-    const runAs: PassOptions = { maxSteps: options.groups.steps, reserve: Math.min(options.groups.reserve, options.budget.find / 2) }
+    const runAs: TurnOptions ={ maxSteps: options.groups.steps, reserve: Math.min(options.groups.reserve, options.budget.find / 2) }
     let stopped = ""
     for (const { group, prefix } of grouping.focused) {
       const prompt = focusPrompt(prefix, options.finder)
@@ -181,40 +181,40 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
         if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + firstCallHold(prompt, options.price)) stopped = NOT_REVIEWED_BECAUSE.spent
       }
       if (stopped.length > 0) {
-        groupRuns.push({ group, pass: Option.none(), notReviewed: stopped })
+        groupRuns.push({ group, turn: Option.none(), notReviewed: stopped })
         continue
       }
-      const pass = PassNumber.make(found.length + 1)
-      // A group's pass asks its first call once more after a failure worth another try, as the first whole pass does.
+      const turn = TurnNumber.make(found.length + 1)
+      // A group's turn asks its first call once more after a failure worth another try, as the first whole turn does.
       const result = yield* find(found.length, prompt, runAs, { retryFirstCall: true })
       found.push(result)
       const answered = result.calls.some((call) => Option.isSome(call.tokens))
-      groupRuns.push({ group, pass: Option.some(pass), notReviewed: answered ? "" : noCallWhy(result.ended) })
-      // Only the stage's refusal stops the rest; a group whose pass failed otherwise is lost alone.
+      groupRuns.push({ group, turn: Option.some(turn), notReviewed: answered ? "" : noCallWhy(result.ended) })
+      // Only the stage's refusal stops the rest; a group whose turn failed otherwise is lost alone.
       if (!answered && result.ended._tag === "SpendRefused") stopped = NOT_REVIEWED_BECAUSE.stopped
-      yield* record({ passes: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
+      yield* record({ turns: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
     }
   } else {
     const firstAnswered = yield* Deferred.make<boolean>()
     const whole = (index: number) => reviewPrompt(prepared, { finder: options.finder, order: orders[index] ?? [] })
-    // Whatever becomes of the first pass, the review learns whether it answered; the others start only if it did.
-    const first = yield* Effect.forkChild(find(0, whole(0), passOptions, { onFirstAnswer: (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid) }).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
+    // Whatever becomes of the first turn, the review learns whether it answered; the others start only if it did.
+    const first = yield* Effect.forkChild(find(0, whole(0), turnOptions, { onFirstAnswer: (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid) }).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
     const answered = yield* Deferred.await(firstAnswered)
-    const others = answered ? yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index, whole(index), passOptions), { concurrency: "unbounded" }) : []
+    const others = answered ? yield* Effect.forEach(Arr.range(1, options.turns - 1).filter((index) => index < options.turns), (index) => find(index, whole(index), turnOptions), { concurrency: "unbounded" }) : []
     found.push(yield* Fiber.join(first), ...others)
   }
 
   const all = yield* findings.all(run)
   const buckets = mergeFindings(all, prepared.files, { vote: options.vote })
-  yield* record({ passes: found, groups: groupRuns, checks: [], findings: all, buckets, verdicts: [], complete: false })
+  yield* record({ turns: found, groups: groupRuns, checks: [], findings: all, buckets, verdicts: [], complete: false })
   const wholePrefix = reviewPrefix(prepared)
   /**
-   * A check's prefix: in a focused review, that of the group holding the finding's file, else of the group whose pass
-   * reported it, so the check's request starts with that pass's bytes; else the whole review's. A check on the prefix
-   * of a group whose pass never answered (not reviewed) has no cache to read, and the report notes it.
+   * A check's prefix: in a focused review, that of the group holding the finding's file, else of the group whose turn
+   * reported it, so the check's request starts with that turn's bytes; else the whole review's. A check on the prefix
+   * of a group whose turn never answered (not reviewed) has no cache to read, and the report notes it.
    */
   const prefixOf = (finding: Finding, check: CheckNumber): ReadonlyArray<PromptPart> => {
-    const reporter = groupRuns.find((one) => Option.contains(one.pass, finding.pass))
+    const reporter = groupRuns.find((one) => Option.contains(one.turn, finding.turn))
     const holding = grouping.focused.find((one) => one.group.paths.includes(finding.path)) ?? grouping.focused.find((one) => reporter !== undefined && one.group.number === reporter.group.number)
     if (holding === undefined) return wholePrefix
     const ran = groupRuns.find((one) => one.group.number === holding.group.number)
@@ -223,14 +223,14 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   }
   const rounds = options.verify ? checkRounds(buckets, all, CLAIMS_CHECKED) : []
   // What a check keeps back for its closing call when it runs alone (one at a time, or the only one): at most half the
-  // verify stage. Checks beside each other keep nothing back, for the reason passes do: under $0.20, three checks each
+  // verify stage. Checks beside each other keep nothing back, for the reason finder turns do: under $0.20, three checks each
   // keeping a call's hold (about $0.09 at a long pull request's size) would leave no room for their own calls.
   // Decided per round, from the checks it runs.
-  const checkReserve = (due: number) => Math.min(options.verifyConcurrency, due) === 1 ? Math.min(options.pass.reserve, options.budget.verify / 2) : 0
+  const checkReserve = (due: number) => Math.min(options.verifyConcurrency, due) === 1 ? Math.min(options.turn.reserve, options.budget.verify / 2) : 0
   const runCheck = (target: CheckTarget, check: CheckNumber, prefix: ReadonlyArray<PromptPart>, reserve: number) => {
     const stage: ReviewStage = { _tag: "Verify", check }
     return Effect.gen(function* () {
-      return yield* passes.run({
+      return yield* turns.run({
         prompt: verifyPrompt(prefix, target.finding),
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/check-${check}`),
@@ -244,8 +244,8 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     })))
   }
   // Round by round (`checkRounds`): a later round checks a bucket's next claim only when no check confirmed the bucket,
-  // so three passes reporting one defect cost one check when it holds; checks are numbered in the order they start.
-  const checked: Array<{ readonly result: PassResult; readonly check: BucketCheck }> = []
+  // so three turns reporting one defect cost one check when it holds; checks are numbered in the order they start.
+  const checked: Array<{ readonly result: TurnResult; readonly check: BucketCheck }> = []
   for (const round of rounds) {
     const confirmed = new Set(checked.filter((one) => one.check.outcome === "confirmed").map((one) => one.check.bucket))
     const due = round.filter((target) => !confirmed.has(target.bucket.number))
@@ -254,7 +254,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     checked.push(...yield* Effect.forEach(numbered, ({ target, check }, index) => runCheck(target, check, prefixes[index] ?? wholePrefix, checkReserve(numbered.length)), { concurrency: options.verifyConcurrency }))
   }
 
-  return yield* record({ passes: found, groups: groupRuns, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
+  return yield* record({ turns: found, groups: groupRuns, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
 })
 
 /**
@@ -308,9 +308,9 @@ const freshRun = (base: string, started: number) => Effect.gen(function* () {
   return yield* attempt.pipe(Effect.retry({ times: RUN_TRIES - 1 }))
 })
 
-/** A pass or a check that could not run at all (its folder not made, a defect), as its result: `Failed`, in its failure's words, logged. */
+/** A turn, a finder's or a check's, that could not run at all (its folder not made, a defect), as its result: `Failed`, in its failure's words, logged. */
 const couldNotRun = (stage: ReviewStage) => (cause: Cause.Cause<unknown>) =>
-  Effect.logWarning("a review pass could not run", cause).pipe(Effect.as<PassResult>({
+  Effect.logWarning("a review turn could not run", cause).pipe(Effect.as<TurnResult>({
     stage,
     session: Option.none(),
     ended: { _tag: "Failed", message: clipTo(Cause.prettyErrors(cause).map((error) => error.message).join("; ") || "it could not run", 300) },

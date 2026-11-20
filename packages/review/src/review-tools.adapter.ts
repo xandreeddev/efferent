@@ -149,7 +149,7 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
     }),
     readDiff: ({ path, page }) => Effect.fromResult(diffPage(reviewed.files, path, page ?? 1)),
     reportFinding: (report) => Match.valueTags(reviewed.stage, {
-      Find: ({ pass }) => Effect.flatMap(Effect.fromResult(checkedReport(keptReport(report), reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, pass, checked), recordedText)),
+      Find: ({ turn }) => Effect.flatMap(Effect.fromResult(checkedReport(keptReport(report), reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, turn, checked), recordedText)),
       Verify: () => Effect.fail(NOT_FINDING_NOW),
     }),
     verdict: (report) => Match.valueTags(reviewed.stage, {

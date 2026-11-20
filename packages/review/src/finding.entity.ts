@@ -16,16 +16,19 @@ export const SEVERITY_RANK: Readonly<Record<Severity, number>> = { high: 0, medi
 
 /**
  * The longest a finding's claim is kept, in characters: a longer one is cut (`keptReport`), never refused, since a
- * refused report in a pass's closing call is lost (41% of the live passes' reports were refused at the old 600).
+ * refused report in a turn's closing call is lost (41% of the live turns' reports were refused at the old 600).
  */
 export const CLAIM_LIMIT = 1_500
 
 /** The longest a finding's quoted evidence is kept, in characters: a longer one keeps its first whole lines (`keptReport`). */
 export const EVIDENCE_LIMIT = 1_000
 
-/** Which pass of a review found something, from 1. */
-export const PassNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("PassNumber"))
-export type PassNumber = typeof PassNumber.Type
+/**
+ * Which finder turn of a review found something, from 1. Its brand is its own (`ReviewTurnNumber`), not core's
+ * `TurnNumber` (a session's turn), so the compiler never takes one for the other.
+ */
+export const TurnNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).pipe(Schema.brand("ReviewTurnNumber"))
+export type TurnNumber = typeof TurnNumber.Type
 
 /**
  * What the model reports with `reportFinding`: the head's file and lines (`endLine` the last, when it spans more than
@@ -43,10 +46,10 @@ export const FindingReport = Schema.Struct({
 })
 export type FindingReport = typeof FindingReport.Type
 
-/** A finding as a review keeps it: what was reported, the pass that reported it and its number in that pass, from 1. */
+/** A finding as a review keeps it: what was reported, the turn that reported it and its number in that turn, from 1. */
 export const Finding = Schema.Struct({
   ...FindingReport.fields,
-  pass: PassNumber,
+  turn: TurnNumber,
   number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type Finding = typeof Finding.Type

@@ -6,17 +6,17 @@ import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retrya
 import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
 import { Findings } from "./findings.port.js"
-import { CLOSING_ASKS, PassJournalFailed, SUMMARY_KEPT } from "./review-pass.entity.js"
-import type { CallUsage, PassEnded, PassResult } from "./review-pass.entity.js"
-import { ReviewPasses } from "./review-pass.port.js"
-import type { PassInput } from "./review-pass.port.js"
+import { CLOSING_ASKS, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
+import type { CallUsage, TurnEnded, TurnResult } from "./review-turn.entity.js"
+import { ReviewTurns } from "./review-turn.port.js"
+import type { TurnInput } from "./review-turn.port.js"
 import { harvestNote, stepCapNote } from "./review-prompt.entity.functions.js"
 import { reviewToolHandlers, reviewTools } from "./review-tools.adapter.js"
 import { READ_DIFF, READ_LINES, REPORT_FINDING, VERDICT } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
 
-/** The owner a pass's session is created under in its journal. */
-export const PASS_OWNER = "efferent-review"
+/** The owner a turn's session is created under in its journal. */
+export const TURN_OWNER = "efferent-review"
 
 /** The path a `readLines` or `readDiff` call names, when its parameters hold one. */
 const OpenedPath = Schema.Struct({ path: Schema.String })
@@ -25,9 +25,9 @@ const OpenedPath = Schema.Struct({ path: Schema.String })
 const wordsOf = (error: unknown, otherwise: string): string =>
   Predicate.hasProperty(error, "message") && Predicate.isString(error.message) && error.message.length > 0 ? error.message : otherwise
 
-/** A failure of the pass's journal (opening, recovering, reading or writing it) as the pass's own failure. */
-const kept = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, PassJournalFailed, R> =>
-  Effect.mapError(effect, (cause) => new PassJournalFailed({ message: wordsOf(cause, "the journal failed"), cause }))
+/** A failure of the turn's journal (opening, recovering, reading or writing it) as the turn's own failure. */
+const kept = <A, E, R>(effect: Effect.Effect<A, E, R>): Effect.Effect<A, TurnJournalFailed, R> =>
+  Effect.mapError(effect, (cause) => new TurnJournalFailed({ message: wordsOf(cause, "the journal failed"), cause }))
 
 /** Whether a failed answer is the model's (a refused, cut or failed call), not the journal's. */
 const isModels = (error: unknown): boolean => AiError.isAiError(error) || Predicate.isTagged(error, "ModelAnswerFailed")
@@ -37,46 +37,46 @@ const worthAnotherTry = (error: unknown): boolean =>
   retryable(error) || (Predicate.isTagged(error, "ModelAnswerFailed") && Predicate.hasProperty(error, "cause") && retryable(error.cause))
 
 /**
- * What a pass runs on, each a part a host may swap: the model (a layer charging the `ModelSpend` it is given: each pass
+ * What a turn runs on, each a part a host may swap: the model (a layer charging the `ModelSpend` it is given: each turn
  * builds it over a ledger of its own inside its stage's), the memory that builds each step's context (`flatMemory` by
- * default), the tools' handlers over what the pass reviews (`reviewToolHandlers` by default), and the journal kept at
+ * default), the tools' handlers over what the turn reviews (`reviewToolHandlers` by default), and the journal kept at
  * an input's `journalAt` (a `directoryJournal` in that folder by default), whose failure to open is a
- * `PassJournalFailed`.
+ * `TurnJournalFailed`.
  */
-export interface KernelPassesOptions {
+export interface KernelTurnsOptions {
   readonly model: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>
-  /** The checks' model, when it differs from the passes' (another reasoning effort): `model` by default. */
+  /** The checks' model, when it differs from the finder turns' (another reasoning effort): `model` by default. */
   readonly verifyModel?: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>
   readonly memory?: Layer.Layer<Memory>
   readonly tools?: typeof reviewToolHandlers
-  readonly journal?: (at: string) => Layer.Layer<JournalStorage, PassJournalFailed>
+  readonly journal?: (at: string) => Layer.Layer<JournalStorage, TurnJournalFailed>
 }
 
-/** The stock journal: a `directoryJournal` in the folder `at`, a refusal to open it a `PassJournalFailed`. */
-const folderJournal = (at: string): Layer.Layer<JournalStorage, PassJournalFailed> =>
+/** The stock journal: a `directoryJournal` in the folder `at`, a refusal to open it a `TurnJournalFailed`. */
+const folderJournal = (at: string): Layer.Layer<JournalStorage, TurnJournalFailed> =>
   directoryJournal({ directory: at }).pipe(
-    Layer.catchTag("JournalOpenFailed", (cause) => Layer.effect(JournalStorage, Effect.fail(new PassJournalFailed({ message: wordsOf(cause, "the journal could not be opened"), cause })))),
+    Layer.catchTag("JournalOpenFailed", (cause) => Layer.effect(JournalStorage, Effect.fail(new TurnJournalFailed({ message: wordsOf(cause, "the journal could not be opened"), cause })))),
   )
 
 /**
- * One pass or check over the kernel: a session in the journal at `journalAt` (its turns recovered first), the memory,
- * the review's tools, the model over a ledger of the pass's own inside its stage's (`stageSpend`, so each call's cost is
- * what that ledger settled while it ran, whatever runs beside it), and the host's loop with `modelAnswer` and
- * `callTool`. Each step sends the prompt's prefix, then what the memory gives (the tail message, the calls and their
- * results). It ends when the model answers without a call (a pass is first asked once more for what it weighed and did
- * not report, `harvestNote`, and only that answer's `reportFinding` calls run); for a check, once its verdict is
- * recorded; when the ledger refuses a call, when a call fails, when an answer is cut at the output cap (its finish
- * says `length`; the calls it asked for run first, so a finding it reported is kept), or when the journal fails: each
- * with the findings recorded so far. From its start it holds back `options.reserve` from its stage for its closing
- * call; at its step cap, or when the ledger refuses a later call while that reserve is held, it releases the reserve,
- * stores the host's note (`stepCapNote`) and asks once more, offering the same tools so the provider's cache holds,
- * and runs only the calls that report (`reportFinding` in a pass, `verdict` in a check), asking once more when the
- * tool refused one of them (`CLOSING_ASKS`); a closing call that fails is said in `StepCap`'s `why`. `onFirstAnswer`
- * is given, once, whether its first call answered (`false` when it ended before one returned); when it is given, the other passes wait on that call, so a failure of it worth another try (`retryable`: a rate
- * limit, a provider's error, a lost connection) is asked once more first; so is it with `retryFirstCall` (a focused
- * group's pass).
+ * One turn, a finder's or a check's, over the kernel: a session in the journal at `journalAt` (its turns recovered
+ * first), the memory, the review's tools, the model over a ledger of the turn's own inside its stage's (`stageSpend`, so
+ * each call's cost is what that ledger settled while it ran, whatever runs beside it), and the host's loop with
+ * `modelAnswer` and `callTool`. Each step sends the prompt's prefix, then what the memory gives (the tail message, the
+ * calls and their results). It ends when the model answers without a call (a finder turn is first asked once more for
+ * what it weighed and did not report, `harvestNote`, and only that answer's `reportFinding` calls run); for a check,
+ * once its verdict is recorded; when the ledger refuses a call, when a call fails, when an answer is cut at the output
+ * cap (its finish says `length`; the calls it asked for run first, so a finding it reported is kept), or when the
+ * journal fails: each with the findings recorded so far. From its start it holds back `options.reserve` from its stage
+ * for its closing call; at its step cap, or when the ledger refuses a later call while that reserve is held, it releases
+ * the reserve, stores the host's note (`stepCapNote`) and asks once more, offering the same tools so the provider's
+ * cache holds, and runs only the calls that report (`reportFinding` in a finder turn, `verdict` in a check), asking once
+ * more when the tool refused one of them (`CLOSING_ASKS`); a closing call that fails is said in `StepCap`'s `why`.
+ * `onFirstAnswer` is given, once, whether its first call answered (`false` when it ended before one returned); when it
+ * is given, the other turns wait on that call, so a failure of it worth another try (`retryable`: a rate limit, a
+ * provider's error, a lost connection) is asked once more first; so is it with `retryFirstCall` (a focused group's turn).
  */
-const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Required<KernelPassesOptions>) {
+const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Required<KernelTurnsOptions>) {
   const own = yield* stageSpend(input.spend, Option.none())
   const settled = Effect.map(Effect.orDie(own.totals), (totals) => totals.settled)
   const findings = yield* Findings
@@ -97,7 +97,7 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
     onNone: () => Effect.void,
     onSome: (hold) => {
       reserved = Option.none()
-      return input.spend.release(hold).pipe(Effect.tapError((error) => Effect.logWarning("a review pass's reserve could not be released", error)), Effect.ignore)
+      return input.spend.release(hold).pipe(Effect.tapError((error) => Effect.logWarning("a review turn's reserve could not be released", error)), Effect.ignore)
     },
   }))
   const signal = (answered: boolean) => Effect.suspend(() => {
@@ -111,14 +111,14 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
     const memory = yield* Memory
     const toolkit = yield* reviewTools
     const conversations = yield* Sessions
-    const id = yield* kept(conversations.create({ owner: PASS_OWNER }))
+    const id = yield* kept(conversations.create({ owner: TURN_OWNER }))
     made = Option.some(id)
     const session = yield* kept(conversations.open(id))
     yield* kept(session.append(userMessage(input.prompt.tail)))
     // What the closing call will need, held back from the stage now; a stage with no room for it goes on without.
     if (input.options.reserve > 0) reserved = yield* input.spend.keepBack(input.options.reserve)
 
-    /** One model call: its answer and whether it was cut at the output cap, or how the pass ends when it failed. */
+    /** One model call: its answer and whether it was cut at the output cap, or how the turn ends when it failed. */
     const ask = (step: number) => Effect.gen(function* () {
       const context = yield* kept(memory.context(session))
       const prompt = Prompt.make([...input.prompt.prefix, ...context])
@@ -128,17 +128,17 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
           if (part.type === "finish") finish = part.reason
         })),
       )
-      /** What the pass's own ledger settled since `before`, rounded past the float noise of a difference. */
+      /** What the turn's own ledger settled since `before`, rounded past the float noise of a difference. */
       const spentSince = (before: number) => Effect.map(settled, (now) => Math.max(0, Math.round((now - before) * 1e12) / 1e12))
       const before = yield* settled
       const tried = yield* Effect.result(modelAnswer(stream, session))
-      // The call the other passes wait on is asked once more after a failure worth another try (a rate limit, a
+      // The call the other turns wait on is asked once more after a failure worth another try (a rate limit, a
       // provider's error, a lost connection): one blip would otherwise end the whole find stage. A failed answer
       // stores nothing, so the second try is the same request; the failed one is a call of its own in the record.
       const again = Result.isFailure(tried) && step === 1 && (input.onFirstAnswer !== undefined || input.retryFirstCall === true) && worthAnotherTry(tried.failure)
       if (again) {
         calls.push({ step, tokens: Option.none(), cost: yield* spentSince(before) })
-        yield* Effect.logWarning("a review pass's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed"))
+        yield* Effect.logWarning("a review turn's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed"))
       }
       const retriedAt = yield* settled
       const answered = again ? yield* Effect.result(modelAnswer(stream, session)) : tried
@@ -147,8 +147,8 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       if (Result.isFailure(answered)) {
         calls.push({ step, tokens: Option.none(), cost })
         const error = answered.failure
-        if (!isModels(error)) return yield* Effect.fail(new PassJournalFailed({ message: wordsOf(error, "the journal failed"), cause: error }))
-        return Result.fail<PassEnded>(isSpendRefusal(error)
+        if (!isModels(error)) return yield* Effect.fail(new TurnJournalFailed({ message: wordsOf(error, "the journal failed"), cause: error }))
+        return Result.fail<TurnEnded>(isSpendRefusal(error)
           ? { _tag: "SpendRefused", message: wordsOf(error, "the spend cap refused the call") }
           : { _tag: "ModelFailed", message: wordsOf(error, "the model call failed") })
       }
@@ -159,8 +159,8 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
 
     /**
      * The closing call, at the step cap, after a spend refusal, for a check after an answer with no verdict, or for a
-     * pass after its answer in words (`harvestNote`): the reserve released, the host's note, then one more call whose
-     * reporting calls alone run. Its words, or why it failed.
+     * finder turn after its answer in words (`harvestNote`): the reserve released, the host's note, then one more call
+     * whose reporting calls alone run. Its words, or why it failed.
      */
     const closing = (step: number, note: string = stepCapNote(stage)) => Effect.gen(function* () {
       yield* releaseReserve
@@ -188,25 +188,25 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
         // A spend refusal after the first call: the closing call may still report on the reserve kept for it.
         if (asked.failure._tag === "SpendRefused" && step > 1 && Option.isSome(reserved)) {
           const closed = yield* closing(step + 1)
-          if (yield* judged) return { _tag: "Judged" } satisfies PassEnded
-          if (closed.why.length > 0) return { _tag: "SpendRefused", message: `${asked.failure.message}; its closing call failed: ${closed.why}` } satisfies PassEnded
+          if (yield* judged) return { _tag: "Judged" } satisfies TurnEnded
+          if (closed.why.length > 0) return { _tag: "SpendRefused", message: `${asked.failure.message}; its closing call failed: ${closed.why}` } satisfies TurnEnded
         }
         return asked.failure
       }
       const { answer, cut } = asked.success
       if (!cut && answer.toolCalls.length === 0) {
-        const answered: PassEnded = { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) }
-        // A pass that answers in words is asked once more to report what it weighed and kept to itself (`harvestNote`):
-        // the checks settle every report. Its summary stays the first answer's; a failed harvest is logged.
+        const answered: TurnEnded = { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) }
+        // A finder turn that answers in words is asked once more to report what it weighed and kept to itself
+        // (`harvestNote`): the checks settle every report. Its summary stays the first answer's; a failed harvest is logged.
         if (!checking) {
           const harvested = yield* closing(step + 1, harvestNote())
-          if (harvested.why.length > 0) yield* Effect.logWarning("a review pass's harvest call failed", harvested.why)
+          if (harvested.why.length > 0) yield* Effect.logWarning("a review turn's harvest call failed", harvested.why)
           return answered
         }
         // A check that answers in words gave no verdict (a verdict in text has no quote to check): it is asked once
         // more, with the host's note, for the verdict call.
         yield* closing(step + 1)
-        return (yield* judged) ? { _tag: "Judged" } satisfies PassEnded : answered
+        return (yield* judged) ? { _tag: "Judged" } satisfies TurnEnded : answered
       }
       // Every call the answer asked for runs, also when the answer was cut: a call that did not decode is a failed result.
       for (const call of answer.toolCalls) {
@@ -214,12 +214,12 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
         if (Option.isSome(path)) opened.add(path.value.path)
         yield* kept(callTool(toolkit, call, session))
       }
-      if (yield* judged) return { _tag: "Judged" } satisfies PassEnded
-      if (cut) return { _tag: "OutputCut" } satisfies PassEnded
+      if (yield* judged) return { _tag: "Judged" } satisfies TurnEnded
+      if (cut) return { _tag: "OutputCut" } satisfies TurnEnded
     }
     const closed = yield* closing(input.options.maxSteps + 1)
-    if (yield* judged) return { _tag: "Judged" } satisfies PassEnded
-    return { _tag: "StepCap", steps: input.options.maxSteps, ...closed } satisfies PassEnded
+    if (yield* judged) return { _tag: "Judged" } satisfies TurnEnded
+    return { _tag: "StepCap", steps: input.options.maxSteps, ...closed } satisfies TurnEnded
   }).pipe(Effect.ensuring(releaseReserve)))
 
   const model = (checking ? parts.verifyModel : parts.model).pipe(Layer.provide(Layer.succeed(ModelSpend, own)))
@@ -230,31 +230,31 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
   )
   const ended = yield* loop.pipe(
     Effect.provide(stack),
-    Effect.catchTag("PassJournalFailed", (failed) => Effect.logWarning("a review pass's journal failed", failed).pipe(
-      Effect.as<PassEnded>({ _tag: "JournalFailed", message: clipTo(failed.message, 300) }),
+    Effect.catchTag("TurnJournalFailed", (failed) => Effect.logWarning("a review turn's journal failed", failed).pipe(
+      Effect.as<TurnEnded>({ _tag: "JournalFailed", message: clipTo(failed.message, 300) }),
     )),
   )
-  // A pass that ended before its first call returned says so: no answer.
+  // A turn that ended before its first call returned says so: no answer.
   yield* signal(false)
-  const result: PassResult = { stage, session: made, ended, calls, opened: Arr.sort(Array.from(opened), Order.String) }
+  const result: TurnResult = { stage, session: made, ended, calls, opened: Arr.sort(Array.from(opened), Order.String) }
   return result
 })
 
 /**
- * The passes and checks over the kernel (`runPass`), each part swappable (`KernelPassesOptions`): the model is the
- * host's layer, built for each pass over a ledger of its own inside the stage's `spend`; the tools read the host's
+ * The finder turns and the checks over the kernel (`runTurn`), each part swappable (`KernelTurnsOptions`): the model is
+ * the host's layer, built for each turn over a ledger of its own inside the stage's `spend`; the tools read the host's
  * `Checkout` and record in its `Findings`.
  */
-export const kernelPasses = (options: KernelPassesOptions): Layer.Layer<ReviewPasses, never, Checkout | Findings> => {
-  const parts: Required<KernelPassesOptions> = {
+export const kernelTurns = (options: KernelTurnsOptions): Layer.Layer<ReviewTurns, never, Checkout | Findings> => {
+  const parts: Required<KernelTurnsOptions> = {
     model: options.model,
     verifyModel: options.verifyModel ?? options.model,
     memory: options.memory ?? flatMemory,
     tools: options.tools ?? reviewToolHandlers,
     journal: options.journal ?? folderJournal,
   }
-  return Layer.effect(ReviewPasses, Effect.gen(function* () {
+  return Layer.effect(ReviewTurns, Effect.gen(function* () {
     const needs = yield* Effect.context<Checkout | Findings>()
-    return ReviewPasses.of({ run: (input) => runPass(input, parts).pipe(Effect.provide(needs)) })
+    return ReviewTurns.of({ run: (input) => runTurn(input, parts).pipe(Effect.provide(needs)) })
   }))
 }

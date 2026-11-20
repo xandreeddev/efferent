@@ -44,15 +44,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   runs nothing of the pull request's unless asked: its commands run only in
   a sandbox. It is private: no release publishes it until its evals pass.
 - `efferent-review review <number> --repo <owner/name>` reviews a pull
-  request with one pass of a model (DeepSeek V4.1 Flash through the Vercel
+  request with one turn of a model (DeepSeek V4.1 Flash through the Vercel
   AI Gateway by default, its key read from `VERCEL_API_KEY`), the host's own
-  loop on the kernel (`kernelPasses({ memory, tools, journal })`, each part
-  swappable): a session in a directory journal per pass, flat memory, a step
+  loop on the kernel (`kernelTurns({ memory, tools, journal })`, each part
+  swappable): a session in a directory journal per turn, flat memory, a step
   cap (`--max-steps`, 16) and a spend cap (`--max-cost`, $0.20 by default,
   each call's worst case held at 1 byte a token and settled at what the
-  gateway bills); `--model` with its `--price` asks another model. A pass
+  gateway bills); `--model` with its `--price` asks another model. A turn
   that stops early keeps its findings: an answer cut at the output cap runs
-  its calls first, and a journal that fails ends the pass, not the review.
+  its calls first, and a journal that fails ends the turn, not the review.
   The model reads with `readLines`, `searchCode`, `listFiles` and `readDiff`,
   each bounded and paging itself, over the clone's objects at the reviewed
   commit (a link, a submodule, a folder, a binary file, a file over 1 MiB or
@@ -63,14 +63,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   prompt (`REVIEW_PROMPT` `review-prompt-2`), the five tools' descriptions
   and answers (`REVIEW_TOOLS_VERSION` `review-tools-2`). The report shows at
   most six findings by severity, the model's words printed plain, marks one
-  that only restates a CI failure, and says why a pass that stopped early is
+  that only restates a CI failure, and says why a turn that stopped early is
   incomplete; `--json` prints it whole. `--at first` (both commands) reviews
   the commit of the pull request's earliest `pull_request` CI run while it was
   open, a force-pushed one's included (else the head its first force-push
   replaced, else its oldest commit, said so), against where its history
   meets the base, and records the paths later commits changed. Each run of a
   review keeps, in a folder of its own, its prepared review, its report (its
-  sessions, each call's tokens, cached tokens and cost) and its pass's
+  sessions, each call's tokens, cached tokens and cost) and its turn's
   journal, for offline scoring.
 - `efferent-review` reviews any commit but the head (`--at first`, `--at
   <sha>`) with the pull request's description as it stood when that commit
@@ -81,53 +81,53 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   commit, which told a review of the first head what was wrong: seven of the
   twenty pull requests of the review's eval had been edited so.
 - `efferent-review review` reviews in focused groups by default
-  (`--focus groups`; `--focus whole` for the passes over the whole pull
+  (`--focus groups`; `--focus whole` for the turns over the whole pull
   request): the changed code files (tests, pages and `.astro` files
   included) grouped by package, a large package cut by file stem, at most
   6,000 tokens of diff and 8 files a group, the riskiest groups first
-  (`--group-order git` keeps git's order); one pass a group in turn, 8 calls
-  each (`--group-steps`), while the find stage has room for a pass's first
-  call (sized from its prompt) and its closing call, the rest listed as not
-  reviewed (about seven groups fit the stock $0.30 find stage), as is a
-  group whose pass answered no call, which stops the rest; config, CI,
-  lockfiles and docs get no pass unless `--config-pass`, and the report
-  names each file in no group; a pull request with nothing to group is
-  reviewed whole. `--vote` is refused with groups, and `--find-cost` or
-  `--verify-cost` above `--max-cost` is refused. Each pass sends the pull
+  (`--group-order git` keeps git's order); one turn a group, one after
+  another, 8 calls each (`--group-steps`), while the find stage has room for
+  a turn's first call (sized from its prompt) and its closing call, the rest
+  listed as not reviewed (about seven groups fit the stock $0.30 find
+  stage), as is a group whose turn answered no call, which stops the rest;
+  config, CI, lockfiles and docs get no turn unless `--config-turn`, and the
+  report names each file in no group; a pull request with nothing to group
+  is reviewed whole. `--vote` is refused with groups, and `--find-cost` or
+  `--verify-cost` above `--max-cost` is refused. Each turn sends the pull
   request with every changed file listed and its group's diffs as a message
   of its own, which the checks of its findings start with too, so they can
-  read the same cache. `--passes` and `--max-steps` are flags of
+  read the same cache. `--turns` and `--max-steps` are flags of
   `--focus whole` only. The packed diff now puts the source first, in git's order,
   then the tests, large config, pages and docs. `--effort-find` and
   `--effort-check` ask a stage's model at another reasoning effort (`none`
-  turns reasoning off). The report shows each group's pass, cost and
+  turns reasoning off). The report shows each group's turn, cost and
   findings, and `review.json` keeps the focus, the groups and the efforts.
-- `efferent-review review` runs several passes and checks what they find.
-  `--passes` (1 by default, until an evaluation shows more find more)
-  passes, the first alone until its first call returns, then the others
+- `efferent-review review` runs several finder turns and checks what they
+  find. `--turns` (1 by default, until an evaluation shows more find more)
+  turns, the first alone until its first call returns, then the others
   beside it (none when the first's call failed or it could not run, which
   the report says; that call is asked once more after a rate limit, a
   provider's error or a lost connection), each walking every changed file the model reads (the
   ones the packed diff leaves out included, marked) in an order of its own, so
-  the passes start in different files. `--finder candidates` (the default)
+  the turns start in different files. `--finder candidates` (the default)
   asks for every plausible defect with its evidence; `--finder strict` for
-  only what the pass is sure of; both ask for each finding the moment it is
+  only what the turn is sure of; both ask for each finding the moment it is
   seen. `reportFinding` refuses a path the pull request does not change (it
   names the changed files), an `endLine` before `line` and more than 40
   lines. The findings merge into buckets by place, each anchored at its
-  first finding, one finding a pass, kinds together, a span counted at most
+  first finding, one finding a turn, kinds together, a span counted at most
   40 lines, every bucket recorded with its votes; `--vote` keeps only those
-  two passes found (or one, for a security problem). Each kept bucket is
+  two turns found (or one, for a security problem). Each kept bucket is
   checked (unless `--no-verify`) on the same cached prefix: the model tries to
   refute it and answers with the new `verdict` tool, and a confirmed verdict
   counts as unsure unless its quote holds a whole line of real code from the
   head's file at the lines the finding cites (one either side; at most forty
   from where it starts), not one from around them.
-  The report shows the confirmed findings with how many passes found each and
+  The report shows the confirmed findings with how many turns found each and
   the check's reason, and each stage's calls, tokens and cost. Every stage is
   offered the same six tools, since a changed tool list or `tool_choice: none`
   loses the gateway's prompt cache (measured: 16,384 cached tokens to 0). A
-  lone pass keeps $0.10 back from its start, and at its step cap, or when a later
+  lone turn keeps $0.10 back from its start, and at its step cap, or when a later
   call is refused, releases it, stores a host note and asks once more,
   running only its reporting calls. A check does the same (keeping $0.10
   back only when it runs alone), and also when it answers in words with no
@@ -137,9 +137,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   call that other open calls crowd out waits for one to close (ten minutes at
   most) rather than being refused. `review.json` is kept as the review runs
   and replaced whole as each stage ends, in a run folder no other run can
-  share; a pass that cannot run is recorded, not a failed review; the report
-  says `Incomplete: no pass finished.` rather than `No findings.` when no
-  pass finished. The
+  share; a turn that cannot run is recorded, not a failed review; the report
+  says `Incomplete: no turn finished.` rather than `No findings.` when no
+  turn finished. The
   repository's rules are shown whole nearest the changed paths first (16,000
   characters), then by their headings; the output cap is 4,096 tokens. Records
   go under `--records` (`~/.efferent-review/records/<owner>/<repo>/<pr>/<sha>/<run>/`),
@@ -149,19 +149,19 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the outcome, the reason and a quote of the cited lines),
   `REVIEW_TOOLS_VERSION` `review-tools-4` (`verdict`, each stage's refusal of
   the other's tool, and `reportFinding`'s refusals).
-- `efferent-review review`: a focused pass is asked to review its own group's
+- `efferent-review review`: a focused turn is asked to review its own group's
   files whole, ask for reads that do not depend on each other at once and
   hold the description's claims against the code (`FOCUS_TAIL`). On four gold
-  groups every pass hit the old 8-call cap; with a 24-call guard
-  (`--group-steps`) every pass ended on its own, after 5 to 17 calls. Passes
+  groups every turn hit the old 8-call cap; with a 24-call guard
+  (`--group-steps`) every turn ended on its own, after 5 to 17 calls. Turns
   still read across the whole pull request whatever their group (on #644, 6
-  of 171 reads were of a pass's own files), which is not fixed here. A
+  of 171 reads were of a turn's own files), which is not fixed here. A
   bucket's check is shown its most severe finding first (on #644 the gold
   leak, reported medium, shared a bucket with a low reading whose longer
   evidence won, and only the low one was checked).
-  A pass that answers in words is asked once more to report what it weighed
+  A turn that answers in words is asked once more to report what it weighed
   and kept to itself (`HARVEST_NOTE`), and only that answer's `reportFinding`
-  calls run: on #644's gold group the pass named the defect in its summary
+  calls run: on #644's gold group the turn named the defect in its summary
   and reported no finding. A closing call whose report the tool refused is
   asked once more. A claim or a verdict's reason past 1,500 characters is cut
   and its evidence or quote past 1,000 keeps its first whole lines, never
@@ -174,11 +174,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   focused tails, the harvest note), `REVIEW_TOOLS_VERSION` `review-tools-5`
   (`reportFinding`'s and `verdict`'s parameters).
 - `efferent-review review` checks each finding of a bucket, not only its
-  best: two passes may name two mechanisms on the same lines, and on #644's
+  best: two turns may name two mechanisms on the same lines, and on #644's
   full run the gold leak was a bucket's second finding and never checked.
   Checks run in rounds (`checkRounds`, at most `CLAIMS_CHECKED`, 3, a
   bucket): every bucket's best before any bucket's next, and a later round
-  only for a bucket no check has confirmed, so passes that report one defect
+  only for a bucket no check has confirmed, so turns that report one defect
   cost one check when it holds. The report shows the finding its check
   confirmed, and each check in `review.json` names the finding it was shown
   (`BucketCheck.finding`). A finding no check confirmed but one judged
@@ -187,7 +187,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   findings.` instead of `No findings.`; checked alone, #644's gold leak got
   one confirmed and one unsure verdict in two draws, and an unsure one used
   to be dropped. A bucket whose findings are one defect reported by several
-  passes now gets up to three tries, and one confirmation reports it: with
+  turns now gets up to three tries, and one confirmation reports it: with
   verdicts that flip between draws, that trades some precision for recall,
   and false findings per review are not measured yet. A check is told that docs,
   comments and a description the pull request itself adds are its author's
@@ -195,6 +195,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `review-prompt-9`): on #657 the check refuted the unsandboxed commands
   twice by citing a rule the pull request had added to its own `AGENTS.md`;
   told so, it confirmed once in two.
+- `efferent-review` says turn for what it called a pass, the kernel's word
+  (the entries above say turn already): a review is made of turns (one
+  finder turn a group, or each turn over the whole pull request, and one
+  check turn a finding checked), each made of steps. The flags are `--turns`
+  and `--config-turn` (`--passes` and `--config-pass` are gone), each finder
+  turn's journal is kept in
+  `turn-N/`, `review.json` names its fields `turns`, `turnsAsked` and
+  `turn`, the report says `Turn 1: …` and `(V/K turns)`, and the port is
+  `ReviewTurns` (`kernelTurns`, `TurnInput`, `TurnResult`, `TurnEnded`).
+  The text the model reads is unchanged (`REVIEW_PROMPT` `review-prompt-9`,
+  `REVIEW_TOOLS_VERSION` `review-tools-5`).
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

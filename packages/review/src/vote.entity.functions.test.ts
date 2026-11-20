@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import type { FileDiff } from "./diff.entity.js"
-import { PassNumber } from "./finding.entity.js"
+import { TurnNumber } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
 import { changedLinesOf, checkRounds, evidenceMatches, mergeFindings, normalizedLine, quoteWithin } from "./vote.entity.functions.js"
 
@@ -27,8 +27,8 @@ const FILE: FileDiff = {
   }],
 }
 
-const finding = (pass: number, number: number, line: number, extra: Partial<Finding> = {}): Finding => ({
-  path: "src/a.ts", line, kind: "bug", severity: "medium", claim: `claim ${pass}.${number}`, evidence: "", pass: PassNumber.make(pass), number, ...extra,
+const finding = (turn: number, number: number, line: number, extra: Partial<Finding> = {}): Finding => ({
+  path: "src/a.ts", line, kind: "bug", severity: "medium", claim: `claim ${turn}.${number}`, evidence: "", turn: TurnNumber.make(turn), number, ...extra,
 })
 
 describe("changedLinesOf", () => {
@@ -38,11 +38,11 @@ describe("changedLinesOf", () => {
 })
 
 describe("mergeFindings", () => {
-  /** Each bucket as `line-endLine kind [pass.number…] votes why`. */
+  /** Each bucket as `line-endLine kind [turn.number…] votes why`. */
   const shown = (buckets: ReturnType<typeof mergeFindings>) =>
-    buckets.map((bucket) => `${bucket.line}-${bucket.endLine} ${bucket.kind} [${bucket.members.map((member) => `${member.pass}.${member.number}`).join(" ")}] ${bucket.votes} ${bucket.why}`)
+    buckets.map((bucket) => `${bucket.line}-${bucket.endLine} ${bucket.kind} [${bucket.members.map((member) => `${member.turn}.${member.number}`).join(" ")}] ${bucket.votes} ${bucket.why}`)
 
-  test("a bucket is anchored at its first finding: those of other passes starting within three lines of it join, each pass once, whatever kind each says", () => {
+  test("a bucket is anchored at its first finding: those of other turns starting within three lines of it join, each turn once, whatever kind each says", () => {
     expect(shown(mergeFindings([
       finding(1, 1, 5), finding(2, 1, 8), finding(2, 2, 6), finding(3, 1, 10, { kind: "security" }), finding(3, 2, 15),
     ], [FILE], { vote: false }))).toEqual([
@@ -52,7 +52,7 @@ describe("mergeFindings", () => {
     ])
   })
 
-  test("two findings of one pass never share a bucket, however near", () => {
+  test("two findings of one turn never share a bucket, however near", () => {
     expect(shown(mergeFindings([finding(1, 1, 5), finding(1, 2, 5), finding(1, 3, 6)], [FILE], { vote: false }))).toEqual(["5-5 bug [1.1] 1 kept", "5-5 bug [1.2] 1 kept", "6-6 bug [1.3] 1 kept"])
   })
 
@@ -67,7 +67,7 @@ describe("mergeFindings", () => {
     ])
   })
 
-  test("with the vote on: two passes, or one of them saying security; the rest recorded as left out by the vote", () => {
+  test("with the vote on: two turns, or one of them saying security; the rest recorded as left out by the vote", () => {
     expect(shown(mergeFindings([finding(1, 1, 5), finding(2, 1, 6, { kind: "security" }), finding(1, 2, 15), finding(3, 1, 10, { kind: "security" })], [FILE], { vote: true }))).toEqual([
       "5-6 bug [1.1 2.1] 2 kept", "10-10 security [3.1] 1 kept", "15-15 bug [1.2] 1 one-vote",
     ])
@@ -85,7 +85,7 @@ describe("mergeFindings", () => {
       finding(3, 1, 6, { evidence: "  6 + added(5)\n  7   kept(7)" }),
     ], [FILE], { vote: false })
     const [first] = mergeFindings([finding(2, 1, 5, { evidence: "nowhere" }), finding(1, 4, 5, { evidence: "elsewhere" })], [FILE], { vote: false })
-    expect<ReadonlyArray<number | undefined>>([matched?.best.pass, first?.best.pass]).toEqual([3, 1])
+    expect<ReadonlyArray<number | undefined>>([matched?.best.turn, first?.best.turn]).toEqual([3, 1])
   })
 
   test("the best-worded finding is the most severe first: a medium one with short evidence stands for a bucket over a low one with longer evidence the diff holds", () => {
@@ -95,13 +95,13 @@ describe("mergeFindings", () => {
       finding(5, 1, 5, { severity: "medium", evidence: "not in the file" }),
     ], [FILE], { vote: false })
     // The medium ones first; among them the one whose evidence the diff holds; the low one's longer evidence loses.
-    expect<ReadonlyArray<number | string | undefined>>([bucket?.best.pass, bucket?.best.severity, bucket?.votes]).toEqual([4, "medium", 3])
+    expect<ReadonlyArray<number | string | undefined>>([bucket?.best.turn, bucket?.best.severity, bucket?.votes]).toEqual([4, "medium", 3])
   })
 })
 
 describe("checkRounds", () => {
-  /** Each round as `bucket:pass.number` per check. */
-  const shown = (rounds: ReturnType<typeof checkRounds>) => rounds.map((round) => round.map((target) => `${target.bucket.number}:${target.finding.pass}.${target.finding.number}`))
+  /** Each round as `bucket:turn.number` per check. */
+  const shown = (rounds: ReturnType<typeof checkRounds>) => rounds.map((round) => round.map((target) => `${target.bucket.number}:${target.finding.turn}.${target.finding.number}`))
 
   test("each kept bucket's best first, every bucket's first claim before any second, at most perBucket a bucket, none of a bucket not kept", () => {
     const findings = [
@@ -109,7 +109,7 @@ describe("checkRounds", () => {
       finding(1, 2, 10), finding(1, 3, 1),
     ]
     const buckets = mergeFindings(findings, [FILE], { vote: false })
-    // Bucket 1 (line 1) is off the changed lines; bucket 2 holds four passes (best: the high one), bucket 3 one.
+    // Bucket 1 (line 1) is off the changed lines; bucket 2 holds four turns (best: the high one), bucket 3 one.
     expect([shown(checkRounds(buckets, findings, 3)), shown(checkRounds(buckets, findings, 1))]).toEqual([
       [["2:2.1", "3:1.2"], ["2:3.1"], ["2:1.1"]],
       [["2:2.1", "3:1.2"]],

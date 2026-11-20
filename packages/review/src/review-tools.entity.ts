@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { FileDiff } from "./diff.entity.js"
-import { CheckNumber, PassNumber } from "./finding.entity.js"
+import { CheckNumber, TurnNumber } from "./finding.entity.js"
 import { CommitSha, RepoName } from "./pull-request.entity.js"
 
 /** The tools' names, as the model calls them. */
@@ -48,13 +48,13 @@ export const PAGE_CHARS = 30_000
 export const READ_FILE_BYTES = 1024 * 1024
 
 /**
- * The stage a model's call is made in: a pass that finds (`Find`, whose findings `reportFinding` records under its
- * pass), or a check of one finding (`Verify`, whose verdict `verdict` records under its check). Every stage is offered
+ * The stage a model's call is made in: a turn that finds (`Find`, whose findings `reportFinding` records under its
+ * turn), or a check of one finding (`Verify`, whose verdict `verdict` records under its check). Every stage is offered
  * the same tools, so a provider's cache keeps their declarations with the prompt's prefix; a tool of the other stage
  * answers a failed result that names the one to call.
  */
 export const ReviewStage = Schema.Union([
-  Schema.TaggedStruct("Find", { pass: PassNumber }),
+  Schema.TaggedStruct("Find", { turn: TurnNumber }),
   Schema.TaggedStruct("Verify", { check: CheckNumber }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type ReviewStage = typeof ReviewStage.Type

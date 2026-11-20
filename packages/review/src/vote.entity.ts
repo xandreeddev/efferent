@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { Finding, FindingKind, LineNumber, PassNumber } from "./finding.entity.js"
+import { Finding, FindingKind, LineNumber, TurnNumber } from "./finding.entity.js"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
@@ -26,22 +26,22 @@ export const BucketNumber = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)).p
 export type BucketNumber = typeof BucketNumber.Type
 
 /**
- * Why a bucket was kept or not: kept for the checks (`kept`); left out by the vote, one pass alone having found it and
+ * Why a bucket was kept or not: kept for the checks (`kept`); left out by the vote, one turn alone having found it and
  * it not a security problem (`one-vote`, only when the vote is on); its findings are not on the pull request's changed
  * lines (`off-changed-lines`).
  */
 export const BucketWhy = Schema.Literals(["kept", "one-vote", "off-changed-lines"])
 export type BucketWhy = typeof BucketWhy.Type
 
-/** A finding of a bucket: its pass and its number in that pass. */
-export const BucketMember = Schema.Struct({ pass: PassNumber, number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)) })
+/** A finding of a bucket: its turn and its number in that turn. */
+export const BucketMember = Schema.Struct({ turn: TurnNumber, number: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)) })
 export type BucketMember = typeof BucketMember.Type
 
 /**
- * The findings of several passes about one place: one file, each finding starting within `NEAR_LINES` of the first
- * finding's lines (its anchor, counted at most `SPAN_COUNTED` lines), at most one finding a pass, whatever kind each
+ * The findings of several turns about one place: one file, each finding starting within `NEAR_LINES` of the first
+ * finding's lines (its anchor, counted at most `SPAN_COUNTED` lines), at most one finding a turn, whatever kind each
  * says. Its lines span its findings' (each counted at most `SPAN_COUNTED` lines); its votes are its findings, one a
- * pass; `best` is the finding whose words stand for it (the longest evidence the file's diff holds, else the first),
+ * turn; `best` is the finding whose words stand for it (the longest evidence the file's diff holds, else the first),
  * and its kind is the best's; `kept` and `why` say whether it goes to the checks. Every bucket is recorded, kept or
  * not, for offline scoring.
  */
@@ -60,7 +60,7 @@ export const Bucket = Schema.Struct({
 export type Bucket = typeof Bucket.Type
 
 /**
- * The most findings of one bucket checked, each by a check of its own: two passes may name two mechanisms on the same
+ * The most findings of one bucket checked, each by a check of its own: two turns may name two mechanisms on the same
  * lines (#644's full run: a bucket held the gold leak and a different reading, and only one was checked).
  */
 export const CLAIMS_CHECKED = 3
@@ -69,6 +69,6 @@ export const CLAIMS_CHECKED = 3
 export const CheckTarget = Schema.Struct({ bucket: Bucket, finding: Finding })
 export type CheckTarget = typeof CheckTarget.Type
 
-/** How findings are merged: whether the vote filters the buckets (two passes, or one for a security problem) or every bucket on changed lines is kept. */
+/** How findings are merged: whether the vote filters the buckets (two turns, or one for a security problem) or every bucket on changed lines is kept. */
 export const MergeOptions = Schema.Struct({ vote: Schema.Boolean })
 export type MergeOptions = typeof MergeOptions.Type

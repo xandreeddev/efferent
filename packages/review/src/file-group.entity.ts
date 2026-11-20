@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { PassNumber } from "./finding.entity.js"
+import { TurnNumber } from "./finding.entity.js"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 const AtLeastOne = Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))
@@ -9,7 +9,7 @@ export const GroupNumber = AtLeastOne.pipe(Schema.brand("GroupNumber"))
 export type GroupNumber = typeof GroupNumber.Type
 
 /**
- * Changed files reviewed together by one focused pass: its number, the package they belong to (the nearest folder
+ * Changed files reviewed together by one focused turn: its number, the package they belong to (the nearest folder
  * holding a `package.json`, `.` for the repository's root), their paths in the order they are shown, and the estimated
  * tokens of their diffs.
  */
@@ -32,8 +32,8 @@ export type GroupBounds = typeof GroupBounds.Type
 export const DEFAULT_GROUP_BOUNDS: GroupBounds = { tokens: 6_000, files: 8 }
 
 /**
- * The most model calls one focused pass makes by default: a guard against a pass that never ends, the find stage's
- * ledger being the real limit. Measured on four gold groups (2026-11-20): at 8 every pass hit the cap; at 24 every pass
+ * The most model calls (steps) one focused turn makes by default: a guard against a turn that never ends, the find
+ * stage's ledger being the real limit. Measured on four gold groups (2026-11-20): at 8 every turn hit the cap; at 24 every turn
  * ended on its own, after 5 to 17 calls (an interactive reviewer on a stronger model took 8 to 18 turns a review).
  */
 export const DEFAULT_GROUP_STEPS = 24
@@ -57,19 +57,19 @@ export const CallPrice = Schema.Struct({
 export type CallPrice = typeof CallPrice.Type
 
 /**
- * What a focused pass keeps back for its closing call by default, in USD: a focused request's hold with room to spare
+ * What a focused turn keeps back for its closing call by default, in USD: a focused request's hold with room to spare
  * (#644's gold group's seventh call asked to hold $0.040, a request of about 118 KB at 1 byte a token), less than a
  * whole review's `DEFAULT_CLOSING_RESERVE`, sized for 300 KB requests. On #644 the defect was reported on the closing
- * call, after the stage refused the seventh. Raised from $0.05 for the 24-call guard: a pass that reads files whole
- * grows its request, and #644's ninth pass asked to hold $0.077 late in its run, which $0.05 could not close on.
+ * call, after the stage refused the seventh. Raised from $0.05 for the 24-call guard: a turn that reads files whole
+ * grows its request, and #644's ninth turn asked to hold $0.077 late in its run, which $0.05 could not close on.
  */
 export const DEFAULT_GROUP_RESERVE = 0.1
 
 /** Why a group was not reviewed, in words. */
 export const NOT_REVIEWED_BECAUSE = {
   spent: "the find stage had no room for its first call and its closing reserve",
-  noCall: "its pass ended before any model call answered",
-  stopped: "the find stage refused an earlier group's pass before any of its calls answered, so it stopped",
+  noCall: "its turn ended before any model call answered",
+  stopped: "the find stage refused an earlier group's turn before any of its calls answered, so it stopped",
 } as const
 
 /** The note when a focused review found no file to group (config, CI or docs alone) and reviewed the whole pull request. */
@@ -82,12 +82,12 @@ export const NO_GROUP_NOTE = "No changed file is code a group holds, so the pull
 export const GroupOrder = Schema.Literals(["risk", "git"])
 export type GroupOrder = typeof GroupOrder.Type
 
-/** A changed file a focused review gives no pass, and why, in words. */
+/** A changed file a focused review gives no turn, and why, in words. */
 export const UngroupedFile = Schema.Struct({ path: Schema.String, why: Schema.String })
 export type UngroupedFile = typeof UngroupedFile.Type
 
 /**
- * How a review's passes read the pull request: each walking the whole of it (`whole`), or one focused pass per group of
+ * How a review's finder turns read the pull request: each walking the whole of it (`whole`), or one focused turn per group of
  * changed source and test files (`groups`).
  */
 export const Focus = Schema.Literals(["whole", "groups"])
@@ -96,19 +96,19 @@ export type Focus = typeof Focus.Type
 /**
  * How a review reads the pull request by default: in focused groups. Measured on the gold cases (2026-11-20, one run
  * each, the gold groups alone): the gold group of #644 found and confirmed its defect ($0.035), which the
- * whole-pull-request pass had missed; #480, #595 and #657's groups missed theirs. A focused review is cut short on a
+ * whole-pull-request turn had missed; #480, #595 and #657's groups missed theirs. A focused review is cut short on a
  * large pull request: at about $0.022 to $0.053 a group (a 24-call guard and the harvest call), the stock find stage
  * ($0.50) reviews about ten to twelve groups and lists the rest as not reviewed.
  */
 export const DEFAULT_FOCUS: Focus = "groups"
 
 /**
- * A group as the review ran it: the group, the pass that ran on it (none when none started), and why it was not
- * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its pass answered at least one call).
+ * A group as the review ran it: the group, the turn that ran on it (none when none started), and why it was not
+ * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its turn answered at least one call).
  */
 export const GroupRun = Schema.Struct({
   group: FileGroup,
-  pass: Schema.OptionFromNullOr(PassNumber),
+  turn: Schema.OptionFromNullOr(TurnNumber),
   notReviewed: Schema.String,
 })
 export type GroupRun = typeof GroupRun.Type
