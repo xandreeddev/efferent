@@ -43,7 +43,6 @@ export const GROUP_START_ROOM = 0.03
 /** Why a group was not reviewed, in words. */
 export const NOT_REVIEWED_BECAUSE = {
   spent: "the find stage's budget had no room for another pass",
-  refused: "the find stage refused a call of an earlier group's pass",
 } as const
 
 /**
@@ -58,7 +57,7 @@ export const DEFAULT_FOCUS: Focus = "whole"
 
 /**
  * A group as the review ran it: the group, and the pass that reviewed it, or none, with why it was not reviewed (the
- * find stage's budget spent, or a pass before it refused).
+ * find stage's budget spent).
  */
 export const GroupRun = Schema.Struct({
   group: FileGroup,

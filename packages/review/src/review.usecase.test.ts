@@ -206,6 +206,19 @@ describe("reviewPullRequest", () => {
     expect(finds[sumPass - 1]?.prompt.prefix[2]?.content.includes("File: src/sum.ts")).toBe(true)
   })
 
+  test("focused: a pass the stage refused does not stop the next group's", async () => {
+    let started = 0
+    const refused = Layer.succeed(ReviewPasses, ReviewPasses.of({
+      run: (input) => Effect.sync(() => {
+        started += 1
+        return { stage: input.reviewed.stage, session: Option.none(), ended: { _tag: "SpendRefused" as const, message: "its reserve crowded the call out" }, calls: [], opened: [] }
+      }),
+    }))
+    // One file a group, so the fixture's pull request makes several.
+    const report = await reviewWith(refused, { ...REVIEW_OPTIONS, focus: "groups", verify: false, groups: { ...DEFAULT_GROUP_OPTIONS, bounds: { tokens: 6_000, files: 1 } } })
+    expect([report.groups.length > 1, started, report.groups.every((run) => Option.isSome(run.pass))]).toEqual([true, report.groups.length, true])
+  })
+
   test("focused: a group starts only while the find stage has room; the rest are listed as not reviewed", async () => {
     const { asked, layer } = scripted("total += value * 1")
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, budget: { total: 0.5, find: GROUP_START_ROOM / 2, verify: 0.2 } })

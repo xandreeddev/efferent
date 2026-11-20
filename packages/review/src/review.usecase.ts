@@ -143,7 +143,9 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   }
 
   // Focused: one pass a group, one after another, each with its group's prefix; a group starts only while the find
-  // stage has `GROUP_START_ROOM` unsettled and no pass before it was refused, else it is listed as not reviewed.
+  // stage has `GROUP_START_ROOM` neither settled nor held, else it and every group after it are listed as not reviewed.
+  // A pass the stage refused does not stop the next: its own reserve, held beside its call, is what crowded it out
+  // (on #657 the second group's eighth call was refused with $0.08 of the stage left).
   const focused = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : []
   const groupRuns: Array<GroupRun> = []
   const found: Array<PassResult> = []
@@ -162,7 +164,6 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       const result = yield* find(found.length, focusPrompt(prefix, options.finder), runAs)
       groupRuns.push({ group, pass: Option.some(PassNumber.make(found.length + 1)), notReviewed: "" })
       found.push(result)
-      if (result.ended._tag === "SpendRefused") stopped = NOT_REVIEWED_BECAUSE.refused
       yield* record({ passes: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
     }
   } else {
