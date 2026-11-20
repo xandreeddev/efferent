@@ -11,7 +11,7 @@ import type { PassEnded, PassResult } from "./review-pass.entity.js"
 import type { Focus, GroupRun, UngroupedFile } from "./file-group.entity.js"
 import type { Effort } from "./review-model.entity.js"
 import type { Finder } from "./review-prompt.entity.js"
-import { EVIDENCE_SHOWN, FINDINGS_SHOWN } from "./review-report.entity.js"
+import { EVIDENCE_SHOWN, FINDINGS_SHOWN, UNSETTLED_HEAD } from "./review-report.entity.js"
 import type { BucketCheck, ReportedFinding, ReviewReport, ReviewUsage } from "./review-report.entity.js"
 import type { Bucket } from "./vote.entity.js"
 
@@ -99,19 +99,30 @@ export const usageOf = (results: ReadonlyArray<PassResult>): ReviewUsage => {
  */
 export const reviewReport = (input: ReportInput): ReviewReport => {
   const byBucket = new Map(input.buckets.map((bucket) => [bucket.number, bucket]))
-  const shown = input.verify
-    ? input.verdicts.flatMap((check) => {
-      const bucket = byBucket.get(check.bucket)
-      return check.outcome === "confirmed" && bucket !== undefined ? [{ bucket, checked: Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason }) }] : []
-    })
-    : input.buckets.filter((bucket) => bucket.kept).map((bucket) => ({ bucket, checked: "" }))
-  const reported = shown.map(({ bucket, checked }): ReportedFinding => ({
-    ...bucket.best,
-    bucket: bucket.number,
-    votes: bucket.votes,
-    checked,
-    restatesCi: restatesCi(bucket.best, input.prepared.failing),
-  }))
+  const byMember = new Map(input.findings.map((finding) => [`${finding.pass}/${finding.number}`, finding]))
+  /** The first check of each bucket that ended `outcome`, in check order. */
+  const firstOf = (outcome: BucketCheck["outcome"]) => Arr.dedupeWith(
+    Arr.sort(input.verdicts.filter((check) => check.outcome === outcome), Order.mapInput(Order.Number, (check: BucketCheck) => check.check)),
+    (one: BucketCheck, other: BucketCheck) => one.bucket === other.bucket,
+  )
+  const asReported = (checks: ReadonlyArray<BucketCheck>) => checks.flatMap((check): ReadonlyArray<ReportedFinding> => {
+    const bucket = byBucket.get(check.bucket)
+    const finding = byMember.get(`${check.finding.pass}/${check.finding.number}`)
+    if (bucket === undefined || finding === undefined) return []
+    // A verdict counted unsure by the host (its quote not found) says so before the check's own reason.
+    const reason = Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason })
+    const checked = check.why.length > 0 ? `${check.why}: ${reason}` : reason
+    return [{ ...finding, bucket: bucket.number, votes: bucket.votes, checked, restatesCi: restatesCi(finding, input.prepared.failing) }]
+  })
+  // A bucket is shown once: with the first of its findings a check confirmed; else, apart, its first a check was unsure of.
+  const confirmed = firstOf("confirmed")
+  const settled = new Set(confirmed.map((check) => check.bucket))
+  const reported = input.verify
+    ? asReported(confirmed)
+    : input.buckets.filter((bucket) => bucket.kept).map((bucket): ReportedFinding => ({
+      ...bucket.best, bucket: bucket.number, votes: bucket.votes, checked: "", restatesCi: restatesCi(bucket.best, input.prepared.failing),
+    }))
+  const unsettled = asReported(firstOf("unsure").filter((check) => !settled.has(check.bucket)))
   const find = usageOf(input.passes)
   const verify = usageOf(input.checks)
   return {
@@ -138,6 +149,7 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     buckets: input.buckets,
     verdicts: input.verdicts,
     reported: Arr.sort(reported, FINDING_ORDER),
+    unsettled: Arr.sort(unsettled, FINDING_ORDER),
     packedFiles: input.prepared.diff.kept.length,
     changedFiles: input.prepared.files.length,
     usage: usageOf([...input.passes, ...input.checks]),
@@ -239,7 +251,7 @@ const tallies = (report: ReviewReport): ReadonlyArray<string> => {
 /**
  * The report a person reads: the pull request and the commit reviewed; at most `FINDINGS_SHOWN` findings in their
  * order, each with its evidence, how many passes found it and the check's reason, and how many more there are, or
- * `No findings.` (`Incomplete: no pass finished.` when no pass answered or reached its step cap); each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
+ * `No findings.` (`No confirmed findings.` when some are unsettled; `Incomplete: no pass finished.` when no pass answered or reached its step cap); then, apart under `UNSETTLED_HEAD`, at most `FINDINGS_SHOWN` findings no check settled, as the confirmed are shown, and how many more; each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
  * so an unchecked finding is never read as none; `incomplete: <why>` for each pass that stopped before it answered, else its summary;
  * the passes that did not start because the first ended before its first call answered (`notStarted`); the passes and
  * how the buckets and checks came out; the files in the pack against those changed and the files the passes opened;
@@ -248,18 +260,22 @@ const tallies = (report: ReviewReport): ReadonlyArray<string> => {
 export const reportText = (report: ReviewReport): string => {
   const shown = report.reported.slice(0, FINDINGS_SHOWN)
   const more = report.reported.length - shown.length
+  const unsettled = report.unsettled.slice(0, FINDINGS_SHOWN)
   const opened = Arr.dedupe(report.passes.flatMap((pass) => pass.opened))
-  const byBucket = new Map(report.buckets.map((bucket) => [bucket.number, bucket]))
+  const byMember = new Map(report.findings.map((finding) => [`${finding.pass}/${finding.number}`, finding]))
   const unchecked = report.verdicts.flatMap((check) => {
-    const bucket = byBucket.get(check.bucket)
-    return check.outcome === "unchecked" && bucket !== undefined ? [`Not checked (${check.why}): ${shownPath(bucket.path)}:${bucket.line} ${bucket.best.severity} ${bucket.kind} — ${printable(bucket.best.claim)}`] : []
+    const finding = byMember.get(`${check.finding.pass}/${check.finding.number}`)
+    return check.outcome === "unchecked" && finding !== undefined ? [`Not checked (${check.why}): ${shownPath(finding.path)}:${finding.line} ${finding.severity} ${finding.kind} — ${printable(finding.claim)}`] : []
   })
   return [
     `Review of #${report.number} in ${report.repo} at ${report.at.sha.slice(0, 12)}, ${AT_SOURCE_WORDS[report.at.source]}`,
     "",
     ...(shown.length > 0 ? shown.flatMap((finding) => findingLines(finding, report.passes.length))
-      : report.passes.some((pass) => FINISHED.includes(pass.ended._tag)) ? ["No findings."] : ["Incomplete: no pass finished."]),
+      : !report.passes.some((pass) => FINISHED.includes(pass.ended._tag)) ? ["Incomplete: no pass finished."]
+      : unsettled.length > 0 ? ["No confirmed findings."] : ["No findings."]),
     ...(more > 0 ? [`${more} more ${more === 1 ? "finding" : "findings"} not shown.`] : []),
+    ...(unsettled.length > 0 ? ["", UNSETTLED_HEAD, ...unsettled.flatMap((finding) => findingLines(finding, report.passes.length))] : []),
+    ...(report.unsettled.length > unsettled.length ? [`${report.unsettled.length - unsettled.length} more unsettled not shown.`] : []),
     ...unchecked.slice(0, FINDINGS_SHOWN),
     ...(unchecked.length > FINDINGS_SHOWN ? [`${unchecked.length - FINDINGS_SHOWN} more not checked.`] : []),
     "",

@@ -59,6 +59,16 @@ export const Bucket = Schema.Struct({
 })
 export type Bucket = typeof Bucket.Type
 
+/**
+ * The most findings of one bucket checked, each by a check of its own: two passes may name two mechanisms on the same
+ * lines (#644's full run: a bucket held the gold leak and a different reading, and only one was checked).
+ */
+export const CLAIMS_CHECKED = 3
+
+/** A check to run: the kept bucket and the one finding of it the check is shown. */
+export const CheckTarget = Schema.Struct({ bucket: Bucket, finding: Finding })
+export type CheckTarget = typeof CheckTarget.Type
+
 /** How findings are merged: whether the vote filters the buckets (two passes, or one for a security problem) or every bucket on changed lines is kept. */
 export const MergeOptions = Schema.Struct({ vote: Schema.Boolean })
 export type MergeOptions = typeof MergeOptions.Type

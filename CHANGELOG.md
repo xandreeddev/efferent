@@ -165,6 +165,28 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   model-facing texts: `REVIEW_PROMPT` `review-prompt-8` (the system text, the
   focused tails, the harvest note), `REVIEW_TOOLS_VERSION` `review-tools-5`
   (`reportFinding`'s and `verdict`'s parameters).
+- `efferent-review review` checks each finding of a bucket, not only its
+  best: two passes may name two mechanisms on the same lines, and on #644's
+  full run the gold leak was a bucket's second finding and never checked.
+  Checks run in rounds (`checkRounds`, at most `CLAIMS_CHECKED`, 3, a
+  bucket): every bucket's best before any bucket's next, and a later round
+  only for a bucket no check has confirmed, so passes that report one defect
+  cost one check when it holds. The report shows the finding its check
+  confirmed, and each check in `review.json` names the finding it was shown
+  (`BucketCheck.finding`). A finding no check confirmed but one judged
+  unsure is no longer dropped: the report lists it apart, under
+  `UNSETTLED_HEAD` (`ReviewReport.unsettled`), and says `No confirmed
+  findings.` instead of `No findings.`; checked alone, #644's gold leak got
+  one confirmed and one unsure verdict in two draws, and an unsure one used
+  to be dropped. A bucket whose findings are one defect reported by several
+  passes now gets up to three tries, and one confirmation reports it: with
+  verdicts that flip between draws, that trades some precision for recall,
+  and false findings per review are not measured yet. A check is told that docs,
+  comments and a description the pull request itself adds are its author's
+  claims, never proof the code is right (`VERIFY_TAIL`, `REVIEW_PROMPT`
+  `review-prompt-9`): on #657 the check refuted the unsandboxed commands
+  twice by citing a rule the pull request had added to its own `AGENTS.md`;
+  told so, it confirmed once in two.
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

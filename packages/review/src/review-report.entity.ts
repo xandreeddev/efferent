@@ -6,12 +6,15 @@ import { ReviewedAt } from "./prepare-review.entity.js"
 import { PullNumber, RepoName } from "./pull-request.entity.js"
 import { PassResult } from "./review-pass.entity.js"
 import { Finder } from "./review-prompt.entity.js"
-import { Bucket, BucketNumber } from "./vote.entity.js"
+import { Bucket, BucketMember, BucketNumber } from "./vote.entity.js"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
 /** The most findings a report shows; the rest are counted. */
 export const FINDINGS_SHOWN = 6
+
+/** The line above the findings no check settled, in the report a person reads. */
+export const UNSETTLED_HEAD = "Unsettled: no check confirmed these and none refuted them (a check could not tell, or its quote was not found); read them before trusting either way."
 
 /** The longest a finding's quoted evidence is shown in the report, in characters. */
 export const EVIDENCE_SHOWN = 400
@@ -25,11 +28,13 @@ export const CheckOutcome = Schema.Literals(["confirmed", "refuted", "unsure", "
 export type CheckOutcome = typeof CheckOutcome.Type
 
 /**
- * One bucket's check: the bucket, the check's number, its verdict when it gave one, whether the verdict's quote is in
- * the head's file within the cited lines (`quoteWithin`), the outcome, and why, in words, when it is no verdict's own.
+ * One check of a bucket's finding: the bucket, the finding it was shown (`finding`, its pass and number), the check's
+ * number, its verdict when it gave one, whether the verdict's quote is in the head's file within the finding's lines
+ * (`quoteWithin`), the outcome, and why, in words, when it is no verdict's own.
  */
 export const BucketCheck = Schema.Struct({
   bucket: BucketNumber,
+  finding: BucketMember,
   check: CheckNumber,
   verdict: Schema.OptionFromNullOr(Verdict),
   quoteHolds: Schema.Boolean,
@@ -39,7 +44,8 @@ export const BucketCheck = Schema.Struct({
 export type BucketCheck = typeof BucketCheck.Type
 
 /**
- * A finding as the report shows it: the bucket's best-worded finding, how many passes found it of how many ran, why
+ * A finding as the report shows it: the bucket's finding a check confirmed (its first confirmed, in check order; with no
+ * check, the bucket's best-worded), how many passes found it of how many ran, why
  * the check confirmed it (empty when nothing was checked), and whether it only restates a failure the CI's digest
  * already names (same path and line).
  */
@@ -73,7 +79,11 @@ export type ReviewUsage = typeof ReviewUsage.Type
  * asked for (`passesAsked`: more than ran when the first ended before its first call answered); each pass and each check
  * (its session, how it ended, its calls with what each used, the files it opened); every finding of every pass; every
  * bucket, kept or not, with its votes; every check; the findings shown (`reported`: confirmed by a check, or the kept
- * buckets' when no check ran, sorted by severity, then path, then line); the files in the packed diff against those
+ * buckets' when no check ran, sorted by severity, then path, then line); the findings no check settled (`unsettled`:
+ * of each bucket no check confirmed and one judged unsure, its first unsure finding with the check's reason, the
+ * host's why first when the host made it unsure, sorted the same, kept apart from the confirmed: checked alone, #644's
+ * gold leak got one confirmed and one unsure verdict in two draws, and an unsure one used to be dropped); the files in
+ * the packed diff against those
  * changed; what each stage's calls and all of them used; and the wall time.
  */
 export const ReviewReport = Schema.Struct({
@@ -100,6 +110,7 @@ export const ReviewReport = Schema.Struct({
   buckets: Schema.Array(Bucket),
   verdicts: Schema.Array(BucketCheck),
   reported: Schema.Array(ReportedFinding),
+  unsettled: Schema.Array(ReportedFinding),
   packedFiles: Count,
   changedFiles: Count,
   usage: ReviewUsage,
