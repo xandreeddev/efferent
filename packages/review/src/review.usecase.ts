@@ -50,7 +50,8 @@ const quoteHolds = (repo: RepoName, at: CommitSha, bucket: Bucket, verdict: Verd
   const entry = yield* checkout.entry(repo, at, path.success)
   if (entry._tag !== "File") return false
   const text = yield* checkout.blob(repo, entry.blob)
-  return quoteWithin(text, verdict.quote, bucket.line, bucket.endLine)
+  // The lines the check was shown: the bucket's best finding's.
+  return quoteWithin(text, verdict.quote, bucket.best.line, bucket.best.endLine ?? bucket.best.line)
 }).pipe(Effect.catch((error) => Effect.logWarning("a verdict's quote could not be checked", error).pipe(Effect.as(false))))
 
 /** A check's outcome: its verdict's, a confirmed one whose quote fails counting as unsure; no verdict, unchecked. */

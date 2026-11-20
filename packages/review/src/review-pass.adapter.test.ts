@@ -215,7 +215,7 @@ describe("a pass over the kernel", () => {
 })
 
 describe("three passes at once under the review's budget", () => {
-  // The size of D1's longest pass's last request: about 300 KB, held at 1 byte a token at $0.30 a million ($0.09),
+  // The size of the longest live single pass's last request: about 300 KB, held at 1 byte a token at $0.30 a million ($0.09),
   // plus 4,096 tokens of output at $1.20 a million; each call billed $0.0025, so sixteen calls settle $0.04.
   const PREFIX = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "x".repeat(300_000) }]
   const billed = (answer: string) => answer.replace(/"cost":[0-9.]+/, "\"cost\":0.0025")
