@@ -49,9 +49,10 @@ describe("bwrapArgv", () => {
 
   test("the limits are set by the sandbox's shell, the command passed as $1 and never spliced; the address space only when given", () => {
     const closeFds = `for fd in /proc/self/fd/*; do n=\${fd##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-"; done 2>/dev/null; true`
-    expect(limitedArgv("a\"; $(b)", limits)).toEqual(["/bin/sh", "-c", `${closeFds} && ulimit -c 0 && ulimit -v ${8 * 1024 * 1024} && ulimit -f ${2 * 1024 * 1024} && exec /bin/sh -c "$1"`, "sh", "a\"; $(b)"])
+    // The launcher is bash: dash reads `exec 10>&-` as a program named 10 and exits 127; bash counts -f in KiB.
+    expect(limitedArgv("a\"; $(b)", limits)).toEqual(["/usr/bin/bash", "-c", `${closeFds} && ulimit -c 0 && ulimit -v ${8 * 1024 * 1024} && ulimit -f ${1024 * 1024} && exec /bin/sh -c "$1"`, "sh", "a\"; $(b)"])
     expect(bwrapArgv({ ...layout, tmpfsSize: false }, { workDir: "/c", network: false, repoBins: true, binds: [] }, "/work", "x", limits).join(" ")).toContain("--dev /dev --tmpfs /tmp")
-    expect(limitedArgv("x", { fileBytes: 1024, tmpBytes: 1 })).toEqual(["/bin/sh", "-c", `${closeFds} && ulimit -c 0 && ulimit -f 2 && exec /bin/sh -c "$1"`, "sh", "x"])
+    expect(limitedArgv("x", { fileBytes: 2048, tmpBytes: 1 })).toEqual(["/usr/bin/bash", "-c", `${closeFds} && ulimit -c 0 && ulimit -f 2 && exec /bin/sh -c "$1"`, "sh", "x"])
   })
 })
 
@@ -99,6 +100,17 @@ describe("toolBindOf", () => {
     }])
     expect(toolBindOf({ name: "bun", real: "/home/user/.bun/bin/bun", prefix: none, packageRoot: none, toolsDir: none })).toEqual([
       { name: "bun", binds: [{ host: "/home/user/.bun/bin/bun", inner: "/opt/tool/bun/bun", writable: false }], program: "/opt/tool/bun/bun" },
+    ])
+  })
+
+  test("GitHub's runner: bun from setup-bun by its file alone, node from the tool cache by its file and npm's package", () => {
+    expect(toolBindOf({ name: "bun", real: "/home/runner/.bun/bin/bun", prefix: none, packageRoot: none, toolsDir: none })).toEqual([
+      { name: "bun", binds: [{ host: "/home/runner/.bun/bin/bun", inner: "/opt/tool/bun/bun", writable: false }], program: "/opt/tool/bun/bun" },
+    ])
+    const prefix = "/opt/hostedtoolcache/node/24.11.1/x64"
+    expect(toolBindOf({ name: "node", real: `${prefix}/bin/node`, prefix: Option.some(prefix), packageRoot: none, toolsDir: none })[0]?.binds).toEqual([
+      { host: `${prefix}/bin/node`, inner: "/opt/tool/node/bin/node", writable: false },
+      { host: `${prefix}/lib/node_modules/npm`, inner: "/opt/tool/node/lib/node_modules/npm", writable: false },
     ])
   })
 

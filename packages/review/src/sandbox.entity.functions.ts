@@ -11,22 +11,27 @@ const topArgs = (entry: HostEntry): ReadonlyArray<string> => Match.valueTags(ent
 
 /**
  * Close every descriptor but the three streams: a runtime that spawns without close-on-exec (Bun does) hands its open
- * files and sockets to `bwrap`, which passes them on.
+ * files and sockets to `bwrap`, which passes them on. Bash's: a POSIX shell need not take a descriptor past 9 in a
+ * redirection, and dash (Ubuntu's `/bin/sh`) reads `exec 10>&-` as running a program named `10` and exits 127.
  */
 const CLOSE_FDS = `for fd in /proc/self/fd/*; do n=\${fd##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-"; done 2>/dev/null; true`
 
+/** The launcher's shell: bash, for `CLOSE_FDS`; the command itself runs in `/bin/sh`. */
+export const LAUNCHER = "/usr/bin/bash"
+
 /**
- * The sandbox's own words for the command: the shell closes every descriptor but the three streams, sets the limits,
- * then runs the command as its first argument (`"$1"`), so the command is data to the outer shell and runs only inside
- * the sandbox; nothing is spliced into a line.
+ * The sandbox's own words for the command: the launcher (`LAUNCHER`) closes every descriptor but the three streams,
+ * sets the limits (bash counts `ulimit -f` in blocks of 1,024 bytes), then runs the command in `/bin/sh` as its first
+ * argument (`"$1"`), so the command is data to the launcher and runs only inside the sandbox; nothing is spliced into
+ * a line.
  */
 export const limitedArgv = (command: string, limits: Limits): ReadonlyArray<string> => [
-  "/bin/sh", "-c",
+  LAUNCHER, "-c",
   [
     CLOSE_FDS,
     "ulimit -c 0",
     ...(limits.memoryBytes === undefined ? [] : [`ulimit -v ${Math.floor(limits.memoryBytes / 1024)}`]),
-    `ulimit -f ${Math.floor(limits.fileBytes / 512)}`,
+    `ulimit -f ${Math.floor(limits.fileBytes / 1024)}`,
     `exec /bin/sh -c "$1"`,
   ].join(" && "),
   "sh", command,

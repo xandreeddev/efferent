@@ -87,7 +87,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `node_modules` when every lockfile and `package.json` is the base's, and
   otherwise is not validated locally. Every check runs offline, within five
   minutes a command and fifteen a clone. A host
-  without bwrap or unprivileged user namespaces fails with
+  without bwrap, `/usr/bin/bash` or unprivileged user namespaces fails with
   `SandboxUnavailable` and runs nothing. CI installs bubblewrap and allows
   user namespaces so the isolation probe runs there.
 

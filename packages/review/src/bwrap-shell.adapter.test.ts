@@ -32,11 +32,21 @@ const work = (name: string): string => {
   return dir
 }
 
+/**
+ * Run `command` in a sandbox of `plan`. A run that does not exit 0 prints its stderr and bwrap's argv, so a failure on
+ * a host the probe cannot be run on by hand (CI's) names its cause in the log; some tests expect one, so it prints and
+ * fails nothing.
+ */
 const inSandbox = (plan: SandboxPlan, command: string, timeoutMs = 20_000): Promise<Ran> => {
   if (layout === undefined) return Promise.reject(new Error(`no sandbox: ${Result.isFailure(host) ? host.failure.message : ""}`))
   return Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const shell = yield* bwrapShell({ layout, plan })
-    return yield* shell.run({ command, timeoutMs })
+    const ran = yield* shell.run({ command, timeoutMs })
+    if (ran.ended._tag !== "Exited" || ran.ended.code !== 0) {
+      const argv = [layout.bwrap, ...bwrapArgv(layout, plan, "/work", command, SANDBOX_DEFAULTS.limits)].map((arg) => JSON.stringify(arg)).join(" ")
+      console.error(`sandboxed ${JSON.stringify(command)} ended ${JSON.stringify(ran.ended)}\nstderr: ${ran.stderr}\nargv: ${argv}`)
+    }
+    return ran
   })))
 }
 
