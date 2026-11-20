@@ -66,6 +66,8 @@ export const UNRUN_BECAUSE = {
   budget: "the clone's time budget ran out before it ran",
   noSnapshot: "the base's install could not be restored on the head",
   depsChanged: "dependencies changed: not validated locally (CI covers it)",
+  untrustedBase: "the base is not on the repository's default branch, so nothing is installed or run",
+  notRegular: "a dependency file is a link or a submodule, so nothing is installed or run",
   baseInstall: "the base did not install",
   passedBefore: "passed on this base before",
   knownBefore: "(known from an earlier review)",

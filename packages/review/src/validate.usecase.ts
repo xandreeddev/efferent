@@ -6,7 +6,8 @@ import { digestLog } from "./log-digest.entity.functions.js"
 import type { CommitSha } from "./pull-request.entity.js"
 import { INSTRUCTION_FILES, LOCKFILES } from "./repo-profile.entity.js"
 import type { Candidate } from "./repo-profile.entity.js"
-import { dependencyPaths, managerOf, profileOf, sameFiles } from "./repo-profile.entity.functions.js"
+import { dependencyPaths, isDependencyPath, managerOf, profileOf, sameFiles } from "./repo-profile.entity.functions.js"
+import { Forge } from "./forge.port.js"
 import type { SnapshotKey } from "./review-cache.entity.js"
 import { ReviewCache } from "./review-cache.port.js"
 import { ReviewLogs } from "./review-logs.port.js"
@@ -24,7 +25,8 @@ type Outcome =
   | { readonly _tag: "Unrun"; readonly command: string; readonly reason: string }
 
 /**
- * Run a pull request's commands, its base trusted (on the repository's default branch, which `prepareReview` checks),
+ * Run a pull request's commands, only when its base is in the history of the repository's default branch (checked
+ * first, here) and no dependency file is a link or a submodule at either end,
  * each phase in a sandbox of its own over a throwaway clone (`Checkout.clone`, made before any sandbox writes to it,
  * and never touched by host git after). The manager is chosen from the base's lockfile (`managerOf`). The head is
  * validated only when its dependency files (every lockfile and every `package.json` of the tree) are byte for byte the
@@ -41,7 +43,11 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
   const sandboxes = yield* Sandboxes
   const logs = yield* ReviewLogs
   const cache = yield* ReviewCache
+  const forge = yield* Forge
   const repo = request.repo
+  // Only a base in the history of the default branch, as the forge names it and the remote has it now, is installed:
+  // checked here, so no caller of the validations can install from another.
+  if (!(yield* checkout.onBranch(repo, request.base, yield* forge.defaultBranch(repo)))) return { _tag: "Refused", reason: UNRUN_BECAUSE.untrustedBase } satisfies ValidationRun
   const showAt = (at: CommitSha, path: string) => checkout.show(repo, at, path)
   const packageJson = yield* showAt(request.base, "package.json")
   const yarnrc = yield* showAt(request.base, ".yarnrc.yml")
@@ -53,6 +59,9 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
     const paths = dependencyPaths(yield* checkout.files(repo, at))
     return (yield* Effect.forEach(paths, (path) => Effect.map(showAt(at, path), (text) => Option.toArray(Option.map(text, (body) => ({ path, text: body })))), { concurrency: 4 })).flat()
   })
+  // A dependency file that is a link or a submodule at either end is read through it by an install: refused.
+  const irregular = (at: CommitSha) => Effect.map(checkout.notRegular(repo, at), (paths) => paths.some(isDependencyPath))
+  if ((yield* irregular(request.base)) || (yield* irregular(request.head))) return { _tag: "Refused", reason: UNRUN_BECAUSE.notRegular } satisfies ValidationRun
   const baseFiles = yield* dependencies(request.base)
   if (!sameFiles(baseFiles, yield* dependencies(request.head))) return { _tag: "Refused", reason: UNRUN_BECAUSE.depsChanged } satisfies ValidationRun
 

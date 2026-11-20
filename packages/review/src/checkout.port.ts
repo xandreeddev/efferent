@@ -23,7 +23,8 @@ export type CheckoutError = CommandFailed | OutputCut | CommitMissing
  * (`PatternRefused` for a regular expression git cannot read), and `mergeBase` where two commits' histories meet.
  * `entry`, `blob` and `grep` run under the host shell's small output bound (`tool`). `changedPaths` answers the paths
  * `from...to` changes (from where `to` left `from`), for a review's records. `onBranch` fetches a branch as the remote
- * has it now and answers whether a commit is in its history.
+ * has it now and answers whether a commit is in its history. `notRegular` answers the paths of a commit's tree that
+ * are not regular files (a link, a submodule).
  */
 export class Checkout extends Context.Service<Checkout, {
   readonly fetch: (repo: RepoName, base: PullEnd, head: HeadToFetch) => Effect.Effect<void, CheckoutError>
@@ -38,4 +39,5 @@ export class Checkout extends Context.Service<Checkout, {
   readonly mergeBase: (repo: RepoName, one: CommitSha, other: CommitSha) => Effect.Effect<CommitSha, CheckoutError>
   readonly changedPaths: (repo: RepoName, from: CommitSha, to: CommitSha) => Effect.Effect<ReadonlyArray<string>, CheckoutError>
   readonly onBranch: (repo: RepoName, sha: CommitSha, branch: BranchName) => Effect.Effect<boolean, CheckoutError>
+  readonly notRegular: (repo: RepoName, at: CommitSha) => Effect.Effect<ReadonlyArray<string>, CheckoutError>
 }>()("@xandreed/review/Checkout") {}

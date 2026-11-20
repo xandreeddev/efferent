@@ -5,7 +5,7 @@ import { join } from "node:path"
 import { Deferred, Effect, Exit, Fiber, Layer, Option, Result } from "effect"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import type { Transport } from "./checkout.entity.js"
-import { entryOf, gitArgv, grepHitsOf, LS_SIZED_ENTRY } from "./checkout.entity.functions.js"
+import { entryOf, gitArgv, grepHitsOf, LS_SIZED_ENTRY, neutralFilters } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff, renderDiff } from "./diff.entity.functions.js"
 import { attributesOf, fileVerdict } from "./file-verdict.entity.functions.js"
@@ -51,6 +51,44 @@ describe("gitArgv", () => {
     expect(gitArgv(["file"], null, ["clone"])).toEqual([
       "git", ...quiet, "-c", "protocol.allow=never", "-c", "protocol.file.allow=always", "--literal-pathspecs", "clone",
     ])
+  })
+
+  test("neutralFilters turns off every driver the host's config defines, a name with dots included", () => {
+    expect(neutralFilters("filter.lfs.smudge git-lfs smudge -- %f\nfilter.lfs.required true\nfilter.crypt.v2.clean x\ncore.bare false\n")).toEqual([
+      ...["smudge=", "clean=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.lfs.${setting}`]),
+      ...["smudge=", "clean=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.crypt.v2.${setting}`]),
+    ])
+    expect(neutralFilters("")).toEqual([])
+  })
+
+  test("a clone's checkout runs no filter driver of the host's that the head's own .gitattributes names; plain git, the control, does", async () => {
+    // A repository whose head commits `* filter=crypt`, and a host whose config defines that driver.
+    const remote = mkdtempSync(join(fixture.root, "driver-remote-"))
+    const git = (...args: ReadonlyArray<string>) => execFileSync("git", ["-c", "user.name=Fixture", "-c", "user.email=fixture@example.com", "-c", "commit.gpgsign=false", "-C", remote, ...args], { env: fixture.env }).toString().trim()
+    git("init", "--quiet", "-b", "main")
+    writeFileSync(join(remote, "a.txt"), "a\n")
+    git("add", "-A")
+    git("commit", "--quiet", "-m", "base")
+    const baseSha = CommitSha.make(git("rev-parse", "HEAD"))
+    writeFileSync(join(remote, ".gitattributes"), "* filter=crypt\n")
+    writeFileSync(join(remote, "b.txt"), "b\n")
+    git("add", "-A")
+    git("commit", "--quiet", "-m", "head")
+    const headSha = CommitSha.make(git("rev-parse", "HEAD"))
+    git("update-ref", "refs/pull/9/head", headSha)
+    git("reset", "--quiet", "--hard", baseSha)
+    const marker = join(fixture.root, "driver-ran")
+    const env = { ...fixture.env, GIT_CONFIG_COUNT: "1", GIT_CONFIG_KEY_0: "filter.crypt.smudge", GIT_CONFIG_VALUE_0: `touch ${marker}; cat` }
+    const layer = gitCheckout({ cacheRoot: freshCache(), remoteUrl: () => remote, transports: ["file"] }).pipe(Layer.provide(hostShell({ cwd: fixture.root, env })))
+    const exit = await Effect.runPromiseExit(Effect.gen(function* () {
+      const checkout = yield* Checkout
+      yield* checkout.fetch(repo, { ref: BranchName.make("main"), sha: baseSha }, { sha: headSha, fetchRef: FetchRef.make("refs/pull/9/head") })
+      return yield* Effect.scoped(Effect.map(checkout.clone(repo, headSha), (path) => readFileSync(join(path, "b.txt"), "utf8")))
+    }).pipe(Effect.provide(layer)))
+    expect([Exit.isSuccess(exit) ? exit.value : "failed", existsSync(marker)]).toEqual(["b\n", false])
+    git("update-ref", "refs/heads/head", headSha)
+    execFileSync("git", ["clone", "--quiet", "--branch", "head", remote, join(fixture.root, "driver-plain")], { env })
+    expect(existsSync(marker)).toBe(true)
   })
 
   test("a clone's checkout runs no lfs filter and reads no attributes file of the host's; plain git, the control, does run it", async () => {

@@ -278,7 +278,7 @@ describe("a git command of a tool's that fails", () => {
   const failing = (failure: CheckoutError) => Layer.succeed(Checkout, Checkout.of({
     fetch: () => Effect.fail(failure), diff: () => Effect.fail(failure), show: () => Effect.fail(failure), worktree: () => Effect.fail(failure), clone: () => Effect.fail(failure),
     entry: () => Effect.fail(failure), blob: () => Effect.fail(failure), files: () => Effect.fail(failure), grep: () => Effect.fail(failure),
-    mergeBase: () => Effect.fail(failure), changedPaths: () => Effect.fail(failure), onBranch: () => Effect.fail(failure),
+    mergeBase: () => Effect.fail(failure), changedPaths: () => Effect.fail(failure), onBranch: () => Effect.fail(failure), notRegular: () => Effect.fail(failure),
   }))
   const storedOver = (checkout: Layer.Layer<Checkout>, made: ReadonlyArray<readonly [string, unknown]>) =>
     Effect.runPromise(Effect.scoped(Effect.gen(function* () {
@@ -319,7 +319,7 @@ describe("a git command of a tool's that fails", () => {
         return "x"
       }),
       files: () => Effect.succeed([]), grep: () => Effect.succeed([]), mergeBase: () => Effect.succeed(head), changedPaths: () => Effect.succeed([]),
-      onBranch: () => Effect.succeed(true),
+      onBranch: () => Effect.succeed(true), notRegular: () => Effect.succeed([]),
     }))
     expect([await storedOver(huge, [["readLines", { path: "dist/app.min.js" }]]), read]).toEqual([
       [["dist/app.min.js holds 5000000 bytes, more than readLines reads (1048576): find what you need in it with searchCode and path set to it.", true]],

@@ -5,7 +5,7 @@ import { dirname, isAbsolute, join, resolve } from "node:path"
 import { Effect, Layer, Option, Schema } from "effect"
 import { CacheRootRefused, CommitMissing, GREP_TIMEOUT_MS, PatternRefused } from "./checkout.entity.js"
 import type { BlobSha, GrepRequest, Transport, TreeEntry } from "./checkout.entity.js"
-import { entryOf, gitArgv, grepHitsOf, LS_ENTRY, LS_SIZED_ENTRY, REGULAR } from "./checkout.entity.functions.js"
+import { entryOf, gitArgv, grepHitsOf, LS_ENTRY, LS_SIZED_ENTRY, neutralFilters, REGULAR } from "./checkout.entity.functions.js"
 import { Checkout } from "./checkout.port.js"
 import { CommandFailed } from "./host-command.entity.js"
 import { runWhole } from "./host-shell.adapter.js"
@@ -131,6 +131,14 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     })
   }, provided)
 
+  const notRegular = Effect.fn("checkout.not_regular")(function* (repo: RepoName, at: CommitSha) {
+    const listed = yield* runWhole(git(repo, "ls-tree", "-r", "-z", "--full-tree", at))
+    return listed.stdout.split("\0").flatMap((line) => {
+      const match = LS_ENTRY.exec(line)
+      return match !== null && !(match[2] === "blob" && REGULAR.includes(match[1] ?? "")) ? [line.slice(match[0].length)] : []
+    })
+  }, provided)
+
   const grep = Effect.fn("checkout.grep")(function* (repo: RepoName, at: CommitSha, request: GrepRequest) {
     // The pattern always follows -e and the paths --, so a pattern that starts with - is a pattern, never an option.
     // The host's config never shapes the output: no column, no colour, no full name, no fallback outside the commit.
@@ -170,9 +178,12 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     yield* runWhole(gitArgv(["file"], null, ["clone", "--quiet", "--no-hardlinks", "--no-checkout", "--template=", "--", mirror(repo), path]))
     const found = yield* runWhole(inClone("cat-file", "-e", `${at}^{commit}`), { exits: [0, 1, 128] })
     if (found.code !== 0) return yield* Effect.fail(new CommitMissing({ sha: at, message: `the commit ${at} is not in the clone of ${repo}` }))
-    yield* runWhole(inClone("checkout", "--quiet", "--detach", at))
+    // Every filter driver the host's config defines is turned off, and the system's attributes file is not read, so
+    // a `.gitattributes` the pull request commits can name no driver of the host's (git-crypt, a custom smudge).
+    const drivers = yield* runWhole(inClone("config", "--get-regexp", "^filter\\."), { exits: [0, 1] })
+    yield* runWhole(["env", "GIT_ATTR_NOSYSTEM=1", ...inClone(...neutralFilters(drivers.stdout), "checkout", "--quiet", "--detach", at)])
     return path
   }, provided)
 
-  return Checkout.of({ fetch, diff, show, worktree, clone, entry, blob, files, grep, mergeBase, changedPaths, onBranch })
+  return Checkout.of({ fetch, diff, show, worktree, clone, entry, blob, files, notRegular, grep, mergeBase, changedPaths, onBranch })
 }))

@@ -9,7 +9,8 @@ import { processShell } from "@xandreed/sdk/node"
 import { Checkout } from "./checkout.port.js"
 import { reviewLayers, validationLayers } from "./cli.adapter.js"
 import { DIGEST_LIMITS } from "./log-digest.entity.js"
-import { CommitSha, RepoName } from "./pull-request.entity.js"
+import { Forge } from "./forge.port.js"
+import { BranchName, CommitSha, RepoName } from "./pull-request.entity.js"
 import { NOT_ALLOWED } from "./repo-profile.entity.js"
 import { directoryCache } from "./review-cache.adapter.js"
 import type { ReviewCache } from "./review-cache.port.js"
@@ -43,8 +44,12 @@ const HEAD_FILES: Readonly<Record<string, string>> = { ...BASE_FILES, "src/sum.t
 
 const ran = (code: number, stdout = ""): Ran => ({ stdout, stderr: "", stdoutCut: 0, stderrCut: 0, ended: { _tag: "Exited", code } })
 
-/** A checkout over files held in memory: `show` and `files` read them by commit, `clone` makes an empty folder. */
-const checkoutOf = (files: Readonly<Record<string, Readonly<Record<string, string>>>>) => Layer.succeed(Checkout, Checkout.of({
+/**
+ * A checkout over files held in memory: `show` and `files` read them by commit, `clone` makes an empty folder;
+ * `onBranch` says whether the base is on the default branch, and `links` the paths that are no regular file.
+ */
+const checkoutOf = (files: Readonly<Record<string, Readonly<Record<string, string>>>>, onBranch = true, links: Readonly<Record<string, ReadonlyArray<string>>> = {}) => Layer.succeed(Checkout, Checkout.of({
+  notRegular: (_repo, at) => Effect.succeed(links[at] ?? []),
   fetch: () => Effect.void,
   diff: () => Effect.succeed(""),
   show: (_repo, at, path) => Effect.succeed(Option.fromNullishOr(files[at]?.[path])),
@@ -56,7 +61,16 @@ const checkoutOf = (files: Readonly<Record<string, Readonly<Record<string, strin
   grep: () => Effect.die("no search in these tests"),
   mergeBase: () => Effect.die("no merge base in these tests"),
   changedPaths: () => Effect.die("no paths in these tests"),
-  onBranch: () => Effect.succeed(true),
+  onBranch: () => Effect.succeed(onBranch),
+}))
+
+/** The forge, for its default branch alone. */
+const forge = Layer.succeed(Forge, Forge.of({
+  pullRequest: () => Effect.die("no pull request in these tests"),
+  ciRuns: () => Effect.die("no runs in these tests"),
+  firstHead: () => Effect.die("no first head in these tests"),
+  failedLog: () => Effect.die("no log in these tests"),
+  defaultBranch: () => Effect.succeed(BranchName.make("main")),
 }))
 
 interface Asked {
@@ -86,10 +100,10 @@ const request = (over: Partial<ValidationRequest> = {}): ValidationRequest => ({
   repo, base: BASE, head: HEAD, run: [], profile: true, changedPaths: ["src/sum.ts"], limits: DIGEST_LIMITS, logFolder: "7-abc", commandTimeoutMs: 60_000, budgetMs: 600_000, ...over,
 })
 
-const validated = (cache: string, files: Readonly<Record<string, Readonly<Record<string, string>>>>, sandboxes: ReturnType<typeof sandboxesOf>, asked: ValidationRequest) =>
+const validated = (cache: string, files: Readonly<Record<string, Readonly<Record<string, string>>>>, sandboxes: ReturnType<typeof sandboxesOf>, asked: ValidationRequest, checkout = checkoutOf(files)) =>
   Effect.runPromise(Effect.gen(function* () {
     return yield* (yield* Validations).run(asked)
-  }).pipe(Effect.provide(sandboxValidations.pipe(Layer.provide(Layer.mergeAll(checkoutOf(files), sandboxes.layer, directoryLogs(join(cache, "logs")), directoryCache(cache)))))))
+  }).pipe(Effect.provide(sandboxValidations.pipe(Layer.provide(Layer.mergeAll(checkout, forge, sandboxes.layer, directoryLogs(join(cache, "logs")), directoryCache(cache)))))))
 
 const ranOf = (run: ValidationRun) => run._tag === "Ran" ? run : undefined
 const shape = (asked: ReadonlyArray<Asked>) => asked.filter((each) => each.side !== "scratch").map((each) => [each.side, each.command, each.plan.network, each.plan.repoBins, each.plan.binds.map((bind) => [bind.inner, bind.writable])])
@@ -162,8 +176,23 @@ describe("validate", () => {
     expect(readdirSync(join(cache, "owner", "project", "node-modules")).length).toBe(2)
   })
 
-  test("a head whose dependency files differ from the base's runs nothing: a lockfile, or any workspace's package.json", async () => {
-    for (const [path, text] of [["bun.lock", "{ changed }"], ["packages/a/package.json", "{ \"x\": 1 }"], ["packages/b/package.json", "{}"]] as const) {
+  test("a base not on the default branch runs nothing, called directly too: no install, no snapshot, no verdict", async () => {
+    const cache = join(root, "untrusted")
+    const sandboxes = sandboxesOf(() => ran(0))
+    const run = await validated(cache, { [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, sandboxes, request({ run: ["bun test"] }), checkoutOf({ [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, false))
+    expect([run, sandboxes.asked, existsSync(join(cache, "owner"))]).toEqual([{ _tag: "Refused", reason: "the base is not on the repository's default branch, so nothing is installed or run" }, [], false])
+  })
+
+  test("a dependency file that is a link or a submodule at either end runs nothing", async () => {
+    for (const links of [{ [HEAD]: ["package.json"] }, { [BASE]: ["packages/a/package.json"] }, { [HEAD]: ["patches/x.patch"] }]) {
+      const sandboxes = sandboxesOf(() => ran(0))
+      const run = await validated(join(root, "links"), { [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, sandboxes, request(), checkoutOf({ [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, true, links))
+      expect([run, sandboxes.asked]).toEqual([{ _tag: "Refused", reason: "a dependency file is a link or a submodule, so nothing is installed or run" }, []])
+    }
+  })
+
+  test("a head whose dependency files differ from the base's runs nothing: a lockfile, any workspace's package.json, a manager's config, a patch", async () => {
+    for (const [path, text] of [["bun.lock", "{ changed }"], ["packages/a/package.json", "{ \"x\": 1 }"], ["packages/b/package.json", "{}"], [".npmrc", "registry=x"], ["bunfig.toml", "[install]"], ["patches/left-pad.patch", "+x"]] as const) {
       const sandboxes = sandboxesOf(() => ran(0))
       const run = await validated(join(root, `deps-${path.length}`), { [BASE]: BASE_FILES, [HEAD]: { ...HEAD_FILES, [path]: text } }, sandboxes, request({ run: ["bun test"] }))
       expect([run, sandboxes.asked]).toEqual([{ _tag: "Refused", reason: "dependencies changed: not validated locally (CI covers it)" }, []])
@@ -196,7 +225,7 @@ describe("validate", () => {
     type Needs<L> = L extends Layer.Layer<infer _Out, infer _Error, infer In> ? In : never
     type Gives<L> = L extends Layer.Layer<infer Out, infer _Error, infer _In> ? Out : never
     type ValidationNeeds = Needs<typeof sandboxValidations>
-    const needs: [Checkout | Sandboxes | ReviewLogs | ReviewCache] extends [ValidationNeeds] ? true : false = true
+    const needs: [Checkout | Forge | Sandboxes | ReviewLogs | ReviewCache] extends [ValidationNeeds] ? true : false = true
     const noShellNeeded: [Shell] extends [ValidationNeeds] ? false : true = true
     type Plain = Gives<ReturnType<typeof reviewLayers>>
     type Asked = Gives<ReturnType<typeof validationLayers>>

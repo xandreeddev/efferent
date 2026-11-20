@@ -63,9 +63,12 @@ export const normalPath = (path: string): Option.Option<string> => {
   return Option.some(parts.join("/"))
 }
 
-/** Every value of a `.yarnrc.yml` that names a file (a `/` in it, or a script's extension): what yarn may load as it installs. */
+/**
+ * Every value of a `.yarnrc.yml` that names a file (a `/` in it, or a script's extension), after a key or as a list's
+ * item (`plugins:` then `  - ./x.cjs`): what yarn may load as it installs.
+ */
 export const yarnrcPathsOf = (yarnrc: string): ReadonlyArray<string> =>
-  [...yarnrc.matchAll(/:\s*["']?([^"'\s#]+)["']?\s*$/gm)].flatMap((match) => {
+  [...yarnrc.matchAll(/(?::|^\s*-)\s*["']?([^"'\s#]+)["']?\s*$/gm)].flatMap((match) => {
     const value = match[1] ?? ""
     return value.includes("/") || /\.(c|m)?js$/.test(value) ? Option.toArray(normalPath(value)) : []
   })
@@ -109,12 +112,21 @@ export const managerOf = (base: BaseFiles, changedPaths: ReadonlyArray<string>, 
   return { _tag: "Chosen", manager, lockfile, install: INSTALL[manager], run: `${manager} run`, version: `${TOOL_BIN}/${manager} --version` }
 }
 
-/** The names an install reads its dependencies from: every lockfile, and every workspace's `package.json`. */
-const DEPENDENCY_NAMES: ReadonlyArray<string> = [...LOCKFILES.map(([file]) => file), "package.json"]
+/**
+ * The names an install reads: every lockfile, every workspace's `package.json`, and the managers' config (registries,
+ * workspaces, hooks).
+ */
+export const DEPENDENCY_NAMES: ReadonlyArray<string> = [
+  ...LOCKFILES.map(([file]) => file), "package.json", "bunfig.toml", ".npmrc", ".yarnrc", ".yarnrc.yml", "pnpm-workspace.yaml", ".pnpmfile.cjs",
+]
 
-/** The paths of a tree's dependency files, anywhere in it: each lockfile and each `package.json`, in code-unit order. */
+/** Whether an install reads a path: one of `DEPENDENCY_NAMES`, or a file in a `patches` folder (patched dependencies). */
+export const isDependencyPath = (path: string): boolean =>
+  DEPENDENCY_NAMES.includes(path.slice(path.lastIndexOf("/") + 1)) || path.split("/").slice(0, -1).includes("patches")
+
+/** The paths of a tree's dependency files, anywhere in it (`isDependencyPath`), in code-unit order. */
 export const dependencyPaths = (paths: ReadonlyArray<string>): ReadonlyArray<string> =>
-  paths.filter((path) => DEPENDENCY_NAMES.includes(path.slice(path.lastIndexOf("/") + 1))).toSorted((a, b) => a < b ? -1 : a > b ? 1 : 0)
+  paths.filter(isDependencyPath).toSorted((a, b) => a < b ? -1 : a > b ? 1 : 0)
 
 /** Whether two trees' dependency files are the same paths with the same bytes. */
 export const sameFiles = (one: ReadonlyArray<{ readonly path: string; readonly text: string }>, other: ReadonlyArray<{ readonly path: string; readonly text: string }>): boolean =>

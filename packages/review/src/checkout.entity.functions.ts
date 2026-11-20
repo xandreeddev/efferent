@@ -26,6 +26,21 @@ export const gitArgv = (transports: ReadonlyArray<Transport>, gitDir: string | n
   ...args,
 ]
 
+/**
+ * The `-c` options that turn off every filter driver `git config --get-regexp '^filter\.'` names (`filter.<driver>.<key>
+ * <value>` a line, a driver's name may hold dots): its smudge, clean and process emptied and `required=false`, so a
+ * `.gitattributes` the pull request commits can name no driver of the host's (git-crypt, a custom smudge) and run it.
+ */
+export const neutralFilters = (configured: string): ReadonlyArray<string> => {
+  const drivers = new Set<string>()
+  for (const line of configured.split("\n")) {
+    const key = line.split(/\s/, 1)[0] ?? ""
+    const match = /^filter\.(.+)\.[^.]+$/i.exec(key)
+    if (match?.[1] !== undefined) drivers.add(match[1])
+  }
+  return [...drivers].flatMap((driver) => ["smudge=", "clean=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]))
+}
+
 /** A regular file's modes in a tree: the only entries a tool reads. */
 export const REGULAR: ReadonlyArray<string> = ["100644", "100755"]
 

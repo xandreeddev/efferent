@@ -34,11 +34,13 @@ describe("managerOf", () => {
 
   test("normalPath names a path as git does, none when it leads out; yarnrcPathsOf the files a .yarnrc.yml names", () => {
     expect(["./a//b/./c", "a/x/../b", "../a", "a/../.."].map(normalPath)).toEqual([Option.some("a/b/c"), Option.some("a/b"), Option.none(), Option.none()])
-    expect(yarnrcPathsOf("yarnPath: ./.yarn/releases/y.cjs\nnodeLinker: pnp\nplugins:\n  - path: .yarn/plugins/p.cjs\n    spec: \"x\"\n")).toEqual([".yarn/releases/y.cjs", ".yarn/plugins/p.cjs"])
+    expect(yarnrcPathsOf("yarnPath: ./.yarn/releases/y.cjs\nnodeLinker: pnp\nplugins:\n  - path: .yarn/plugins/p.cjs\n    spec: \"x\"\n  - ./tools/bare.cjs\n  - \"quoted/q.js\"\n")).toEqual([".yarn/releases/y.cjs", ".yarn/plugins/p.cjs", "tools/bare.cjs", "quoted/q.js"])
   })
 
   test("dependencyPaths finds every lockfile and package.json; sameFiles holds only for the same bytes at the same paths", () => {
-    expect(dependencyPaths(["src/a.ts", "package.json", "packages/b/package.json", "bun.lock", "docs/package.json.md"])).toEqual(["bun.lock", "package.json", "packages/b/package.json"])
+    expect(dependencyPaths(["src/a.ts", "package.json", "packages/b/package.json", "bun.lock", "docs/package.json.md", ".npmrc", "bunfig.toml", "pnpm-workspace.yaml", ".pnpmfile.cjs", ".yarnrc.yml", "patches/x.patch", ".yarn/patches/y.patch", "src/patches.ts"])).toEqual([
+      ".npmrc", ".pnpmfile.cjs", ".yarn/patches/y.patch", ".yarnrc.yml", "bun.lock", "bunfig.toml", "package.json", "packages/b/package.json", "patches/x.patch", "pnpm-workspace.yaml",
+    ])
     const files = [{ path: "bun.lock", text: "a" }, { path: "package.json", text: "{}" }]
     expect([sameFiles(files, [...files]), sameFiles(files, [{ path: "bun.lock", text: "b" }, files[1] ?? files[0]!]), sameFiles(files, files.slice(0, 1))]).toEqual([true, false, false])
   })

@@ -91,10 +91,6 @@ const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox 
 }
 
 describe("prepareReview", () => {
-  test("a base that is not on the repository's default branch runs nothing: no install, no snapshot, no verdict", async () => {
-    const { review, asked } = await prepared(pullOf(true, "write"), OPTIONS, true, STOCK_POLICIES, "fix-sum")
-    expect([review.validation, asked.length]).toEqual([{ _tag: "Skipped", reason: "untrusted-base" }, 0])
-  })
 
   test("a same-repository writer's pull request: the diff packed, the base's rules, the failed CI digested, the commands run at the head", async () => {
     const { review, asked } = await prepared(pullOf(true, "write"))
