@@ -177,7 +177,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   unsure is no longer dropped: the report lists it apart, under
   `UNSETTLED_HEAD` (`ReviewReport.unsettled`), and says `No confirmed
   findings.` instead of `No findings.`; on #644's full run the gold leak's
-  check was unsure and the report said nothing.
+  check was unsure and the report said nothing. A check is told that docs,
+  comments and a description the pull request itself adds are its author's
+  claims, never proof the code is right (`VERIFY_TAIL`, `REVIEW_PROMPT`
+  `review-prompt-9`): on #657 the check refuted the unsandboxed commands
+  twice by citing a rule the pull request had added to its own `AGENTS.md`;
+  told so, it confirmed once in two.
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's
