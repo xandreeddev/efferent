@@ -70,7 +70,7 @@ const ORDER = [
 
 describe("reviewPrompt", () => {
   test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates pass's tail", () => {
-    expect(REVIEW_PROMPT).toBe("review-prompt-4")
+    expect(REVIEW_PROMPT).toBe("review-prompt-5")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
       tail: [
@@ -126,7 +126,7 @@ describe("reviewPrompt", () => {
   test("the host's note at the step cap, by stage, pinned whole", () => {
     expect([stepCapNote({ _tag: "Find", pass: PassNumber.make(1) }), stepCapNote({ _tag: "Verify", check: CheckNumber.make(1) })]).toEqual([
       "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]",
-      "[Host note: You have used the tool calls this check allows. Call verdict now with what you have read. No other tool runs now.]",
+      "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]",
     ])
   })
 

@@ -146,6 +146,10 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   yield* record({ passes: found, checks: [], findings: all, buckets, verdicts: [], complete: false })
   const prefix = reviewPrefix(prepared)
   const toCheck = options.verify ? Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER) : []
+  // What a check keeps back for its closing call when it runs alone (one at a time, or the only one): at most half the
+  // verify stage. Checks beside each other keep nothing back, for the reason passes do: under $0.20, three checks each
+  // keeping a call's hold (about $0.09 at a long pull request's size) would leave no room for their own calls.
+  const checkReserve = Math.min(options.verifyConcurrency, toCheck.length) === 1 ? Math.min(options.pass.reserve, options.budget.verify / 2) : 0
   const checked = yield* Effect.forEach(toCheck, (bucket, index) => {
     const check = CheckNumber.make(index + 1)
     const stage: ReviewStage = { _tag: "Verify", check }
@@ -154,7 +158,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
         prompt: verifyPrompt(prefix, bucket.best),
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/check-${check}`),
-        options: { maxSteps: options.verifySteps, reserve: 0 },
+        options: { maxSteps: options.verifySteps, reserve: checkReserve },
         spend: verifySpend,
       })
       return result

@@ -99,7 +99,10 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   loses the gateway's prompt cache (measured: 16,384 cached tokens to 0). A
   lone pass keeps $0.10 back from its start, and at its step cap, or when a later
   call is refused, releases it, stores a host note and asks once more,
-  running only its reporting calls. Each stage has a budget inside
+  running only its reporting calls. A check does the same (keeping $0.10
+  back only when it runs alone), and also when it answers in words with no
+  verdict: a verdict written as text has no quote to check and never counts,
+  so the host's note asks for the `verdict` call. Each stage has a budget inside
   `--max-cost` ($0.50: `--find-cost` $0.30, `--verify-cost` $0.20), and a
   call that other open calls crowd out waits for one to close (ten minutes at
   most) rather than being refused. `review.json` is kept as the review runs
@@ -111,8 +114,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   characters), then by their headings; the output cap is 4,096 tokens. Records
   go under `--records` (`~/.efferent-review/records/<owner>/<repo>/<pr>/<sha>/<run>/`),
   apart from the clones, and nothing cleans them. New model-facing texts:
-  `REVIEW_PROMPT` `review-prompt-4` (a system text both stages share, the two
-  finders' tails, the check's tail, the step-cap notes),
+  `REVIEW_PROMPT` `review-prompt-5` (a system text both stages share, the two
+  finders' tails, the check's tail, the closing notes: a check's asks for
+  the outcome, the reason and a quote of the cited lines),
   `REVIEW_TOOLS_VERSION` `review-tools-4` (`verdict`, each stage's refusal of
   the other's tool, and `reportFinding`'s refusals).
 

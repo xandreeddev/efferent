@@ -223,6 +223,27 @@ describe("a pass over the kernel", () => {
     expect(JSON.stringify(ran.kept[1]?.messages.at(-1))).toContain("You are checking a finding, not reporting new ones: call verdict with your verdict on it.")
   })
 
+  test("a check that answers in words is asked once more for its verdict: the host's note, the same tools offered; a verdict in text is never one", async () => {
+    const VERDICT = { outcome: "confirmed", reason: "It multiplies by one.", quote: "total += value * 1" }
+    const check = { stage: { _tag: "Verify", check: CheckNumber.make(1) } } as const
+    const judged = await pass([says("Verdict: confirmed."), asks(["verdict", VERDICT]), says("never sent")], check)
+    const words = await pass([says("Verdict: confirmed."), says("Verdict: confirmed, again."), says("never sent")], check)
+    expect<unknown>([judged.result.ended, judged.verdict, judged.kept.length]).toEqual([{ _tag: "Judged" }, Option.some({ ...VERDICT, check: 1 }), 2])
+    expect(judged.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]" })
+    expect(judged.kept.map((one) => one.tools)).toEqual([0, 1].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
+    expect<unknown>([words.result.ended, words.verdict, words.kept.length]).toEqual([{ _tag: "Answered", summary: "Verdict: confirmed." }, Option.none(), 2])
+    // A pass that answers in words has answered: it is not asked again.
+    const answered = await pass([says("Done."), says("never sent")])
+    expect([answered.result.ended._tag, answered.kept.length]).toEqual(["Answered", 1])
+  })
+
+  test("a check refused mid-way with a reserve kept back gives its verdict on the closing call and is judged", async () => {
+    const VERDICT = { outcome: "refuted", reason: "Multiplying by one is harmless.", quote: "total += value * 1" }
+    const price = { input: 0, output: 1, cacheRead: 0 }
+    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["verdict", VERDICT])], { maxCost: 0.0089, price, reserve: 0.0045, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    expect<unknown>([ran.result.ended, ran.verdict, ran.kept.length]).toEqual([{ _tag: "Judged" }, Option.some({ ...VERDICT, check: 1 }), 2])
+  })
+
   test("a pass refuses verdict: there is no finding to check", async () => {
     const ran = await pass([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }]), says("Done.")])
     expect<unknown>([ran.result.ended, ran.verdict]).toEqual([{ _tag: "Answered", summary: "Done." }, Option.none()])

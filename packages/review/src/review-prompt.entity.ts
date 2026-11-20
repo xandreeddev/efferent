@@ -6,7 +6,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE, VERDICT
  * passes and of the checks. A change to any of them is a new version, kept with each review's record so results are
  * compared prompt to prompt.
  */
-export const REVIEW_PROMPT = "review-prompt-4"
+export const REVIEW_PROMPT = "review-prompt-5"
 
 /** The most characters of instruction files shown whole, nearest to the changed paths first; past it, their headings. */
 export const RULES_WHOLE = 16_000
@@ -99,10 +99,14 @@ export const VERIFY_TAIL = [
   "- Quote the lines of the cited file your verdict rests on, as they are at the commit under review.",
 ].join("\n")
 
-/** The host's note after a pass's last allowed step, by stage: what to do with the one call left. */
+/**
+ * The host's note before a closing call, by stage: what to do with the one call left. A pass's comes after its last
+ * allowed step (or a spend refusal); a check's also after an answer that gave no verdict, so it names no cause, and
+ * says that a verdict in text is not counted (it has no quote to check).
+ */
 export const STEP_CAP_NOTE = {
   Find: `You have used the tool calls this review allows. Report now with ${REPORT_FINDING} each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.`,
-  Verify: `You have used the tool calls this check allows. Call ${VERDICT} now with what you have read. No other tool runs now.`,
+  Verify: `This check ends now. Call ${VERDICT} now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.`,
 } as const
 
 /** One message of the prompt's prefix: the system text, or the pull request as one user message. */

@@ -78,6 +78,7 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
   const findings = yield* Findings
   const stage = input.reviewed.stage
   const reports = Match.valueTags(stage, { Find: () => REPORT_FINDING, Verify: () => VERDICT })
+  const checking = Match.valueTags(stage, { Find: () => false, Verify: () => true })
   const judged = Match.valueTags(stage, {
     Find: () => Effect.succeed(false),
     Verify: ({ check }) => Effect.map(findings.verdictOf(input.reviewed.run, check), Option.isSome),
@@ -153,8 +154,8 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
     })
 
     /**
-     * The closing call, at the step cap or after a spend refusal: the reserve released, the host's note, then one more
-     * call whose reporting calls alone run. Its words, or why it failed.
+     * The closing call, at the step cap, after a spend refusal, or for a check after an answer with no verdict: the
+     * reserve released, the host's note, then one more call whose reporting calls alone run. Its words, or why it failed.
      */
     const closing = (step: number) => Effect.gen(function* () {
       yield* releaseReserve
@@ -171,12 +172,20 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
         // A spend refusal after the first call: the closing call may still report on the reserve kept for it.
         if (asked.failure._tag === "SpendRefused" && step > 1 && Option.isSome(reserved)) {
           const closed = yield* closing(step + 1)
+          if (yield* judged) return { _tag: "Judged" } satisfies PassEnded
           if (closed.why.length > 0) return { _tag: "SpendRefused", message: `${asked.failure.message}; its closing call failed: ${closed.why}` } satisfies PassEnded
         }
         return asked.failure
       }
       const { answer, cut } = asked.success
-      if (!cut && answer.toolCalls.length === 0) return { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) } satisfies PassEnded
+      if (!cut && answer.toolCalls.length === 0) {
+        const answered: PassEnded = { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) }
+        // A check that answers in words gave no verdict (a verdict in text has no quote to check): it is asked once
+        // more, with the host's note, for the verdict call.
+        if (!checking) return answered
+        yield* closing(step + 1)
+        return (yield* judged) ? { _tag: "Judged" } satisfies PassEnded : answered
+      }
       // Every call the answer asked for runs, also when the answer was cut: a call that did not decode is a failed result.
       for (const call of answer.toolCalls) {
         const path = call.name === READ_LINES || call.name === READ_DIFF ? Schema.decodeUnknownOption(OpenedPath)(call.params) : Option.none()
