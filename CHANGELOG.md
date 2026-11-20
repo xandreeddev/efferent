@@ -165,6 +165,15 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   model-facing texts: `REVIEW_PROMPT` `review-prompt-8` (the system text, the
   focused tails, the harvest note), `REVIEW_TOOLS_VERSION` `review-tools-5`
   (`reportFinding`'s and `verdict`'s parameters).
+- `efferent-review review` checks each finding of a bucket, not only its
+  best: two passes may name two mechanisms on the same lines, and on #644's
+  full run the gold leak was a bucket's second finding and never checked.
+  Checks run in rounds (`checkRounds`, at most `CLAIMS_CHECKED`, 3, a
+  bucket): every bucket's best before any bucket's next, and a later round
+  only for a bucket no check has confirmed, so passes that report one defect
+  cost one check when it holds. The report shows the finding its check
+  confirmed, and each check in `review.json` names the finding it was shown
+  (`BucketCheck.finding`).
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

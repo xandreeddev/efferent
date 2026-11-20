@@ -6,7 +6,7 @@ import { ReviewedAt } from "./prepare-review.entity.js"
 import { PullNumber, RepoName } from "./pull-request.entity.js"
 import { PassResult } from "./review-pass.entity.js"
 import { Finder } from "./review-prompt.entity.js"
-import { Bucket, BucketNumber } from "./vote.entity.js"
+import { Bucket, BucketMember, BucketNumber } from "./vote.entity.js"
 
 const Count = Schema.Int.check(Schema.isGreaterThanOrEqualTo(0))
 
@@ -25,11 +25,13 @@ export const CheckOutcome = Schema.Literals(["confirmed", "refuted", "unsure", "
 export type CheckOutcome = typeof CheckOutcome.Type
 
 /**
- * One bucket's check: the bucket, the check's number, its verdict when it gave one, whether the verdict's quote is in
- * the head's file within the cited lines (`quoteWithin`), the outcome, and why, in words, when it is no verdict's own.
+ * One check of a bucket's finding: the bucket, the finding it was shown (`finding`, its pass and number), the check's
+ * number, its verdict when it gave one, whether the verdict's quote is in the head's file within the finding's lines
+ * (`quoteWithin`), the outcome, and why, in words, when it is no verdict's own.
  */
 export const BucketCheck = Schema.Struct({
   bucket: BucketNumber,
+  finding: BucketMember,
   check: CheckNumber,
   verdict: Schema.OptionFromNullOr(Verdict),
   quoteHolds: Schema.Boolean,
@@ -39,7 +41,8 @@ export const BucketCheck = Schema.Struct({
 export type BucketCheck = typeof BucketCheck.Type
 
 /**
- * A finding as the report shows it: the bucket's best-worded finding, how many passes found it of how many ran, why
+ * A finding as the report shows it: the bucket's finding a check confirmed (its first confirmed, in check order; with no
+ * check, the bucket's best-worded), how many passes found it of how many ran, why
  * the check confirmed it (empty when nothing was checked), and whether it only restates a failure the CI's digest
  * already names (same path and line).
  */

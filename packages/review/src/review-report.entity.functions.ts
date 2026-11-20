@@ -99,18 +99,25 @@ export const usageOf = (results: ReadonlyArray<PassResult>): ReviewUsage => {
  */
 export const reviewReport = (input: ReportInput): ReviewReport => {
   const byBucket = new Map(input.buckets.map((bucket) => [bucket.number, bucket]))
+  const byMember = new Map(input.findings.map((finding) => [`${finding.pass}/${finding.number}`, finding]))
+  // A bucket is shown once, with the first of its findings a check confirmed, in check order.
+  const confirmed = Arr.dedupeWith(
+    Arr.sort(input.verdicts.filter((check) => check.outcome === "confirmed"), Order.mapInput(Order.Number, (check: BucketCheck) => check.check)),
+    (one: BucketCheck, other: BucketCheck) => one.bucket === other.bucket,
+  )
   const shown = input.verify
-    ? input.verdicts.flatMap((check) => {
+    ? confirmed.flatMap((check) => {
       const bucket = byBucket.get(check.bucket)
-      return check.outcome === "confirmed" && bucket !== undefined ? [{ bucket, checked: Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason }) }] : []
+      const finding = byMember.get(`${check.finding.pass}/${check.finding.number}`)
+      return bucket !== undefined && finding !== undefined ? [{ bucket, finding, checked: Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason }) }] : []
     })
-    : input.buckets.filter((bucket) => bucket.kept).map((bucket) => ({ bucket, checked: "" }))
-  const reported = shown.map(({ bucket, checked }): ReportedFinding => ({
-    ...bucket.best,
+    : input.buckets.filter((bucket) => bucket.kept).map((bucket) => ({ bucket, finding: bucket.best, checked: "" }))
+  const reported = shown.map(({ bucket, finding, checked }): ReportedFinding => ({
+    ...finding,
     bucket: bucket.number,
     votes: bucket.votes,
     checked,
-    restatesCi: restatesCi(bucket.best, input.prepared.failing),
+    restatesCi: restatesCi(finding, input.prepared.failing),
   }))
   const find = usageOf(input.passes)
   const verify = usageOf(input.checks)
@@ -249,10 +256,10 @@ export const reportText = (report: ReviewReport): string => {
   const shown = report.reported.slice(0, FINDINGS_SHOWN)
   const more = report.reported.length - shown.length
   const opened = Arr.dedupe(report.passes.flatMap((pass) => pass.opened))
-  const byBucket = new Map(report.buckets.map((bucket) => [bucket.number, bucket]))
+  const byMember = new Map(report.findings.map((finding) => [`${finding.pass}/${finding.number}`, finding]))
   const unchecked = report.verdicts.flatMap((check) => {
-    const bucket = byBucket.get(check.bucket)
-    return check.outcome === "unchecked" && bucket !== undefined ? [`Not checked (${check.why}): ${shownPath(bucket.path)}:${bucket.line} ${bucket.best.severity} ${bucket.kind} — ${printable(bucket.best.claim)}`] : []
+    const finding = byMember.get(`${check.finding.pass}/${check.finding.number}`)
+    return check.outcome === "unchecked" && finding !== undefined ? [`Not checked (${check.why}): ${shownPath(finding.path)}:${finding.line} ${finding.severity} ${finding.kind} — ${printable(finding.claim)}`] : []
   })
   return [
     `Review of #${report.number} in ${report.repo} at ${report.at.sha.slice(0, 12)}, ${AT_SOURCE_WORDS[report.at.source]}`,

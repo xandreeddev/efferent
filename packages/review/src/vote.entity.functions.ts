@@ -3,7 +3,7 @@ import type { FileDiff } from "./diff.entity.js"
 import { SEVERITY_RANK } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
 import { BucketNumber, CHANGED_SLACK, CITED_SLACK, NEAR_LINES, QUOTE_LINE_CHARS, QUOTE_SLACK, SPAN_COUNTED } from "./vote.entity.js"
-import type { Bucket, BucketWhy, MergeOptions } from "./vote.entity.js"
+import type { Bucket, BucketWhy, CheckTarget, MergeOptions } from "./vote.entity.js"
 
 /**
  * A quoted line as compared: the number and marker a tool's answer puts before a line (`  42| `, `  42 + `,
@@ -161,3 +161,37 @@ export const CHECK_ORDER: Order.Order<Bucket> = Order.combineAll([
   Order.mapInput(Order.String, (bucket: Bucket) => bucket.path),
   Order.mapInput(Order.Number, (bucket: Bucket) => bucket.line),
 ])
+
+/** A bucket's findings in the order they are checked: its best first, then the more severe, then in pass and number order. */
+const claimsOf = (bucket: Bucket, byMember: ReadonlyMap<string, Finding>): ReadonlyArray<Finding> => {
+  const isBest = (finding: Finding) => finding.pass === bucket.best.pass && finding.number === bucket.best.number
+  const members = bucket.members.flatMap((member) => {
+    const finding = byMember.get(`${member.pass}/${member.number}`)
+    return finding === undefined ? [] : [finding]
+  })
+  return Arr.sort(members, Order.combineAll([
+    Order.mapInput(Order.Boolean, (finding: Finding) => !isBest(finding)),
+    Order.mapInput(Order.Number, (finding: Finding) => SEVERITY_RANK[finding.severity]),
+    Order.mapInput(Order.Number, (finding: Finding) => finding.pass),
+    Order.mapInput(Order.Number, (finding: Finding) => finding.number),
+  ]))
+}
+
+/**
+ * The checks a review may run, in rounds, one per finding of a kept bucket and at most `perBucket` a bucket, so two
+ * mechanisms on the same lines are each checked: round `r` holds the `r`-th claim of each kept bucket that has one (its
+ * best first, the buckets in `CHECK_ORDER`), so a stage's budget reaches every bucket's first claim before any bucket's
+ * second. The review runs a later round's check only for a bucket no check has confirmed yet.
+ */
+export const checkRounds = (buckets: ReadonlyArray<Bucket>, findings: ReadonlyArray<Finding>, perBucket: number): ReadonlyArray<ReadonlyArray<CheckTarget>> => {
+  const byMember = new Map(findings.map((finding) => [`${finding.pass}/${finding.number}`, finding]))
+  const kept = Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER).map((bucket) => ({ bucket, claims: claimsOf(bucket, byMember).slice(0, perBucket) }))
+  const rounds: Array<ReadonlyArray<CheckTarget>> = []
+  for (let round = 0; kept.some(({ claims }) => claims.length > round); round++) {
+    rounds.push(kept.flatMap(({ bucket, claims }) => {
+      const finding = claims[round]
+      return finding === undefined ? [] : [{ bucket, finding }]
+    }))
+  }
+  return rounds
+}

@@ -175,7 +175,9 @@ describe("reviewPullRequest", () => {
 
   test("a confirmed verdict whose quote is not in the file near the cited lines counts as unsure, and is not reported", async () => {
     const report = await reviewWith(scripted("return total * 2").layer)
-    expect<unknown>([report.verdicts.map((check) => [check.outcome, check.quoteHolds, check.why]), report.reported]).toEqual([[["unsure", false, "its quote is not in the file near the cited lines"]], []])
+    // The bucket holds the three passes' findings: none confirmed, so each is checked in a round of its own.
+    const unsure = ["unsure", false, "its quote is not in the file near the cited lines"]
+    expect<unknown>([report.verdicts.map((check) => [check.finding.pass, check.outcome, check.quoteHolds, check.why]), report.reported]).toEqual([[[1, ...unsure], [2, ...unsure], [3, ...unsure]], []])
   })
 
   test("a first pass that cannot run starts no other, never leaves the review waiting, and the review keeps its record of it", async () => {

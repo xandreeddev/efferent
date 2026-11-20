@@ -32,8 +32,9 @@ import type { ReviewStage } from "./review-tools.entity.js"
 import { treePath } from "./review-tools.entity.functions.js"
 import type { ReviewOptions } from "./review.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
-import type { Bucket } from "./vote.entity.js"
-import { CHECK_ORDER, mergeFindings, quoteWithin } from "./vote.entity.functions.js"
+import { CLAIMS_CHECKED } from "./vote.entity.js"
+import type { CheckTarget } from "./vote.entity.js"
+import { checkRounds, mergeFindings, quoteWithin } from "./vote.entity.functions.js"
 import type { CommitSha } from "./pull-request.entity.js"
 
 /** Write a value as JSON through its schema; a value of the review's own that does not encode is a defect. */
@@ -52,25 +53,27 @@ const uncheckedWhy = (ended: PassEnded): string => Match.valueTags(ended, {
   Failed: () => INCOMPLETE_BECAUSE.Failed,
 })
 
-/** Whether a verdict's quote is in the head's file within the cited lines (`quoteWithin`); a file that cannot be read is no. */
-const quoteHolds = (repo: RepoName, at: CommitSha, bucket: Bucket, verdict: Verdict) => Effect.gen(function* () {
+/** Whether a verdict's quote is in the head's file within the lines the check was shown (`quoteWithin`); a file that cannot be read is no. */
+const quoteHolds = (repo: RepoName, at: CommitSha, finding: Finding, verdict: Verdict) => Effect.gen(function* () {
   const checkout = yield* Checkout
-  const path = treePath(bucket.path)
+  const path = treePath(finding.path)
   if (Result.isFailure(path)) return false
   const entry = yield* checkout.entry(repo, at, path.success)
   if (entry._tag !== "File") return false
   const text = yield* checkout.blob(repo, entry.blob)
-  // The lines the check was shown: the bucket's best finding's.
-  return quoteWithin(text, verdict.quote, bucket.best.line, bucket.best.endLine ?? bucket.best.line)
+  return quoteWithin(text, verdict.quote, finding.line, finding.endLine ?? finding.line)
 }).pipe(Effect.catch((error) => Effect.logWarning("a verdict's quote could not be checked", error).pipe(Effect.as(false))))
 
 /** A check's outcome: its verdict's, a confirmed one whose quote fails counting as unsure; no verdict, unchecked. */
-const checkOf = (bucket: Bucket, check: CheckNumber, result: PassResult, verdict: Option.Option<Verdict>, holds: boolean): BucketCheck => Option.match(verdict, {
-  onNone: () => ({ bucket: bucket.number, check, verdict, quoteHolds: false, outcome: "unchecked", why: uncheckedWhy(result.ended) }),
-  onSome: (given) => given.outcome === "confirmed" && !holds
-    ? { bucket: bucket.number, check, verdict, quoteHolds: holds, outcome: "unsure", why: "its quote is not in the file near the cited lines" }
-    : { bucket: bucket.number, check, verdict, quoteHolds: holds, outcome: given.outcome, why: "" },
-})
+const checkOf = ({ bucket, finding }: CheckTarget, check: CheckNumber, result: PassResult, verdict: Option.Option<Verdict>, holds: boolean): BucketCheck => {
+  const of = { bucket: bucket.number, finding: { pass: finding.pass, number: finding.number }, check, verdict }
+  return Option.match(verdict, {
+    onNone: () => ({ ...of, quoteHolds: false, outcome: "unchecked", why: uncheckedWhy(result.ended) }),
+    onSome: (given) => given.outcome === "confirmed" && !holds
+      ? { ...of, quoteHolds: holds, outcome: "unsure", why: "its quote is not in the file near the cited lines" }
+      : { ...of, quoteHolds: holds, outcome: given.outcome, why: "" },
+  })
+}
 
 /**
  * Review a pull request: prepare it (`prepareReview`, at the commit `options.prepare.at` names), then find, merge and
@@ -86,8 +89,10 @@ const checkOf = (bucket: Bucket, check: CheckNumber, result: PassResult, verdict
  *   reserve back; a group starts only while the find stage has `GROUP_START_ROOM` neither settled nor held, else it
  *   and the rest are recorded as not reviewed.
  * - Merge: every finding into buckets (`mergeFindings`), the vote filtering them only when `vote` is on.
- * - Check (when `verify` is on): one check per kept bucket, best first (`CHECK_ORDER`), `verifyConcurrency` at once,
- *   each asked to refute the bucket's best finding and answer with `verdict`, on the prefix of the group holding the
+ * - Check (when `verify` is on): one check per finding of a kept bucket, at most `CLAIMS_CHECKED` a bucket, in rounds
+ *   (`checkRounds`): every bucket's best (buckets in `CHECK_ORDER`) before any bucket's next, a later round's check
+ *   only for a bucket no check confirmed yet, `verifyConcurrency` at once within a round; each asked to refute its
+ *   finding and answer with `verdict`, on the prefix of the group holding the
  *   finding's file (else of the group whose pass reported it; the whole review's prefix when unfocused), so its request
  *   starts with that pass's bytes; a confirmed verdict whose quote is not in
  *   the head's file near the cited lines counts as unsure; a check the budget refused is unchecked.
@@ -216,30 +221,37 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     if (ran === undefined || ran.notReviewed.length > 0) notes.push(uncachedCheckNote(check, holding.group.number))
     return holding.prefix
   }
-  const toCheck = options.verify ? Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER) : []
-  const checkPrefixes = toCheck.map((bucket, index) => prefixOf(bucket.best, CheckNumber.make(index + 1)))
+  const rounds = options.verify ? checkRounds(buckets, all, CLAIMS_CHECKED) : []
   // What a check keeps back for its closing call when it runs alone (one at a time, or the only one): at most half the
   // verify stage. Checks beside each other keep nothing back, for the reason passes do: under $0.20, three checks each
   // keeping a call's hold (about $0.09 at a long pull request's size) would leave no room for their own calls.
-  const checkReserve = Math.min(options.verifyConcurrency, toCheck.length) === 1 ? Math.min(options.pass.reserve, options.budget.verify / 2) : 0
-  const checked = yield* Effect.forEach(toCheck, (bucket, index) => {
-    const check = CheckNumber.make(index + 1)
+  const checkReserve = Math.min(options.verifyConcurrency, rounds[0]?.length ?? 0) === 1 ? Math.min(options.pass.reserve, options.budget.verify / 2) : 0
+  const runCheck = (target: CheckTarget, check: CheckNumber, prefix: ReadonlyArray<PromptPart>) => {
     const stage: ReviewStage = { _tag: "Verify", check }
     return Effect.gen(function* () {
-      const result = yield* passes.run({
-        prompt: verifyPrompt(checkPrefixes[index] ?? wholePrefix, bucket.best),
+      return yield* passes.run({
+        prompt: verifyPrompt(prefix, target.finding),
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/check-${check}`),
         options: { maxSteps: options.verifySteps, reserve: checkReserve },
         spend: verifySpend,
       })
-      return result
     }).pipe(Effect.catchCause(couldNotRun(stage)), Effect.flatMap((result) => Effect.gen(function* () {
       const verdict = yield* findings.verdictOf(run, check)
-      const holds = Option.isSome(verdict) ? yield* quoteHolds(repo, prepared.at.sha, bucket, verdict.value) : false
-      return { result, check: checkOf(bucket, check, result, verdict, holds) }
+      const holds = Option.isSome(verdict) ? yield* quoteHolds(repo, prepared.at.sha, target.finding, verdict.value) : false
+      return { result, check: checkOf(target, check, result, verdict, holds) }
     })))
-  }, { concurrency: options.verifyConcurrency })
+  }
+  // Round by round (`checkRounds`): a later round checks a bucket's next claim only when no check confirmed the bucket,
+  // so three passes reporting one defect cost one check when it holds; checks are numbered in the order they start.
+  const checked: Array<{ readonly result: PassResult; readonly check: BucketCheck }> = []
+  for (const round of rounds) {
+    const confirmed = new Set(checked.filter((one) => one.check.outcome === "confirmed").map((one) => one.check.bucket))
+    const due = round.filter((target) => !confirmed.has(target.bucket.number))
+    const numbered = due.map((target, index) => ({ target, check: CheckNumber.make(checked.length + index + 1) }))
+    const prefixes = numbered.map(({ target, check }) => prefixOf(target.finding, check))
+    checked.push(...yield* Effect.forEach(numbered, ({ target, check }, index) => runCheck(target, check, prefixes[index] ?? wholePrefix), { concurrency: options.verifyConcurrency }))
+  }
 
   return yield* record({ passes: found, groups: groupRuns, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
 })

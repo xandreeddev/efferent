@@ -31,10 +31,10 @@ const BUCKETS: ReadonlyArray<Bucket> = FINDINGS.map((one, index) => ({
 const CHECKS: ReadonlyArray<BucketCheck> = BUCKETS.map((bucket, index): BucketCheck => {
   const check = CheckNumber.make(index + 1)
   const given = (outcome: "confirmed" | "refuted") => Option.some({ outcome, reason: `Reason ${index + 1}.`, quote: "q", check })
-  if (index < 7) return { bucket: bucket.number, check, verdict: given("confirmed"), quoteHolds: true, outcome: "confirmed", why: "" }
-  if (index === 7) return { bucket: bucket.number, check, verdict: given("refuted"), quoteHolds: true, outcome: "refuted", why: "" }
-  if (index === 8) return { bucket: bucket.number, check, verdict: given("confirmed"), quoteHolds: false, outcome: "unsure", why: "its quote is not in the file near the cited lines" }
-  return { bucket: bucket.number, check, verdict: Option.none(), quoteHolds: false, outcome: "unchecked", why: "the spend cap refused a model call" }
+  if (index < 7) return { bucket: bucket.number, finding: bucket.members[0] ?? { pass: PassNumber.make(1), number: 1 }, check, verdict: given("confirmed"), quoteHolds: true, outcome: "confirmed", why: "" }
+  if (index === 7) return { bucket: bucket.number, finding: bucket.members[0] ?? { pass: PassNumber.make(1), number: 1 }, check, verdict: given("refuted"), quoteHolds: true, outcome: "refuted", why: "" }
+  if (index === 8) return { bucket: bucket.number, finding: bucket.members[0] ?? { pass: PassNumber.make(1), number: 1 }, check, verdict: given("confirmed"), quoteHolds: false, outcome: "unsure", why: "its quote is not in the file near the cited lines" }
+  return { bucket: bucket.number, finding: bucket.members[0] ?? { pass: PassNumber.make(1), number: 1 }, check, verdict: Option.none(), quoteHolds: false, outcome: "unchecked", why: "the spend cap refused a model call" }
 })
 
 const passResult = (number: number, ended: PassResult["ended"], cost: number): PassResult => ({
