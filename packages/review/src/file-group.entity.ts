@@ -52,8 +52,12 @@ export const NOT_REVIEWED_BECAUSE = {
 export const Focus = Schema.Literals(["whole", "groups"])
 export type Focus = typeof Focus.Type
 
-/** How a review reads the pull request by default. */
-export const DEFAULT_FOCUS: Focus = "whole"
+/**
+ * How a review reads the pull request by default: in focused groups. Measured on the gold cases (2026-11-20, one run
+ * each): the gold group of #644 alone found and confirmed its defect ($0.035), which the whole-pull-request pass had
+ * missed; #480, #595 and #657's groups missed theirs.
+ */
+export const DEFAULT_FOCUS: Focus = "groups"
 
 /**
  * A group as the review ran it: the group, and the pass that reviewed it, or none, with why it was not reviewed (the

@@ -76,12 +76,19 @@ const checkOf = (bucket: Bucket, check: CheckNumber, result: PassResult, verdict
  * check, each model call charged to the review's ledger under its stage's cap (`stageSpend`: `budget.find` for the
  * passes, `budget.verify` for the checks, both inside `budget.total`).
  *
- * - Find: `passes` passes (`ReviewPasses`), each walking the changed files in its own order (`walkOrders`) with the
- *   tail of `finder`; the first runs alone until its first call returns, having written the provider's cache of the
- *   shared prefix, then the others run beside it.
+ * - Find, `focus` `whole`: `passes` passes (`ReviewPasses`), each walking the changed files in its own order
+ *   (`walkOrders`) with the tail of `finder`; the first runs alone until its first call returns, having written the
+ *   provider's cache of the shared prefix, then the others run beside it.
+ * - Find, `focus` `groups`: the changed files grouped (`policies.group`, by package, given the folders holding a
+ *   `package.json` at the commit under review), one pass a group in their order, one after another, each sending its
+ *   group's prefix (`focusPrefix`) and the finder's words, capped at `groups.steps` calls and keeping its closing
+ *   reserve back; a group starts only while the find stage has `GROUP_START_ROOM` neither settled nor held, else it
+ *   and the rest are recorded as not reviewed.
  * - Merge: every finding into buckets (`mergeFindings`), the vote filtering them only when `vote` is on.
  * - Check (when `verify` is on): one check per kept bucket, best first (`CHECK_ORDER`), `verifyConcurrency` at once,
- *   each asked to refute the bucket's best finding and answer with `verdict`; a confirmed verdict whose quote is not in
+ *   each asked to refute the bucket's best finding and answer with `verdict`, on the prefix of the group holding the
+ *   finding's file (else of the group whose pass reported it; the whole review's prefix when unfocused), so its request
+ *   starts with that pass's bytes; a confirmed verdict whose quote is not in
  *   the head's file near the cited lines counts as unsure; a check the budget refused is unchecked.
  *
  * Each run has a folder of its own (`<number>/<sha>/<run>/` in `ReviewLogs`), so a rerun never writes over one before

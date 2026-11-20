@@ -154,8 +154,12 @@ const COMMANDS = ["prepare", "review"]
 /**
  * The command line. `prepare <number> --repo <owner/name>` reads the pull request, prepares it (`prepareReview`) and
  * prints a short summary, or the whole prepared review as JSON with `--json`. `review <number> --repo <owner/name>`
- * prepares it and reviews it (`reviewPullRequest`): `--passes` passes (`DEFAULT_PASSES`) finding as `--finder` says
- * (`candidates` by default, or `strict`), each capped at `--max-steps` (`DEFAULT_MAX_STEPS`); the findings merged, the
+ * prepares it and reviews it (`reviewPullRequest`): with `--focus groups` (`DEFAULT_FOCUS`) one pass a group of changed
+ * source and test files, each capped at `--group-steps` (`DEFAULT_GROUP_STEPS`), `--config-pass` adding a group of the
+ * other files but pages and docs; with `--focus whole` `--passes` passes (`DEFAULT_PASSES`) over the whole pull request,
+ * each capped at `--max-steps` (`DEFAULT_MAX_STEPS`); either finding as `--finder` says (`candidates` by default, or
+ * `strict`), the passes' and the checks' model asked at `--effort-find` and `--effort-check` (`default`: nothing
+ * sent; `none`, `low`, `medium`, `high`, `withEffort`); the findings merged, the
  * vote filtering them only with `--vote`; each kept bucket checked unless `--no-verify`, each check capped at
  * `--verify-steps` (`DEFAULT_VERIFY_STEPS`). The model is `DEFAULT_REVIEW_MODEL`, its key read from the environment
  * variable it names (another id of its endpoint with `--model` and its `--price`), every call charged to one ledger
