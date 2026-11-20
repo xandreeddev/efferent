@@ -141,6 +141,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the outcome, the reason and a quote of the cited lines),
   `REVIEW_TOOLS_VERSION` `review-tools-4` (`verdict`, each stage's refusal of
   the other's tool, and `reportFinding`'s refusals).
+- `efferent-review review`: a focused pass reads its own group's files whole,
+  leaves the other changed files to their groups' passes, asks for reads that
+  do not depend on each other at once and holds the description's claims
+  against the code (`FOCUS_TAIL`). On four gold groups every pass hit the old
+  8-call cap after reading across the whole pull request; with a 24-call
+  guard (`--group-steps`) every pass ended on its own, after 5 to 17 calls.
+  A pass that answers in words is asked once more to report what it weighed
+  and kept to itself (`HARVEST_NOTE`), and only that answer's `reportFinding`
+  calls run: on #644's gold group the pass named the defect in its summary
+  and reported no finding. A closing call whose report the tool refused is
+  asked once more. A claim or a verdict's reason past 1,500 characters is cut
+  and its evidence or quote past 1,000 keeps its first whole lines, never
+  refused: 14 of 34 live `reportFinding` calls (41%) and 3 of 13 verdicts had
+  been refused for length, 14 of them never sent again. Checks run up to 12
+  calls (6 before), and the stock budget is $0.80 (`--find-cost` $0.50,
+  `--verify-cost` $0.30). The system text says a third-party package's source
+  is not in the repository: a claim states what it assumes of a library. New
+  model-facing texts: `REVIEW_PROMPT` `review-prompt-8` (the system text, the
+  focused tails, the harvest note), `REVIEW_TOOLS_VERSION` `review-tools-5`
+  (`reportFinding`'s and `verdict`'s parameters).
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

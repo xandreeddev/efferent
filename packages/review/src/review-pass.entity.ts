@@ -10,6 +10,9 @@ export const DEFAULT_MAX_STEPS = 16
 /** The longest a pass's closing summary is kept, in characters. */
 export const SUMMARY_KEPT = 600
 
+/** The most calls a closing ask makes: one, and one more when the tool refused a reporting call of the first. */
+export const CLOSING_ASKS = 2
+
 /** What one model call of a pass used, as the provider reported it: tokens read (the cached share among them) and written. */
 export const CallTokens = Schema.Struct({
   input: Count,

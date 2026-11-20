@@ -5,7 +5,7 @@ import { shownPath } from "./diff.entity.functions.js"
 import type { Finding } from "./finding.entity.js"
 import { droppedLines, fileKind, isTestPath, packDiff } from "./packed-diff.entity.functions.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, GROUP_INTRO, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
+import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, GROUP_INTRO, HARVEST_NOTE, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
 import type { Finder, FindTailOptions, PromptPart, ReviewPrompt, WalkedFile } from "./review-prompt.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import type { ReviewStage } from "./review-tools.entity.js"
@@ -133,8 +133,8 @@ export const focusPrefix = (prepared: PreparedReview, group: ReadonlyArray<FileD
   { role: "user", content: `${GROUP_INTRO}\n\n${framed("files-under-review", packDiff(group, budgetTokens).text)}` },
 ]
 
-/** A focused pass's prompt: its group's prefix (`focusPrefix`) and its finder's words (`FIND_TAIL`), with no walk: its files are the group's. */
-export const focusPrompt = (prefix: ReadonlyArray<PromptPart>, finder: Finder): ReviewPrompt => ({ prefix, tail: FIND_TAIL[finder] })
+/** A focused pass's prompt: its group's prefix (`focusPrefix`) and its finder's focused words (`FOCUS_TAIL`), with no walk: its files are the group's. */
+export const focusPrompt = (prefix: ReadonlyArray<PromptPart>, finder: Finder): ReviewPrompt => ({ prefix, tail: FOCUS_TAIL[finder] })
 
 /**
  * A pass's prompt: the prefix (`reviewPrefix`) and the tail, what the pass is asked (`FIND_TAIL` of its finder), then
@@ -167,6 +167,9 @@ export const verifyPrompt = (prefix: ReadonlyArray<PromptPart>, finding: Finding
 
 /** The host's note after a pass's or a check's last allowed step: `STEP_CAP_NOTE` of its stage, as a host note. */
 export const stepCapNote = (stage: ReviewStage): string => hostNote(STEP_CAP_NOTE[stage._tag])
+
+/** The host's note after a pass answers in words, as a host note: report what was weighed and not reported (`HARVEST_NOTE`). */
+export const harvestNote = (): string => hostNote(HARVEST_NOTE)
 
 /** The group a changed file is walked in: code first, then tests, then manifests and config, then docs. */
 const walkGroupOf = (path: string): number => {

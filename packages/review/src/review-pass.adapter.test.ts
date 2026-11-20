@@ -171,19 +171,28 @@ describe("a focused pass and its check on the wire", () => {
 
 describe("a pass over the kernel", () => {
   test("the model reads, reports, and answers: the finding recorded, each call's tokens and cost, the files opened, the journal kept", async () => {
-    const ran = await pass([asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("One bug: a multiplication by one.")])
+    const ran = await pass([asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("One bug: a multiplication by one."), says("none")])
     expect<unknown>(ran.result).toEqual({
       stage: { _tag: "Find", pass: 1 },
       session: expect.objectContaining({ _tag: "Some" }),
       ended: { _tag: "Answered", summary: "One bug: a multiplication by one." },
-      calls: [{ step: 1, tokens: Option.some({ input: 1_000, cached: 800, output: 50 }), cost: 0.0004 }, { step: 2, tokens: Option.some({ input: 1_200, cached: 1_000, output: 20 }), cost: 0.0002 }],
+      calls: [
+        { step: 1, tokens: Option.some({ input: 1_000, cached: 800, output: 50 }), cost: 0.0004 },
+        { step: 2, tokens: Option.some({ input: 1_200, cached: 1_000, output: 20 }), cost: 0.0002 },
+        { step: 3, tokens: Option.some({ input: 1_200, cached: 1_000, output: 20 }), cost: 0.0002 },
+      ],
       opened: ["src/sum.ts"],
     })
     expect<unknown>(ran.findings).toEqual([{ ...FINDING, pass: 1, number: 1 }])
-    expect(Math.round(ran.settled * 1e6) / 1e6).toBe(0.0006)
-    // Each request starts with the prefix, unchanged; then the tail, the calls and their results, as the memory gives them.
-    expect(ran.sent.map((messages) => messages.map((message) => message.role))).toEqual([["system", "user", "user"], ["system", "user", "user", "assistant", "tool", "tool"]])
-    expect(ran.sent.map((messages) => messages.slice(0, 3).map((message) => message.content))).toEqual([["The system text.", "The pull request.", "Review it."], ["The system text.", "The pull request.", "Review it."]])
+    expect(Math.round(ran.settled * 1e6) / 1e6).toBe(0.0008)
+    // Each request starts with the prefix, unchanged; then the tail, the calls and their results, as the memory gives
+    // them; the last, the harvest, after the answer in words and the host's note.
+    expect(ran.sent.map((messages) => messages.map((message) => message.role))).toEqual([
+      ["system", "user", "user"],
+      ["system", "user", "user", "assistant", "tool", "tool"],
+      ["system", "user", "user", "assistant", "tool", "tool", "assistant", "user"],
+    ])
+    expect(ran.sent.map((messages) => messages.slice(0, 3).map((message) => message.content))).toEqual([0, 1, 2].map(() => ["The system text.", "The pull request.", "Review it."]))
     expect(ran.journal.length).toBeGreaterThan(0)
   })
 
@@ -208,13 +217,14 @@ describe("a pass over the kernel", () => {
     const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
     const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
     const limited = { status: 429, body: JSON.stringify({ error: { message: "slow down" } }) }
-    const blip = await pass([unavailable, says("Done.")])
-    const rateLimited = await pass([limited, says("Done.")])
+    // A pass that answers asks once more for what it weighed (the harvest), answered "none" here.
+    const blip = await pass([unavailable, says("Done."), says("none")])
+    const rateLimited = await pass([limited, says("Done."), says("none")])
     const twice = await pass([unavailable, unavailable, says("Done.")])
     const refused = await pass([refusedCall, says("Done.")])
     const alone = await pass([unavailable, says("Done.")], { waitedOn: false })
-    expect([blip.result.ended, blip.signals, blip.sent.length, blip.result.calls.map((call) => [call.step, Option.isSome(call.tokens)])]).toEqual([{ _tag: "Answered", summary: "Done." }, [[true, 2]], 2, [[1, false], [1, true]]])
-    expect([rateLimited.result.ended._tag, rateLimited.sent.length]).toEqual(["Answered", 2])
+    expect([blip.result.ended, blip.signals, blip.sent.length, blip.result.calls.map((call) => [call.step, Option.isSome(call.tokens)])]).toEqual([{ _tag: "Answered", summary: "Done." }, [[true, 2]], 3, [[1, false], [1, true], [2, true]]])
+    expect([rateLimited.result.ended._tag, rateLimited.sent.length]).toEqual(["Answered", 3])
     expect([twice.result.ended._tag, twice.signals, twice.sent.length]).toEqual(["ModelFailed", [[false, 2]], 2])
     expect([refused.result.ended._tag, refused.signals, refused.sent.length]).toEqual(["ModelFailed", [[false, 1]], 1])
     expect([alone.result.ended._tag, alone.sent.length]).toEqual(["ModelFailed", 1])
@@ -223,9 +233,9 @@ describe("a pass over the kernel", () => {
   test("a focused group's pass (retryFirstCall, no one waiting) asks its first call once more after a 503, and not after a 400", async () => {
     const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
     const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
-    const blip = await pass([unavailable, says("Done.")], { waitedOn: false, retryFirstCall: true })
+    const blip = await pass([unavailable, says("Done."), says("none")], { waitedOn: false, retryFirstCall: true })
     const refused = await pass([refusedCall, says("Done.")], { waitedOn: false, retryFirstCall: true })
-    expect([blip.result.ended._tag, blip.sent.length, refused.result.ended._tag, refused.sent.length]).toEqual(["Answered", 2, "ModelFailed", 1])
+    expect([blip.result.ended._tag, blip.sent.length, refused.result.ended._tag, refused.sent.length]).toEqual(["Answered", 3, "ModelFailed", 1])
   })
 
   test("firstCallBytes counts at least the first request's body the ledger holds on, for a newline- and quote-heavy prompt", async () => {
@@ -274,7 +284,7 @@ describe("a pass over the kernel", () => {
     expect(JSON.stringify(ran.kept[1]?.messages.at(-1))).toContain("You are checking a finding, not reporting new ones: call verdict with your verdict on it.")
   })
 
-  test("a check that answers in words is asked once more for its verdict: the host's note, the same tools offered; a verdict in text is never one", async () => {
+  test("a check that answers in words is asked once more for its verdict: the host's note, the same tools offered; a verdict in text is never one; a pass is asked once more for reportFinding alone", async () => {
     const VERDICT = { outcome: "confirmed", reason: "It multiplies by one.", quote: "total += value * 1" }
     const check = { stage: { _tag: "Verify", check: CheckNumber.make(1) } } as const
     const judged = await pass([says("Verdict: confirmed."), asks(["verdict", VERDICT]), says("never sent")], check)
@@ -283,9 +293,10 @@ describe("a pass over the kernel", () => {
     expect(judged.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]" })
     expect(judged.kept.map((one) => one.tools)).toEqual([0, 1].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
     expect<unknown>([words.result.ended, words.verdict, words.kept.length]).toEqual([{ _tag: "Answered", summary: "Verdict: confirmed." }, Option.none(), 2])
-    // A pass that answers in words has answered: it is not asked again.
-    const answered = await pass([says("Done."), says("never sent")])
-    expect([answered.result.ended._tag, answered.kept.length]).toEqual(["Answered", 1])
+    // A pass that answers in words is asked once more (the harvest), and only that answer's reportFinding calls run:
+    // its readLines is not, so nothing is opened; it has answered, with its first words.
+    const answered = await pass([says("Done."), asks(["readLines", { path: "src/sum.ts" }], ["reportFinding", FINDING]), says("never sent")])
+    expect<unknown>([answered.result.ended, answered.findings.length, answered.result.opened, answered.kept.length]).toEqual([{ _tag: "Answered", summary: "Done." }, 1, [], 2])
   })
 
   test("a check refused mid-way with a reserve kept back gives its verdict on the closing call and is judged", async () => {
@@ -345,15 +356,67 @@ describe("a pass over the kernel", () => {
         asked += 1
       }), inner.context(session)) })
     })).pipe(Layer.provide(flatMemory))
-    const ran = await pass([asks(["listFiles", { glob: "*" }]), says("Nothing.")], { passes: { memory } })
-    expect([asked, ran.result.ended._tag, ran.sent.length]).toEqual([2, "Answered", 2])
+    const ran = await pass([asks(["listFiles", { glob: "*" }]), says("Nothing."), says("none")], { passes: { memory } })
+    expect([asked, ran.result.ended._tag, ran.sent.length]).toEqual([3, "Answered", 3])
+  })
+})
+
+describe("the closing call asked once more after a refused report", () => {
+  const ELSEWHERE = { ...FINDING, path: "src/never-changed.ts" }
+
+  test("a step-cap closing call whose reportFinding the tool refuses (a path the pull request does not change) is asked once more, and its second, valid report is recorded", async () => {
+    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", FINDING]), says("never sent")], { maxSteps: 1 })
+    expect<unknown>([ran.result.ended, ran.findings, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 1, summary: "", why: "" }, [{ ...FINDING, pass: 1, number: 1 }], 3])
+    // The second ask reads the refusal, which says what to give, with the same six tools offered.
+    const refusal = ran.kept[2]?.messages.at(-1)
+    expect([refusal?.role, JSON.stringify(refusal?.content).includes("src/never-changed.ts is not a file this pull request changes")]).toEqual(["tool", true])
+    expect(ran.kept.map((one) => one.tools)).toEqual([0, 1, 2].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
+  })
+
+  test("a second refusal ends the closing: no third call, whatever it would have reported", async () => {
+    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", ELSEWHERE]), asks(["reportFinding", FINDING])], { maxSteps: 1 })
+    expect<unknown>([ran.result.ended, ran.findings, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 1, summary: "", why: "" }, [], 3])
+  })
+})
+
+describe("the harvest: a pass that answers in words is asked once more for what it weighed", () => {
+  const HARVEST = "[Host note: Before this pass ends: call reportFinding now for each possible defect you noticed or weighed in the files you reviewed and did not report, also one you judged too small or not sure, saying in its claim what would make it real; another reviewer checks each report. If there is none, answer \"none\". No other tool runs now.]"
+
+  test("a pass that answers in words, then reports on the harvest, keeps that finding: the host's note, the same six tools, only reportFinding run, the first answer's summary", async () => {
+    const harvested = sse([
+      { choices: [{ delta: { content: "One I had kept back.", tool_calls: [
+        { index: 0, id: "c0", type: "function", function: { name: "readLines", arguments: JSON.stringify({ path: "src/sum.ts" }) } },
+        { index: 1, id: "c1", type: "function", function: { name: "reportFinding", arguments: JSON.stringify(FINDING) } },
+      ] }, finish_reason: "tool_calls" }] },
+      usage(1_000, 800, 50, 0.0004),
+    ])
+    const ran = await pass([says("Nothing wrong."), harvested, says("never sent")])
+    expect<unknown>([ran.result.ended, ran.findings, ran.result.opened, ran.kept.length, ran.result.calls.map((call) => call.step)]).toEqual([
+      { _tag: "Answered", summary: "Nothing wrong." }, [{ ...FINDING, pass: 1, number: 1 }], [], 2, [1, 2],
+    ])
+    expect(ran.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: HARVEST })
+    expect(ran.kept.map((one) => one.tools)).toEqual([0, 1].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
+  })
+
+  test("one whose harvest answers none ends Answered with the first summary; one whose harvest call fails too", async () => {
+    const none = await pass([says("Nothing wrong."), says("none"), says("never sent")])
+    const failed = await pass([says("Nothing wrong."), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }])
+    expect<unknown>([none.result.ended, none.findings, none.kept.length, none.kept.at(-1)?.messages.at(-1)]).toEqual([{ _tag: "Answered", summary: "Nothing wrong." }, [], 2, { role: "user", content: HARVEST }])
+    expect<unknown>([failed.result.ended, failed.kept.length]).toEqual([{ _tag: "Answered", summary: "Nothing wrong." }, 2])
+  })
+
+  test("a check that answers in words is never harvested: its closing note asks for the verdict", async () => {
+    const ran = await pass([says("Verdict: confirmed."), says("Still confirmed.")], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    expect(ran.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: This check ends now. Call verdict now with your outcome, your reason and a quote of the cited lines your verdict rests on: a verdict written as text is not counted. No other tool runs now.]" })
   })
 })
 
 describe("three passes at once under the review's budget", () => {
-  // The size of the longest live single pass's last request: about 300 KB, held at 1 byte a token at $0.30 a million ($0.09),
-  // plus 4,096 tokens of output at $1.20 a million; each call billed $0.0025, so sixteen calls settle $0.04.
-  const PREFIX = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "x".repeat(300_000) }]
+  // A request of 700 KB, over twice the longest live single pass's last (about 300 KB), held at 1 byte a token at $0.30
+  // a million ($0.21) plus 4,096 tokens of output at $1.20 a million: about $0.216 a call, so three calls' holds ($0.65)
+  // pass the find stage's $0.50 and the passes' calls crowd each other out. Each call is billed $0.0025, so a pass's
+  // seventeen calls (sixteen, then the harvest) settle $0.0425.
+  const PREFIX = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "x".repeat(700_000) }]
   const billed = (answer: string) => answer.replace(/"cost":[0-9.]+/, "\"cost\":0.0025")
   /**
    * An endpoint for several passes at once: each request answered by how far its own conversation is, a call for its
@@ -426,25 +489,25 @@ describe("three passes at once under the review's budget", () => {
 
   test("under the default budget's find stage, none ends on a spend refusal: a call the others' holds crowd out waits", async () => {
     const ran = await passesAtOnce(defaultStages)
-    expect(ran).toEqual({ ended: ["Answered", "Answered", "Answered"], settled: 0.12, held: 0 })
+    expect(ran).toEqual({ ended: ["Answered", "Answered", "Answered"], settled: 0.1275, held: 0 })
   }, 60_000)
 
   test("why passes beside each other keep nothing back: three each keeping a sixth of the find stage crowd out each other's calls and end refused", async () => {
-    // Every reserve is held before any call (`keptFirst`), and each pass makes 24 calls: whatever the interleaving, no
-    // pass ends (giving its sixth back) before 23 calls have settled $0.0575, and then $0.15 kept back and a call's
-    // hold of about $0.097 pass the find stage's $0.30, so the next call is refused.
+    // Every reserve is held before any call (`keptFirst`), and no pass gives its sixth back (its harvest's closing call)
+    // before it has made 24 calls. Three sixths ($0.25) and one call's hold (about $0.216) leave the find stage's $0.50
+    // room for about $0.034 settled, fourteen calls at most: whatever the interleaving, a call is refused first.
     const ran = await passesAtOnce((root) => Effect.flatMap(defaultStages(root), (stage) => keptFirst(stage, 3)), 3, DEFAULT_BUDGET.find / 6, steady(23), 24)
     expect([ran.ended.includes("SpendRefused"), ran.held]).toEqual([true, 0])
   }, 60_000)
 
   test("one pass keeping the default closing reserve back answers under the default budget, and its reserve is released", async () => {
     const ran = await passesAtOnce(defaultStages, 1, DEFAULT_CLOSING_RESERVE)
-    expect(ran).toEqual({ ended: ["Answered"], settled: 0.04, held: 0 })
+    expect(ran).toEqual({ ended: ["Answered"], settled: 0.0425, held: 0 })
   }, 60_000)
 
   test("control: on the same cap, a ledger that refuses whatever open holds crowd out ends a pass on a refusal", async () => {
-    // In lockstep, the three calls of a round are open at once: three holds of about $0.097 and what the rounds before
-    // settled pass $0.30 by the third round, and the last call of it is refused.
+    // In lockstep, the three calls of a round are open at once: two holds of about $0.216 fit under $0.50 and the
+    // third is refused, where the stage's ledger makes it wait.
     const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)

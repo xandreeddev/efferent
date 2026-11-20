@@ -1,16 +1,16 @@
 import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Prompt } from "effect/ai"
-import { JournalStorage, kernel, ModelSpend, Sessions, userMessage } from "@xandreed/core"
+import { JournalStorage, kernel, messageOf, ModelSpend, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId, SpendHold } from "@xandreed/core"
 import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retryable, sessions } from "@xandreed/sdk"
 import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
 import { Findings } from "./findings.port.js"
-import { PassJournalFailed, SUMMARY_KEPT } from "./review-pass.entity.js"
+import { CLOSING_ASKS, PassJournalFailed, SUMMARY_KEPT } from "./review-pass.entity.js"
 import type { CallUsage, PassEnded, PassResult } from "./review-pass.entity.js"
 import { ReviewPasses } from "./review-pass.port.js"
 import type { PassInput } from "./review-pass.port.js"
-import { stepCapNote } from "./review-prompt.entity.functions.js"
+import { harvestNote, stepCapNote } from "./review-prompt.entity.functions.js"
 import { reviewToolHandlers, reviewTools } from "./review-tools.adapter.js"
 import { READ_DIFF, READ_LINES, REPORT_FINDING, VERDICT } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
@@ -63,15 +63,16 @@ const folderJournal = (at: string): Layer.Layer<JournalStorage, PassJournalFaile
  * the review's tools, the model over a ledger of the pass's own inside its stage's (`stageSpend`, so each call's cost is
  * what that ledger settled while it ran, whatever runs beside it), and the host's loop with `modelAnswer` and
  * `callTool`. Each step sends the prompt's prefix, then what the memory gives (the tail message, the calls and their
- * results). It ends when the model answers without a call; for a check, once its verdict is recorded; when the ledger
- * refuses a call, when a call fails, when an answer is cut at the output cap (its finish says `length`; the calls it
- * asked for run first, so a finding it reported is kept), or when the journal fails: each with the findings recorded
- * so far. From its start it holds back `options.reserve` from its stage for its closing call; at its step cap, or
- * when the ledger refuses a later call while that reserve is held, it releases the reserve, stores the host's note
- * (`stepCapNote`) and asks once more, offering the same tools so the provider's cache holds, and runs only the calls
- * that report (`reportFinding` in a pass, `verdict` in a check); a closing call that fails is said in `StepCap`'s
- * `why`. `onFirstAnswer` is given, once, whether its first call answered (`false` when it ended before one returned);
- * when it is given, the other passes wait on that call, so a failure of it worth another try (`retryable`: a rate
+ * results). It ends when the model answers without a call (a pass is first asked once more for what it weighed and did
+ * not report, `harvestNote`, and only that answer's `reportFinding` calls run); for a check, once its verdict is
+ * recorded; when the ledger refuses a call, when a call fails, when an answer is cut at the output cap (its finish
+ * says `length`; the calls it asked for run first, so a finding it reported is kept), or when the journal fails: each
+ * with the findings recorded so far. From its start it holds back `options.reserve` from its stage for its closing
+ * call; at its step cap, or when the ledger refuses a later call while that reserve is held, it releases the reserve,
+ * stores the host's note (`stepCapNote`) and asks once more, offering the same tools so the provider's cache holds,
+ * and runs only the calls that report (`reportFinding` in a pass, `verdict` in a check), asking once more when the
+ * tool refused one of them (`CLOSING_ASKS`); a closing call that fails is said in `StepCap`'s `why`. `onFirstAnswer`
+ * is given, once, whether its first call answered (`false` when it ended before one returned); when it is given, the other passes wait on that call, so a failure of it worth another try (`retryable`: a rate
  * limit, a provider's error, a lost connection) is asked once more first; so is it with `retryFirstCall` (a focused
  * group's pass).
  */
@@ -157,16 +158,28 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
     })
 
     /**
-     * The closing call, at the step cap, after a spend refusal, or for a check after an answer with no verdict: the
-     * reserve released, the host's note, then one more call whose reporting calls alone run. Its words, or why it failed.
+     * The closing call, at the step cap, after a spend refusal, for a check after an answer with no verdict, or for a
+     * pass after its answer in words (`harvestNote`): the reserve released, the host's note, then one more call whose
+     * reporting calls alone run. Its words, or why it failed.
      */
-    const closing = (step: number) => Effect.gen(function* () {
+    const closing = (step: number, note: string = stepCapNote(stage)) => Effect.gen(function* () {
       yield* releaseReserve
-      yield* kept(session.append(userMessage(stepCapNote(stage))))
-      const last = yield* ask(step)
-      if (Result.isFailure(last)) return { summary: "", why: "message" in last.failure ? last.failure.message : last.failure._tag }
-      for (const call of last.success.answer.toolCalls.filter((call) => call.name === reports)) yield* kept(callTool(toolkit, call, session))
-      return { summary: clipTo(last.success.answer.text.trim(), SUMMARY_KEPT), why: "" }
+      yield* kept(session.append(userMessage(note)))
+      let summary = ""
+      // A reporting call the tool refused (a path it does not change, lines out of order) is lost unless asked again:
+      // the refusal says what to give, so the model is asked once more, at most `CLOSING_ASKS` calls in all.
+      for (let asked = 0; asked < CLOSING_ASKS; asked++) {
+        const last = yield* ask(step + asked)
+        if (Result.isFailure(last)) return { summary, why: "message" in last.failure ? last.failure.message : last.failure._tag }
+        let refused = false
+        for (const call of last.success.answer.toolCalls.filter((call) => call.name === reports)) {
+          const stored = yield* kept(callTool(toolkit, call, session))
+          if (Option.exists(messageOf(stored), (message) => Predicate.isTagged(message, "ToolResult") && message.isFailure)) refused = true
+        }
+        summary = clipTo(last.success.answer.text.trim(), SUMMARY_KEPT)
+        if (!refused) break
+      }
+      return { summary, why: "" }
     })
 
     for (let step = 1; step <= input.options.maxSteps; step++) {
@@ -183,9 +196,15 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       const { answer, cut } = asked.success
       if (!cut && answer.toolCalls.length === 0) {
         const answered: PassEnded = { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) }
+        // A pass that answers in words is asked once more to report what it weighed and kept to itself (`harvestNote`):
+        // the checks settle every report. Its summary stays the first answer's; a failed harvest is logged.
+        if (!checking) {
+          const harvested = yield* closing(step + 1, harvestNote())
+          if (harvested.why.length > 0) yield* Effect.logWarning("a review pass's harvest call failed", harvested.why)
+          return answered
+        }
         // A check that answers in words gave no verdict (a verdict in text has no quote to check): it is asked once
         // more, with the host's note, for the verdict call.
-        if (!checking) return answered
         yield* closing(step + 1)
         return (yield* judged) ? { _tag: "Judged" } satisfies PassEnded : answered
       }

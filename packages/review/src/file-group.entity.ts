@@ -31,8 +31,12 @@ export type GroupBounds = typeof GroupBounds.Type
  */
 export const DEFAULT_GROUP_BOUNDS: GroupBounds = { tokens: 6_000, files: 8 }
 
-/** The most model calls one focused pass makes by default. */
-export const DEFAULT_GROUP_STEPS = 8
+/**
+ * The most model calls one focused pass makes by default: a guard against a pass that never ends, the find stage's
+ * ledger being the real limit. Measured on four gold groups (2026-11-20): at 8 every pass hit the cap; at 24 every pass
+ * ended on its own, after 5 to 17 calls (an interactive reviewer on a stronger model took 8 to 18 turns a review).
+ */
+export const DEFAULT_GROUP_STEPS = 24
 
 /**
  * The bytes a request holds beside its prompt's text, for the first call's hold a group must have room for: the six
@@ -92,8 +96,8 @@ export type Focus = typeof Focus.Type
  * How a review reads the pull request by default: in focused groups. Measured on the gold cases (2026-11-20, one run
  * each, the gold groups alone): the gold group of #644 found and confirmed its defect ($0.035), which the
  * whole-pull-request pass had missed; #480, #595 and #657's groups missed theirs. A focused review is cut short on a
- * large pull request: at about $0.02 to $0.035 a group, the stock find stage ($0.30) reviews about seven groups and
- * lists the rest as not reviewed.
+ * large pull request: at about $0.022 to $0.053 a group (a 24-call guard and the harvest call), the stock find stage
+ * ($0.50) reviews about ten to twelve groups and lists the rest as not reviewed.
  */
 export const DEFAULT_FOCUS: Focus = "groups"
 

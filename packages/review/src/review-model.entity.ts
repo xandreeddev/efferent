@@ -49,16 +49,19 @@ export const Effort = Schema.Literals(["default", "none", "low", "medium", "high
 export type Effort = typeof Effort.Type
 
 /**
- * What a review may spend by default, in USD: $0.50 in all, $0.30 on its passes, $0.20 on its checks. Measured on the
- * packs of #645, #647, #650 and #658 at their first heads: a first request of 130 to 139 KB holds about $0.044 at 1
- * byte a token, and a request grows with every result read; the longest pass (16 steps) settled $0.040 and its last
- * request (about 300 KB) held about $0.093, plus $0.005 for 4,096 tokens of output. Three passes settle about $0.12
- * and hold at most three such requests at once, which a stage's ledger lets wait for each other (`stageSpend`) rather
- * than refuse, so $0.30 never refuses a call that settled spend leaves room for. A check's request is about the pack's
- * size (about $0.05 held); measured, a check that gave its verdict settled about $0.010 (#645, two checks in 13
- * calls), and one that reasoned four calls without one $0.022 (#595): $0.20 holds three at once and checks about ten.
+ * What a review may spend by default, in USD: $0.80 in all, $0.50 on its passes, $0.30 on its checks. First sized
+ * ($0.50: $0.30 and $0.20) on the packs of #645, #647, #650 and #658 at their first heads: a first request of 130 to
+ * 139 KB holds about $0.044 at 1 byte a token, and a request grows with every result read; the longest pass (16 steps)
+ * settled $0.040 and its last request (about 300 KB) held about $0.093, plus $0.005 for 4,096 tokens of output. Three
+ * passes settle about $0.12 and hold at most three such requests at once, which a stage's ledger lets wait for each
+ * other (`stageSpend`) rather than refuse. A check's request is about the pack's size (about $0.05 held); measured, a
+ * check that gave its verdict settled about $0.010 (#645, two checks in 13 calls), and one that reasoned four calls
+ * without one $0.022 (#595).
+ * Focused passes with a 24-call guard and their harvest call settled $0.022 to $0.053 a group (2026-11-20, four gold
+ * groups), so the find stage holds about $0.04 for each of a large pull request's 10 to 12 groups ($0.50 in all), and
+ * the checks at 12 calls about $0.02 each ($0.30, about twelve with three open at once).
  */
-export const DEFAULT_BUDGET = { total: 0.5, find: 0.3, verify: 0.2 } as const
+export const DEFAULT_BUDGET = { total: 0.8, find: 0.5, verify: 0.3 } as const
 
 /** The most a review may spend by default, in USD: `DEFAULT_BUDGET`'s total. */
 export const DEFAULT_MAX_COST = DEFAULT_BUDGET.total
