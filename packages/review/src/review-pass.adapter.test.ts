@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Layer, Option, Redacted } from "effect"
+import { Deferred, Effect, Layer, Option, Redacted } from "effect"
 import type { Context } from "effect"
 import { FetchHttpClient } from "effect/http"
 import { JournalStorage, ModelSpend, modelSpendMemory } from "@xandreed/core"
@@ -355,14 +355,57 @@ describe("three passes at once under the review's budget", () => {
   // plus 4,096 tokens of output at $1.20 a million; each call billed $0.0025, so sixteen calls settle $0.04.
   const PREFIX = [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: "x".repeat(300_000) }]
   const billed = (answer: string) => answer.replace(/"cost":[0-9.]+/, "\"cost\":0.0025")
-  /** An endpoint for several passes at once: each request answered by how far its own conversation is, a call for its first fifteen steps, then words. */
-  const steady = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    const asked = sentOf(JSON.parse(await new Response(init?.body ?? "").text())).messages.filter((message) => message.role === "assistant").length
-    return new Response(billed(asked < 15 ? asks(["listFiles", { glob: "src/*" }]) : says("Done.")), { status: 200, headers: { "content-type": "text/event-stream" } })
-  }, { preconnect: () => {} })
+  /**
+   * An endpoint for several passes at once: each request answered by how far its own conversation is, a call for its
+   * first `calls` steps, then words. With `lockstep`, the requests go in rounds of `lockstep`: each waits until its
+   * round is full (or `LOCKSTEP_FALLBACK_MS` passed, which only frees the passes left once one has ended), so every
+   * pass's call of a round is open at once, whatever the scheduler does.
+   */
+  const steady = (calls = 15, lockstep = 0) => {
+    let arrived = 0
+    // Once a round has waited past the fallback, a pass has ended: the rounds are over and no request waits again.
+    let freed = false
+    const waiting: Array<{ readonly until: number; readonly go: () => void }> = []
+    return Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
+      const asked = sentOf(JSON.parse(await new Response(init?.body ?? "").text())).messages.filter((message) => message.role === "assistant").length
+      if (lockstep > 0 && !freed) {
+        const until = (Math.floor(arrived / lockstep) + 1) * lockstep
+        arrived += 1
+        for (const one of waiting.filter((entry) => entry.until <= arrived)) one.go()
+        if (until > arrived) await new Promise<void>((go) => {
+          waiting.push({ until, go })
+          setTimeout(() => {
+            freed = true
+            for (const one of waiting) one.go()
+          }, LOCKSTEP_FALLBACK_MS)
+        })
+      }
+      return new Response(billed(asked < calls ? asks(["listFiles", { glob: "src/*" }]) : says("Done.")), { status: 200, headers: { "content-type": "text/event-stream" } })
+    }, { preconnect: () => {} })
+  }
+  const LOCKSTEP_FALLBACK_MS = 2_000
 
-  /** `count` passes at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back: how each ended and what was settled. */
-  const passesAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0) => {
+  /**
+   * A stage whose calls wait until `count` passes have kept their reserve back, so every reserve is held before any
+   * call is asked, whatever order the passes start in.
+   */
+  const keptFirst = (stage: StageLedger, count: number): Effect.Effect<StageLedger> => Effect.map(Deferred.make<void>(), (allKept) => {
+    let kept = 0
+    return {
+      ...stage,
+      keepBack: (amount: number) => Effect.tap(stage.keepBack(amount), () => Effect.suspend(() => {
+        kept += 1
+        return kept >= count ? Deferred.succeed(allKept, undefined) : Effect.void
+      })),
+      reserve: (request) => Effect.flatMap(Deferred.await(allKept), () => stage.reserve(request)),
+    }
+  })
+
+  /**
+   * `count` passes at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back
+   * and capped at `maxSteps`, on the `endpoint`: how each ended and what was settled.
+   */
+  const passesAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0, endpoint = steady(), maxSteps = 16) => {
     const layers = kernelPasses({ model: testModel({ maxCost: DEFAULT_MAX_COST }) }).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)))
     const folder = mkdtempSync(join(fixture.root, "three-"))
     return Effect.runPromise(Effect.gen(function* () {
@@ -373,11 +416,11 @@ describe("three passes at once under the review's budget", () => {
         prompt: { prefix: PREFIX, tail: "Review it." },
         reviewed: { run: "run-1", repo, at: head, files, stage: { _tag: "Find", pass: PassNumber.make(number) } },
         journalAt: join(folder, `pass-${number}`),
-        options: { maxSteps: 16, reserve },
+        options: { maxSteps, reserve },
         spend: stage,
       }), { concurrency: "unbounded" })
       return { ended: results.map((result) => result.ended._tag), settled: Math.round((yield* root.totals).settled * 1e6) / 1e6, held: (yield* root.totals).reserved }
-    }).pipe(Effect.provide(layers), Effect.provideService(FetchHttpClient.Fetch, steady)))
+    }).pipe(Effect.provide(layers), Effect.provideService(FetchHttpClient.Fetch, endpoint)))
   }
   const defaultStages = (root: Context.Service.Shape<typeof ModelSpend>) => Effect.flatMap(stageSpend(root, Option.some(DEFAULT_BUDGET.total)), (total) => stageSpend(total, Option.some(DEFAULT_BUDGET.find)))
 
@@ -387,7 +430,10 @@ describe("three passes at once under the review's budget", () => {
   }, 60_000)
 
   test("why passes beside each other keep nothing back: three each keeping a sixth of the find stage crowd out each other's calls and end refused", async () => {
-    const ran = await passesAtOnce(defaultStages, 3, DEFAULT_BUDGET.find / 6)
+    // Every reserve is held before any call (`keptFirst`), and each pass makes 24 calls: whatever the interleaving, no
+    // pass ends (giving its sixth back) before 23 calls have settled $0.0575, and then $0.15 kept back and a call's
+    // hold of about $0.097 pass the find stage's $0.30, so the next call is refused.
+    const ran = await passesAtOnce((root) => Effect.flatMap(defaultStages(root), (stage) => keptFirst(stage, 3)), 3, DEFAULT_BUDGET.find / 6, steady(23), 24)
     expect([ran.ended.includes("SpendRefused"), ran.held]).toEqual([true, 0])
   }, 60_000)
 
@@ -397,7 +443,9 @@ describe("three passes at once under the review's budget", () => {
   }, 60_000)
 
   test("control: on the same cap, a ledger that refuses whatever open holds crowd out ends a pass on a refusal", async () => {
-    const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }))
+    // In lockstep, the three calls of a round are open at once: three holds of about $0.097 and what the rounds before
+    // settled pass $0.30 by the third round, and the last call of it is refused.
+    const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)
 })
