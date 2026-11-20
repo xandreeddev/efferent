@@ -123,9 +123,9 @@ describe("reviewPullRequest", () => {
     const finds = asked.filter((input) => input.reviewed.stage._tag === "Find")
     const checks = asked.filter((input) => input.reviewed.stage._tag === "Verify")
     expect([events.slice(0, 2), during, /-[0-9a-f]{6}$/.test(report.run), report.complete]).toEqual([["pass 1 started", "pass 1 answered first"], ["complete false"], true, true])
-    // Each pass keeps back at most half the find stage split among the passes: $0.30 / 6.
+    // Passes beside each other keep nothing back for a closing call.
     expect([finds.length, finds.map((input) => input.journalAt), finds[0]?.options, finds.every((input) => input.prompt.tail.startsWith("Review the pull request above and report every plausible defect")), finds.filter((input) => input.onFirstAnswer !== undefined).length]).toEqual([
-      3, [1, 2, 3].map((pass) => join(folder, `pass-${pass}`)), { maxSteps: 4, reserve: 0.3 / (2 * 3) }, true, 1,
+      3, [1, 2, 3].map((pass) => join(folder, `pass-${pass}`)), { maxSteps: 4, reserve: 0 }, true, 1,
     ])
     expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6, reserve: 0 }, finds[0]?.prompt.prefix, true])
     expect<unknown>([report.promptVersion, report.toolsVersion, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
@@ -182,6 +182,7 @@ describe("reviewPullRequest", () => {
   test("with the vote on, a bucket one pass found is left out; with checks off, the kept buckets are reported unchecked", async () => {
     const { asked, layer } = scripted("total += value * 1")
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, passes: 1, vote: true, verify: false })
-    expect<unknown>([asked.length, report.buckets.map((bucket) => bucket.why), report.verdicts, report.reported]).toEqual([1, ["one-vote"], [], []])
+    // A lone pass keeps its closing reserve back: $0.10, within half the find stage.
+    expect<unknown>([asked.length, asked[0]?.options, report.buckets.map((bucket) => bucket.why), report.verdicts, report.reported]).toEqual([1, { maxSteps: 4, reserve: 0.1 }, ["one-vote"], [], []])
   })
 })

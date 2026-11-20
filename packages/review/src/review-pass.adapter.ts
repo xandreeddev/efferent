@@ -152,7 +152,10 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       const asked = yield* ask(step)
       if (Result.isFailure(asked)) {
         // A spend refusal after the first call: the closing call may still report on the reserve kept for it.
-        if (asked.failure._tag === "SpendRefused" && step > 1 && Option.isSome(reserved)) yield* closing(step + 1)
+        if (asked.failure._tag === "SpendRefused" && step > 1 && Option.isSome(reserved)) {
+          const closed = yield* closing(step + 1)
+          if (closed.why.length > 0) return { _tag: "SpendRefused", message: `${asked.failure.message}; its closing call failed: ${closed.why}` } satisfies PassEnded
+        }
         return asked.failure
       }
       const { answer, cut } = asked.success

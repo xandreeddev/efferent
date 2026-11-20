@@ -14,6 +14,8 @@ interface StageState {
   readonly calls: number
   readonly open: number
   readonly kept: number
+  /** Keeps the parent has not answered yet: their amounts are in `kept`, their holds not yet in `holds`. */
+  readonly keeping: number
   readonly holds: ReadonlyMap<SpendHoldId, { readonly amount: number; readonly kept: boolean }>
   readonly closed: Deferred.Deferred<void>
 }
@@ -42,7 +44,7 @@ const heldOf = (state: StageState): number => state.calls + state.kept
  * an amount only when it fits now, in the parent's `keepBack` when it has one.
  */
 export const stageSpend = Effect.fn("review.stage_spend")(function* (parent: Ledger | StageLedger, cap: Option.Option<number>, options: StageSpendOptions = {}) {
-  const state = yield* Ref.make<StageState>({ settled: 0, calls: 0, open: 0, kept: 0, holds: new Map(), closed: yield* Deferred.make<void>() })
+  const state = yield* Ref.make<StageState>({ settled: 0, calls: 0, open: 0, kept: 0, keeping: 0, holds: new Map(), closed: yield* Deferred.make<void>() })
   const waitMs = options.waitMs ?? STAGE_WAIT_MS
   const limit = Option.getOrElse(cap, () => 0)
 
@@ -51,7 +53,7 @@ export const stageSpend = Effect.fn("review.stage_spend")(function* (parent: Led
     const next = yield* Deferred.make<void>()
     const woken = yield* Ref.modify(state, (current) => {
       const changed = change(current)
-      const keptHolds = [...changed.holds.values()].some((hold) => hold.kept)
+      const keptHolds = changed.keeping > 0 || [...changed.holds.values()].some((hold) => hold.kept)
       return [current.closed, { ...changed, calls: changed.open === 0 ? 0 : Math.max(0, changed.calls), kept: keptHolds ? Math.max(0, changed.kept) : 0, closed: next }]
     })
     yield* Deferred.succeed(woken, undefined)
@@ -104,13 +106,13 @@ export const stageSpend = Effect.fn("review.stage_spend")(function* (parent: Led
   const keepBack = (amount: number): Effect.Effect<Option.Option<SpendHold>> => Effect.gen(function* () {
     const fits = yield* Ref.modify(state, (current) => {
       const room = Option.match(cap, { onNone: () => true, onSome: (most) => current.settled + heldOf(current) + amount <= most })
-      return [room, room ? { ...current, kept: current.kept + amount } : current]
+      return [room, room ? { ...current, kept: current.kept + amount, keeping: current.keeping + 1 } : current]
     })
     if (!fits) return Option.none()
     const held = yield* parentKeeps(amount)
     yield* Option.match(held, {
-      onNone: () => closeWith((current) => ({ ...current, kept: current.kept - amount })),
-      onSome: (hold) => Ref.update(state, (current) => ({ ...current, holds: new Map([...current.holds, [hold.id, { amount, kept: true }]]) })),
+      onNone: () => closeWith((current) => ({ ...current, kept: current.kept - amount, keeping: current.keeping - 1 })),
+      onSome: (hold) => Ref.update(state, (current) => ({ ...current, keeping: current.keeping - 1, holds: new Map([...current.holds, [hold.id, { amount, kept: true }]]) })),
     })
     return held
   })

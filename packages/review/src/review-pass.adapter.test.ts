@@ -176,6 +176,12 @@ describe("a pass over the kernel", () => {
     expect(kept.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]" })
   })
 
+  test("a closing call after a spend refusal that fails is said beside the refusal", async () => {
+    const price = { input: 0, output: 1, cacheRead: 0 }
+    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }], { maxCost: 0.0089, price, reserve: 0.0045 })
+    expect([ran.result.ended._tag, ran.result.ended._tag === "SpendRefused" && ran.result.ended.message.includes("; its closing call failed: ") && ran.result.ended.message.includes("the model does not exist")]).toEqual(["SpendRefused", true])
+  })
+
   test("at the step cap: the host's note, the same tools offered, and only the last answer's reportFinding calls run", async () => {
     const lastAnswer = sse([
       { choices: [{ delta: { content: "One more problem.", tool_calls: [
@@ -286,6 +292,11 @@ describe("three passes at once under the review's budget", () => {
   test("under the default budget's find stage, none ends on a spend refusal: a call the others' holds crowd out waits", async () => {
     const ran = await passesAtOnce(defaultStages)
     expect(ran).toEqual({ ended: ["Answered", "Answered", "Answered"], settled: 0.12, held: 0 })
+  }, 60_000)
+
+  test("why passes beside each other keep nothing back: three each keeping a sixth of the find stage crowd out each other's calls and end refused", async () => {
+    const ran = await passesAtOnce(defaultStages, 3, DEFAULT_BUDGET.find / 6)
+    expect([ran.ended.includes("SpendRefused"), ran.held]).toEqual([true, 0])
   }, 60_000)
 
   test("one pass keeping the default closing reserve back answers under the default budget, and its reserve is released", async () => {

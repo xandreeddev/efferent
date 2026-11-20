@@ -116,9 +116,9 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const findSpend = yield* stageSpend(total, Option.some(options.budget.find))
   const verifySpend = yield* stageSpend(total, Option.some(options.budget.verify))
   const orders = walkOrders(prepared, options.passes)
-  // What each pass keeps back for its closing call: at most half the find stage split among the passes, so their
-  // reserves never take the room their calls need.
-  const passOptions = { ...options.pass, reserve: Math.min(options.pass.reserve, options.budget.find / (2 * options.passes)) }
+  // What a lone pass keeps back for its closing call: at most half the find stage. Passes beside each other keep
+  // nothing back, since each one's reserve would crowd out the others' calls (three keeping a sixth each end refused).
+  const passOptions = { ...options.pass, reserve: options.passes === 1 ? Math.min(options.pass.reserve, options.budget.find / 2) : 0 }
 
   const find = (index: number, onFirstAnswer?: (answered: boolean) => Effect.Effect<void>) => {
     const stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(index + 1) }

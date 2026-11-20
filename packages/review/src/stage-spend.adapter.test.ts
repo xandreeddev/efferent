@@ -128,6 +128,24 @@ describe("stageSpend", () => {
     expect(ran).toEqual([true, true, true, 0.5, { settled: 0, reserved: 1 }, { settled: 0, reserved: 1 }, { settled: 0, reserved: 0.5 }, { settled: 0, reserved: 0.5 }])
   })
 
+  test("a call that closes while a keep waits on the parent never loses what is being kept back", async () => {
+    const ran = await run(Effect.gen(function* () {
+      const memory = yield* ModelSpend
+      const gate = yield* Deferred.make<void>()
+      // A parent that answers the keep (0.125) only once let go, as a ledger doing I/O might.
+      const slow = ModelSpend.of({ ...memory, reserve: (request) => (request.amount === 0.125 ? Effect.andThen(Deferred.await(gate), memory.reserve(request)) : memory.reserve(request)) })
+      const stage = yield* stageSpend(slow, Option.some(1))
+      const call = yield* stage.reserve({ amount: 0.25, caps: {} })
+      const keeping = yield* Effect.forkChild(stage.keepBack(0.125))
+      yield* Effect.yieldNow
+      yield* stage.settle(call, 0.25)
+      yield* Deferred.succeed(gate, undefined)
+      const kept = yield* Fiber.join(keeping)
+      return [Option.isSome(kept), yield* stage.totals]
+    }))
+    expect(ran).toEqual([true, { settled: 0.25, reserved: 0.125 }])
+  })
+
   test("releasing frees the hold and settles nothing", async () => {
     const totals = await run(Effect.gen(function* () {
       const parent = yield* ModelSpend
