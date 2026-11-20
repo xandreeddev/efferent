@@ -172,11 +172,14 @@ describe("a pass over the kernel", () => {
   test("the first call the other passes wait on is asked once more after a failure worth another try; a refusal, a second failure and a pass no one waits on are not", async () => {
     const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
     const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
+    const limited = { status: 429, body: JSON.stringify({ error: { message: "slow down" } }) }
     const blip = await pass([unavailable, says("Done.")])
+    const rateLimited = await pass([limited, says("Done.")])
     const twice = await pass([unavailable, unavailable, says("Done.")])
     const refused = await pass([refusedCall, says("Done.")])
     const alone = await pass([unavailable, says("Done.")], { waitedOn: false })
-    expect([blip.result.ended, blip.signals, blip.sent.length]).toEqual([{ _tag: "Answered", summary: "Done." }, [[true, 2]], 2])
+    expect([blip.result.ended, blip.signals, blip.sent.length, blip.result.calls.map((call) => [call.step, Option.isSome(call.tokens)])]).toEqual([{ _tag: "Answered", summary: "Done." }, [[true, 2]], 2, [[1, false], [1, true]]])
+    expect([rateLimited.result.ended._tag, rateLimited.sent.length]).toEqual(["Answered", 2])
     expect([twice.result.ended._tag, twice.signals, twice.sent.length]).toEqual(["ModelFailed", [[false, 2]], 2])
     expect([refused.result.ended._tag, refused.signals, refused.sent.length]).toEqual(["ModelFailed", [[false, 1]], 1])
     expect([alone.result.ended._tag, alone.sent.length]).toEqual(["ModelFailed", 1])

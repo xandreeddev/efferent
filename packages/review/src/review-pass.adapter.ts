@@ -123,16 +123,21 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
           if (part.type === "finish") finish = part.reason
         })),
       )
+      /** What the pass's own ledger settled since `before`, rounded past the float noise of a difference. */
+      const spentSince = (before: number) => Effect.map(settled, (now) => Math.max(0, Math.round((now - before) * 1e12) / 1e12))
       const before = yield* settled
       const tried = yield* Effect.result(modelAnswer(stream, session))
       // The call the other passes wait on is asked once more after a failure worth another try (a rate limit, a
       // provider's error, a lost connection): one blip would otherwise end the whole find stage. A failed answer
-      // stores nothing, so the second try is the same request.
-      const answered = Result.isFailure(tried) && step === 1 && input.onFirstAnswer !== undefined && worthAnotherTry(tried.failure)
-        ? yield* Effect.logWarning("a review pass's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed")).pipe(Effect.andThen(Effect.result(modelAnswer(stream, session))))
-        : tried
-      // What the pass's own ledger settled while the call ran, rounded past the float noise of a difference.
-      const cost = Math.max(0, Math.round(((yield* settled) - before) * 1e12) / 1e12)
+      // stores nothing, so the second try is the same request; the failed one is a call of its own in the record.
+      const again = Result.isFailure(tried) && step === 1 && input.onFirstAnswer !== undefined && worthAnotherTry(tried.failure)
+      if (again) {
+        calls.push({ step, tokens: Option.none(), cost: yield* spentSince(before) })
+        yield* Effect.logWarning("a review pass's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed"))
+      }
+      const retriedAt = yield* settled
+      const answered = again ? yield* Effect.result(modelAnswer(stream, session)) : tried
+      const cost = yield* spentSince(again ? retriedAt : before)
       yield* signal(Result.isSuccess(answered))
       if (Result.isFailure(answered)) {
         calls.push({ step, tokens: Option.none(), cost })
