@@ -15,7 +15,7 @@ import { prepareReview } from "./prepare-review.usecase.js"
 import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
 import { directoryCache } from "./review-cache.adapter.js"
 import { directoryLogs } from "./review-logs.adapter.js"
-import { DEFAULT_FOCUS, DEFAULT_GROUP_STEPS, Focus } from "./file-group.entity.js"
+import { DEFAULT_FOCUS, DEFAULT_GROUP_STEPS, Focus, GroupOrder } from "./file-group.entity.js"
 import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, Effort } from "./review-model.entity.js"
 import { withEffort } from "./review-model.entity.functions.js"
 import type { Finder } from "./review-prompt.entity.js"
@@ -58,7 +58,7 @@ export const validationLayers = (repo: RepoName, roots: { readonly cache: string
   )
 
 /** The flags that take a value; `--workflow` may be given more than once, the others once. */
-const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--run", "--focus", "--group-steps", "--effort-find", "--effort-check"]
+const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--run", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
 const REPEATED = ["--workflow", "--run"]
 const SWITCHES = ["--json", "--validate", "--vote", "--no-verify", "--config-pass"]
 
@@ -116,7 +116,7 @@ const wholeNumber = (text: string, what: string) => {
 }
 
 /** The flags only `review` reads. */
-const REVIEW_ONLY = ["--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--focus", "--group-steps", "--effort-find", "--effort-check"]
+const REVIEW_ONLY = ["--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--passes", "--finder", "--model", "--price", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
 
 /** The switches only `review` reads. */
 const REVIEW_SWITCHES = ["--vote", "--no-verify", "--config-pass"]
@@ -210,10 +210,15 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const finder = yield* Option.match(one(line, "--finder"), { onNone: () => Effect.succeed<Finder>("candidates"), onSome: finderOf })
   const focus = yield* Option.match(one(line, "--focus"), { onNone: () => Effect.succeed<Focus>(DEFAULT_FOCUS), onSome: oneOf("--focus", Focus.literals) })
   // A flag of the other focus would do nothing: refused, never ignored.
+  // `--vote` too: in a focused review each file is read by one pass, so no bucket can get a second vote.
   const otherFocus = focus === "groups"
-    ? ["--passes", "--max-steps"].find((flag) => Option.isSome(one(line, flag)))
-    : [...["--group-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-pass"].filter((flag) => line.switches.has(flag))][0]
+    ? [...["--passes", "--max-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--vote"].filter((flag) => line.switches.has(flag))][0]
+    : [...["--group-steps", "--group-order"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-pass"].filter((flag) => line.switches.has(flag))][0]
   if (otherFocus !== undefined) return yield* Effect.fail(usage(`${otherFocus} is a flag of --focus ${focus === "groups" ? "whole" : "groups"}, not of --focus ${focus}`))
+  // A stage's cap above the total would promise what the total refuses: refused, never clamped.
+  const overTotal = ([["--find-cost", findCost], ["--verify-cost", verifyCost]] as const).find(([, cost]) => cost > maxCost)
+  if (overTotal !== undefined) return yield* Effect.fail(usage(`${overTotal[0]} (${overTotal[1]}) must not exceed --max-cost (${maxCost})`))
+  const groupOrder = yield* Option.match(one(line, "--group-order"), { onNone: () => Effect.succeed<GroupOrder>(DEFAULT_GROUP_OPTIONS.order), onSome: oneOf("--group-order", GroupOrder.literals) })
   const groupSteps = yield* Option.match(one(line, "--group-steps"), { onNone: () => Effect.succeed(DEFAULT_GROUP_STEPS), onSome: (text) => wholeNumber(text, "--group-steps") })
   const effortFind = yield* Option.match(one(line, "--effort-find"), { onNone: () => Effect.succeed<Effort>("default"), onSome: oneOf("--effort-find", Effort.literals) })
   const effortCheck = yield* Option.match(one(line, "--effort-check"), { onNone: () => Effect.succeed<Effort>("default"), onSome: oneOf("--effort-check", Effort.literals) })
@@ -232,7 +237,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
     focus,
     passes,
     pass: { maxSteps, reserve: DEFAULT_CLOSING_RESERVE },
-    groups: { ...DEFAULT_GROUP_OPTIONS, steps: groupSteps, config: line.switches.has("--config-pass") },
+    groups: { ...DEFAULT_GROUP_OPTIONS, steps: groupSteps, order: groupOrder, config: line.switches.has("--config-pass") },
     effort: { find: effortFind, check: effortCheck },
     finder,
     vote: line.switches.has("--vote"),
@@ -241,6 +246,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
     verifySteps,
     budget: { total: maxCost, find: findCost, verify: verifyCost },
     model: model.model,
+    price: { input: model.price.input, output: model.price.output, maxOutputTokens: model.maxOutputTokens, bytesPerToken: model.bytesPerToken },
   }).pipe(Effect.provide(layers))
   yield* Console.log(json ? JSON.stringify(yield* Schema.encodeEffect(ReviewReport)(report).pipe(Effect.orDie), null, 2) : reportText(report))
   return 0

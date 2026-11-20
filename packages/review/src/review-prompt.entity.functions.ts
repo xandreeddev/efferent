@@ -5,7 +5,7 @@ import { shownPath } from "./diff.entity.functions.js"
 import type { Finding } from "./finding.entity.js"
 import { droppedLines, fileKind, isTestPath, packDiff } from "./packed-diff.entity.functions.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FIND_TAIL, GROUP_INTRO, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
+import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, GROUP_INTRO, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
 import type { Finder, FindTailOptions, PromptPart, ReviewPrompt, WalkedFile } from "./review-prompt.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import type { ReviewStage } from "./review-tools.entity.js"
@@ -101,14 +101,20 @@ const prefixWith = (prepared: PreparedReview, changes: ReadonlyArray<string>): R
 }
 
 /**
- * Every changed file as a focused review lists it: each file a review reads (`- <path> (+A -D)`, in git's order), then
- * `Left out of the review:` and the files the verdict left out (`droppedLines`: each lockfile's line, then each file
- * with its reason).
+ * Every changed file as a focused review lists it: each file a review reads (`- <path> (+A -D)`, in git's order, the
+ * first `FILES_SHOWN`, the rest `- N more files (+A -D)`), then `Left out of the review:` and the files the verdict
+ * left out (`droppedLines`: each lockfile's line, then each file with its reason, itself bounded).
  */
-export const filesText = (prepared: PreparedReview): string => {
+export const filesText = (prepared: PreparedReview, shown: number = FILES_SHOWN): string => {
   const earlier = prepared.diff.dropped.filter((file) => file.reason !== "over-budget")
   const left = new Set(earlier.map((file) => file.path))
-  const read = prepared.files.filter((file) => !left.has(file.path)).map((file) => `- ${shownPath(file.path)} (+${file.additions} -${file.deletions})`)
+  const reads = prepared.files.filter((file) => !left.has(file.path))
+  const rest = reads.slice(shown)
+  const sum = (pick: (file: FileDiff) => number) => rest.reduce((total, file) => total + pick(file), 0)
+  const read = [
+    ...reads.slice(0, shown).map((file) => `- ${shownPath(file.path)} (+${file.additions} -${file.deletions})`),
+    ...(rest.length > 0 ? [`- ${rest.length} more ${rest.length === 1 ? "file" : "files"} (+${sum((file) => file.additions)} -${sum((file) => file.deletions)})`] : []),
+  ]
   return [
     ...(read.length > 0 ? [read.join("\n")] : ["(no file left to review)"]),
     ...(earlier.length > 0 ? [["Left out of the review:", ...droppedLines(earlier, prepared.files.map((file) => file.path))].join("\n")] : []),

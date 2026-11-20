@@ -2,9 +2,9 @@ import { Array as Arr, Cause, Clock, Deferred, Effect, Fiber, Match, Option, Ran
 import { ModelSpend } from "@xandreed/core"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
-import { GROUP_START_ROOM, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
-import type { GroupRun } from "./file-group.entity.js"
-import { packageFoldersToLook } from "./file-group.entity.functions.js"
+import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import type { Focus, GroupRun } from "./file-group.entity.js"
+import { firstCallHold, lookupFailedNote, orderGroups, packageFoldersToLook, uncachedCheckNote, ungroupedOf } from "./file-group.entity.functions.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { Finding, Verdict } from "./finding.entity.js"
 import type { PassOptions } from "./review-pass.entity.js"
@@ -103,6 +103,12 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const prepared = yield* prepareReview(repo, number, options.prepare, policies)
   const { run, folder } = yield* freshRun(reviewFolderOf(prepared.pullRequest.number, prepared.at.sha), started)
   yield* logs.keep(`${folder}/prepared.json`, yield* jsonOf(PreparedReview, prepared))
+  const grouping = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : { focused: [], ungrouped: [], notes: [] }
+  // The focus the review runs: the whole one when there is no group to review.
+  const focus: Focus = options.focus === "groups" && grouping.focused.length > 0 ? "groups" : "whole"
+  const notes: Array<string> = [...grouping.notes, ...(options.focus === "groups" && focus === "whole" ? [NO_GROUP_NOTE] : [])]
+  const groupRuns: Array<GroupRun> = []
+  const found: Array<PassResult> = []
 
   /** The report as it stands, kept as `review.json` (whole or not at all), `complete` once every stage ran. */
   const record = (parts: Pick<ReportInput, "passes" | "groups" | "checks" | "findings" | "buckets" | "verdicts" | "complete">) => Effect.gen(function* () {
@@ -110,12 +116,14 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       ...parts,
       run,
       prepared,
-      focus: options.focus,
+      focus,
+      ungrouped: focus === "groups" ? grouping.ungrouped : [],
+      notes: [...notes],
       effort: options.effort,
       finder: options.finder,
       vote: options.vote,
       verify: options.verify,
-      passesAsked: options.focus === "groups" ? parts.passes.length : options.passes,
+      passesAsked: focus === "groups" ? parts.passes.length : options.passes,
       promptVersion: REVIEW_PROMPT,
       toolsVersion: REVIEW_TOOLS_VERSION,
       model: options.model,
@@ -150,28 +158,31 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   }
 
   // Focused: one pass a group, one after another, each with its group's prefix; a group starts only while the find
-  // stage has its closing reserve and one call's hold (`GROUP_START_ROOM`) neither settled nor held, so a pass that
-  // starts can always close and report; else it and every group after it are listed as not reviewed. A pass the stage
-  // refused does not stop the next: its own reserve, held beside its call, is what crowded it out (on #657 the second
-  // group's eighth call was refused with $0.08 of the stage left).
-  const focused = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : []
-  const groupRuns: Array<GroupRun> = []
-  const found: Array<PassResult> = []
-  if (options.focus === "groups") {
+  // stage has its closing reserve and its first call's hold (`firstCallHold`, from its prompt's size) neither settled
+  // nor held, so a pass that starts can always close and report; else it and every group after it are listed as not
+  // reviewed. A pass the stage refused does not stop the next: its own reserve, held beside its call, is what crowded it
+  // out (on #657 the second group's eighth call was refused with $0.08 of the stage left). A pass none of whose calls
+  // answered reviewed nothing: its group is listed as not reviewed, and the groups after it too. With no group to
+  // review (a pull request of config, CI or docs alone), the review falls back to the whole focus.
+  if (focus === "groups") {
     const runAs: PassOptions = { maxSteps: options.groups.steps, reserve: Math.min(options.groups.reserve, options.budget.find / 2) }
     let stopped = ""
-    for (const { group, prefix } of focused) {
+    for (const { group, prefix } of grouping.focused) {
+      const prompt = focusPrompt(prefix, options.finder)
       if (stopped.length === 0) {
         const totals = yield* Effect.orDie(findSpend.totals)
-        if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + GROUP_START_ROOM) stopped = NOT_REVIEWED_BECAUSE.spent
+        if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + firstCallHold(prompt, options.price)) stopped = NOT_REVIEWED_BECAUSE.spent
       }
       if (stopped.length > 0) {
         groupRuns.push({ group, pass: Option.none(), notReviewed: stopped })
         continue
       }
-      const result = yield* find(found.length, focusPrompt(prefix, options.finder), runAs)
-      groupRuns.push({ group, pass: Option.some(PassNumber.make(found.length + 1)), notReviewed: "" })
+      const pass = PassNumber.make(found.length + 1)
+      const result = yield* find(found.length, prompt, runAs)
       found.push(result)
+      const answered = result.calls.some((call) => Option.isSome(call.tokens))
+      groupRuns.push({ group, pass: Option.some(pass), notReviewed: answered ? "" : NOT_REVIEWED_BECAUSE.noCall })
+      if (!answered) stopped = NOT_REVIEWED_BECAUSE.stopped
       yield* record({ passes: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
     }
   } else {
@@ -190,14 +201,19 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const wholePrefix = reviewPrefix(prepared)
   /**
    * A check's prefix: in a focused review, that of the group holding the finding's file, else of the group whose pass
-   * reported it, so the check's request starts with that pass's bytes; else the whole review's.
+   * reported it, so the check's request starts with that pass's bytes; else the whole review's. A check on the prefix
+   * of a group whose pass never answered (not reviewed) has no cache to read, and the report notes it.
    */
-  const prefixOf = (finding: Finding): ReadonlyArray<PromptPart> => {
+  const prefixOf = (finding: Finding, check: CheckNumber): ReadonlyArray<PromptPart> => {
     const reporter = groupRuns.find((one) => Option.contains(one.pass, finding.pass))
-    const holding = focused.find((one) => one.group.paths.includes(finding.path)) ?? focused.find((one) => reporter !== undefined && one.group.number === reporter.group.number)
-    return holding === undefined ? wholePrefix : holding.prefix
+    const holding = grouping.focused.find((one) => one.group.paths.includes(finding.path)) ?? grouping.focused.find((one) => reporter !== undefined && one.group.number === reporter.group.number)
+    if (holding === undefined) return wholePrefix
+    const ran = groupRuns.find((one) => one.group.number === holding.group.number)
+    if (ran === undefined || ran.notReviewed.length > 0) notes.push(uncachedCheckNote(check, holding.group.number))
+    return holding.prefix
   }
   const toCheck = options.verify ? Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER) : []
+  const checkPrefixes = toCheck.map((bucket, index) => prefixOf(bucket.best, CheckNumber.make(index + 1)))
   // What a check keeps back for its closing call when it runs alone (one at a time, or the only one): at most half the
   // verify stage. Checks beside each other keep nothing back, for the reason passes do: under $0.20, three checks each
   // keeping a call's hold (about $0.09 at a long pull request's size) would leave no room for their own calls.
@@ -207,7 +223,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     const stage: ReviewStage = { _tag: "Verify", check }
     return Effect.gen(function* () {
       const result = yield* passes.run({
-        prompt: verifyPrompt(prefixOf(bucket.best), bucket.best),
+        prompt: verifyPrompt(checkPrefixes[index] ?? wholePrefix, bucket.best),
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/check-${check}`),
         options: { maxSteps: options.verifySteps, reserve: checkReserve },
@@ -224,29 +240,38 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   return yield* record({ passes: found, groups: groupRuns, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
 })
 
-/** Whether the commit under review holds a regular `package.json` in `folder` (`""`, the root); a lookup that fails is no. */
+/**
+ * Whether the commit under review holds a regular `package.json` in `folder` (`""`, the root); none when the lookup
+ * failed (logged), which the review notes rather than read as no.
+ */
 const holdsPackage = (repo: RepoName, at: CommitSha, folder: string) => Effect.gen(function* () {
   const checkout = yield* Checkout
   const path = treePath(folder === "" ? "package.json" : `${folder}/package.json`)
-  if (Result.isFailure(path)) return false
-  return (yield* checkout.entry(repo, at, path.success))._tag === "File"
-}).pipe(Effect.catch((error) => Effect.logWarning("a package.json could not be looked up", error).pipe(Effect.as(false))))
+  if (Result.isFailure(path)) return Option.some(false)
+  return Option.some((yield* checkout.entry(repo, at, path.success))._tag === "File")
+}).pipe(Effect.catch((error) => Effect.logWarning("a package.json could not be looked up", error).pipe(Effect.as(Option.none<boolean>()))))
 
 /**
  * A focused review's groups (`policies.group` over the files the verdict kept, given the folders that hold a
- * `package.json` at the commit under review), each with its prefix (`focusPrefix`, its diffs under the preparation's
- * token budget).
+ * `package.json` at the commit under review), in the order `groups.order` says (`orderGroups`), each with its prefix
+ * (`focusPrefix`, its diffs under the preparation's token budget); the files no group holds, with why
+ * (`ungroupedOf`); and a note for each folder whose `package.json` could not be looked up.
  */
 const reviewGroups = (repo: RepoName, prepared: PreparedReview, options: ReviewOptions, policies: ReviewPolicies) => Effect.gen(function* () {
   const left = new Set(prepared.diff.dropped.filter((file) => file.reason !== "over-budget").map((file) => file.path))
   const read = prepared.files.filter((file) => !left.has(file.path))
-  const folders = yield* Effect.filter(packageFoldersToLook(read.map((file) => file.path)), (folder) => holdsPackage(repo, prepared.at.sha, folder), { concurrency: 4 })
-  const groups = policies.group(read, new Set(folders), options.groups.bounds, options.groups.config)
+  const looked = yield* Effect.forEach(packageFoldersToLook(read.map((file) => file.path)), (folder) => Effect.map(holdsPackage(repo, prepared.at.sha, folder), (holds) => ({ folder, holds })), { concurrency: 4 })
+  const roots = new Set(looked.filter((one) => Option.contains(one.holds, true)).map((one) => one.folder))
+  const groups = orderGroups(policies.group(read, roots, options.groups.bounds, options.groups.config), read, options.groups.order)
   const byPath = new Map(read.map((file) => [file.path, file]))
-  return groups.map((group) => ({
-    group,
-    prefix: focusPrefix(prepared, group.paths.flatMap((path) => Option.toArray(Option.fromNullishOr(byPath.get(path)))), options.prepare.budgetTokens),
-  }))
+  return {
+    focused: groups.map((group) => ({
+      group,
+      prefix: focusPrefix(prepared, group.paths.flatMap((path) => Option.toArray(Option.fromNullishOr(byPath.get(path)))), options.prepare.budgetTokens),
+    })),
+    ungrouped: ungroupedOf(read, groups),
+    notes: looked.filter((one) => Option.isNone(one.holds)).map((one) => lookupFailedNote(one.folder)),
+  }
 })
 
 /** How many times a run tries a fresh folder's name before it gives up. */

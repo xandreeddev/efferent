@@ -8,7 +8,7 @@ import { AT_SOURCE_WORDS } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
 import { FINISHED, INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
 import type { PassEnded, PassResult } from "./review-pass.entity.js"
-import type { Focus, GroupRun } from "./file-group.entity.js"
+import type { Focus, GroupRun, UngroupedFile } from "./file-group.entity.js"
 import type { Effort } from "./review-model.entity.js"
 import type { Finder } from "./review-prompt.entity.js"
 import { EVIDENCE_SHOWN, FINDINGS_SHOWN } from "./review-report.entity.js"
@@ -61,6 +61,8 @@ export interface ReportInput {
   readonly focus: Focus
   readonly effort: { readonly find: Effort; readonly check: Effort }
   readonly groups: ReadonlyArray<GroupRun>
+  readonly ungrouped: ReadonlyArray<UngroupedFile>
+  readonly notes: ReadonlyArray<string>
   readonly finder: Finder
   readonly vote: boolean
   readonly verify: boolean
@@ -123,6 +125,8 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     focus: input.focus,
     effort: input.effort,
     groups: input.groups,
+    ungrouped: input.ungrouped,
+    notes: input.notes,
     finder: input.finder,
     vote: input.vote,
     verify: input.verify,
@@ -193,17 +197,26 @@ const notStarted = (report: ReviewReport): ReadonlyArray<string> => {
  * A focused review's groups, one a line: `Group N (<package>, F files): pass P, $C, K findings`, or `…: not reviewed:
  * <why>`; none for a whole review.
  */
-const groupLines = (report: ReviewReport): ReadonlyArray<string> => report.groups.map((run) => {
-  const head = `Group ${run.group.number} (${shownPath(run.group.package)}, ${plural(run.group.paths.length, "file", "files")})`
-  return Option.match(run.pass, {
-    onNone: () => `${head}: not reviewed: ${run.notReviewed}`,
-    onSome: (pass) => {
-      const ran = report.passes.filter((result) => Match.valueTags(result.stage, { Find: (stage) => stage.pass === pass, Verify: () => false }))
-      const found = report.findings.filter((finding) => finding.pass === pass).length
-      return `${head}: pass ${pass}, $${usageOf(ran).cost.toFixed(4)}, ${plural(found, "finding", "findings")}`
-    },
-  })
-})
+const groupLines = (report: ReviewReport): ReadonlyArray<string> => [
+  ...report.groups.map((run) => {
+    const head = `Group ${run.group.number} (${shownPath(run.group.package)}, ${plural(run.group.paths.length, "file", "files")})`
+    return Option.match(run.pass, {
+      onNone: () => `${head}: not reviewed: ${run.notReviewed}`,
+      onSome: (pass) => {
+        if (run.notReviewed.length > 0) return `${head}: pass ${pass}, not reviewed: ${run.notReviewed}`
+        const ran = report.passes.filter((result) => Match.valueTags(result.stage, { Find: (stage) => stage.pass === pass, Verify: () => false }))
+        const found = report.findings.filter((finding) => finding.pass === pass).length
+        return `${head}: pass ${pass}, $${usageOf(ran).cost.toFixed(4)}, ${plural(found, "finding", "findings")}`
+      },
+    })
+  }),
+  ...report.ungrouped.slice(0, UNGROUPED_SHOWN).map((file) => `In no group: ${shownPath(file.path)} (${file.why})`),
+  ...(report.ungrouped.length > UNGROUPED_SHOWN ? [`${report.ungrouped.length - UNGROUPED_SHOWN} more files in no group.`] : []),
+  ...report.notes.map((note) => `Note: ${note}`),
+]
+
+/** The most files in no group the report names; the rest are counted. */
+const UNGROUPED_SHOWN = 10
 
 /** The efforts asked, when either is not the model's default: `; effort: find <e>, check <e>`. */
 const effortText = (report: ReviewReport): string =>

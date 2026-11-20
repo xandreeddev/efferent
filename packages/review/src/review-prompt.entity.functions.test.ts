@@ -3,9 +3,9 @@ import { Option } from "effect"
 import type { FileDiff } from "./diff.entity.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { PreparedReview } from "./prepare-review.entity.js"
-import { FIND_TAIL, REVIEW_PROMPT } from "./review-prompt.entity.js"
+import { FILES_SHOWN, FIND_TAIL, REVIEW_PROMPT } from "./review-prompt.entity.js"
 import { isTestPath } from "./packed-diff.entity.functions.js"
-import { focusPrefix, focusPrompt, nearestFirst, reviewPrefix, reviewPrompt, rulesText, stepCapNote, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
+import { filesText, focusPrefix, focusPrompt, nearestFirst, reviewPrefix, reviewPrompt, rulesText, stepCapNote, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
 import { PREPARED } from "./review-prompt.testing.js"
 
 const PREFIX_USER = [
@@ -71,7 +71,7 @@ const ORDER = [
 
 describe("reviewPrompt", () => {
   test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates pass's tail", () => {
-    expect(REVIEW_PROMPT).toBe("review-prompt-6")
+    expect(REVIEW_PROMPT).toBe("review-prompt-7")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
       tail: [
@@ -121,6 +121,19 @@ describe("reviewPrompt", () => {
     // The second message names every changed file whatever the group, so it is the same for every group and check.
     expect(focusPrefix(PREPARED, [], 24_000)[1]).toEqual(prefix[1])
     expect(verifyPrompt(prefix, { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e", pass: PassNumber.make(1), number: 1 }).prefix).toBe(prefix)
+  })
+
+  test("filesText: past FILES_SHOWN the files a review reads are counted, with their lines", () => {
+    const sum = PREPARED.files.find((file) => file.path === "src/sum.ts")!
+    const more = { ...PREPARED, files: [...PREPARED.files, { ...sum, path: "src/b.ts", additions: 2, deletions: 3 }, { ...sum, path: "src/c.ts", additions: 4, deletions: 0 }] }
+    expect(filesText(more, 1)).toBe([
+      "- src/sum.ts (+1 -1)",
+      "- 2 more files (+6 -3)",
+      "",
+      "Left out of the review:",
+      "- bun.lock changed (+1 -0); no manifest changed",
+    ].join("\n"))
+    expect(FILES_SHOWN).toBe(200)
   })
 
   test("the strict pass's tail, pinned whole", () => {

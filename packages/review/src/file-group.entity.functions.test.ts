@@ -3,7 +3,7 @@ import { Option } from "effect"
 import { estimateTokens } from "@xandreed/sdk"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff } from "./diff.entity.functions.js"
-import { groupFiles, isGrouped, packageFoldersToLook, packageOf, stemOf } from "./file-group.entity.functions.js"
+import { firstCallHold, groupFiles, isGrouped, orderGroups, packageFoldersToLook, packageOf, riskOf, stemOf, ungroupedOf } from "./file-group.entity.functions.js"
 
 /** A modified file whose one hunk adds `added` lines. */
 const file = (path: string, added: number): FileDiff => ({
@@ -27,9 +27,43 @@ describe("the groups of a focused review", () => {
     expect(packageFoldersToLook(["packages/a/src/x.ts", "packages/a/y.ts", "z.ts"])).toEqual(["", "packages", "packages/a", "packages/a/src"])
   })
 
-  test("stemOf and isGrouped: a name to its first dot; source and tests are grouped, config, manifests, pages and docs are not", () => {
+  test("stemOf and isGrouped: a name to its first dot; code is grouped (tests, pages, a docs folder's code and .astro files too), config, manifests and docs are not", () => {
     expect(["src/charge.adapter.test.ts", "a/b/render-feed.adapter.ts", "Makefile"].map(stemOf)).toEqual(["charge", "render-feed", "Makefile"])
-    expect(["src/a.ts", "src/a.test.ts", "package.json", "biome.json", "README.md", "site/pages/x.astro", "docs/x.ts"].map(isGrouped)).toEqual([true, true, false, false, false, false, false])
+    expect(["src/a.ts", "src/a.test.ts", "site/pages/x.astro", "docs/x.ts", "site/pages/api.ts", "package.json", "biome.json", "README.md", "docs/guide.mdx"].map(isGrouped)).toEqual([true, true, true, true, true, false, false, false, false])
+  })
+
+  test("ungroupedOf: each file a review reads that no group holds, with why", () => {
+    const files = [file("src/a.ts", 1), file("package.json", 1), file("biome.json", 1), file("README.md", 1), file("src/b.ts", 1)]
+    const groups = groupFiles(files.slice(0, 1), new Set(), { tokens: 6_000, files: 8 })
+    expect(ungroupedOf(files, groups)).toEqual([
+      { path: "package.json", why: "a manifest or CI file" }, { path: "biome.json", why: "config" }, { path: "README.md", why: "docs" }, { path: "src/b.ts", why: "code no group holds" },
+    ])
+  })
+
+  test("firstCallHold: the prompt's bytes and REQUEST_SLACK_BYTES at the input price, a full answer at the output price", () => {
+    const prompt = { prefix: [{ role: "system" as const, content: "x".repeat(1_000) }, { role: "user" as const, content: "é".repeat(500) }], tail: "y".repeat(1_000) }
+    const price = { input: 0.3, output: 1.2, maxOutputTokens: 4_096, bytesPerToken: 1 }
+    // 1,000 + 1,000 (two bytes a character) + 1,000 + 8,000 bytes.
+    expect(Math.round(firstCallHold(prompt, price) * 1e9)).toBe(Math.round(((11_000 * 0.3) / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
+    expect(Math.round(firstCallHold(prompt, { ...price, bytesPerToken: 4 }) * 1e9)).toBe(Math.round(((2_750 * 0.3) / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
+  })
+
+  test("riskOf: risky added lines of source count four, of a test one, and each source line a hundredth", () => {
+    const lines = (path: string, texts: ReadonlyArray<string>): FileDiff => ({ ...file(path, 0), additions: texts.length, hunks: [{ oldStart: 1, oldCount: 0, newStart: 1, newCount: texts.length, section: "", lines: texts.map((text, at) => ({ _tag: "Added" as const, line: at + 1, text })) }] })
+    expect([
+      riskOf([lines("src/a.ts", ["const ref = yield* Ref.make(0)", "const total = 1", "yield* Effect.forkScoped(run)", "fs.open(path)"])]),
+      riskOf([lines("src/a.test.ts", ["const lock = yield* Semaphore.make(1)", "plain"])]),
+      riskOf([lines("src/b.ts", ["const references = 1", "const umask = 0o22", "TOKEN_LIMIT"])]),
+    ]).toEqual([3 * 4 + 0.04, 1, 4 + 4 + 0.03])
+  })
+
+  test("orderGroups: riskiest first, ties in git's order, renumbered from 1; git keeps the order given", () => {
+    const calm = file("src/calm.ts", 3)
+    const risky = { ...file("src/risky.ts", 1), hunks: [{ oldStart: 1, oldCount: 0, newStart: 1, newCount: 1, section: "", lines: [{ _tag: "Added" as const, line: 1, text: "spawn(process)" }] }] }
+    const tie = file("src/tie.ts", 3)
+    const groups = groupFiles([calm, risky, tie], new Set(), { tokens: 6_000, files: 1 })
+    expect(paths(orderGroups(groups, [calm, risky, tie], "risk"))).toEqual([[1, ".", ["src/risky.ts"]], [2, ".", ["src/calm.ts"]], [3, ".", ["src/tie.ts"]]])
+    expect(paths(orderGroups(groups, [calm, risky, tie], "git"))).toEqual(paths(groups))
   })
 
   test("a package within the bounds is one group, its port and adapter in different folders together; packages in git's order, tests-only groups last", () => {

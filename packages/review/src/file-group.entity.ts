@@ -35,23 +35,51 @@ export const DEFAULT_GROUP_BOUNDS: GroupBounds = { tokens: 6_000, files: 8 }
 export const DEFAULT_GROUP_STEPS = 8
 
 /**
- * One call's hold on a focused request, in USD: what the find stage must have left, neither settled nor held, beside a
- * group's closing reserve for its pass to start. Measured on #644's gold group: its seventh call asked to hold $0.040
- * (a request of about 118 KB at 1 byte a token, and 4,096 tokens of output).
+ * The bytes a request holds beside its prompt's text, for the first call's hold a group must have room for: the six
+ * tools' declarations and the request's own fields (the declarations are about 6 KB).
  */
-export const GROUP_START_ROOM = 0.04
+export const REQUEST_SLACK_BYTES = 8_000
+
+/**
+ * What a model call is held at, for sizing a group's first call before it is sent: the price of input and output per
+ * million tokens, the output cap of a call, and how many bytes of a request count as a token (the ledger's own).
+ */
+export const CallPrice = Schema.Struct({
+  input: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  output: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
+  maxOutputTokens: AtLeastOne,
+  bytesPerToken: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1)),
+})
+export type CallPrice = typeof CallPrice.Type
 
 /**
  * What a focused pass keeps back for its closing call by default, in USD: a focused request's hold with room to spare
- * (`GROUP_START_ROOM`), less than a whole review's `DEFAULT_CLOSING_RESERVE`, sized for 300 KB requests. On #644 the
- * defect was reported on the closing call, after the stage refused the seventh.
+ * (#644's gold group's seventh call asked to hold $0.040, a request of about 118 KB at 1 byte a token), less than a
+ * whole review's `DEFAULT_CLOSING_RESERVE`, sized for 300 KB requests. On #644 the defect was reported on the closing
+ * call, after the stage refused the seventh.
  */
 export const DEFAULT_GROUP_RESERVE = 0.05
 
 /** Why a group was not reviewed, in words. */
 export const NOT_REVIEWED_BECAUSE = {
-  spent: "the find stage's budget had no room for another pass",
+  spent: "the find stage had no room for its first call and its closing reserve",
+  noCall: "its pass ended before any model call answered",
+  stopped: "an earlier group's pass ended before any model call answered, so the find stage stopped",
 } as const
+
+/** The note when a focused review found no file to group (config, CI or docs alone) and reviewed the whole pull request. */
+export const NO_GROUP_NOTE = "No changed file is code a group holds, so the pull request was reviewed whole (--focus whole)."
+
+/**
+ * The order a focused review runs its groups in: by risk (`riskOf`: changed lines on shared state, concurrency,
+ * processes, files, the network and secrets first), or in git's order (`git`).
+ */
+export const GroupOrder = Schema.Literals(["risk", "git"])
+export type GroupOrder = typeof GroupOrder.Type
+
+/** A changed file a focused review gives no pass, and why, in words. */
+export const UngroupedFile = Schema.Struct({ path: Schema.String, why: Schema.String })
+export type UngroupedFile = typeof UngroupedFile.Type
 
 /**
  * How a review's passes read the pull request: each walking the whole of it (`whole`), or one focused pass per group of
@@ -70,8 +98,8 @@ export type Focus = typeof Focus.Type
 export const DEFAULT_FOCUS: Focus = "groups"
 
 /**
- * A group as the review ran it: the group, and the pass that reviewed it, or none, with why it was not reviewed (the
- * find stage's budget spent).
+ * A group as the review ran it: the group, the pass that ran on it (none when none started), and why it was not
+ * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its pass answered at least one call).
  */
 export const GroupRun = Schema.Struct({
   group: FileGroup,
