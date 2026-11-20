@@ -141,12 +141,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the outcome, the reason and a quote of the cited lines),
   `REVIEW_TOOLS_VERSION` `review-tools-4` (`verdict`, each stage's refusal of
   the other's tool, and `reportFinding`'s refusals).
-- `efferent-review review`: a focused pass reads its own group's files whole,
-  leaves the other changed files to their groups' passes, asks for reads that
-  do not depend on each other at once and holds the description's claims
-  against the code (`FOCUS_TAIL`). On four gold groups every pass hit the old
-  8-call cap after reading across the whole pull request; with a 24-call
-  guard (`--group-steps`) every pass ended on its own, after 5 to 17 calls.
+- `efferent-review review`: a focused pass is asked to review its own group's
+  files whole, ask for reads that do not depend on each other at once and
+  hold the description's claims against the code (`FOCUS_TAIL`). On four gold
+  groups every pass hit the old 8-call cap; with a 24-call guard
+  (`--group-steps`) every pass ended on its own, after 5 to 17 calls. Passes
+  still read across the whole pull request whatever their group (on #644, 6
+  of 171 reads were of a pass's own files), which is not fixed here. A
+  bucket's check is shown its most severe finding first (on #644 the gold
+  leak, reported medium, shared a bucket with a low reading whose longer
+  evidence won, and only the low one was checked).
   A pass that answers in words is asked once more to report what it weighed
   and kept to itself (`HARVEST_NOTE`), and only that answer's `reportFinding`
   calls run: on #644's gold group the pass named the defect in its summary

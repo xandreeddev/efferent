@@ -98,11 +98,18 @@ const grouped = (findings: ReadonlyArray<Finding>): ReadonlyArray<Arr.NonEmptyRe
   return groups
 }
 
-/** The finding whose words stand for a group: the longest evidence its file's diff holds, else the first found. */
+/**
+ * The finding whose words stand for a group, the one its check is shown: the most severe (two passes may name two
+ * mechanisms on the same lines, and the check should try the more harmful: on #644 a medium finding of the gold leak
+ * shared a bucket with a low one of another reading, and only the low one, chosen for its longer evidence, was
+ * checked); among those, one whose evidence its file's diff holds, the longest; else the first found.
+ */
 const bestOf = (group: Arr.NonEmptyReadonlyArray<Finding>, file: FileDiff | undefined): Finding => {
   const first = Arr.sort(group, Order.combine(Order.mapInput(Order.Number, (finding: Finding) => finding.pass), Order.mapInput(Order.Number, (finding: Finding) => finding.number)))
-  const matching = first.filter((finding) => evidenceMatches(finding.evidence, file))
-  return matching.reduce((best, finding) => (finding.evidence.length > best.evidence.length ? finding : best), matching[0] ?? first[0])
+  const rank = Math.min(...first.map((finding) => SEVERITY_RANK[finding.severity]))
+  const severest = Arr.filter(first, (finding) => SEVERITY_RANK[finding.severity] === rank)
+  const matching = severest.filter((finding) => evidenceMatches(finding.evidence, file))
+  return matching.reduce((best, finding) => (finding.evidence.length > best.evidence.length ? finding : best), matching[0] ?? severest[0] ?? first[0])
 }
 
 /**

@@ -58,8 +58,9 @@ export type Effort = typeof Effort.Type
  * check that gave its verdict settled about $0.010 (#645, two checks in 13 calls), and one that reasoned four calls
  * without one $0.022 (#595).
  * Focused passes with a 24-call guard and their harvest call settled $0.022 to $0.053 a group (2026-11-20, four gold
- * groups), so the find stage holds about $0.04 for each of a large pull request's 10 to 12 groups ($0.50 in all), and
- * the checks at 12 calls about $0.02 each ($0.30, about twelve with three open at once).
+ * groups), and $0.020 to $0.074 on #644's nine at its first head, where the ninth was refused part-way at $0.50 (holds
+ * grow with every file read whole): the find stage covers about eight or nine groups, a larger pull request's later
+ * ones listed as not reviewed. Its four checks at 12 calls settled $0.099 in all ($0.30 checks about twelve).
  */
 export const DEFAULT_BUDGET = { total: 0.8, find: 0.5, verify: 0.3 } as const
 
