@@ -72,7 +72,8 @@ const folderJournal = (at: string): Layer.Layer<JournalStorage, PassJournalFaile
  * that report (`reportFinding` in a pass, `verdict` in a check); a closing call that fails is said in `StepCap`'s
  * `why`. `onFirstAnswer` is given, once, whether its first call answered (`false` when it ended before one returned);
  * when it is given, the other passes wait on that call, so a failure of it worth another try (`retryable`: a rate
- * limit, a provider's error, a lost connection) is asked once more first.
+ * limit, a provider's error, a lost connection) is asked once more first; so is it with `retryFirstCall` (a focused
+ * group's pass).
  */
 const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Required<KernelPassesOptions>) {
   const own = yield* stageSpend(input.spend, Option.none())
@@ -133,7 +134,7 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       // The call the other passes wait on is asked once more after a failure worth another try (a rate limit, a
       // provider's error, a lost connection): one blip would otherwise end the whole find stage. A failed answer
       // stores nothing, so the second try is the same request; the failed one is a call of its own in the record.
-      const again = Result.isFailure(tried) && step === 1 && input.onFirstAnswer !== undefined && worthAnotherTry(tried.failure)
+      const again = Result.isFailure(tried) && step === 1 && (input.onFirstAnswer !== undefined || input.retryFirstCall === true) && worthAnotherTry(tried.failure)
       if (again) {
         calls.push({ step, tokens: Option.none(), cost: yield* spentSince(before) })
         yield* Effect.logWarning("a review pass's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed"))

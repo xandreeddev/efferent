@@ -4,7 +4,8 @@ import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
 import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
 import type { Focus, GroupRun } from "./file-group.entity.js"
-import { firstCallHold, lookupFailedNote, orderGroups, packageFoldersToLook, uncachedCheckNote, ungroupedOf } from "./file-group.entity.functions.js"
+import { firstCallHold, lookupFailedNote, noCallWhy, orderGroups, packageFoldersToLook, uncachedCheckNote, ungroupedOf } from "./file-group.entity.functions.js"
+import type { PassInput } from "./review-pass.port.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { Finding, Verdict } from "./finding.entity.js"
 import type { PassOptions } from "./review-pass.entity.js"
@@ -143,7 +144,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   // nothing back, since each one's reserve would crowd out the others' calls (three keeping a sixth each end refused).
   const passOptions = { ...options.pass, reserve: options.passes === 1 ? Math.min(options.pass.reserve, options.budget.find / 2) : 0 }
 
-  const find = (index: number, prompt: ReviewPrompt, runAs: PassOptions, onFirstAnswer?: (answered: boolean) => Effect.Effect<void>) => {
+  const find = (index: number, prompt: ReviewPrompt, runAs: PassOptions, first: Pick<PassInput, "onFirstAnswer" | "retryFirstCall"> = {}) => {
     const stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(index + 1) }
     return Effect.gen(function* () {
       return yield* passes.run({
@@ -152,7 +153,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
         journalAt: yield* logs.folder(`${folder}/pass-${index + 1}`),
         options: runAs,
         spend: findSpend,
-        ...(onFirstAnswer === undefined ? {} : { onFirstAnswer }),
+        ...first,
       })
     }).pipe(Effect.catchCause(couldNotRun(stage)))
   }
@@ -162,7 +163,8 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   // nor held, so a pass that starts can always close and report; else it and every group after it are listed as not
   // reviewed. A pass the stage refused does not stop the next: its own reserve, held beside its call, is what crowded it
   // out (on #657 the second group's eighth call was refused with $0.08 of the stage left). A pass none of whose calls
-  // answered reviewed nothing: its group is listed as not reviewed, and the groups after it too. With no group to
+  // answered reviewed nothing: its group is listed as not reviewed, with why; when the stage refused it, the groups
+  // after it too, and after any other failure the next group still runs. With no group to
   // review (a pull request of config, CI or docs alone), the review falls back to the whole focus.
   if (focus === "groups") {
     const runAs: PassOptions = { maxSteps: options.groups.steps, reserve: Math.min(options.groups.reserve, options.budget.find / 2) }
@@ -178,18 +180,20 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
         continue
       }
       const pass = PassNumber.make(found.length + 1)
-      const result = yield* find(found.length, prompt, runAs)
+      // A group's pass asks its first call once more after a failure worth another try, as the first whole pass does.
+      const result = yield* find(found.length, prompt, runAs, { retryFirstCall: true })
       found.push(result)
       const answered = result.calls.some((call) => Option.isSome(call.tokens))
-      groupRuns.push({ group, pass: Option.some(pass), notReviewed: answered ? "" : NOT_REVIEWED_BECAUSE.noCall })
-      if (!answered) stopped = NOT_REVIEWED_BECAUSE.stopped
+      groupRuns.push({ group, pass: Option.some(pass), notReviewed: answered ? "" : noCallWhy(result.ended) })
+      // Only the stage's refusal stops the rest; a group whose pass failed otherwise is lost alone.
+      if (!answered && result.ended._tag === "SpendRefused") stopped = NOT_REVIEWED_BECAUSE.stopped
       yield* record({ passes: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
     }
   } else {
     const firstAnswered = yield* Deferred.make<boolean>()
     const whole = (index: number) => reviewPrompt(prepared, { finder: options.finder, order: orders[index] ?? [] })
     // Whatever becomes of the first pass, the review learns whether it answered; the others start only if it did.
-    const first = yield* Effect.forkChild(find(0, whole(0), passOptions, (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid)).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
+    const first = yield* Effect.forkChild(find(0, whole(0), passOptions, { onFirstAnswer: (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid) }).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
     const answered = yield* Deferred.await(firstAnswered)
     const others = answered ? yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index, whole(index), passOptions), { concurrency: "unbounded" }) : []
     found.push(yield* Fiber.join(first), ...others)

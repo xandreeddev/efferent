@@ -3,7 +3,8 @@ import { Option } from "effect"
 import { estimateTokens } from "@xandreed/sdk"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff } from "./diff.entity.functions.js"
-import { firstCallHold, groupFiles, isGrouped, orderGroups, packageFoldersToLook, packageOf, riskOf, stemOf, ungroupedOf } from "./file-group.entity.functions.js"
+import { REQUEST_SLACK_BYTES } from "./file-group.entity.js"
+import { firstCallBytes, firstCallHold, groupFiles, isGrouped, orderGroups, packageFoldersToLook, packageOf, riskOf, stemOf, ungroupedOf } from "./file-group.entity.functions.js"
 
 /** A modified file whose one hunk adds `added` lines. */
 const file = (path: string, added: number): FileDiff => ({
@@ -40,12 +41,14 @@ describe("the groups of a focused review", () => {
     ])
   })
 
-  test("firstCallHold: the prompt's bytes and REQUEST_SLACK_BYTES at the input price, a full answer at the output price", () => {
-    const prompt = { prefix: [{ role: "system" as const, content: "x".repeat(1_000) }, { role: "user" as const, content: "é".repeat(500) }], tail: "y".repeat(1_000) }
+  test("firstCallBytes and firstCallHold: the messages as JSON, escapes counted, and REQUEST_SLACK_BYTES; at the input price, a full answer at the output price", () => {
+    // A newline-heavy prompt: each line break is two bytes in JSON, each quote two.
+    const prompt = { prefix: [{ role: "system" as const, content: "\n".repeat(1_000) }, { role: "user" as const, content: "\"".repeat(500) }], tail: "é".repeat(500) }
+    const json = new TextEncoder().encode(JSON.stringify({ messages: [...prompt.prefix, { role: "user", content: prompt.tail }] })).length
+    expect([json > 4_000, firstCallBytes(prompt)]).toEqual([true, json + REQUEST_SLACK_BYTES])
     const price = { input: 0.3, output: 1.2, maxOutputTokens: 4_096, bytesPerToken: 1 }
-    // 1,000 + 1,000 (two bytes a character) + 1,000 + 8,000 bytes.
-    expect(Math.round(firstCallHold(prompt, price) * 1e9)).toBe(Math.round(((11_000 * 0.3) / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
-    expect(Math.round(firstCallHold(prompt, { ...price, bytesPerToken: 4 }) * 1e9)).toBe(Math.round(((2_750 * 0.3) / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
+    expect(Math.round(firstCallHold(prompt, price) * 1e9)).toBe(Math.round((((json + 8_000) * 0.3) / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
+    expect(Math.round(firstCallHold(prompt, { ...price, bytesPerToken: 4 }) * 1e9)).toBe(Math.round((((json + 8_000) / 4) * 0.3 / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
   })
 
   test("riskOf: risky added lines of source count four, of a test one, and each source line a hundredth", () => {
@@ -64,6 +67,15 @@ describe("the groups of a focused review", () => {
     const groups = groupFiles([calm, risky, tie], new Set(), { tokens: 6_000, files: 1 })
     expect(paths(orderGroups(groups, [calm, risky, tie], "risk"))).toEqual([[1, ".", ["src/risky.ts"]], [2, ".", ["src/calm.ts"]], [3, ".", ["src/tie.ts"]]])
     expect(paths(orderGroups(groups, [calm, risky, tie], "git"))).toEqual(paths(groups))
+  })
+
+  test("orderGroups: a risky tests-only group runs after every source group, and the config group last", () => {
+    const riskyTest = { ...file("src/z.test.ts", 1), hunks: [{ oldStart: 1, oldCount: 0, newStart: 1, newCount: 1, section: "", lines: [{ _tag: "Added" as const, line: 1, text: "spawn(fork(lock))" }] }] }
+    const calm = file("src/calm.ts", 3)
+    const config = { ...file("ci.yml", 1), hunks: [{ oldStart: 1, oldCount: 0, newStart: 1, newCount: 1, section: "", lines: [{ _tag: "Added" as const, line: 1, text: "secret: token" }] }] }
+    const all = [riskyTest, calm, config]
+    const groups = groupFiles(all, new Set(), { tokens: 6_000, files: 1 }, true)
+    expect(paths(orderGroups(groups, all, "risk"))).toEqual([[1, ".", ["src/calm.ts"]], [2, ".", ["src/z.test.ts"]], [3, ".", ["ci.yml"]]])
   })
 
   test("a package within the bounds is one group, its port and adapter in different folders together; packages in git's order, tests-only groups last", () => {

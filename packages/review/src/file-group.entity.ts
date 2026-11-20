@@ -64,7 +64,7 @@ export const DEFAULT_GROUP_RESERVE = 0.05
 export const NOT_REVIEWED_BECAUSE = {
   spent: "the find stage had no room for its first call and its closing reserve",
   noCall: "its pass ended before any model call answered",
-  stopped: "an earlier group's pass ended before any model call answered, so the find stage stopped",
+  stopped: "the find stage refused an earlier group's pass before any of its calls answered, so it stopped",
 } as const
 
 /** The note when a focused review found no file to group (config, CI or docs alone) and reviewed the whole pull request. */

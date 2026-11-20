@@ -20,6 +20,8 @@ import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review
 import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
 import { withEffort } from "./review-model.entity.functions.js"
+import { REQUEST_SLACK_BYTES } from "./file-group.entity.js"
+import { firstCallBytes } from "./file-group.entity.functions.js"
 import { kernelPasses } from "./review-pass.adapter.js"
 import type { KernelPassesOptions } from "./review-pass.adapter.js"
 import { PassJournalFailed } from "./review-pass.entity.js"
@@ -67,6 +69,8 @@ interface Sent {
   readonly tools: ReadonlyArray<string>
   /** The body's `reasoning` field, as sent (none: absent). */
   readonly reasoning: unknown
+  /** The body's size in bytes, as the ledger counts it. */
+  readonly bytes?: number
 }
 
 /** A request's body, read loosely: the test's own fake wire. */
@@ -81,7 +85,8 @@ const sentOf = (body: unknown): Sent => {
 const endpoint = (script: ReadonlyArray<string | { readonly status: number; readonly body: string }>) => {
   const kept: Array<Sent> = []
   const fetch = Object.assign(async (_input: RequestInfo | URL, init?: RequestInit) => {
-    kept.push(sentOf(JSON.parse(await new Response(init?.body ?? "").text())))
+    const body = await new Response(init?.body ?? "").text()
+    kept.push({ ...sentOf(JSON.parse(body)), bytes: new TextEncoder().encode(body).length })
     const next = script[Math.min(kept.length, script.length) - 1] ?? says("")
     return typeof next === "string"
       ? new Response(next, { status: 200, headers: { "content-type": "text/event-stream" } })
@@ -103,6 +108,8 @@ interface PassOptionsForTest {
   readonly waitedOn?: boolean
   /** The prompt, `PROMPT` by default. */
   readonly prompt?: { readonly prefix: ReadonlyArray<{ readonly role: "system" | "user"; readonly content: string }>; readonly tail: string }
+  /** Whether the input asks its first call once more after a failure worth another try without `onFirstAnswer`. */
+  readonly retryFirstCall?: boolean
 }
 
 const testModel = (options: PassOptionsForTest) =>
@@ -126,6 +133,7 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
       journalAt,
       options: { maxSteps: options.maxSteps ?? 16, reserve: options.reserve ?? 0 },
       spend,
+      ...(options.retryFirstCall === undefined ? {} : { retryFirstCall: options.retryFirstCall }),
       ...(options.waitedOn === false ? {} : {
         onFirstAnswer: (answered: boolean) => Effect.sync(() => {
           signals.push([answered, kept.length])
@@ -210,6 +218,22 @@ describe("a pass over the kernel", () => {
     expect([twice.result.ended._tag, twice.signals, twice.sent.length]).toEqual(["ModelFailed", [[false, 2]], 2])
     expect([refused.result.ended._tag, refused.signals, refused.sent.length]).toEqual(["ModelFailed", [[false, 1]], 1])
     expect([alone.result.ended._tag, alone.sent.length]).toEqual(["ModelFailed", 1])
+  })
+
+  test("a focused group's pass (retryFirstCall, no one waiting) asks its first call once more after a 503, and not after a 400", async () => {
+    const unavailable = { status: 503, body: JSON.stringify({ error: { message: "the provider is overloaded" } }) }
+    const refusedCall = { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }
+    const blip = await pass([unavailable, says("Done.")], { waitedOn: false, retryFirstCall: true })
+    const refused = await pass([refusedCall, says("Done.")], { waitedOn: false, retryFirstCall: true })
+    expect([blip.result.ended._tag, blip.sent.length, refused.result.ended._tag, refused.sent.length]).toEqual(["Answered", 2, "ModelFailed", 1])
+  })
+
+  test("firstCallBytes counts at least the first request's body the ledger holds on, for a newline- and quote-heavy prompt", async () => {
+    const prompt = { prefix: [{ role: "system" as const, content: "The system text." }, { role: "user" as const, content: `${"a line\n".repeat(4_000)}${"\"q\" ".repeat(2_000)}` }], tail: "Review it." }
+    const ran = await pass([says("Done.")], { prompt, waitedOn: false })
+    const sent = ran.kept[0]?.bytes ?? 0
+    // Within the slack it keeps for the tools: never under the body, and not far over it.
+    expect([sent > 40_000, firstCallBytes(prompt) >= sent, firstCallBytes(prompt) - sent < REQUEST_SLACK_BYTES]).toEqual([true, true, true])
   })
 
   test("a spend refusal mid-pass, with a reserve kept back from the start: the reserve released, the host's note, and the closing call's finding kept", async () => {

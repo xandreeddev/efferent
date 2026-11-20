@@ -1,8 +1,9 @@
-import { Array as Arr, Option, Order } from "effect"
-import { estimateTokens } from "@xandreed/sdk"
+import { Array as Arr, Option, Order, Predicate } from "effect"
+import { clipTo, estimateTokens } from "@xandreed/sdk"
+import type { PassEnded } from "./review-pass.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
-import { GroupNumber, REQUEST_SLACK_BYTES } from "./file-group.entity.js"
+import { GroupNumber, NOT_REVIEWED_BECAUSE, REQUEST_SLACK_BYTES } from "./file-group.entity.js"
 import type { CallPrice, FileGroup, GroupBounds, GroupOrder, UngroupedFile } from "./file-group.entity.js"
 import { fileKind, isTestPath } from "./packed-diff.entity.functions.js"
 import type { FileKind } from "./packed-diff.entity.js"
@@ -40,6 +41,13 @@ export const isGrouped = (path: string): boolean => fileKind(path) === "code"
 export const lookupFailedNote = (folder: string): string =>
   `The package.json of ${folder === "" ? "the root" : shownPath(folder)} could not be looked up, so its files were grouped as if it held none.`
 
+/**
+ * Why a group whose pass answered no call was not reviewed: `NOT_REVIEWED_BECAUSE.noCall`, then how the pass ended,
+ * in its failure's words (cut at 200 characters) or its tag.
+ */
+export const noCallWhy = (ended: PassEnded): string =>
+  `${NOT_REVIEWED_BECAUSE.noCall}: ${Predicate.hasProperty(ended, "message") && Predicate.isString(ended.message) && ended.message.length > 0 ? clipTo(ended.message, 200) : ended._tag}`
+
 /** The note for a check run on the prefix of a group whose pass never answered: no cache to read. */
 export const uncachedCheckNote = (check: number, group: number): string =>
   `Check ${check} ran on the prefix of group ${group}, whose pass never answered, so it had no cache to read.`
@@ -61,15 +69,19 @@ export const ungroupedOf = (files: ReadonlyArray<FileDiff>, groups: ReadonlyArra
 }
 
 /**
- * What a group's first call is held at before it is sent, in USD: its prompt's bytes (the prefix's and the tail's text,
- * and `REQUEST_SLACK_BYTES` for the tools' declarations) as tokens at `bytesPerToken`, at the input price, and a full
- * answer (`maxOutputTokens`) at the output price.
+ * The bytes of a group's first request as the ledger counts them (the request's body, UTF-8): its messages encoded as
+ * JSON (the prefix, then the tail as a user message: JSON's escaping of line breaks and quotes counted), and
+ * `REQUEST_SLACK_BYTES` for the tools' declarations and the request's other fields.
  */
-export const firstCallHold = (prompt: ReviewPrompt, price: CallPrice): number => {
-  const encoder = new TextEncoder()
-  const bytes = [...prompt.prefix.map((part) => part.content), prompt.tail].reduce((sum, text) => sum + encoder.encode(text).length, REQUEST_SLACK_BYTES)
-  return (bytes / price.bytesPerToken) * (price.input / 1e6) + price.maxOutputTokens * (price.output / 1e6)
-}
+export const firstCallBytes = (prompt: ReviewPrompt): number =>
+  new TextEncoder().encode(JSON.stringify({ messages: [...prompt.prefix, { role: "user", content: prompt.tail }] })).length + REQUEST_SLACK_BYTES
+
+/**
+ * What a group's first call is held at before it is sent, in USD: its request's bytes (`firstCallBytes`) as tokens at
+ * `bytesPerToken`, at the input price, and a full answer (`maxOutputTokens`) at the output price.
+ */
+export const firstCallHold = (prompt: ReviewPrompt, price: CallPrice): number =>
+  (firstCallBytes(prompt) / price.bytesPerToken) * (price.input / 1e6) + price.maxOutputTokens * (price.output / 1e6)
 
 /** Words on an added line that mark shared state, concurrency, processes, files, the network or secrets: `RISKY_CASED` as written, `RISKY_ANY` in any case. */
 const RISKY_CASED = /\b(Ref|Semaphore|Deferred|Queue|PubSub|Fiber)\b/
@@ -90,13 +102,21 @@ export const riskOf = (files: ReadonlyArray<FileDiff>): number =>
   files.reduce((sum, file) => sum + (isTestPath(file.path) ? riskyLines(file) : 4 * riskyLines(file) + addedLines(file) / 100), 0)
 
 /**
- * The groups in the order a focused review runs them, renumbered from 1: highest `riskOf` first, ties in the order
- * given (git's), with `risk`; as given with `git`.
+ * The groups in the order a focused review runs them, renumbered from 1. With `risk`: the groups holding source first,
+ * then those of tests alone, then the config group (`--config-pass`, files no code group holds), each highest
+ * `riskOf` first, ties in the order given (git's); with `git`, as given.
  */
 export const orderGroups = (groups: ReadonlyArray<FileGroup>, files: ReadonlyArray<FileDiff>, order: GroupOrder): ReadonlyArray<FileGroup> => {
   const byPath = new Map(files.map((file) => [file.path, file]))
   const risk = new Map(groups.map((group) => [group, riskOf(group.paths.flatMap((path) => Option.toArray(Option.fromNullishOr(byPath.get(path)))))]))
-  const ordered = order === "git" ? groups : Arr.sort(groups, Order.mapInput(Order.flip(Order.Number), (group: FileGroup) => risk.get(group) ?? 0))
+  const tier = (group: FileGroup): number => {
+    if (!group.paths.some(isGrouped)) return 2
+    return group.paths.some((path) => !isTestPath(path)) ? 0 : 1
+  }
+  const ordered = order === "git" ? groups : Arr.sort(groups, Order.combine(
+    Order.mapInput(Order.Number, tier),
+    Order.mapInput(Order.flip(Order.Number), (group: FileGroup) => risk.get(group) ?? 0),
+  ))
   return ordered.map((group, index) => ({ ...group, number: GroupNumber.make(index + 1) }))
 }
 
@@ -113,7 +133,7 @@ interface Unit {
  * source of its stem), filled in order into groups up to `bounds`, a unit too large for one cut into its files, a file
  * over the bounds a group alone. The groups with source come first, then those of tests alone, each in the order of its
  * first file; numbered from 1. With `config`, the other files a review reads but docs make one group more, last,
- * whatever its size.
+ * whatever its size. `orderGroups` then orders them to run (by risk within the same tiers, or as given).
  */
 export const groupFiles = (files: ReadonlyArray<FileDiff>, roots: ReadonlySet<string>, bounds: GroupBounds, config = false): ReadonlyArray<FileGroup> => {
   const tokensOf = new Map(files.map((file) => [file, Number(estimateTokens(renderDiff([file])))]))

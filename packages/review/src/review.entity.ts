@@ -37,8 +37,9 @@ export type GroupOptions = typeof GroupOptions.Type
 
 /**
  * The stock focused review: `DEFAULT_GROUP_BOUNDS`, `DEFAULT_GROUP_STEPS` calls a pass, `DEFAULT_GROUP_RESERVE` kept
- * back, riskiest first (on the 36 tuning gold cases the first group holding a gold file came at 5.7 on average, against
- * 8.4 in git's order, and within the first seven in 27 against 26), no config pass.
+ * back, riskiest first among the source groups, then the tests' (on the 36 tuning gold cases the first group holding a
+ * gold file came at 5.2 on average, against 8.4 in git's order, and within the first seven in 28 against 26), no
+ * config pass.
  */
 export const DEFAULT_GROUP_OPTIONS: GroupOptions = { bounds: DEFAULT_GROUP_BOUNDS, steps: DEFAULT_GROUP_STEPS, reserve: DEFAULT_GROUP_RESERVE, order: "risk", config: false }
 

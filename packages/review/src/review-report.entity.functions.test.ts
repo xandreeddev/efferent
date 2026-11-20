@@ -2,7 +2,7 @@ import { describe, expect, test } from "bun:test"
 import { Option } from "effect"
 import { SessionId } from "@xandreed/core"
 import { GroupNumber, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
-import { lookupFailedNote } from "./file-group.entity.functions.js"
+import { lookupFailedNote, noCallWhy } from "./file-group.entity.functions.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
 import type { PassResult } from "./review-pass.entity.js"
@@ -146,7 +146,7 @@ describe("the review's report", () => {
       groups: [
         { group: group(1, ["src/a.ts", "src/a.test.ts"]), pass: Option.some(PassNumber.make(1)), notReviewed: "" },
         { group: group(2, ["src/sum.ts"]), pass: Option.some(PassNumber.make(2)), notReviewed: "" },
-        { group: group(3, ["src/y.ts"]), pass: Option.some(PassNumber.make(3)), notReviewed: NOT_REVIEWED_BECAUSE.noCall },
+        { group: group(3, ["src/y.ts"]), pass: Option.some(PassNumber.make(3)), notReviewed: noCallWhy({ _tag: "SpendRefused", message: "the cap of 0.3 refused 0.04" }) },
         { group: group(4, ["src/z.ts"]), pass: Option.none(), notReviewed: NOT_REVIEWED_BECAUSE.stopped },
         { group: group(5, ["src/x.ts"]), pass: Option.none(), notReviewed: NOT_REVIEWED_BECAUSE.spent },
       ],
@@ -159,8 +159,8 @@ describe("the review's report", () => {
       "Pass 2: incomplete: the pass reached its step cap (16); Two more.",
       "Group 1 (packages/app, 2 files): pass 1, $0.0109, 10 findings",
       "Group 2 (packages/app, 1 file): pass 2, $0.0019, 0 findings",
-      "Group 3 (packages/app, 1 file): pass 3, not reviewed: its pass ended before any model call answered",
-      "Group 4 (packages/app, 1 file): not reviewed: an earlier group's pass ended before any model call answered, so the find stage stopped",
+      "Group 3 (packages/app, 1 file): pass 3, not reviewed: its pass ended before any model call answered: the cap of 0.3 refused 0.04",
+      "Group 4 (packages/app, 1 file): not reviewed: the find stage refused an earlier group's pass before any of its calls answered, so it stopped",
       "Group 5 (packages/app, 1 file): not reviewed: the find stage had no room for its first call and its closing reserve",
       "In no group: package.json (a manifest or CI file)",
       "In no group: README.md (docs)",

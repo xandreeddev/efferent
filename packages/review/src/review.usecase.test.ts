@@ -267,11 +267,22 @@ describe("reviewPullRequest", () => {
     ])
   })
 
-  test("focused: a pass none of whose calls answered (refused at its first call) reviewed nothing, and stops the groups after it", async () => {
+  test("focused: a pass the stage refused before any call answered reviewed nothing, and stops the groups after it; each group's pass retries its first call", async () => {
     const { started, layer } = charging(0, { _tag: "SpendRefused", message: "the stage's cap refused the first call" }, false)
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, groups: ONE_A_GROUP })
     expect<unknown>([started.length, report.groups.map((run) => [Option.isSome(run.pass), run.notReviewed])]).toEqual([
-      1, report.groups.map((_, index) => (index === 0 ? [true, NOT_REVIEWED_BECAUSE.noCall] : [false, NOT_REVIEWED_BECAUSE.stopped])),
+      1, report.groups.map((_, index) => (index === 0 ? [true, `${NOT_REVIEWED_BECAUSE.noCall}: the stage's cap refused the first call`] : [false, NOT_REVIEWED_BECAUSE.stopped])),
+    ])
+    const { asked, layer: told } = scripted("q")
+    await reviewWith(told, { ...REVIEW_OPTIONS, focus: "groups", verify: false })
+    expect(asked.every((input) => input.retryFirstCall === true && input.onFirstAnswer === undefined)).toBe(true)
+  })
+
+  test("focused: a pass that failed otherwise before any call answered (a provider's error twice) loses its group alone; the next group runs", async () => {
+    const { started, layer } = charging(0, { _tag: "ModelFailed", message: "the provider is overloaded" }, false)
+    const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, groups: ONE_A_GROUP })
+    expect<unknown>([report.groups.length > 1, started.length, report.groups.map((run) => [Option.isSome(run.pass), run.notReviewed])]).toEqual([
+      true, report.groups.length, report.groups.map(() => [true, `${NOT_REVIEWED_BECAUSE.noCall}: the provider is overloaded`]),
     ])
   })
 
@@ -317,7 +328,7 @@ describe("reviewPullRequest", () => {
       })
     }))
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups" })
-    expect<unknown>([report.groups.map((run) => run.notReviewed), report.verdicts.length, report.notes]).toEqual([[NOT_REVIEWED_BECAUSE.noCall], 1, [uncachedCheckNote(1, 1)]])
+    expect<unknown>([report.groups.map((run) => run.notReviewed), report.verdicts.length, report.notes]).toEqual([[`${NOT_REVIEWED_BECAUSE.noCall}: no answer`], 1, [uncachedCheckNote(1, 1)]])
   })
 
   test("focused, with no file to group: the review falls back to the whole focus and says so", async () => {
