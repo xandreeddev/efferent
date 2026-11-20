@@ -94,7 +94,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   the check's reason, and each stage's calls, tokens and cost. Every stage is
   offered the same six tools, since a changed tool list or `tool_choice: none`
   loses the gateway's prompt cache (measured: 16,384 cached tokens to 0). A
-  pass keeps $0.10 back from its start, and at its step cap, or when a later
+  lone pass keeps $0.10 back from its start, and at its step cap, or when a later
   call is refused, releases it, stores a host note and asks once more,
   running only its reporting calls. Each stage has a budget inside
   `--max-cost` ($0.50: `--find-cost` $0.30, `--verify-cost` $0.20), and a
