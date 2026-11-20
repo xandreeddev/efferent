@@ -14,12 +14,6 @@ export const LOCKFILES: ReadonlyArray<readonly [string, Manager]> = [
   ["npm-shrinkwrap.json", "npm"],
 ]
 
-/**
- * The files that say where packages come from and how they are fetched: a head that changes one installs with a
- * package cache of its own, thrown away after, and they are part of a snapshot's key.
- */
-export const REGISTRY_CONFIG = [".npmrc", "bunfig.toml", ".yarnrc", ".yarnrc.yml", ".pnpmfile.cjs", "pnpm-workspace.yaml"] as const
-
 /** The scripts of `package.json` taken as checks when they exist. */
 export const CHECK_SCRIPTS = ["typecheck", "type-check", "lint", "test", "check"] as const
 
@@ -29,10 +23,11 @@ export const INSTRUCTION_FILES = ["AGENTS.md", "CLAUDE.md"] as const
 /**
  * How a repository installs: its manager, its lockfile, and the command that installs from it with no script of the
  * repository's run (`--ignore-scripts`, or yarn berry's `--mode=skip-build`), the lockfile frozen, packages copied
- * (never hard-linked) from the bot's cache at `/cache`. `Refused` says why it is not installed at all.
+ * (never hard-linked) from the bot's cache at `/cache`; and the command that says the manager's version, for a
+ * snapshot's key. `Refused` says why it is not installed at all.
  */
 export const ManagerChoice = Schema.Union([
-  Schema.TaggedStruct("Chosen", { manager: Manager, lockfile: Schema.String, install: Schema.String, run: Schema.String }),
+  Schema.TaggedStruct("Chosen", { manager: Manager, lockfile: Schema.String, install: Schema.String, run: Schema.String, version: Schema.String }),
   Schema.TaggedStruct("Refused", { reason: Schema.String }),
 ])
 export type ManagerChoice = typeof ManagerChoice.Type

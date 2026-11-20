@@ -11,7 +11,7 @@ import { CommandFailed } from "./host-command.entity.js"
 import { runWhole } from "./host-shell.adapter.js"
 import type { HostShell } from "./host-shell.port.js"
 import { CommitSha } from "./pull-request.entity.js"
-import type { HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
+import type { BranchName, HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
 import { plainText } from "./log-digest.entity.functions.js"
 import { clipTo } from "@xandreed/sdk"
 
@@ -150,6 +150,12 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     )
   }, provided)
 
+  const onBranch = Effect.fn("checkout.on_branch")(function* (repo: RepoName, sha: CommitSha, branch: BranchName) {
+    yield* runWhole(git(repo, "fetch", "--quiet", "--no-tags", "origin", `+refs/heads/${branch}:refs/heads/${branch}`))
+    const ancestor = yield* runWhole(git(repo, "merge-base", "--is-ancestor", sha, `refs/heads/${branch}`), { exits: [0, 1] })
+    return ancestor.code === 0
+  }, provided)
+
   const changedPaths = Effect.fn("checkout.changed_paths")(function* (repo: RepoName, from: CommitSha, to: CommitSha) {
     const listed = yield* runWhole(git(repo, "-c", "core.quotePath=false", "diff", "--no-ext-diff", "--no-textconv", "--name-only", "-z", "-M", `${from}...${to}`))
     return listed.stdout.split("\0").filter((path) => path.length > 0)
@@ -168,5 +174,5 @@ export const gitCheckout = (options: GitCheckoutOptions): Layer.Layer<Checkout, 
     return path
   }, provided)
 
-  return Checkout.of({ fetch, diff, show, worktree, clone, entry, blob, files, grep, mergeBase, changedPaths })
+  return Checkout.of({ fetch, diff, show, worktree, clone, entry, blob, files, grep, mergeBase, changedPaths, onBranch })
 }))

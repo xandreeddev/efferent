@@ -105,7 +105,11 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       onSome: (reason) => Effect.succeed<Validation>({ _tag: "Skipped", reason }),
       onNone: () => Option.match(validations, {
         onNone: () => Effect.succeed<Validation>({ _tag: "Skipped", reason: "no-sandbox" }),
-        onSome: (service) => service.run({
+        onSome: (service) => Effect.gen(function* () {
+          // Only a base on the default branch, as the forge names it and the remote has it now, is installed.
+          const trusted = yield* checkout.onBranch(repo, at.base, yield* forge.defaultBranch(repo))
+          if (!trusted) return { _tag: "Skipped", reason: "untrusted-base" } satisfies Validation
+          return yield* service.run({
           repo,
           base: at.base,
           head: at.sha,
@@ -116,6 +120,7 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
           logFolder: folder,
           commandTimeoutMs: options.timeoutMs,
           budgetMs: options.budgetMs,
+          })
         }),
       }),
     })

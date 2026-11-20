@@ -14,7 +14,7 @@ import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import { CommandFailed } from "./host-command.entity.js"
 import { summaryText } from "./prepare-review.entity.functions.js"
 import { prepareReview } from "./prepare-review.usecase.js"
-import { PullRequest, RepoName } from "./pull-request.entity.js"
+import { BranchName, PullRequest, RepoName } from "./pull-request.entity.js"
 import type { Permission, PullNumber } from "./pull-request.entity.js"
 import { directoryLogs } from "./review-logs.adapter.js"
 import type { ValidationRequest, ValidationRun } from "./validations.entity.js"
@@ -39,7 +39,8 @@ const run = (id: number, conclusion: string): CiRun => ({
 
 const FAILED_LOG = ["ci\tRun tests\t2026-11-19T11:47:00.5Z error: expect(received).toBe(expected)", "ci\tRun tests\t2026-11-19T11:47:00.6Z       at <anonymous> (/runner/work/project/src/sum.ts:4:3)", "ci\tRun tests\t2026-11-19T11:47:00.7Z  1 fail"].join("\n")
 
-const forgeOf = (pull: PullRequest) => Layer.succeed(Forge, Forge.of({
+const forgeOf = (pull: PullRequest, defaultBranch = "main") => Layer.succeed(Forge, Forge.of({
+  defaultBranch: () => Effect.succeed(BranchName.make(defaultBranch)),
   pullRequest: (_repo: RepoName, _number: PullNumber) => Effect.succeed(pull),
   firstHead: () => Effect.succeed({ sha: pull.head.sha, source: "first-commit" as const }),
   ciRuns: () => Effect.succeed([run(11, "failure"), run(12, "success"), run(13, "timed_out"), run(14, "failure")]),
@@ -80,9 +81,9 @@ const worktrees = () => ["worktrees", "clones"].flatMap((name) => {
   return existsSync(folder) ? readdirSync(folder) : []
 })
 
-const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox = true, policies: ReviewPolicies = STOCK_POLICIES) => {
+const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox = true, policies: ReviewPolicies = STOCK_POLICIES, defaultBranch = "main") => {
   const validations = validationsStub()
-  const base = Layer.mergeAll(forgeOf(pull), gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot))
+  const base = Layer.mergeAll(forgeOf(pull, defaultBranch), gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot))
     .pipe(Layer.provide(hostShell({ cwd: fixture.root, env: fixture.env })))
   const program = prepareReview(repo, pull.number, options, policies)
   const run = sandbox ? program.pipe(Effect.provide(Layer.merge(base, validations.layer))) : program.pipe(Effect.provide(base))
@@ -90,6 +91,11 @@ const prepared = (pull: PullRequest, options: PrepareOptions = OPTIONS, sandbox 
 }
 
 describe("prepareReview", () => {
+  test("a base that is not on the repository's default branch runs nothing: no install, no snapshot, no verdict", async () => {
+    const { review, asked } = await prepared(pullOf(true, "write"), OPTIONS, true, STOCK_POLICIES, "fix-sum")
+    expect([review.validation, asked.length]).toEqual([{ _tag: "Skipped", reason: "untrusted-base" }, 0])
+  })
+
   test("a same-repository writer's pull request: the diff packed, the base's rules, the failed CI digested, the commands run at the head", async () => {
     const { review, asked } = await prepared(pullOf(true, "write"))
     // Code, the most lines changed first, then docs: a file that only loses lines is kept; the rules file the head rewrote is docs, last.

@@ -4,9 +4,9 @@ import { Checkout } from "./checkout.port.js"
 import type { LogDigest } from "./log-digest.entity.js"
 import { digestLog } from "./log-digest.entity.functions.js"
 import type { CommitSha } from "./pull-request.entity.js"
-import { INSTRUCTION_FILES, LOCKFILES, REGISTRY_CONFIG } from "./repo-profile.entity.js"
-import type { Candidate, Manager } from "./repo-profile.entity.js"
-import { managerOf, profileOf } from "./repo-profile.entity.functions.js"
+import { INSTRUCTION_FILES, LOCKFILES } from "./repo-profile.entity.js"
+import type { Candidate } from "./repo-profile.entity.js"
+import { dependencyPaths, managerOf, profileOf, sameFiles } from "./repo-profile.entity.functions.js"
 import type { SnapshotKey } from "./review-cache.entity.js"
 import { ReviewCache } from "./review-cache.port.js"
 import { ReviewLogs } from "./review-logs.port.js"
@@ -20,21 +20,21 @@ const LEAST_MS = 1_000
 
 /** How a command of a clone's run came out: it ran, with its digest and whether it passed, or it did not, with why. */
 type Outcome =
-  | { readonly _tag: "Ran"; readonly command: string; readonly digest: LogDigest; readonly passed: boolean; readonly timedOut: boolean }
+  | { readonly _tag: "Ran"; readonly command: string; readonly digest: LogDigest; readonly passed: boolean }
   | { readonly _tag: "Unrun"; readonly command: string; readonly reason: string }
 
 /**
- * Run a pull request's commands, each phase in a sandbox of its own over a throwaway clone (`Checkout.clone`, made
- * before any sandbox writes to it, and never touched by host git after): the manager chosen from the base's lockfile
- * (`managerOf`); the profile (`profileOf`: the base's definition of done and check scripts with `profile`, and the
- * commands given by hand), each command with no verdict yet asked on a clone of the base and kept only when it exits
- * 0 there, the verdict kept in the cache (a pass or a timeout for every base with the lockfile, any other failure for
- * this base alone, so a flaky failure is asked again once main moves); then the head's clone installed and every kept
- * command run on it. Each clone installs first, the network shared and the bot's package cache bound (one of its own,
- * thrown away, for a head that changes the registry's config), with no script of the repository's; or restores a
- * snapshot of the base's `node_modules` kept under the same files; then runs its commands with no network, one after
- * another, under `allowOnly`, each with the command's time or what is left of the clone's budget. Every log is kept
- * whole and digested.
+ * Run a pull request's commands, its base trusted (on the repository's default branch, which `prepareReview` checks),
+ * each phase in a sandbox of its own over a throwaway clone (`Checkout.clone`, made before any sandbox writes to it,
+ * and never touched by host git after). The manager is chosen from the base's lockfile (`managerOf`). The head is
+ * validated only when its dependency files (every lockfile and every `package.json` of the tree) are byte for byte the
+ * base's; otherwise nothing runs (`depsChanged`): a pull request's head never installs. Only the base installs, with
+ * the network shared, the bot's package cache bound and no script of the repository's, every program by its absolute
+ * path; its `node_modules` is kept as a snapshot under the base's commit, the files and the manager's version, and the
+ * head restores it with no network. The profile (`profileOf`) is asked on the base, each command with no verdict for
+ * this base yet kept only when it exits 0 there, the verdict kept for this base alone; then every kept command runs on
+ * the head with no network, one after another, under `allowOnly`, each with the command's time or what is left of the
+ * clone's budget. Every log is kept whole and digested.
  */
 export const validate = Effect.fn("review.validate")(function* (request: ValidationRequest) {
   const checkout = yield* Checkout
@@ -48,12 +48,17 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
   const lockfiles = (yield* Effect.forEach(LOCKFILES, ([file]) => Effect.map(showAt(request.base, file), (text) => Option.isSome(text) ? [file] : []), { concurrency: 1 })).flat()
   const choice = managerOf({ lockfiles, packageJson, yarnrc }, request.changedPaths, sandboxes.tools)
   if (choice._tag === "Refused") return { _tag: "Refused", reason: choice.reason } satisfies ValidationRun
+
+  const dependencies = (at: CommitSha) => Effect.gen(function* () {
+    const paths = dependencyPaths(yield* checkout.files(repo, at))
+    return (yield* Effect.forEach(paths, (path) => Effect.map(showAt(at, path), (text) => Option.toArray(Option.map(text, (body) => ({ path, text: body })))), { concurrency: 4 })).flat()
+  })
+  const baseFiles = yield* dependencies(request.base)
+  if (!sameFiles(baseFiles, yield* dependencies(request.head))) return { _tag: "Refused", reason: UNRUN_BECAUSE.depsChanged } satisfies ValidationRun
+
   const instructions = request.profile ? (yield* Effect.forEach(INSTRUCTION_FILES, (path) => showAt(request.base, path), { concurrency: 1 })).flatMap(Option.toArray) : []
   const candidates = profileOf({ run: choice.run, packageJson, instructions, profile: request.profile, byHand: request.run })
-  const lockfile = Option.getOrElse(yield* showAt(request.base, choice.lockfile), () => "")
-  /** A pass or a timeout holds for every base with this lockfile; any other failure for this base alone. */
-  const anyBase = (command: string) => ({ repo, lockfile, command, base: "" })
-  const thisBase = (command: string) => ({ repo, lockfile, command, base: request.base })
+  const verdictKey = (command: string) => ({ repo, base: request.base, command })
 
   const keep = (name: string, command: string, ran: Ran) => Effect.gen(function* () {
     const text = logText(ran)
@@ -63,25 +68,33 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
     return digest
   })
 
-  /** A clone's install, or the snapshot restored in its place: its digest and whether it passed. */
-  const install = (dir: string, at: CommitSha, side: "base" | "head", manager: Manager, timeoutMs: number) => Effect.gen(function* () {
-    const files = (yield* Effect.forEach([choice.lockfile, "package.json", ...REGISTRY_CONFIG], (path) => Effect.map(showAt(at, path), (text) => Option.toArray(Option.map(text, (body) => ({ path, text: body })))), { concurrency: 1 })).flat()
-    const key: SnapshotKey = { repo, manager, files }
+  /** The manager's version, asked in an empty sandbox with no network, for the snapshot's key. */
+  const version = yield* Effect.scoped(Effect.gen(function* () {
+    const shell = yield* sandboxes.shell({ workDir: yield* cache.scratch(repo), network: false, repoBins: false, binds: [] })
+    const ran = yield* shell.run({ command: choice.version, timeoutMs: 30_000 })
+    return passed(ran) ? ran.stdout.trim() : "unknown"
+  }))
+  const key: SnapshotKey = { repo, base: request.base, manager: choice.manager, version, files: baseFiles }
+
+  /** Put the base's `node_modules` in a clone: restore the snapshot, with no network; none, nothing restored. */
+  const restore = (dir: string, side: "base" | "head", timeoutMs: number) => Effect.gen(function* () {
     const saved = yield* cache.snapshot(key)
-    if (Option.isSome(saved)) {
-      const restorer = yield* sandboxes.shell({ workDir: dir, network: false, binds: [{ host: saved.value, inner: "/snapshot", writable: false }] })
-      const ran = yield* restorer.run({ command: RESTORE_SNAPSHOT, timeoutMs })
-      return { digest: yield* keep(`${side}-install.log`, RESTORE_SNAPSHOT, ran), passed: passed(ran) }
-    }
-    const ownCache = side === "head" && request.changedPaths.some((path) => (REGISTRY_CONFIG as ReadonlyArray<string>).includes(path))
-    const packages = ownCache ? yield* cache.scratch(repo) : yield* cache.packages(repo, manager)
-    const installer = yield* sandboxes.shell({ workDir: dir, network: true, binds: [{ host: packages, inner: "/cache", writable: true }] })
+    if (Option.isNone(saved)) return Option.none<{ readonly digest: LogDigest; readonly passed: boolean }>()
+    const restorer = yield* sandboxes.shell({ workDir: dir, network: false, repoBins: false, binds: [{ host: saved.value, inner: "/snapshot", writable: false }] })
+    const ran = yield* restorer.run({ command: RESTORE_SNAPSHOT, timeoutMs })
+    return Option.some({ digest: yield* keep(`${side}-restore.log`, RESTORE_SNAPSHOT, ran), passed: passed(ran) })
+  })
+
+  /** The base's install, the only one with the network, and its snapshot saved. */
+  const installBase = (dir: string, timeoutMs: number) => Effect.gen(function* () {
+    const packages = yield* cache.packages(repo, choice.manager)
+    const installer = yield* sandboxes.shell({ workDir: dir, network: true, repoBins: false, binds: [{ host: packages, inner: "/cache", writable: true }] })
     const ran = yield* installer.run({ command: choice.install, timeoutMs })
-    const digest = yield* keep(`${side}-install.log`, choice.install, ran)
-    if (passed(ran) && side === "base") {
+    const digest = yield* keep("base-install.log", choice.install, ran)
+    if (passed(ran)) {
       yield* Effect.scoped(Effect.gen(function* () {
         const saving = yield* cache.saving(key)
-        const saver = yield* sandboxes.shell({ workDir: dir, network: false, binds: [{ host: saving.dir, inner: "/snapshot", writable: true }] })
+        const saver = yield* sandboxes.shell({ workDir: dir, network: false, repoBins: false, binds: [{ host: saving.dir, inner: "/snapshot", writable: true }] })
         const save = yield* saver.run({ command: SAVE_SNAPSHOT, timeoutMs })
         if (passed(save)) yield* saving.commit
       })).pipe(Effect.ignore({ log: "Warn", message: "the base's node_modules could not be kept as a snapshot" }))
@@ -89,37 +102,36 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
     return { digest, passed: passed(ran) }
   })
 
-  /** Clone `at`, install, and run `commands` there with no network, within the clone's budget. */
+  /** Clone `at`, put the base's `node_modules` in it, and run `commands` there with no network, within the clone's budget. */
   const inClone = (at: CommitSha, side: "base" | "head", commands: ReadonlyArray<string>) => Effect.scoped(Effect.gen(function* () {
     const deadline = (yield* Clock.currentTimeMillis) + request.budgetMs
     const timeLeft = Effect.map(Clock.currentTimeMillis, (now) => Math.min(request.commandTimeoutMs, deadline - now))
     const dir = yield* checkout.clone(repo, at)
-    const installed = yield* install(dir, at, side, choice.manager, Math.max(1, yield* timeLeft))
-    if (!installed.passed) {
-      const reason = side === "base" ? UNRUN_BECAUSE.baseInstall : UNRUN_BECAUSE.headInstall
-      return { install: installed.digest, outcomes: commands.map((command): Outcome => ({ _tag: "Unrun", command, reason })) }
+    const restored = yield* restore(dir, side, Math.max(1, yield* timeLeft))
+    const ready = Option.isSome(restored) ? Option.some(restored.value) : side === "base" ? Option.some(yield* installBase(dir, Math.max(1, yield* timeLeft))) : Option.none()
+    const installed = Option.getOrElse(Option.map(ready, (each) => each.passed), () => false)
+    if (!installed) {
+      const reason = side === "base" ? UNRUN_BECAUSE.baseInstall : UNRUN_BECAUSE.noSnapshot
+      return { install: Option.map(ready, (each) => each.digest), outcomes: commands.map((command): Outcome => ({ _tag: "Unrun", command, reason })) }
     }
-    const shell: Shell["Service"] = allowOnly(commands, yield* sandboxes.shell({ workDir: dir, network: false, binds: [] }))
+    const shell: Shell["Service"] = allowOnly(commands, yield* sandboxes.shell({ workDir: dir, network: false, repoBins: true, binds: [] }))
     const outcomes = yield* Effect.forEach(commands, (command, index) => Effect.gen(function* () {
       const left = yield* timeLeft
       if (left < LEAST_MS) return { _tag: "Unrun", command, reason: UNRUN_BECAUSE.budget } satisfies Outcome
       const ran = yield* shell.run({ command, timeoutMs: left })
-      return { _tag: "Ran", command, digest: yield* keep(`${side}-${index + 1}.log`, command, ran), passed: passed(ran), timedOut: ran.ended._tag === "TimedOut" } satisfies Outcome
+      return { _tag: "Ran", command, digest: yield* keep(`${side}-${index + 1}.log`, command, ran), passed: passed(ran) } satisfies Outcome
     }), { concurrency: 1 })
-    return { install: installed.digest, outcomes }
+    return { install: Option.map(ready, (each) => each.digest), outcomes }
   }))
 
   const fromProfile = (candidate: Candidate) => candidate.kept && candidate.from !== "by-hand"
-  const known = yield* Effect.forEach(candidates, (candidate) => fromProfile(candidate)
-    ? Effect.flatMap(cache.verdict(anyBase(candidate.command)), (found) => Option.isSome(found) ? Effect.succeed(found) : cache.verdict(thisBase(candidate.command)))
-    : Effect.succeed(Option.none()), { concurrency: 1 })
+  const known = yield* Effect.forEach(candidates, (candidate) => fromProfile(candidate) ? cache.verdict(verdictKey(candidate.command)) : Effect.succeed(Option.none()), { concurrency: 1 })
   const toAsk = candidates.filter((candidate, at) => fromProfile(candidate) && Option.isNone(known[at] ?? Option.none())).map((candidate) => candidate.command)
-  const onBase = toAsk.length === 0 ? [] : (yield* inClone(request.base, "base", toAsk)).outcomes
+  const needBase = toAsk.length > 0 || Option.isNone(yield* cache.snapshot(key))
+  const onBase = needBase ? (yield* inClone(request.base, "base", toAsk)).outcomes : []
   yield* Effect.forEach(onBase, (outcome) => outcome._tag === "Unrun"
     ? Effect.void
-    : outcome.passed
-      ? cache.remember(anyBase(outcome.command), { kept: true, reason: UNRUN_BECAUSE.passed })
-      : cache.remember(outcome.timedOut ? anyBase(outcome.command) : thisBase(outcome.command), { kept: false, reason: `on the base it ${outcome.digest.ended}` }), { concurrency: 1 })
+    : cache.remember(verdictKey(outcome.command), outcome.passed ? { kept: true, reason: UNRUN_BECAUSE.passed } : { kept: false, reason: `on the base it ${outcome.digest.ended}` }), { concurrency: 1 })
   const profile = candidates.map((candidate, at): ProfileEntry => {
     if (!candidate.kept) return candidate
     if (candidate.from === "by-hand") return { ...candidate, reason: UNRUN_BECAUSE.byHand }
@@ -137,7 +149,7 @@ export const validate = Effect.fn("review.validate")(function* (request: Validat
     _tag: "Ran",
     manager: choice.manager,
     profile,
-    install: Option.some(onHead.install),
+    install: onHead.install,
     digests: onHead.outcomes.flatMap((outcome) => outcome._tag === "Ran" ? [outcome.digest] : []),
     unrun: onHead.outcomes.flatMap((outcome): ReadonlyArray<Unrun> => outcome._tag === "Unrun" ? [{ command: outcome.command, reason: outcome.reason }] : []),
   } satisfies ValidationRun

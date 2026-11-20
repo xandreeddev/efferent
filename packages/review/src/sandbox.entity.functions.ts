@@ -1,5 +1,5 @@
 import { Match, Option, Result } from "effect"
-import { ETC_ALWAYS, ETC_NETWORK, INNER_ENV, INNER_HOME, INNER_PATH, INNER_WORK, TOOL_BIN, TOOL_ROOT } from "./sandbox.entity.js"
+import { CHECK_PATH, ETC_ALWAYS, ETC_NETWORK, HELPER_PATH, INNER_ENV, INNER_HOME, INNER_WORK, TOOL_BIN, TOOL_ROOT } from "./sandbox.entity.js"
 import type { Bind, HostEntry, HostLayout, Limits, SandboxPlan, ToolBind } from "./sandbox.entity.js"
 
 const bindArgs = (bind: Bind): ReadonlyArray<string> => [bind.writable ? "--bind" : "--ro-bind", bind.host, bind.inner]
@@ -10,13 +10,20 @@ const topArgs = (entry: HostEntry): ReadonlyArray<string> => Match.valueTags(ent
 })
 
 /**
- * The sandbox's own words for the command: the shell sets the limits, then runs the command as its first argument
- * (`"$1"`), so the command is data to the outer shell and runs only inside the sandbox; nothing is spliced into a
- * line.
+ * Close every descriptor but the three streams: a runtime that spawns without close-on-exec (Bun does) hands its open
+ * files and sockets to `bwrap`, which passes them on.
+ */
+const CLOSE_FDS = `for fd in /proc/self/fd/*; do n=\${fd##*/}; [ "$n" -gt 2 ] 2>/dev/null && eval "exec $n>&-"; done 2>/dev/null; true`
+
+/**
+ * The sandbox's own words for the command: the shell closes every descriptor but the three streams, sets the limits,
+ * then runs the command as its first argument (`"$1"`), so the command is data to the outer shell and runs only inside
+ * the sandbox; nothing is spliced into a line.
  */
 export const limitedArgv = (command: string, limits: Limits): ReadonlyArray<string> => [
   "/bin/sh", "-c",
   [
+    CLOSE_FDS,
     "ulimit -c 0",
     ...(limits.memoryBytes === undefined ? [] : [`ulimit -v ${Math.floor(limits.memoryBytes / 1024)}`]),
     `ulimit -f ${Math.floor(limits.fileBytes / 512)}`,
@@ -28,7 +35,7 @@ export const limitedArgv = (command: string, limits: Limits): ReadonlyArray<stri
 /**
  * `bwrap`'s arguments for one command (the program itself left out): every namespace unshared (the network shared
  * back only when the plan says), the sandbox ended with its parent and in a session of its own, an empty environment
- * but `PATH` (fixed, `INNER_PATH`) and `HOME` (`INNER_HOME`, made in the fresh `/tmp`), `/usr` and the system's top folders read-only, the `/etc` files
+ * but `PATH` (fixed: `CHECK_PATH` for the repository's checks, `HELPER_PATH` for the bot's commands) and `HOME` (`INNER_HOME`, made in the fresh `/tmp`), `/usr` and the system's top folders read-only, the `/etc` files
  * the plan needs, a fresh `/proc`, `/dev` and `/tmp`, the toolchain read-only under `/opt/tool` with a link to each
  * program in `/opt/tool/bin`, the plan's binds, the work folder at `/work` (the only writable bind but the plan's),
  * then the command in `cwd` under the limits. Every path is an argument of its own: none is ever a shell's text.
@@ -41,7 +48,7 @@ export const bwrapArgv = (layout: HostLayout, plan: SandboxPlan, cwd: string, co
     "--die-with-parent",
     "--new-session",
     "--clearenv",
-    "--setenv", "PATH", INNER_PATH,
+    "--setenv", "PATH", plan.repoBins ? CHECK_PATH : HELPER_PATH,
     "--setenv", "HOME", INNER_HOME,
     ...INNER_ENV.flatMap(([name, value]) => ["--setenv", name, value]),
     "--ro-bind", "/usr", "/usr",
@@ -93,24 +100,36 @@ export interface ToolFound {
   readonly toolsDir: Option.Option<string>
 }
 
+/** A home folder's path: a folder bound from one must be a package's own (`/node_modules/`) or pnpm's `.tools`. */
+const IN_A_HOME = /^\/(home|root|Users)\//
+
+/** Whether a folder may be bound read-only: one outside every home, or in one only a package's or a `.tools`. */
+const bindableFolder = (path: string): boolean => !IN_A_HOME.test(path) || path.includes("/node_modules/") || path.endsWith("/.tools")
+
 /**
- * How a tool is bound: under `/usr` it is in the sandbox already and only linked; `node` by its installation folder
- * (npm and npx are links into it); a program inside a package by the package's folder; a shim with a `.tools` folder
- * beside it (pnpm's) by the two, in `/opt/tool/bin` itself; any other by its file alone. Never the folder a program sits in: in a home it holds other things (pnpm's
- * folder holds the host's package store).
+ * How a tool is bound, the least it needs and never a folder that holds more: under `/usr` it is in the sandbox already
+ * and only linked; `node` by its program file and npm's package (`lib/node_modules/npm`; npm and npx are links into
+ * it), never its whole installation folder; a program inside a package by the package's folder; a shim with a `.tools`
+ * folder beside it (pnpm's) by the two, in `/opt/tool/bin` itself; any other by its file alone. A folder in a home that
+ * is not a package's or a `.tools` is refused, and the tool with it (none: the tool is not in the sandbox).
  */
 export const toolBindOf = (found: ToolFound): ReadonlyArray<ToolBind> => {
   const inner = `${TOOL_ROOT}/${found.name}`
   const base = found.real.slice(found.real.lastIndexOf("/") + 1)
   if (found.real.startsWith("/usr/")) return [{ name: found.name, binds: [], program: found.real }]
+  const folders = [...Option.toArray(Option.map(found.prefix, (prefix) => `${prefix}/lib/node_modules/npm`)), ...Option.toArray(found.packageRoot), ...Option.toArray(found.toolsDir)]
+  if (!folders.every(bindableFolder)) return []
   return Option.match(found.prefix, {
     onSome: (prefix) => {
-      const at = (path: string) => `${inner}${path.slice(prefix.length)}`
-      const npm = `${prefix}/lib/node_modules/npm/bin`
+      const npm = `${inner}/lib/node_modules/npm`
       return [
-        { name: found.name, binds: [{ host: prefix, inner, writable: false }], program: at(found.real) },
-        { name: "npm", binds: [], program: at(`${npm}/npm-cli.js`) },
-        { name: "npx", binds: [], program: at(`${npm}/npx-cli.js`) },
+        {
+          name: found.name,
+          binds: [{ host: found.real, inner: `${inner}/bin/${base}`, writable: false }, { host: `${prefix}/lib/node_modules/npm`, inner: npm, writable: false }],
+          program: `${inner}/bin/${base}`,
+        },
+        { name: "npm", binds: [], program: `${npm}/bin/npm-cli.js` },
+        { name: "npx", binds: [], program: `${npm}/bin/npx-cli.js` },
       ]
     },
     onNone: () => Option.match(found.packageRoot, {

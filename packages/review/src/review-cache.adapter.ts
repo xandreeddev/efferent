@@ -26,8 +26,8 @@ const there = (path: string) => Effect.tryPromise(() => access(path)).pipe(Effec
  */
 export const directoryCache = (root: string): Layer.Layer<ReviewCache> => Layer.succeed(ReviewCache, ReviewCache.of((() => {
   const repoDir = (repo: RepoName) => join(root, ...repo.split("/"))
-  const verdictPath = (key: VerdictKey) => join(repoDir(key.repo), "verdicts", `${nameOf([key.lockfile, key.command, key.base])}.json`)
-  const snapshotPath = (key: SnapshotKey) => join(repoDir(key.repo), "node-modules", nameOf([key.manager, ...key.files.flatMap((file) => [file.path, file.text])]))
+  const verdictPath = (key: VerdictKey) => join(repoDir(key.repo), "verdicts", `${nameOf([key.base, key.command])}.json`)
+  const snapshotPath = (key: SnapshotKey) => join(repoDir(key.repo), "node-modules", nameOf([key.base, key.manager, key.version, ...key.files.flatMap((file) => [file.path, file.text])]))
   const made = (path: string) => Effect.tryPromise({ try: () => mkdir(path, { recursive: true }), catch: unavailable(`make ${path}`) }).pipe(Effect.as(path))
   const removing = (path: string) => Effect.addFinalizer(() => Effect.tryPromise(() => rm(path, { recursive: true, force: true })).pipe(Effect.ignore({ log: "Warn", message: "a folder of the review cache could not be deleted" })))
   return {

@@ -31,10 +31,10 @@ export const logText = (ran: Ran): string => [
 ].join("\n")
 
 /** What restores a saved `node_modules` into a clone, inside the sandbox: the snapshot is bound read-only at `/snapshot`. */
-export const RESTORE_SNAPSHOT = "cp -a /snapshot/. /work/"
+export const RESTORE_SNAPSHOT = "/usr/bin/cp -a /snapshot/. /work/"
 
 /**
  * What saves every `node_modules` folder of a clone (its `.git` passed over), inside the sandbox, into the folder bound
  * writable at `/snapshot`, each at its place.
  */
-export const SAVE_SNAPSHOT = `find . -path ./.git -prune -o -type d -name node_modules -print -prune | while IFS= read -r d; do mkdir -p "/snapshot/$d" && cp -a "$d/." "/snapshot/$d/" || exit 1; done`
+export const SAVE_SNAPSHOT = `/usr/bin/find . -path ./.git -prune -o -type d -name node_modules -print -prune | while IFS= read -r d; do /usr/bin/mkdir -p "/snapshot/$d" && /usr/bin/cp -a "$d/." "/snapshot/$d/" || exit 1; done`

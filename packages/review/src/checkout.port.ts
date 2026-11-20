@@ -2,7 +2,7 @@ import { Context } from "effect"
 import type { Effect, Option, Scope } from "effect"
 import type { BlobSha, CommitMissing, GrepHit, GrepRequest, PatternRefused, TreeEntry } from "./checkout.entity.js"
 import type { CommandFailed, OutputCut } from "./host-command.entity.js"
-import type { CommitSha, HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
+import type { BranchName, CommitSha, HeadToFetch, PullEnd, RepoName } from "./pull-request.entity.js"
 
 /** Why a checkout failed: a git command failed or was cut, or a commit is not there after fetching. */
 export type CheckoutError = CommandFailed | OutputCut | CommitMissing
@@ -22,7 +22,8 @@ export type CheckoutError = CommandFailed | OutputCut | CommitMissing
  * `files` the paths of a commit's regular files, `grep` the lines of its tracked text files that hold a pattern
  * (`PatternRefused` for a regular expression git cannot read), and `mergeBase` where two commits' histories meet.
  * `entry`, `blob` and `grep` run under the host shell's small output bound (`tool`). `changedPaths` answers the paths
- * `from...to` changes (from where `to` left `from`), for a review's records.
+ * `from...to` changes (from where `to` left `from`), for a review's records. `onBranch` fetches a branch as the remote
+ * has it now and answers whether a commit is in its history.
  */
 export class Checkout extends Context.Service<Checkout, {
   readonly fetch: (repo: RepoName, base: PullEnd, head: HeadToFetch) => Effect.Effect<void, CheckoutError>
@@ -36,4 +37,5 @@ export class Checkout extends Context.Service<Checkout, {
   readonly grep: (repo: RepoName, at: CommitSha, request: GrepRequest) => Effect.Effect<ReadonlyArray<GrepHit>, CheckoutError | PatternRefused>
   readonly mergeBase: (repo: RepoName, one: CommitSha, other: CommitSha) => Effect.Effect<CommitSha, CheckoutError>
   readonly changedPaths: (repo: RepoName, from: CommitSha, to: CommitSha) => Effect.Effect<ReadonlyArray<string>, CheckoutError>
+  readonly onBranch: (repo: RepoName, sha: CommitSha, branch: BranchName) => Effect.Effect<boolean, CheckoutError>
 }>()("@xandreed/review/Checkout") {}

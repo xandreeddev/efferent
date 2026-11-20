@@ -13,7 +13,7 @@ import { hostShell } from "./host-shell.adapter.js"
 import { DIGEST_LIMITS } from "./log-digest.entity.js"
 import type { PrepareOptions } from "./prepare-review.entity.js"
 import { prepareReview } from "./prepare-review.usecase.js"
-import { CommitSha, PullRequest, RepoName } from "./pull-request.entity.js"
+import { BranchName, CommitSha, PullRequest, RepoName } from "./pull-request.entity.js"
 import { directoryLogs } from "./review-logs.adapter.js"
 import type { PassInput } from "./review-pass.port.js"
 import { ReviewPasses } from "./review-pass.port.js"
@@ -41,6 +41,7 @@ const forge = Layer.succeed(Forge, Forge.of({
     return []
   }),
   failedLog: () => Effect.die("no run failed"),
+  defaultBranch: () => Effect.succeed(BranchName.make("main")),
 }))
 
 const layers = Layer.mergeAll(forge, gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot), findingsInMemory)

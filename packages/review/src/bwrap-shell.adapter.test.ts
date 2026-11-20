@@ -1,14 +1,16 @@
 import { afterAll, describe, expect, test } from "bun:test"
 import { execFileSync } from "node:child_process"
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs"
+import { closeSync, existsSync, mkdirSync, mkdtempSync, openSync, readdirSync, readFileSync, rmSync, writeFileSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
-import { Effect, Exit, Result } from "effect"
+import { Effect, Exit, Option, Result } from "effect"
 import type { Ran } from "@xandreed/sdk"
 import { bwrapHost, bwrapShell } from "./bwrap-shell.adapter.js"
-import { ETC_ALWAYS } from "./sandbox.entity.js"
+import { managerOf } from "./repo-profile.entity.functions.js"
+import { ETC_ALWAYS, SANDBOX_DEFAULTS } from "./sandbox.entity.js"
 import type { HostLayout, SandboxPlan } from "./sandbox.entity.js"
-import { probeArgv } from "./sandbox.entity.functions.js"
+import { bwrapArgv, probeArgv } from "./sandbox.entity.functions.js"
+import { RESTORE_SNAPSHOT } from "./validations.entity.functions.js"
 
 const SECRET = "review-probe-secret-7d1f"
 process.env["REVIEW_PROBE_SECRET"] = SECRET
@@ -38,7 +40,8 @@ const inSandbox = (plan: SandboxPlan, command: string, timeoutMs = 20_000): Prom
   })))
 }
 
-const offline = (workDir: string): SandboxPlan => ({ workDir, network: false, binds: [] })
+const offline = (workDir: string): SandboxPlan => ({ workDir, network: false, repoBins: true, binds: [] })
+const helper = (workDir: string, binds: SandboxPlan["binds"] = []): SandboxPlan => ({ workDir, network: false, repoBins: false, binds })
 const exitOf = (ran: Ran): number | string => ran.ended._tag === "Exited" ? ran.ended.code : ran.ended._tag
 
 describe("bwrapShell, the isolation probe", () => {
@@ -71,11 +74,56 @@ describe("bwrapShell, the isolation probe", () => {
   test.skipIf(skip)("no network: DNS fails and a server on the host's loopback is out of reach; shared, the same server answers", async () => {
     const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("reached") })
     afterAll(() => server.stop(true))
+    // The probe's own tools must be there, or a missing one would pass for a refused network.
+    const tools = await inSandbox(offline(work("net-tools")), "command -v getent && command -v bun")
+    expect(exitOf(tools)).toBe(0)
     const probe = `getent hosts example.com || echo no-dns; bun -e "console.log(await (await fetch('http://127.0.0.1:${server.port}')).text())" 2>/dev/null || echo no-loopback`
     const off = await inSandbox(offline(work("net-off")), probe)
     expect(off.stdout).toBe("no-dns\nno-loopback\n")
-    const on = await inSandbox({ workDir: work("net-on"), network: true, binds: [] }, `bun -e "console.log(await (await fetch('http://127.0.0.1:${server.port}')).text())"`)
+    const on = await inSandbox({ workDir: work("net-on"), network: true, repoBins: false, binds: [] }, `bun -e "console.log(await (await fetch('http://127.0.0.1:${server.port}')).text())"`)
     expect(on.stdout).toBe("reached\n")
+  })
+
+  test.skipIf(skip)("the bot's commands never run a node_modules/.bin the repository commits: an install and a restore run the tools, not the shims", async () => {
+    const withShims = (name: string) => {
+      const dir = work(name)
+      const bin = join(dir, "node_modules", ".bin")
+      mkdirSync(bin, { recursive: true })
+      for (const tool of ["bun", "node", "npm", "cp", "find", "mkdir", "sh"]) writeFileSync(join(bin, tool), `#!/bin/sh\ntouch /work/shim-${tool}-ran\n`, { mode: 0o755 })
+      writeFileSync(join(dir, "package.json"), JSON.stringify({ name: "fixture", version: "1.0.0" }))
+      return dir
+    }
+    const dir = withShims("shims")
+    const snapshot = work("shims-snapshot")
+    writeFileSync(join(snapshot, "restored"), "")
+    const install = managerOf({ lockfiles: ["bun.lock"], packageJson: Option.none(), yarnrc: Option.none() }, [], ["bun", "node"])
+    const command = install._tag === "Chosen" ? install.install.replace("--frozen-lockfile ", "") : "false"
+    await inSandbox(helper(dir, [{ host: work("shims-cache"), inner: "/cache", writable: true }]), command)
+    await inSandbox(helper(dir, [{ host: snapshot, inner: "/snapshot", writable: false }]), RESTORE_SNAPSHOT)
+    expect(readdirSync(dir).filter((name) => name.startsWith("shim-"))).toEqual([])
+    expect(existsSync(join(dir, "restored"))).toBe(true)
+    // The control: the repository's own checks do run its node_modules/.bin first.
+    const control = withShims("shims-control")
+    await inSandbox(offline(control), "bun --version")
+    expect(existsSync(join(control, "shim-bun-ran"))).toBe(true)
+  })
+
+  test.skipIf(skip)("no file descriptor of the parent's but the three streams reaches the command (Bun spawns without close-on-exec; the sandbox's shell closes them)", async () => {
+    const opened = openSync(join(root, "parent-fd"), "w")
+    afterAll(() => closeSync(opened))
+    // Piped, so the shell forks `ls` and $$ is the shell the command runs in, not `ls` with its own folder open.
+    const ran = await inSandbox(offline(work("fds")), "ls /proc/$$/fd | /usr/bin/cat")
+    const fds = ran.stdout.split("\n").filter((line) => line.length > 0)
+    expect(fds).not.toContain(String(opened))
+    expect(fds.filter((fd) => !["0", "1", "2", "10", "255"].includes(fd))).toEqual([])
+  })
+
+  test.skipIf(skip)("--clearenv is what keeps bwrap's own environment from the command: with it the variable is gone, without it the command sees it", () => {
+    if (layout === undefined) return
+    const argv = bwrapArgv(layout, offline(work("clearenv")), "/work", "env", SANDBOX_DEFAULTS.limits)
+    const run = (args: ReadonlyArray<string>) => execFileSync(layout.bwrap, [...args], { env: { REVIEW_BWRAP_OWN: "kept" } }).toString()
+    expect(run(argv)).not.toContain("REVIEW_BWRAP_OWN")
+    expect(run(argv.filter((arg) => arg !== "--clearenv"))).toContain("REVIEW_BWRAP_OWN=kept")
   })
 
   test.skipIf(skip)("writes land in the work folder only; quotes, ;, $() and backticks run inside and leave no marker outside", async () => {

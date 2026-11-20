@@ -64,9 +64,10 @@ export type ValidationRun = typeof ValidationRun.Type
 /** The words for why a command did not run, or was dropped after the base was asked. */
 export const UNRUN_BECAUSE = {
   budget: "the clone's time budget ran out before it ran",
-  headInstall: "the head did not install",
+  noSnapshot: "the base's install could not be restored on the head",
+  depsChanged: "dependencies changed: not validated locally (CI covers it)",
   baseInstall: "the base did not install",
-  passedBefore: "passed on the base before, with this lockfile",
+  passedBefore: "passed on this base before",
   knownBefore: "(known from an earlier review)",
   passed: "passed on the base",
   byHand: "asked for by hand",

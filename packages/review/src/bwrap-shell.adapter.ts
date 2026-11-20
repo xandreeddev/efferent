@@ -39,7 +39,7 @@ const toolOf = (name: string, path: string) => Effect.gen(function* () {
   if (Option.isNone(real)) return []
   const binDir = dirname(real.value)
   const parent = dirname(binDir)
-  const isNode = name === "node" && basename(binDir) === "bin" && (yield* exists(join(parent, "lib", "node_modules")))
+  const isNode = name === "node" && basename(binDir) === "bin" && (yield* exists(join(parent, "lib", "node_modules", "npm")))
   const inPackage = !isNode && basename(binDir) === "bin" && (yield* exists(join(parent, "package.json")))
   const tools = join(binDir, ".tools")
   return toolBindOf({

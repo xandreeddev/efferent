@@ -26,10 +26,17 @@ export const TOOL_ROOT = "/opt/tool"
 export const TOOL_BIN = `${TOOL_ROOT}/bin`
 
 /**
- * The sandbox's `PATH`, fixed: the work folder's `node_modules/.bin`, the toolchain's links, then the system's. The
- * host's `PATH` is never passed: it names folders in a person's home.
+ * The `PATH` of a sandbox that runs the repository's own checks, fixed: the work folder's `node_modules/.bin`, the
+ * toolchain's links, then the system's. The host's `PATH` is never passed: it names folders in a person's home.
  */
-export const INNER_PATH = `${INNER_WORK}/node_modules/.bin:${TOOL_BIN}:/usr/local/bin:/usr/bin:/bin`
+export const CHECK_PATH = `${INNER_WORK}/node_modules/.bin:${TOOL_BIN}:/usr/local/bin:/usr/bin:/bin`
+
+/**
+ * The `PATH` of a sandbox that runs the bot's own commands (an install, a snapshot saved or restored, a version
+ * asked): no folder of the work folder's, so a `node_modules/.bin/bun` or `cp` the pull request commits is never run in
+ * place of the tool; those commands also name each program by its absolute path.
+ */
+export const HELPER_PATH = `${TOOL_BIN}:/usr/bin:/bin`
 
 /**
  * The variables every sandbox sets besides `PATH` and `HOME`: pnpm runs as the host has it and never fetches the
@@ -90,11 +97,14 @@ export type HostLayout = typeof HostLayout.Type
 
 /**
  * One sandbox: its work folder on the host (bound at `/work`, the one writable bind besides `binds` that say so),
- * whether it shares the host's network, and the further binds (a package cache, a snapshot).
+ * whether it shares the host's network, whether it runs the repository's own commands (`repoBins`: `CHECK_PATH`, the
+ * work folder's `node_modules/.bin` first) or the bot's (`HELPER_PATH`), and the further binds (a package cache, a
+ * snapshot).
  */
 export const SandboxPlan = Schema.Struct({
   workDir: Schema.String,
   network: Schema.Boolean,
+  repoBins: Schema.Boolean,
   binds: Schema.Array(Bind),
 })
 export type SandboxPlan = typeof SandboxPlan.Type

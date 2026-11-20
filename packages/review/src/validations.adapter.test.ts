@@ -28,33 +28,35 @@ const PATH = process.env["PATH"] ?? "/usr/bin:/bin"
 const repo = RepoName.make("owner/project")
 const BASE = CommitSha.make("b".repeat(40))
 const HEAD = CommitSha.make("c".repeat(40))
-const INSTALL = "BUN_INSTALL_CACHE_DIR=/cache bun install --frozen-lockfile --ignore-scripts --backend=copyfile"
+const INSTALL = "BUN_INSTALL_CACHE_DIR=/cache /opt/tool/bin/bun install --frozen-lockfile --ignore-scripts --backend=copyfile"
+const VERSION = "/opt/tool/bin/bun --version"
 
 const AGENTS = ["# Rules", "## Definition of done", "```bash", "bun install --frozen-lockfile", "bun run typecheck", "bun test", "test -z \"$(git status --porcelain)\"", "```"].join("\n")
 const BASE_FILES: Readonly<Record<string, string>> = {
   "package.json": JSON.stringify({ scripts: { typecheck: "tsc", test: "bun test", build: "x" } }),
+  "packages/a/package.json": "{}",
   "bun.lock": "{ lockfile }",
   "AGENTS.md": AGENTS,
+  "src/sum.ts": "export const sum = 1\n",
 }
+const HEAD_FILES: Readonly<Record<string, string>> = { ...BASE_FILES, "src/sum.ts": "export const sum = 2\n" }
 
 const ran = (code: number, stdout = ""): Ran => ({ stdout, stderr: "", stdoutCut: 0, stderrCut: 0, ended: { _tag: "Exited", code } })
 
-/** A checkout over files held in memory: `show` reads them by commit, `clone` makes an empty folder. */
+/** A checkout over files held in memory: `show` and `files` read them by commit, `clone` makes an empty folder. */
 const checkoutOf = (files: Readonly<Record<string, Readonly<Record<string, string>>>>) => Layer.succeed(Checkout, Checkout.of({
   fetch: () => Effect.void,
   diff: () => Effect.succeed(""),
   show: (_repo, at, path) => Effect.succeed(Option.fromNullishOr(files[at]?.[path])),
   worktree: () => Effect.die("no worktree in these tests"),
-  clone: (_repo, at) => Effect.sync(() => {
-    const dir = mkdtempSync(join(root, `clone-${at.slice(0, 1)}-`))
-    return dir
-  }),
+  clone: (_repo, at) => Effect.sync(() => mkdtempSync(join(root, `clone-${at.slice(0, 1)}-`))),
   entry: () => Effect.die("no tree in these tests"),
   blob: () => Effect.die("no blob in these tests"),
-  files: () => Effect.die("no files in these tests"),
+  files: (_repo, at) => Effect.succeed(Object.keys(files[at] ?? {})),
   grep: () => Effect.die("no search in these tests"),
   mergeBase: () => Effect.die("no merge base in these tests"),
   changedPaths: () => Effect.die("no paths in these tests"),
+  onBranch: () => Effect.succeed(true),
 }))
 
 interface Asked {
@@ -70,10 +72,10 @@ const sandboxesOf = (answer: (side: string, command: string) => Ran, delayMs = 0
     tools: ["bun", "node"],
     shell: (plan) => Effect.succeed(Shell.of({
       run: (request) => Effect.gen(function* () {
-        const side = plan.workDir.includes("clone-c") ? "head" : "base"
+        const side = plan.workDir.includes("/scratch/") ? "scratch" : plan.workDir.includes("clone-c") ? "head" : "base"
         asked.push({ side, plan, command: request.command })
         if (delayMs > 0) yield* Effect.sleep(delayMs)
-        return answer(side, request.command)
+        return request.command === VERSION ? ran(0, "1.3.0\n") : answer(side, request.command)
       }),
     })),
   }))
@@ -90,6 +92,7 @@ const validated = (cache: string, files: Readonly<Record<string, Readonly<Record
   }).pipe(Effect.provide(sandboxValidations.pipe(Layer.provide(Layer.mergeAll(checkoutOf(files), sandboxes.layer, directoryLogs(join(cache, "logs")), directoryCache(cache)))))))
 
 const ranOf = (run: ValidationRun) => run._tag === "Ran" ? run : undefined
+const shape = (asked: ReadonlyArray<Asked>) => asked.filter((each) => each.side !== "scratch").map((each) => [each.side, each.command, each.plan.network, each.plan.repoBins, each.plan.binds.map((bind) => [bind.inner, bind.writable])])
 
 describe("allowOnly", () => {
   test("runs a listed command as written and refuses any other with ShellRefused, running nothing", async () => {
@@ -105,10 +108,10 @@ describe("allowOnly", () => {
 })
 
 describe("validate", () => {
-  test("the profile asked on the base: the install with the network and the bot's cache, each check offline; only what passed runs on the head, from the base's snapshot", async () => {
+  test("only the base installs, with the network and the bot's cache, the bot's commands with no repository bin; the head restores the base's snapshot with no network and no cache", async () => {
     const cache = join(root, "profile")
     const sandboxes = sandboxesOf((side, command) => side === "base" && command === "bun test" ? ran(1, "1 fail") : ran(0))
-    const run = ranOf(await validated(cache, { [BASE]: BASE_FILES, [HEAD]: BASE_FILES }, sandboxes, request({ run: ["bun run build", "curl x"] })))
+    const run = ranOf(await validated(cache, { [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, sandboxes, request({ run: ["bun run build", "curl x"] })))
     expect(run?.profile).toEqual([
       { command: "bun install --frozen-lockfile", from: "instructions", kept: false, reason: NOT_ALLOWED.install },
       { command: "bun run typecheck", from: "instructions", kept: true, reason: "passed on the base" },
@@ -118,69 +121,63 @@ describe("validate", () => {
       { command: "bun run build", from: "by-hand", kept: true, reason: "asked for by hand" },
       { command: "curl x", from: "by-hand", kept: false, reason: NOT_ALLOWED.unknown },
     ])
-    const packages = join(cache, "owner", "project", "packages", "bun")
-    expect(sandboxes.asked.map((each) => [each.side, each.command, each.plan.network, each.plan.binds.map((bind) => [bind.inner, bind.writable, bind.host.startsWith(cache)])])).toEqual([
-      ["base", INSTALL, true, [["/cache", true, true]]],
-      ["base", SAVE_SNAPSHOT, false, [["/snapshot", true, true]]],
-      ["base", "bun run typecheck", false, []],
-      ["base", "bun test", false, []],
-      ["base", "bun run test", false, []],
-      ["head", RESTORE_SNAPSHOT, false, [["/snapshot", false, true]]],
-      ["head", "bun run typecheck", false, []],
-      ["head", "bun run test", false, []],
-      ["head", "bun run build", false, []],
+    expect(shape(sandboxes.asked)).toEqual([
+      ["base", INSTALL, true, false, [["/cache", true]]],
+      ["base", SAVE_SNAPSHOT, false, false, [["/snapshot", true]]],
+      ["base", "bun run typecheck", false, true, []],
+      ["base", "bun test", false, true, []],
+      ["base", "bun run test", false, true, []],
+      ["head", RESTORE_SNAPSHOT, false, false, [["/snapshot", false]]],
+      ["head", "bun run typecheck", false, true, []],
+      ["head", "bun run test", false, true, []],
+      ["head", "bun run build", false, true, []],
     ])
-    expect(sandboxes.asked[0]?.plan.binds[0]?.host).toBe(packages)
-    expect(run?.digests.map((digest) => [digest.source, digest.ended, digest.logPath])).toEqual([
-      [{ _tag: "Command", command: "bun run typecheck" }, "exited with 0", join(cache, "logs", "7-abc", "head-1.log")],
-      [{ _tag: "Command", command: "bun run test" }, "exited with 0", join(cache, "logs", "7-abc", "head-2.log")],
-      [{ _tag: "Command", command: "bun run build" }, "exited with 0", join(cache, "logs", "7-abc", "head-3.log")],
+    // The version is asked offline, in an empty folder, by the bot.
+    expect(sandboxes.asked.filter((each) => each.side === "scratch").map((each) => [each.command, each.plan.network, each.plan.repoBins])).toEqual([[VERSION, false, false]])
+    expect(sandboxes.asked[1]?.plan.binds[0]?.host.startsWith(join(cache, "owner", "project", "packages", "bun"))).toBe(true)
+    // No sandbox of the head's ever has the network or a writable bind.
+    expect(sandboxes.asked.filter((each) => each.side === "head").some((each) => each.plan.network || each.plan.binds.some((bind) => bind.writable))).toBe(false)
+    expect(run?.digests.map((digest) => [digest.source, digest.logPath])).toEqual([
+      [{ _tag: "Command", command: "bun run typecheck" }, join(cache, "logs", "7-abc", "head-1.log")],
+      [{ _tag: "Command", command: "bun run test" }, join(cache, "logs", "7-abc", "head-2.log")],
+      [{ _tag: "Command", command: "bun run build" }, join(cache, "logs", "7-abc", "head-3.log")],
     ])
-    expect(Option.map(run?.install ?? Option.none(), (digest) => digest.source)).toEqual(Option.some({ _tag: "Command", command: RESTORE_SNAPSHOT }))
     expect(readFileSync(join(cache, "logs", "7-abc", "base-2.log"), "utf8")).toBe("1 fail")
 
-    // Again, at the same base: every verdict is known, so no clone of the base is made.
+    // Again, at the same base: every verdict is known and the snapshot kept, so no clone of the base is made.
     const again = sandboxesOf(() => ran(0))
-    const second = ranOf(await validated(cache, { [BASE]: BASE_FILES, [HEAD]: BASE_FILES }, again, request()))
-    expect(second?.profile.filter((entry) => entry.from !== "by-hand" && entry.from !== "instructions" || entry.command === "bun test" || entry.command === "bun run typecheck").map((entry) => [entry.command, entry.kept, entry.reason])).toEqual([
-      ["bun run typecheck", true, "passed on the base before, with this lockfile"],
+    const second = ranOf(await validated(cache, { [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, again, request()))
+    expect(second?.profile.filter((entry) => entry.from !== "by-hand").filter((entry) => entry.command.startsWith("bun run") || entry.command === "bun test").map((entry) => [entry.command, entry.kept, entry.reason])).toEqual([
+      ["bun run typecheck", true, "passed on this base before"],
       ["bun test", false, "on the base it exited with 1 (known from an earlier review)"],
-      ["bun run test", true, "passed on the base before, with this lockfile"],
+      ["bun run test", true, "passed on this base before"],
     ])
-    expect(again.asked.map((each) => [each.side, each.command])).toEqual([["head", RESTORE_SNAPSHOT], ["head", "bun run typecheck"], ["head", "bun run test"]])
+    expect(shape(again.asked).map(([side, command]) => [side, command])).toEqual([["head", RESTORE_SNAPSHOT], ["head", "bun run typecheck"], ["head", "bun run test"]])
 
-    // Main moved, the lockfile did not: a failure is asked again (it may have been a flake); this time it times out.
+    // Another base, the same files: verdicts are per base, so each is asked again, and the base installs again.
     const MOVED = CommitSha.make("d".repeat(40))
-    const moved = sandboxesOf((side, command) => command === "bun test" ? { ...ran(0), ended: { _tag: "TimedOut", afterMs: 60_000 } } : ran(0))
-    await validated(cache, { [MOVED]: BASE_FILES, [HEAD]: BASE_FILES }, moved, request({ base: MOVED }))
-    expect(moved.asked.filter((each) => each.side === "base").map((each) => each.command)).toEqual([RESTORE_SNAPSHOT, "bun test"])
-    // A timeout holds for every base with the lockfile.
-    const LATER = CommitSha.make("e".repeat(40))
-    const later = sandboxesOf(() => ran(0))
-    const fourth = ranOf(await validated(cache, { [LATER]: BASE_FILES, [HEAD]: BASE_FILES }, later, request({ base: LATER })))
-    expect(later.asked.filter((each) => each.side === "base")).toEqual([])
-    expect(fourth?.profile.find((entry) => entry.command === "bun test")?.reason).toBe("on the base it timed out after 60000 ms (known from an earlier review)")
-    expect(readdirSync(join(cache, "owner", "project", "node-modules")).length).toBe(1)
+    const moved = sandboxesOf(() => ran(0))
+    await validated(cache, { [MOVED]: BASE_FILES, [HEAD]: HEAD_FILES }, moved, request({ base: MOVED }))
+    expect(shape(moved.asked).filter(([side]) => side === "base").map(([, command]) => command)).toEqual([INSTALL, SAVE_SNAPSHOT, "bun run typecheck", "bun test", "bun run test"])
+    expect(readdirSync(join(cache, "owner", "project", "node-modules")).length).toBe(2)
   })
 
-  test("a head that changes the registry's config installs with a package cache of its own, thrown away after", async () => {
-    const cache = join(root, "config")
-    const headFiles = { ...BASE_FILES, ".npmrc": "registry=https://example.com\n" }
-    const sandboxes = sandboxesOf(() => ran(0))
-    await validated(cache, { [BASE]: BASE_FILES, [HEAD]: headFiles }, sandboxes, request({ profile: false, run: ["bun test"], changedPaths: [".npmrc"] }))
-    const install = sandboxes.asked.find((each) => each.side === "head" && each.command === INSTALL)
-    const scratch = install?.plan.binds[0]?.host ?? ""
-    expect([install?.plan.network, scratch.startsWith(join(cache, "owner", "project", "scratch")), existsSync(scratch)]).toEqual([true, true, false])
+  test("a head whose dependency files differ from the base's runs nothing: a lockfile, or any workspace's package.json", async () => {
+    for (const [path, text] of [["bun.lock", "{ changed }"], ["packages/a/package.json", "{ \"x\": 1 }"], ["packages/b/package.json", "{}"]] as const) {
+      const sandboxes = sandboxesOf(() => ran(0))
+      const run = await validated(join(root, `deps-${path.length}`), { [BASE]: BASE_FILES, [HEAD]: { ...HEAD_FILES, [path]: text } }, sandboxes, request({ run: ["bun test"] }))
+      expect([run, sandboxes.asked]).toEqual([{ _tag: "Refused", reason: "dependencies changed: not validated locally (CI covers it)" }, []])
+    }
   })
 
-  test("a head that does not install runs nothing; a budget spent leaves the rest unrun", async () => {
-    const cache = join(root, "fails")
-    const broken = sandboxesOf((side, command) => side === "head" && command === INSTALL ? ran(1) : ran(0))
-    const failed = ranOf(await validated(cache, { [BASE]: BASE_FILES, [HEAD]: { ...BASE_FILES, "bun.lock": "{ changed }" } }, broken, request({ profile: false, run: ["bun test", "bun run build"] })))
-    expect([failed?.digests, failed?.unrun]).toEqual([[], [{ command: "bun test", reason: "the head did not install" }, { command: "bun run build", reason: "the head did not install" }]])
+  test("a base that does not install runs nothing on the head; a budget spent leaves the rest unrun", async () => {
+    const broken = sandboxesOf((side, command) => side === "base" && command === INSTALL ? ran(1) : ran(0))
+    const failed = ranOf(await validated(join(root, "fails"), { [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, broken, request({ profile: false, run: ["bun test", "bun run build"] })))
+    expect([failed?.digests, failed?.unrun]).toEqual([[], [{ command: "bun test", reason: "the base's install could not be restored on the head" }, { command: "bun run build", reason: "the base's install could not be restored on the head" }]])
+    expect(broken.asked.filter((each) => each.side === "head").map((each) => each.command)).toEqual([])
 
     const slow = sandboxesOf(() => ran(0), 700)
-    const spent = ranOf(await validated(join(root, "slow"), { [BASE]: BASE_FILES, [HEAD]: BASE_FILES }, slow, request({ profile: false, run: ["bun test", "bun run build"], budgetMs: 2_200 })))
+    const spent = ranOf(await validated(join(root, "slow"), { [BASE]: BASE_FILES, [HEAD]: HEAD_FILES }, slow, request({ profile: false, run: ["bun test", "bun run build"], budgetMs: 2_200 })))
     expect([spent?.digests.map((digest) => digest.source), spent?.unrun]).toEqual([[{ _tag: "Command", command: "bun test" }], [{ command: "bun run build", reason: "the clone's time budget ran out before it ran" }]])
   })
 
