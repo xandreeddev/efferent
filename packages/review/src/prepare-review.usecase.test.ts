@@ -45,6 +45,7 @@ const forgeOf = (pull: PullRequest, defaultBranch = "main") => Layer.succeed(For
   defaultBranch: () => Effect.succeed(BranchName.make(defaultBranch)),
   pullRequest: (_repo: RepoName, _number: PullNumber) => Effect.succeed(pull),
   firstHead: () => Effect.succeed({ sha: pull.head.sha, source: "first-commit" as const }),
+  descriptionHistory: () => Effect.die("these tests review the head"),
   ciRuns: () => Effect.succeed([run(11, "failure"), run(12, "success"), run(13, "timed_out"), run(14, "failure")]),
   failedLog: (_repo, id) => id === 14
     ? Effect.fail(new CommandFailed({ reason: "exited", command: "gh run view 14", message: "exited with 1: HTTP 401: Bad credentials\u001b[0m" }))

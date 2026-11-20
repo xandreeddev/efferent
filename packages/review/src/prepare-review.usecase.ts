@@ -3,6 +3,7 @@ import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff } from "./diff.entity.functions.js"
 import { attributesOf } from "./file-verdict.entity.functions.js"
+import { descriptionAsOf } from "./forge.entity.functions.js"
 import { Forge } from "./forge.port.js"
 import type { LogDigest } from "./log-digest.entity.js"
 import { plainText } from "./log-digest.entity.functions.js"
@@ -10,7 +11,7 @@ import type { DroppedFile } from "./packed-diff.entity.js"
 import type { FailingRun, LaterChanges, PrepareOptions, PreparedReview, ReviewedAt, ReviewPolicies, SkipReason, Validation } from "./prepare-review.entity.js"
 import { reviewFolderOf } from "./prepare-review.entity.functions.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
-import type { PullNumber, RepoName } from "./pull-request.entity.js"
+import type { PullNumber, PullRequest, RepoName } from "./pull-request.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import { ReviewLogs } from "./review-logs.port.js"
 import { Validations } from "./validations.port.js"
@@ -50,6 +51,15 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
     : yield* Effect.gen(function* () {
       if (chosen.sha !== pull.head.sha) yield* checkout.fetch(repo, pull.base, { sha: chosen.sha, fetchRef: pull.fetchRef })
       return { sha: chosen.sha, source: chosen.source, base: yield* checkout.mergeBase(repo, pull.base.sha, chosen.sha) }
+    })
+  // Any commit but the head is reviewed with the description as it stood when it was committed: a later edit often
+  // lists the fixes made after it. With no earlier version known, the current one, logged.
+  const pullRequest: PullRequest = options.at._tag === "Head"
+    ? pull
+    : yield* Effect.gen(function* () {
+      const then = descriptionAsOf(yield* forge.descriptionHistory(repo, pull, at.sha))
+      if (Option.isNone(then)) yield* Effect.logDebug("no earlier description is known, so the review reads the current one", { sha: at.sha })
+      return Option.match(then, { onNone: () => pull, onSome: (body) => ({ ...pull, body }) })
     })
   const files = yield* Effect.fromResult(parseUnifiedDiff(yield* checkout.diff(repo, at.base, at.sha)))
   // What later commits changed, kept for scoring a review of an earlier commit against them.
@@ -121,6 +131,6 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       }),
     })
 
-  const prepared: PreparedReview = { pullRequest: pull, at, files, later, verdicts, diff, rules, ci, failing, validation }
+  const prepared: PreparedReview = { pullRequest, at, files, later, verdicts, diff, rules, ci, failing, validation }
   return prepared
 })

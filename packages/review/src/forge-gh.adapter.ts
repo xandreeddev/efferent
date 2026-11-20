@@ -1,8 +1,8 @@
 import { Effect, Layer, Option, Schema } from "effect"
 import { clipTo } from "@xandreed/sdk"
 import { plainText } from "./log-digest.entity.functions.js"
-import { ForgeUnreadable, RunId } from "./forge.entity.js"
-import type { CheckRun, CiRun, FailedLog, PullTimeline } from "./forge.entity.js"
+import { DESCRIPTION_EDITS_READ, ForgeUnreadable, RunId } from "./forge.entity.js"
+import type { CheckRun, CiRun, DescriptionHistory, FailedLog, PullTimeline } from "./forge.entity.js"
 import { firstHeadOf } from "./forge.entity.functions.js"
 import { Forge } from "./forge.port.js"
 import { CommandFailed } from "./host-command.entity.js"
@@ -67,6 +67,26 @@ const GhTimeline = Schema.Struct({
         closedAt: Schema.NullOr(Schema.String),
         timelineItems: Schema.Struct({
           nodes: Schema.Array(Schema.Struct({ createdAt: Schema.String, beforeCommit: Schema.NullOr(Schema.Struct({ oid: Schema.String })) })),
+        }),
+      }),
+    }),
+  }),
+})
+
+/**
+ * The GraphQL query for when a commit was committed and the saved versions of a pull request's description (its
+ * first `DESCRIPTION_EDITS_READ`, newest first, and how many there are in all; each version's text is its `diff`).
+ */
+export const DESCRIPTION_QUERY = `query($owner: String!, $name: String!, $number: Int!, $sha: GitObjectID!) { repository(owner: $owner, name: $name) { object(oid: $sha) { ... on Commit { committedDate } } pullRequest(number: $number) { userContentEdits(first: ${DESCRIPTION_EDITS_READ}) { totalCount nodes { editedAt diff } } } } }`
+
+const GhDescription = Schema.Struct({
+  data: Schema.Struct({
+    repository: Schema.Struct({
+      object: Schema.NullOr(Schema.Struct({ committedDate: Schema.String })),
+      pullRequest: Schema.Struct({
+        userContentEdits: Schema.Struct({
+          totalCount: Schema.Int,
+          nodes: Schema.Array(Schema.Struct({ editedAt: Schema.String, diff: Schema.NullOr(Schema.String) })),
         }),
       }),
     }),
@@ -205,10 +225,24 @@ export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge,
     })
   }, provided)
 
+  const descriptionHistory = Effect.fn("forge.description_history")(function* (repo: RepoName, pull: Pull, at: CommitSha) {
+    const [owner = "", name = ""] = repo.split("/")
+    // The sha goes with -f, as a string: -F would read a sha of digits alone as a number.
+    const args = ["gh", "api", "graphql", "-f", `query=${DESCRIPTION_QUERY}`, "-F", `owner=${owner}`, "-F", `name=${name}`, "-F", `number=${pull.number}`, "-f", `sha=${at}`]
+    const answer = (yield* decoded(GhDescription, args, (yield* runWhole(args)).stdout)).data.repository
+    const history: DescriptionHistory = {
+      // A commit the forge does not know has no time: no version is then read as the description of its time.
+      committedAt: answer.object?.committedDate ?? "",
+      edits: answer.pullRequest.userContentEdits.nodes.map((node) => ({ editedAt: node.editedAt, text: Option.fromNullishOr(node.diff) })),
+      total: answer.pullRequest.userContentEdits.totalCount,
+    }
+    return history
+  }, provided)
+
   const defaultBranch = Effect.fn("forge.default_branch")(function* (repo: RepoName) {
     const args = ["gh", "api", `repos/${repo}`]
     return (yield* decoded(GhRepo, args, (yield* runWhole(args)).stdout)).default_branch
   }, provided)
 
-  return Forge.of({ pullRequest, ciRuns, firstHead, failedLog, defaultBranch })
+  return Forge.of({ pullRequest, ciRuns, firstHead, descriptionHistory, failedLog, defaultBranch })
 }))
