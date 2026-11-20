@@ -1,6 +1,6 @@
 import { Schema } from "effect"
 import { FileDiff } from "./diff.entity.js"
-import { PassNumber } from "./finding.entity.js"
+import { CheckNumber, PassNumber } from "./finding.entity.js"
 import { CommitSha, RepoName } from "./pull-request.entity.js"
 
 /** The tools' names, as the model calls them. */
@@ -9,12 +9,13 @@ export const SEARCH_CODE = "searchCode"
 export const LIST_FILES = "listFiles"
 export const READ_DIFF = "readDiff"
 export const REPORT_FINDING = "reportFinding"
+export const VERDICT = "verdict"
 
 /**
  * The version of the review's tool set: their names, descriptions, parameters and answers. A change to any of them
  * is a new version, kept with each review's record so results are compared tool set to tool set.
  */
-export const REVIEW_TOOLS_VERSION = "review-tools-2"
+export const REVIEW_TOOLS_VERSION = "review-tools-4"
 
 /** The most lines one `readLines` call reads. */
 export const READ_LINES_LIMIT = 150
@@ -47,13 +48,27 @@ export const PAGE_CHARS = 30_000
 export const READ_FILE_BYTES = 1024 * 1024
 
 /**
- * What the tools read: the repository, the commit under review, every file the pull request changes (the whole
- * parsed diff, not only what was packed), and the pass whose findings `reportFinding` records.
+ * The stage a model's call is made in: a pass that finds (`Find`, whose findings `reportFinding` records under its
+ * pass), or a check of one finding (`Verify`, whose verdict `verdict` records under its check). Every stage is offered
+ * the same tools, so a provider's cache keeps their declarations with the prompt's prefix; a tool of the other stage
+ * answers a failed result that names the one to call.
+ */
+export const ReviewStage = Schema.Union([
+  Schema.TaggedStruct("Find", { pass: PassNumber }),
+  Schema.TaggedStruct("Verify", { check: CheckNumber }),
+]).pipe(Schema.toTaggedUnion("_tag"))
+export type ReviewStage = typeof ReviewStage.Type
+
+/**
+ * What the tools read: the run of the review the calls are for (where `Findings` keeps what they report), the
+ * repository, the commit under review, every file the pull request changes (the whole parsed diff, not only what was
+ * packed), and the stage the calls are made in.
  */
 export const Reviewed = Schema.Struct({
+  run: Schema.String,
   repo: RepoName,
   at: CommitSha,
   files: Schema.Array(FileDiff),
-  pass: PassNumber,
+  stage: ReviewStage,
 })
 export type Reviewed = typeof Reviewed.Type

@@ -2,14 +2,16 @@ import { Array as Arr, Match, Option, Order } from "effect"
 import { clipTo } from "@xandreed/sdk"
 import { shownPath } from "./diff.entity.functions.js"
 import { SEVERITY_RANK } from "./finding.entity.js"
-import type { Finding } from "./finding.entity.js"
+import type { Finding, FindingReport } from "./finding.entity.js"
 import { plainText } from "./log-digest.entity.functions.js"
 import { AT_SOURCE_WORDS } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
+import { FINISHED, INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
 import type { PassEnded, PassResult } from "./review-pass.entity.js"
+import type { Finder } from "./review-prompt.entity.js"
 import { EVIDENCE_SHOWN, FINDINGS_SHOWN } from "./review-report.entity.js"
-import type { ReportedFinding, ReviewReport } from "./review-report.entity.js"
+import type { BucketCheck, ReportedFinding, ReviewReport, ReviewUsage } from "./review-report.entity.js"
+import type { Bucket } from "./vote.entity.js"
 
 /** Whether `text` names `path` at `line`: `path:line` or `path(line,` with no digit after the number. */
 const names = (text: string, path: string, line: number): boolean =>
@@ -38,30 +40,73 @@ export const restatesCi = (finding: Finding, failing: ReadonlyArray<FailingRun>)
 }
 
 /** The order findings are shown in: by severity, `high` first, then by path in code-unit order, then by line. */
-export const FINDING_ORDER: Order.Order<Finding> = Order.combine(
-  Order.combine(Order.mapInput(Order.Number, (finding: Finding) => SEVERITY_RANK[finding.severity]), Order.mapInput(Order.String, (finding: Finding) => finding.path)),
-  Order.mapInput(Order.Number, (finding: Finding) => finding.line),
+export const FINDING_ORDER: Order.Order<FindingReport> = Order.combine(
+  Order.combine(Order.mapInput(Order.Number, (finding: FindingReport) => SEVERITY_RANK[finding.severity]), Order.mapInput(Order.String, (finding: FindingReport) => finding.path)),
+  Order.mapInput(Order.Number, (finding: FindingReport) => finding.line),
 )
 
 /** A run's name, from when it started: its UTC time with `-` for each `:` and `.`, such as `2026-11-19T22-01-51-123Z`. */
 export const runNameOf = (startedMillis: number): string => new Date(startedMillis).toISOString().replace(/[:.]/g, "-")
 
-/** What a review is built from: its run, the prepared review, its passes, its findings, the model and the wall time. */
+/**
+ * What a review is built from: its run, the prepared review, how it found (`finder`, `vote`, `verify`), how many passes
+ * it asked for and those that ran, its checks, every finding, every bucket, every check of a bucket, the versions, the
+ * model and the wall time.
+ */
 export interface ReportInput {
   readonly run: string
   readonly prepared: PreparedReview
+  readonly finder: Finder
+  readonly vote: boolean
+  readonly verify: boolean
+  readonly complete: boolean
+  readonly passesAsked: number
   readonly passes: ReadonlyArray<PassResult>
+  readonly checks: ReadonlyArray<PassResult>
   readonly findings: ReadonlyArray<Finding>
+  readonly buckets: ReadonlyArray<Bucket>
+  readonly verdicts: ReadonlyArray<BucketCheck>
   readonly promptVersion: string
   readonly toolsVersion: string
   readonly model: string
   readonly wallMs: number
 }
 
-/** A review's report: its findings sorted and marked, its passes, and what their calls used together. */
-export const reviewReport = (input: ReportInput): ReviewReport => {
-  const calls = input.passes.flatMap((pass) => pass.calls)
+/** What the calls of some passes or checks used together. */
+export const usageOf = (results: ReadonlyArray<PassResult>): ReviewUsage => {
+  const calls = results.flatMap((result) => result.calls)
   const tokens = calls.flatMap((call) => Option.toArray(call.tokens))
+  return {
+    input: tokens.reduce((sum, one) => sum + one.input, 0),
+    cached: tokens.reduce((sum, one) => sum + one.cached, 0),
+    output: tokens.reduce((sum, one) => sum + one.output, 0),
+    cost: Math.round(calls.reduce((sum, one) => sum + one.cost, 0) * 1e12) / 1e12,
+    calls: calls.length,
+  }
+}
+
+/**
+ * A review's report: the findings shown (each confirmed bucket's best finding with the check's reason; with no check,
+ * each kept bucket's), sorted and marked, with everything they came from kept beside them, and what each stage's calls
+ * and all of them used.
+ */
+export const reviewReport = (input: ReportInput): ReviewReport => {
+  const byBucket = new Map(input.buckets.map((bucket) => [bucket.number, bucket]))
+  const shown = input.verify
+    ? input.verdicts.flatMap((check) => {
+      const bucket = byBucket.get(check.bucket)
+      return check.outcome === "confirmed" && bucket !== undefined ? [{ bucket, checked: Option.match(check.verdict, { onNone: () => "", onSome: (verdict) => verdict.reason }) }] : []
+    })
+    : input.buckets.filter((bucket) => bucket.kept).map((bucket) => ({ bucket, checked: "" }))
+  const reported = shown.map(({ bucket, checked }): ReportedFinding => ({
+    ...bucket.best,
+    bucket: bucket.number,
+    votes: bucket.votes,
+    checked,
+    restatesCi: restatesCi(bucket.best, input.prepared.failing),
+  }))
+  const find = usageOf(input.passes)
+  const verify = usageOf(input.checks)
   return {
     run: input.run,
     repo: input.prepared.pullRequest.repo,
@@ -70,16 +115,21 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     promptVersion: input.promptVersion,
     toolsVersion: input.toolsVersion,
     model: input.model,
+    finder: input.finder,
+    vote: input.vote,
+    verify: input.verify,
+    complete: input.complete,
+    passesAsked: input.passesAsked,
     passes: input.passes,
-    findings: Arr.sort(input.findings, FINDING_ORDER).map((finding): ReportedFinding => ({ ...finding, restatesCi: restatesCi(finding, input.prepared.failing) })),
+    checks: input.checks,
+    findings: input.findings,
+    buckets: input.buckets,
+    verdicts: input.verdicts,
+    reported: Arr.sort(reported, FINDING_ORDER),
     packedFiles: input.prepared.diff.kept.length,
     changedFiles: input.prepared.files.length,
-    usage: {
-      input: tokens.reduce((sum, one) => sum + one.input, 0),
-      cached: tokens.reduce((sum, one) => sum + one.cached, 0),
-      output: tokens.reduce((sum, one) => sum + one.output, 0),
-      cost: calls.reduce((sum, one) => sum + one.cost, 0),
-    },
+    usage: usageOf([...input.passes, ...input.checks]),
+    stages: { find, verify },
     wallMs: Math.max(0, Math.round(input.wallMs)),
   }
 }
@@ -93,47 +143,93 @@ const printable = (text: string): string => plainText(text.replaceAll("\n", " ")
 /** Why a pass is incomplete, in words, with the failure's own words when it has them; none for a pass that answered. */
 const incompleteOf = (ended: PassEnded): Option.Option<string> => Match.valueTags(ended, {
   Answered: () => Option.none(),
-  StepCap: ({ steps }) => Option.some(`${INCOMPLETE_BECAUSE.StepCap} (${steps})`),
+  Judged: () => Option.none(),
+  StepCap: ({ steps, summary, why }) => Option.some(`${INCOMPLETE_BECAUSE.StepCap} (${steps})${why.length > 0 ? `; its closing call failed: ${printable(clipTo(why, 300))}` : ""}${summary.length > 0 ? `; ${printable(summary)}` : ""}`),
+  Failed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.Failed}: ${printable(clipTo(message, 300))}`),
   SpendRefused: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.SpendRefused}: ${printable(clipTo(message, 300))}`),
   ModelFailed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.ModelFailed}: ${printable(clipTo(message, 300))}`),
   OutputCut: () => Option.some(INCOMPLETE_BECAUSE.OutputCut),
   JournalFailed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.JournalFailed}: ${printable(clipTo(message, 300))}`),
 })
 
-/** One finding as the report shows it: `path:line severity kind — claim`, then its quoted evidence, indented; the model's words made plain. */
-const findingLines = (finding: ReportedFinding): ReadonlyArray<string> => {
+/**
+ * One finding as the report shows it: `path:line severity kind — claim (V/K passes)`, then its quoted evidence,
+ * indented, and the check's reason; the model's words made plain.
+ */
+const findingLines = (finding: ReportedFinding, passes: number): ReadonlyArray<string> => {
   const lines = finding.endLine !== undefined && finding.endLine > finding.line ? `${finding.line}-${finding.endLine}` : `${finding.line}`
   const evidence = clipTo(finding.evidence.trimEnd(), EVIDENCE_SHOWN).split("\n").map(plainText).filter((line) => line.trim().length > 0)
   return [
-    `${shownPath(finding.path)}:${lines} ${finding.severity} ${finding.kind} — ${printable(finding.claim)}${finding.restatesCi ? " (restates a CI failure)" : ""}`,
+    `${shownPath(finding.path)}:${lines} ${finding.severity} ${finding.kind} — ${printable(finding.claim)} (${finding.votes}/${passes} ${passes === 1 ? "pass" : "passes"})${finding.restatesCi ? " (restates a CI failure)" : ""}`,
     ...evidence.map((line) => `    > ${line}`),
+    ...(finding.checked.length > 0 ? [`    checked: ${printable(finding.checked)}`] : []),
   ]
 }
 
 const percent = (part: number, whole: number): string => (whole === 0 ? "0%" : `${Math.round((part / whole) * 100)}%`)
 
+const plural = (count: number, one: string, many: string): string => `${count} ${count === 1 ? one : many}`
+
+/**
+ * The passes that did not start, in words, when the find stage stopped after the first pass ended before its first
+ * call answered: `Pass 2 did not start: …` or `Passes 2 to K did not start: …`; none when every pass asked for ran.
+ */
+const notStarted = (report: ReviewReport): ReadonlyArray<string> => {
+  const ran = report.passes.length
+  if (ran === 0 || report.passesAsked <= ran) return []
+  const which = report.passesAsked === ran + 1 ? `Pass ${ran + 1}` : `Passes ${ran + 1} to ${report.passesAsked}`
+  return [`${which} did not start: the find stage stopped because pass 1 ended before its first call answered.`]
+}
+
+/** What a stage's calls used, in words: calls, tokens with the cached share, output and cost. */
+const usageText = (usage: ReviewUsage): string =>
+  `${plural(usage.calls, "call", "calls")}, ${usage.input} tokens in (${percent(usage.cached, usage.input)} cached), ${usage.output} out, $${usage.cost.toFixed(4)}`
+
+/** How many buckets and checks ended each way: `N kept, N left out by the vote, N off the changed lines`, and the checks' outcomes. */
+const tallies = (report: ReviewReport): ReadonlyArray<string> => {
+  const count = (why: Bucket["why"]) => report.buckets.filter((bucket) => bucket.why === why).length
+  const outcome = (which: BucketCheck["outcome"]) => report.verdicts.filter((check) => check.outcome === which).length
+  return [
+    `Passes: ${report.passes.length}, finding ${report.finder === "strict" ? "strictly" : "candidates"}; buckets: ${count("kept")} kept, ${count("one-vote")} left out by the vote, ${count("off-changed-lines")} off the changed lines`,
+    ...(report.verify ? [`Checks: ${outcome("confirmed")} confirmed, ${outcome("refuted")} refuted, ${outcome("unsure")} unsure, ${outcome("unchecked")} unchecked`] : ["Checks: none run"]),
+  ]
+}
+
 /**
  * The report a person reads: the pull request and the commit reviewed; at most `FINDINGS_SHOWN` findings in their
- * order, each with its evidence, and how many more there are, or `No findings.`; `incomplete: <why>` for each pass
- * that stopped before it answered, else its summary; then the files in the pack against those changed, the files the
- * model opened, the model calls, their tokens (the cached share), their cost and the wall time.
+ * order, each with its evidence, how many passes found it and the check's reason, and how many more there are, or
+ * `No findings.` (`Incomplete: no pass finished.` when no pass answered or reached its step cap); each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
+ * so an unchecked finding is never read as none; `incomplete: <why>` for each pass that stopped before it answered, else its summary;
+ * the passes that did not start because the first ended before its first call answered (`notStarted`); the passes and
+ * how the buckets and checks came out; the files in the pack against those changed and the files the passes opened;
+ * each stage's calls, tokens (the cached share) and cost, the total and the wall time.
  */
 export const reportText = (report: ReviewReport): string => {
-  const shown = report.findings.slice(0, FINDINGS_SHOWN)
-  const more = report.findings.length - shown.length
+  const shown = report.reported.slice(0, FINDINGS_SHOWN)
+  const more = report.reported.length - shown.length
   const opened = Arr.dedupe(report.passes.flatMap((pass) => pass.opened))
-  const steps = report.passes.reduce((sum, pass) => sum + pass.calls.length, 0)
+  const byBucket = new Map(report.buckets.map((bucket) => [bucket.number, bucket]))
+  const unchecked = report.verdicts.flatMap((check) => {
+    const bucket = byBucket.get(check.bucket)
+    return check.outcome === "unchecked" && bucket !== undefined ? [`Not checked (${check.why}): ${shownPath(bucket.path)}:${bucket.line} ${bucket.best.severity} ${bucket.kind} — ${printable(bucket.best.claim)}`] : []
+  })
   return [
     `Review of #${report.number} in ${report.repo} at ${report.at.sha.slice(0, 12)}, ${AT_SOURCE_WORDS[report.at.source]}`,
     "",
-    ...(shown.length === 0 ? ["No findings."] : shown.flatMap(findingLines)),
+    ...(shown.length > 0 ? shown.flatMap((finding) => findingLines(finding, report.passes.length))
+      : report.passes.some((pass) => FINISHED.includes(pass.ended._tag)) ? ["No findings."] : ["Incomplete: no pass finished."]),
     ...(more > 0 ? [`${more} more ${more === 1 ? "finding" : "findings"} not shown.`] : []),
+    ...unchecked.slice(0, FINDINGS_SHOWN),
+    ...(unchecked.length > FINDINGS_SHOWN ? [`${unchecked.length - FINDINGS_SHOWN} more not checked.`] : []),
     "",
-    ...report.passes.map((pass) => Option.match(incompleteOf(pass.ended), {
-      onSome: (why) => `Pass ${pass.pass}: incomplete: ${why}`,
-      onNone: () => `Pass ${pass.pass}: ${pass.ended._tag === "Answered" && pass.ended.summary.length > 0 ? printable(pass.ended.summary) : "answered"}`,
+    ...report.passes.map((pass, index) => Option.match(incompleteOf(pass.ended), {
+      onSome: (why) => `Pass ${index + 1}: incomplete: ${why}`,
+      onNone: () => `Pass ${index + 1}: ${pass.ended._tag === "Answered" && pass.ended.summary.length > 0 ? printable(pass.ended.summary) : "answered"}`,
     })),
+    ...notStarted(report),
+    ...tallies(report),
     `Files: ${report.packedFiles} in the pack of ${report.changedFiles} changed; opened ${opened.length}${opened.length === 0 ? "" : `: ${opened.map(shownPath).join(", ")}`}`,
-    `Model: ${report.model}; ${steps} ${steps === 1 ? "call" : "calls"}; tokens ${report.usage.input} in (${report.usage.cached} cached, ${percent(report.usage.cached, report.usage.input)}), ${report.usage.output} out; cost $${report.usage.cost.toFixed(4)}; wall ${(report.wallMs / 1000).toFixed(1)} s`,
+    `Find: ${usageText(report.stages.find)}; verify: ${usageText(report.stages.verify)}`,
+    `Model: ${report.model}; ${usageText(report.usage)}; wall ${(report.wallMs / 1000).toFixed(1)} s`,
   ].join("\n")
 }

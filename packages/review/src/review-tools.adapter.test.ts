@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Result } from "effect"
 import { Tool } from "effect/ai"
 import { kernel, Sessions, userMessage } from "@xandreed/core"
 import { callTool, inProcessJournal, sessions } from "@xandreed/sdk"
@@ -11,14 +11,16 @@ import { Checkout } from "./checkout.port.js"
 import type { CheckoutError } from "./checkout.port.js"
 import { CommandFailed, OutputCut } from "./host-command.entity.js"
 import type { FileDiff } from "./diff.entity.js"
-import { parseUnifiedDiff } from "./diff.entity.functions.js"
-import { PassNumber } from "./finding.entity.js"
+import { parseUnifiedDiff, shownPath } from "./diff.entity.functions.js"
+import { CheckNumber, PassNumber } from "./finding.entity.js"
 import { findingsInMemory } from "./findings.adapter.js"
 import { Findings } from "./findings.port.js"
 import { BIG_LINES, FORGED_NAME, gitFixture, LINK_OUT, MAGIC_FOLDERS, SUBMODULE } from "./git-fixture.testing.js"
 import { hostShell } from "./host-shell.adapter.js"
 import { BranchName, CommitSha, FetchRef, RepoName } from "./pull-request.entity.js"
-import { ListFiles, ReadDiff, ReadLines, reviewToolHandlers, reviewTools, ReportFinding, SearchCode } from "./review-tools.adapter.js"
+import { ListFiles, ReadDiff, ReadLines, reviewToolHandlers, reviewTools, ReportFinding, SearchCode, Verdict } from "./review-tools.adapter.js"
+import type { ReviewStage } from "./review-tools.entity.js"
+import { checkedReport } from "./review-tools.entity.functions.js"
 
 const fixture = gitFixture()
 afterAll(() => fixture.cleanup())
@@ -38,7 +40,7 @@ beforeAll(async () => {
 })
 
 /** Make each call in order in one turn, over the fixture's head: what each stored (its result and whether it failed), and the findings kept. */
-const calls = (made: ReadonlyArray<readonly [string, unknown]>) =>
+const calls = (made: ReadonlyArray<readonly [string, unknown]>, stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(1) }) =>
   Effect.runPromise(Effect.scoped(Effect.gen(function* () {
     const all = yield* Sessions
     const session = yield* all.open(yield* all.create({ owner: "test" }))
@@ -46,9 +48,9 @@ const calls = (made: ReadonlyArray<readonly [string, unknown]>) =>
     const toolkit = yield* reviewTools
     const stored = yield* Effect.forEach(made, ([name, params], index) =>
       Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
-    return { stored, findings: yield* (yield* Findings).all }
+    return { stored, findings: yield* (yield* Findings).all("run-1") }
   }).pipe(Effect.provide(Layer.mergeAll(
-    reviewToolHandlers({ repo, at: head, files, pass: PassNumber.make(1) }),
+    reviewToolHandlers({ run: "run-1", repo, at: head, files, stage }),
     sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
   ).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory)))))))
 
@@ -139,6 +141,73 @@ describe("the review's tools say what they do, in fixed words", () => {
       required: ["path", "line", "kind", "severity", "claim", "evidence"],
       additionalProperties: true,
     })
+  })
+
+  test("verdict: what it gives, when, and the quote it asks for", () => {
+    expect([Verdict.name, Verdict.description]).toEqual([
+      "verdict",
+      "Give your verdict on the finding you were asked to check, once, after reading the lines you need. Only when you check a finding; to report a problem, use reportFinding.",
+    ])
+    expect(Tool.getJsonSchema(Verdict)).toEqual({
+      type: "object",
+      properties: {
+        outcome: { type: "string", enum: ["confirmed", "refuted", "unsure"], description: "confirmed: the problem is real and the pull request brings it in; refuted: it is not; unsure: you cannot tell from what you read." },
+        reason: { type: "string", minLength: 1, maxLength: 600, description: "Why, in one to three sentences, at most 600 characters." },
+        quote: { type: "string", maxLength: 1000, description: "The lines of the file the finding cites that your verdict rests on, quoted exactly as they are at the commit under review, without line numbers, at most 1000 characters." },
+      },
+      required: ["outcome", "reason", "quote"],
+      additionalProperties: true,
+    })
+  })
+
+  test("every stage is offered the same tools, in one order", () => {
+    expect(Object.keys(reviewTools.tools)).toEqual(["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"])
+  })
+})
+
+describe("what reportFinding keeps", () => {
+  const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e" }
+
+  test("a path read as a tree path and one the pull request changes; endLine at or after line; at most 40 lines: else a failed result in words that say what to give", async () => {
+    const changed = files.filter((file) => file.change !== "deleted").map((file) => file.path).sort()
+    const ran = await calls([
+      ["reportFinding", { ...FINDING, path: "./src/sum.ts" }],
+      ["reportFinding", { ...FINDING, path: "src/never-changed.ts" }],
+      ["reportFinding", { ...FINDING, path: "../outside.ts" }],
+      ["reportFinding", { ...FINDING, line: 9, endLine: 4 }],
+      ["reportFinding", { ...FINDING, line: 1, endLine: 41 }],
+      ["reportFinding", { ...FINDING, line: 1, endLine: 40 }],
+    ])
+    expect<unknown>(ran.stored).toEqual([
+      ["recorded finding 1", false],
+      [`src/never-changed.ts is not a file this pull request changes, so a finding cannot cite it. Cite one of the changed files: ${files.filter((file) => file.change !== "deleted").map((file) => shownPath(file.path)).join(", ")}.`, true],
+      ["../outside.ts is not a path in the repository: give one relative to its root, such as src/index.ts, with no .. part and no leading /.", true],
+      ["endLine (4) is before line (9): give the problem's first line as line and its last as endLine.", true],
+      ["A finding cites at most 40 lines: give the problem's first line and an endLine at most 39 lines after it.", true],
+      ["recorded finding 2", false],
+    ])
+    expect([ran.findings.map((finding) => finding.path), changed.length > 0]).toEqual([["src/sum.ts", "src/sum.ts"], true])
+  })
+
+  test("past twenty changed files, the refusal names twenty and counts the rest", () => {
+    const many = Array.from({ length: 23 }, (_, index) => ({ ...files[0]!, path: `f${String(index).padStart(2, "0")}.ts`, change: "modified" as const }))
+    const refused = checkedReport({ path: "x.ts", line: 1 }, many)
+    expect(Result.isFailure(refused) && refused.failure).toBe(`x.ts is not a file this pull request changes, so a finding cannot cite it. Cite one of the changed files: ${many.slice(0, 20).map((file) => file.path).join(", ")}, and 3 more.`)
+  })
+})
+
+describe("each tool in its stage", () => {
+  const VERDICT = { outcome: "refuted", reason: "Not on a changed line.", quote: "total += value * 1" }
+  const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e" }
+
+  test("in a pass, verdict is a failed result in fixed words; in a check, reportFinding is; a check's first verdict stands", async () => {
+    const inPass = await calls([["verdict", VERDICT]])
+    const inCheck = await calls([["reportFinding", FINDING], ["verdict", VERDICT], ["verdict", { ...VERDICT, outcome: "confirmed" }]], { _tag: "Verify", check: CheckNumber.make(1) })
+    expect<unknown>([inPass.stored, inCheck.stored, inCheck.findings]).toEqual([
+      [["There is no finding to check in this review: report each problem with reportFinding.", true]],
+      [["You are checking a finding, not reporting new ones: call verdict with your verdict on it.", true], ["recorded your verdict", false], ["Your first verdict stands: a check gives one.", false]],
+      [],
+    ])
   })
 })
 
@@ -289,7 +358,7 @@ describe("a git command of a tool's that fails", () => {
       return yield* Effect.forEach(made, ([name, params], index) =>
         Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
     }).pipe(Effect.provide(Layer.mergeAll(
-      reviewToolHandlers({ repo, at: head, files: [], pass: PassNumber.make(1) }),
+      reviewToolHandlers({ run: "run-1", repo, at: head, files: [], stage: { _tag: "Find", pass: PassNumber.make(1) } }),
       sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
     ).pipe(Layer.provideMerge(Layer.mergeAll(checkout, findingsInMemory)))))))
 

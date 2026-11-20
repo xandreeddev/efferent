@@ -4,7 +4,7 @@ import { GREP_TIMEOUT_MS } from "./checkout.entity.js"
 import type { GrepHit, TreeEntry } from "./checkout.entity.js"
 import type { FileDiff } from "./diff.entity.js"
 import { renderDiff, shownPath } from "./diff.entity.functions.js"
-import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN } from "./review-tools.entity.js"
+import { DIFF_PAGE, GLOB_LIMIT, LINE_SHOWN, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN, VERDICT } from "./review-tools.entity.js"
 
 /** Why a path that is in the tree is not read, in words that name what to do instead. */
 export const NOT_READ_BECAUSE: Readonly<Record<Exclude<TreeEntry["_tag"], "File">, (shown: string) => string>> = {
@@ -220,3 +220,38 @@ export const GIT_FAILED = "git could not read the commit under review for this c
 
 /** What `reportFinding` answers: the finding's number in its pass. */
 export const recordedText = (number: number): string => `recorded finding ${number}`
+
+/** The most changed files a refusal of `reportFinding`'s path names; the rest are counted. */
+export const CHANGED_NAMED = 20
+
+/** The most lines one finding cites. */
+export const FINDING_LINES = 40
+
+/**
+ * A report as `reportFinding` keeps it, or why it is refused, in words that say what to give: its path read as a tree
+ * path (`treePath`) and one of the files the pull request changes and leaves (not one it deletes; the refusal names
+ * them, at most `CHANGED_NAMED`); `endLine` at or after `line`; at most `FINDING_LINES` lines.
+ */
+export const checkedReport = <R extends { readonly path: string; readonly line: number; readonly endLine?: number }>(report: R, files: ReadonlyArray<FileDiff>): Result.Result<R, string> => {
+  const path = treePath(report.path)
+  if (Result.isFailure(path)) return Result.fail(path.failure)
+  const changed = files.filter((file) => file.change !== "deleted").map((file) => file.path)
+  if (!changed.includes(path.success)) {
+    const named = changed.slice(0, CHANGED_NAMED).map(shownPath).join(", ")
+    const more = changed.length > CHANGED_NAMED ? `, and ${changed.length - CHANGED_NAMED} more` : ""
+    return Result.fail(`${shownPath(report.path)} is not a file this pull request changes, so a finding cannot cite it. Cite one of the changed files: ${named}${more}.`)
+  }
+  const endLine = report.endLine ?? report.line
+  if (endLine < report.line) return Result.fail(`endLine (${endLine}) is before line (${report.line}): give the problem's first line as line and its last as endLine.`)
+  if (endLine - report.line + 1 > FINDING_LINES) return Result.fail(`A finding cites at most ${FINDING_LINES} lines: give the problem's first line and an endLine at most ${FINDING_LINES - 1} lines after it.`)
+  return Result.succeed({ ...report, path: path.success })
+}
+
+/** What `verdict` answers: kept, or refused because the check already gave one. */
+export const judgedText = (kept: boolean): string => (kept ? "recorded your verdict" : "Your first verdict stands: a check gives one.")
+
+/** What `reportFinding` answers while a finding is being checked: the check gives a verdict instead. */
+export const NOT_FINDING_NOW = `You are checking a finding, not reporting new ones: call ${VERDICT} with your verdict on it.`
+
+/** What `verdict` answers while a pass is finding: there is no finding to check. */
+export const NOT_CHECKING_NOW = `There is no finding to check in this review: report each problem with ${REPORT_FINDING}.`

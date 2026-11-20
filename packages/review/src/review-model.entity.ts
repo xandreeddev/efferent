@@ -21,26 +21,33 @@ export const ReviewModel = Schema.Struct({
 export type ReviewModel = typeof ReviewModel.Type
 
 /**
- * The default model: DeepSeek V4.1 Flash through the Vercel AI Gateway, asked of Baseten first, 2,048 tokens of output
- * a call. A request's worst case is held at 1 byte a token, the ledger's bound for any tokenizer: the request is the
- * pull request's text, so no smaller count is safe.
+ * The default model: DeepSeek V4.1 Flash through the Vercel AI Gateway, asked of Baseten first, 4,096 tokens of output
+ * a call (reasoning counts: at 2,048 one pass's answer used 1,925 and another's was cut). A request's worst case is
+ * held at 1 byte a token, the ledger's bound for any tokenizer: the request is the pull request's text, so no smaller
+ * count is safe.
  */
 export const DEFAULT_REVIEW_MODEL: ReviewModel = {
   model: "deepseek/deepseek-v4.1-flash-1017",
   baseUrl: "https://ai-gateway.vercel.sh/v1",
   keyVariable: "VERCEL_API_KEY",
   price: { input: 0.3, output: 1.2, cacheRead: 0.007 },
-  maxOutputTokens: 2_048,
+  maxOutputTokens: 4_096,
   bytesPerToken: 1,
   extra: { providerOptions: { gateway: { order: ["baseten"] } } },
   provider: "vercel.ai_gateway",
 }
 
 /**
- * The most a review may spend by default, in USD, the ledger's total cap. Measured on the packs of #645, #647, #650
- * and #658 at their first heads: a first request of 130 to 139 KB holds about $0.044 at 1 byte a token, and a request
- * grows with every result read; the longest live pass (#647, 16 steps) settled $0.040 and its last request (about
- * 300 KB) held about $0.093, so one normal review needs about $0.13, and a cap of $0.10 or $0.15 would refuse it near
- * its end.
+ * What a review may spend by default, in USD: $0.50 in all, $0.30 on its passes, $0.20 on its checks. Measured on the
+ * packs of #645, #647, #650 and #658 at their first heads: a first request of 130 to 139 KB holds about $0.044 at 1
+ * byte a token, and a request grows with every result read; the longest pass (16 steps) settled $0.040 and its last
+ * request (about 300 KB) held about $0.093, plus $0.005 for 4,096 tokens of output. Three passes settle about $0.12
+ * and hold at most three such requests at once, which a stage's ledger lets wait for each other (`stageSpend`) rather
+ * than refuse, so $0.30 never refuses a call that settled spend leaves room for. A check's request is about the pack's
+ * size (about $0.05 held); measured, a check that gave its verdict settled about $0.010 (#645, two checks in 13
+ * calls), and one that reasoned four calls without one $0.022 (#595): $0.20 holds three at once and checks about ten.
  */
-export const DEFAULT_MAX_COST = 0.2
+export const DEFAULT_BUDGET = { total: 0.5, find: 0.3, verify: 0.2 } as const
+
+/** The most a review may spend by default, in USD: `DEFAULT_BUDGET`'s total. */
+export const DEFAULT_MAX_COST = DEFAULT_BUDGET.total

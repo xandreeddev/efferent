@@ -7,8 +7,8 @@ import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
 
 const short = (sha: string): string => sha.slice(0, 12)
 
-/** The folder a review's logs and records go in, under the repository's: the pull request and the first twelve digits of the commit under review. */
-export const reviewFolderOf = (number: number, sha: string): string => `${number}-${short(sha)}`
+/** The folder a review's logs and records go in, under the repository's: the pull request's number, then the commit under review's full sha. */
+export const reviewFolderOf = (number: number, sha: string): string => `${number}/${sha}`
 
 /** How many files left out the summary names one by one; the rest are counted by reason. */
 const SUMMARY_DROPPED_SHOWN = 5
