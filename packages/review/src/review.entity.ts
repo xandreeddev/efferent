@@ -1,5 +1,5 @@
 import { Schema } from "effect"
-import { DEFAULT_GROUP_BOUNDS, DEFAULT_GROUP_STEPS, Focus, GroupBounds } from "./file-group.entity.js"
+import { DEFAULT_GROUP_BOUNDS, DEFAULT_GROUP_RESERVE, DEFAULT_GROUP_STEPS, Focus, GroupBounds } from "./file-group.entity.js"
 import { PrepareOptions } from "./prepare-review.entity.js"
 import { Effort } from "./review-model.entity.js"
 import { PassOptions } from "./review-pass.entity.js"
@@ -28,14 +28,15 @@ export const DEFAULT_VERIFY_STEPS = 6
 export const DEFAULT_VERIFY_CONCURRENCY = 3
 
 /**
- * How a focused review groups and runs: each group's bounds, the most calls a group's pass makes (`steps`), and whether
- * the files outside every group but pages and docs get a pass of their own (`config`).
+ * How a focused review groups and runs: each group's bounds, the most calls a group's pass makes (`steps`), what each
+ * keeps back for its closing call (`reserve`, USD, at most half the find stage), and whether the files outside every
+ * group but pages and docs get a pass of their own (`config`).
  */
-export const GroupOptions = Schema.Struct({ bounds: GroupBounds, steps: AtLeastOne, config: Schema.Boolean })
+export const GroupOptions = Schema.Struct({ bounds: GroupBounds, steps: AtLeastOne, reserve: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)), config: Schema.Boolean })
 export type GroupOptions = typeof GroupOptions.Type
 
-/** The stock focused review: `DEFAULT_GROUP_BOUNDS`, `DEFAULT_GROUP_STEPS` calls a pass, no config pass. */
-export const DEFAULT_GROUP_OPTIONS: GroupOptions = { bounds: DEFAULT_GROUP_BOUNDS, steps: DEFAULT_GROUP_STEPS, config: false }
+/** The stock focused review: `DEFAULT_GROUP_BOUNDS`, `DEFAULT_GROUP_STEPS` calls a pass, `DEFAULT_GROUP_RESERVE` kept back, no config pass. */
+export const DEFAULT_GROUP_OPTIONS: GroupOptions = { bounds: DEFAULT_GROUP_BOUNDS, steps: DEFAULT_GROUP_STEPS, reserve: DEFAULT_GROUP_RESERVE, config: false }
 
 /**
  * What a review is asked: how to prepare the pull request; how its passes read it (`focus`: `whole`, `passes` passes

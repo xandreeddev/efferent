@@ -209,6 +209,11 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const passes = yield* Option.match(one(line, "--passes"), { onNone: () => Effect.succeed(DEFAULT_PASSES), onSome: (text) => wholeNumber(text, "--passes") })
   const finder = yield* Option.match(one(line, "--finder"), { onNone: () => Effect.succeed<Finder>("candidates"), onSome: finderOf })
   const focus = yield* Option.match(one(line, "--focus"), { onNone: () => Effect.succeed<Focus>(DEFAULT_FOCUS), onSome: oneOf("--focus", Focus.literals) })
+  // A flag of the other focus would do nothing: refused, never ignored.
+  const otherFocus = focus === "groups"
+    ? ["--passes", "--max-steps"].find((flag) => Option.isSome(one(line, flag)))
+    : [...["--group-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-pass"].filter((flag) => line.switches.has(flag))][0]
+  if (otherFocus !== undefined) return yield* Effect.fail(usage(`${otherFocus} is a flag of --focus ${focus === "groups" ? "whole" : "groups"}, not of --focus ${focus}`))
   const groupSteps = yield* Option.match(one(line, "--group-steps"), { onNone: () => Effect.succeed(DEFAULT_GROUP_STEPS), onSome: (text) => wholeNumber(text, "--group-steps") })
   const effortFind = yield* Option.match(one(line, "--effort-find"), { onNone: () => Effect.succeed<Effort>("default"), onSome: oneOf("--effort-find", Effort.literals) })
   const effortCheck = yield* Option.match(one(line, "--effort-check"), { onNone: () => Effect.succeed<Effort>("default"), onSome: oneOf("--effort-check", Effort.literals) })

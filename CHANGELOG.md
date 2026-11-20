@@ -77,11 +77,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   request): the changed source and test files grouped by package, a large
   package cut by file stem, at most 6,000 tokens of diff and 8 files a group;
   one pass a group in turn, 8 calls each (`--group-steps`), while the find
-  stage has room, the rest listed as not reviewed; config, lockfiles, pages
-  and docs get no pass unless `--config-pass`. Each pass sends the pull
+  stage has room for a pass's closing call, the rest listed as not reviewed
+  (about seven groups fit the stock $0.30 find stage); config, lockfiles,
+  pages and docs get no pass unless `--config-pass`. Each pass sends the pull
   request with every changed file listed and its group's diffs as a message
-  of its own, which the checks of its findings start with too, so they read
-  the same cache. The packed diff now puts the source first, in git's order,
+  of its own, which the checks of its findings start with too, so they can
+  read the same cache. `--passes` and `--max-steps` are flags of
+  `--focus whole` only. The packed diff now puts the source first, in git's order,
   then the tests, large config, pages and docs. `--effort-find` and
   `--effort-check` ask a stage's model at another reasoning effort (`none`
   turns reasoning off). The report shows each group's pass, cost and

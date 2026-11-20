@@ -150,19 +150,20 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   }
 
   // Focused: one pass a group, one after another, each with its group's prefix; a group starts only while the find
-  // stage has `GROUP_START_ROOM` neither settled nor held, else it and every group after it are listed as not reviewed.
-  // A pass the stage refused does not stop the next: its own reserve, held beside its call, is what crowded it out
-  // (on #657 the second group's eighth call was refused with $0.08 of the stage left).
+  // stage has its closing reserve and one call's hold (`GROUP_START_ROOM`) neither settled nor held, so a pass that
+  // starts can always close and report; else it and every group after it are listed as not reviewed. A pass the stage
+  // refused does not stop the next: its own reserve, held beside its call, is what crowded it out (on #657 the second
+  // group's eighth call was refused with $0.08 of the stage left).
   const focused = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : []
   const groupRuns: Array<GroupRun> = []
   const found: Array<PassResult> = []
   if (options.focus === "groups") {
-    const runAs: PassOptions = { maxSteps: options.groups.steps, reserve: Math.min(options.pass.reserve, options.budget.find / 2) }
+    const runAs: PassOptions = { maxSteps: options.groups.steps, reserve: Math.min(options.groups.reserve, options.budget.find / 2) }
     let stopped = ""
     for (const { group, prefix } of focused) {
       if (stopped.length === 0) {
         const totals = yield* Effect.orDie(findSpend.totals)
-        if (options.budget.find - totals.settled - totals.reserved < GROUP_START_ROOM) stopped = NOT_REVIEWED_BECAUSE.spent
+        if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + GROUP_START_ROOM) stopped = NOT_REVIEWED_BECAUSE.spent
       }
       if (stopped.length > 0) {
         groupRuns.push({ group, pass: Option.none(), notReviewed: stopped })

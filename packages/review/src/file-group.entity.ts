@@ -35,10 +35,18 @@ export const DEFAULT_GROUP_BOUNDS: GroupBounds = { tokens: 6_000, files: 8 }
 export const DEFAULT_GROUP_STEPS = 8
 
 /**
- * What the find stage must have left, unsettled and not held, for a group's pass to start, in USD: about a call's hold on
- * a focused request (60 KB at 1 byte a token and 4,096 tokens of output, about $0.023).
+ * One call's hold on a focused request, in USD: what the find stage must have left, neither settled nor held, beside a
+ * group's closing reserve for its pass to start. Measured on #644's gold group: its seventh call asked to hold $0.040
+ * (a request of about 118 KB at 1 byte a token, and 4,096 tokens of output).
  */
-export const GROUP_START_ROOM = 0.03
+export const GROUP_START_ROOM = 0.04
+
+/**
+ * What a focused pass keeps back for its closing call by default, in USD: a focused request's hold with room to spare
+ * (`GROUP_START_ROOM`), less than a whole review's `DEFAULT_CLOSING_RESERVE`, sized for 300 KB requests. On #644 the
+ * defect was reported on the closing call, after the stage refused the seventh.
+ */
+export const DEFAULT_GROUP_RESERVE = 0.05
 
 /** Why a group was not reviewed, in words. */
 export const NOT_REVIEWED_BECAUSE = {
@@ -54,8 +62,10 @@ export type Focus = typeof Focus.Type
 
 /**
  * How a review reads the pull request by default: in focused groups. Measured on the gold cases (2026-11-20, one run
- * each): the gold group of #644 alone found and confirmed its defect ($0.035), which the whole-pull-request pass had
- * missed; #480, #595 and #657's groups missed theirs.
+ * each, the gold groups alone): the gold group of #644 found and confirmed its defect ($0.035), which the
+ * whole-pull-request pass had missed; #480, #595 and #657's groups missed theirs. A focused review is cut short on a
+ * large pull request: at about $0.02 to $0.035 a group, the stock find stage ($0.30) reviews about seven groups and
+ * lists the rest as not reviewed.
  */
 export const DEFAULT_FOCUS: Focus = "groups"
 

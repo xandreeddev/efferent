@@ -22,7 +22,7 @@ import { ReviewPasses } from "./review-pass.port.js"
 import { ReviewReport } from "./review-report.entity.js"
 import { DEFAULT_GROUP_OPTIONS } from "./review.entity.js"
 import type { ReviewOptions } from "./review.entity.js"
-import { DEFAULT_GROUP_STEPS, GROUP_START_ROOM, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import { DEFAULT_GROUP_RESERVE, DEFAULT_GROUP_STEPS, GROUP_START_ROOM, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
 import { FIND_TAIL } from "./review-prompt.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 import { reportText } from "./review-report.entity.functions.js"
@@ -200,10 +200,32 @@ describe("reviewPullRequest", () => {
       finds.every((input) => input.prompt.tail === FIND_TAIL.candidates && input.prompt.prefix.length === 3 && input.onFirstAnswer === undefined),
       finds[0]?.options,
       report.passesAsked,
-    ]).toEqual(["groups", report.groups.map((run, index) => [index + 1, ".", true, ""]), report.groups.length, report.groups.length, true, { maxSteps: DEFAULT_GROUP_STEPS, reserve: 0.1 }, report.groups.length])
+    ]).toEqual(["groups", report.groups.map((run, index) => [index + 1, ".", true, ""]), report.groups.length, report.groups.length, true, { maxSteps: DEFAULT_GROUP_STEPS, reserve: DEFAULT_GROUP_RESERVE }, report.groups.length])
     // The pass's first three messages are the check's, byte for byte.
     expect([checks.length, checks[0]?.prompt.prefix === finds[sumPass - 1]?.prompt.prefix, JSON.stringify(checks[0]?.prompt.prefix) === JSON.stringify(finds[sumPass - 1]?.prompt.prefix)]).toEqual([1, true, true])
     expect(finds[sumPass - 1]?.prompt.prefix[2]?.content.includes("File: src/sum.ts")).toBe(true)
+  })
+
+  test("focused, several groups: the second message the same in every group's prefix, the third each group's own; the check on the prefix of the group holding its finding's file", async () => {
+    const { asked, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups", groups: { ...DEFAULT_GROUP_OPTIONS, bounds: { tokens: 6_000, files: 1 } } })
+    const finds = asked.filter((input) => input.reviewed.stage._tag === "Find")
+    const checks = asked.filter((input) => input.reviewed.stage._tag === "Verify")
+    const holding = report.groups.findIndex((run) => run.group.paths.includes("src/sum.ts"))
+    expect([
+      finds.length > 1,
+      finds.every((input) => input.prompt.prefix[1]?.content === finds[0]?.prompt.prefix[1]?.content),
+      new Set(finds.map((input) => input.prompt.prefix[2]?.content)).size,
+      holding > 0,
+      checks.length,
+      checks[0]?.prompt.prefix === finds[holding]?.prompt.prefix,
+    ]).toEqual([true, true, finds.length, true, 1, true])
+  })
+
+  test("focused: a group starts only with its closing reserve and one call's hold left in the find stage", async () => {
+    const run = async (find: number) => (await reviewWith(scripted("q").layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, budget: { total: 0.5, find, verify: 0.2 } })).groups.map((one) => Option.isSome(one.pass))
+    // The reserve is at most half the stage: at $0.06 it is $0.03, and $0.03 + $0.04 does not fit; at $0.08, $0.04 + $0.04 does.
+    expect([await run(0.06), await run(0.08)]).toEqual([[false], [true]])
   })
 
   test("focused: a pass the stage refused does not stop the next group's", async () => {

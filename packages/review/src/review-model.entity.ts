@@ -40,10 +40,10 @@ export const DEFAULT_REVIEW_MODEL: ReviewModel = {
 /**
  * How hard the model reasons in a stage: as the model does by default (`default`, nothing sent), not at all (`none`,
  * the gateway's `reasoning: { enabled: false }`), or at an effort (`reasoning: { effort }`). Measured on DeepSeek V4.1
- * Flash on Baseten through the gateway (2026-11-20): `none` took a call's reasoning from about 3,000 tokens to 0, and
- * changed the prompt's template (25 tokens fewer), so its requests do not read a cache written by default ones;
- * `reasoning_effort: "low"`, `reasoning: { effort: "low" }` and `reasoning: { max_tokens: 256 }` were accepted and
- * changed nothing.
+ * Flash on Baseten through the gateway (2026-11-20): `none` took a call's reasoning from about 3,000 tokens to 0 and
+ * changed the prompt's template (25 tokens fewer), so its requests likely do not share a cache with default ones (not
+ * measured); `reasoning_effort: "low"`, `reasoning: { effort: "low" }` and `reasoning: { max_tokens: 256 }` were
+ * accepted with no change seen (every call of the long probe reasoned about 3,014 tokens, possibly a ceiling).
  */
 export const Effort = Schema.Literals(["default", "none", "low", "medium", "high"])
 export type Effort = typeof Effort.Type

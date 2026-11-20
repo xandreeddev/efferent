@@ -33,8 +33,8 @@ export type FileKind = typeof FileKind.Type
 
 /**
  * How the source files are ordered among themselves when packed: in the order git lists them (`git`, the stock: on the
- * gold cases it packed the defect's file in 27 of 36 tuning cases, against 25 largest first and 21 for the earlier
- * code-largest-first packing), or largest first (`largest`).
+ * gold cases at 24,000 tokens it packed the defect's file in 28 of 36 tuning cases, against 25 largest first and 21
+ * for the earlier code-largest-first packing), or largest first (`largest`).
  */
 export const PackRanking = Schema.Literals(["git", "largest"])
 export type PackRanking = typeof PackRanking.Type
