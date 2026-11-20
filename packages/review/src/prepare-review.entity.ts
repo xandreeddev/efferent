@@ -6,6 +6,7 @@ import type { DroppedFile } from "./packed-diff.entity.js"
 import { CiRun, FirstHeadSource } from "./forge.entity.js"
 import { FileVerdict } from "./file-verdict.entity.js"
 import { DigestLimits, LogDigest } from "./log-digest.entity.js"
+import { ValidationRan, ValidationRefused } from "./validations.entity.js"
 import { PackedDiff } from "./packed-diff.entity.js"
 import { CommitSha, PullRequest } from "./pull-request.entity.js"
 import { FileDiff } from "./diff.entity.js"
@@ -59,17 +60,20 @@ export const ReviewedAt = Schema.Struct({
 export type ReviewedAt = typeof ReviewedAt.Type
 
 /**
- * What a preparation is asked: which commit to review, the token budget of the diff, the commands to run in the worktree (none: nothing is
- * run), the workflow files whose CI runs count (none: every one the `pull_request` event started), the digest's
- * limits and how long each command may run.
+ * What a preparation is asked: which commit to review; the token budget of the diff; the commands to run by hand
+ * (`run`) and whether the repository's profile runs too (`validate`; neither: nothing is run); the workflow files whose
+ * CI runs count (none: every one the `pull_request` event started); the digest's limits; how long each command may
+ * run, and how long each clone's whole run may take (`budgetMs`).
  */
 export const PrepareOptions = Schema.Struct({
   at: ReviewAt,
   budgetTokens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   run: Schema.Array(Schema.String),
+  validate: Schema.Boolean,
   workflows: Schema.Array(Schema.String),
   limits: DigestLimits,
   timeoutMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  budgetMs: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
 })
 export type PrepareOptions = typeof PrepareOptions.Type
 
@@ -78,7 +82,8 @@ export const DEFAULT_BUDGET_TOKENS = 24_000
 
 /**
  * Why the commands asked for were not run: the head is a fork's, its author may not write to the repository, or the
- * host gave no `Validations` (none ships: a pull request's commands run only in a sandbox the host provides).
+ * host gave no `Validations` (a pull request's commands run only in a sandbox the host provides). A base off the
+ * default branch is the validations' own refusal (`Refused`).
  */
 export const SkipReason = Schema.Literals(["fork", "permission", "no-sandbox"])
 export type SkipReason = typeof SkipReason.Type
@@ -90,11 +95,15 @@ export const SKIPPED_BECAUSE: Readonly<Record<SkipReason, string>> = {
   "no-sandbox": "no sandbox to run them in was given, so nothing is run",
 }
 
-/** The commands asked for: none asked, not run with the reason, or run with a digest of each. */
+/**
+ * The commands asked for: none asked; not run, with the reason (`Skipped` before anything was looked at, `Refused`
+ * by what the base holds); or run, with the profile and a digest of each (`ValidationRan`).
+ */
 export const Validation = Schema.Union([
   Schema.TaggedStruct("NotAsked", {}),
   Schema.TaggedStruct("Skipped", { reason: SkipReason }),
-  Schema.TaggedStruct("Ran", { digests: Schema.Array(LogDigest) }),
+  ValidationRefused,
+  ValidationRan,
 ])
 export type Validation = typeof Validation.Type
 

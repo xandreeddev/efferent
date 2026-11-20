@@ -48,6 +48,10 @@ jobs:
       # Foundry's key-free E2E: the forge loop over a scripted implementor.
       - run: bun run foundry demo
 
+      # The reviewer's isolation probe (packages/review) runs bubblewrap for real, and fails
+      # rather than skips when CI is set: install it and allow unprivileged user namespaces.
+      - run: sudo sh scripts/ci-bubblewrap.sh
+
       # Eval suites are key-gated and skip cleanly in CI; unit tests run.
       - run: bun test
 

@@ -1,6 +1,7 @@
 import { join } from "node:path"
 import { Config, ConfigProvider, Console, Effect, Layer, Option, Schema } from "effect"
 import { modelSpendMemory } from "@xandreed/core"
+import { bwrapSandboxes } from "./bwrap-shell.adapter.js"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import { USAGE, UsageError } from "./cli.entity.js"
 import { ghForge } from "./forge-gh.adapter.js"
@@ -12,6 +13,7 @@ import type { PrepareOptions, ReviewAt } from "./prepare-review.entity.js"
 import { summaryText } from "./prepare-review.entity.functions.js"
 import { prepareReview } from "./prepare-review.usecase.js"
 import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
+import { directoryCache } from "./review-cache.adapter.js"
 import { directoryLogs } from "./review-logs.adapter.js"
 import { DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
 import type { ReviewModel } from "./review-model.entity.js"
@@ -21,6 +23,8 @@ import { DEFAULT_MAX_STEPS } from "./review-pass.entity.js"
 import { ReviewReport } from "./review-report.entity.js"
 import { reportText } from "./review-report.entity.functions.js"
 import { reviewPullRequest } from "./review.usecase.js"
+import { sandboxValidations } from "./validations.adapter.js"
+import { VALIDATION_TIMES } from "./validations.entity.js"
 
 /** What the command line reads of its process: the environment, the folder it runs in and the person's home. */
 export interface CliHost {
@@ -38,10 +42,21 @@ export const reviewLayers = (repo: RepoName, cacheRoot: string, host: CliHost) =
   return Layer.mergeAll(ghForge, gitCheckout({ cacheRoot }), directoryLogs(join(cacheRoot, ...repo.split("/"), "reviews"))).pipe(Layer.provide(shell))
 }
 
+/**
+ * What the command line adds when commands are asked for (`--run`, `--validate`): `Validations` in bubblewrap
+ * sandboxes, the toolchain found on the host's `PATH`, what is kept between reviews under the cache root. A host that
+ * cannot make a sandbox fails here with `SandboxUnavailable`: nothing runs outside one. Never a `Shell`.
+ */
+export const validationLayers = (repo: RepoName, cacheRoot: string, host: CliHost) =>
+  Layer.provideMerge(
+    sandboxValidations.pipe(Layer.provide(Layer.mergeAll(bwrapSandboxes({ path: host.env["PATH"] ?? "/usr/bin:/bin" }), directoryCache(cacheRoot)))),
+    reviewLayers(repo, cacheRoot, host),
+  )
+
 /** The flags that take a value; `--workflow` may be given more than once, the others once. */
-const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--at", "--max-cost", "--max-steps", "--model", "--price"]
-const REPEATED = ["--workflow"]
-const SWITCHES = ["--json"]
+const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--at", "--max-cost", "--max-steps", "--model", "--price", "--run"]
+const REPEATED = ["--workflow", "--run"]
+const SWITCHES = ["--json", "--validate"]
 
 /** A parsed command line: the positional words, each valued flag's values in order, and the switches given. */
 interface Line {
@@ -127,9 +142,10 @@ const COMMANDS = ["prepare", "review"]
  * call charged to one ledger capped at `--max-cost` (`DEFAULT_MAX_COST`), the pass capped at `--max-steps`
  * (`DEFAULT_MAX_STEPS`); it prints the report, or the report as JSON with `--json`. `--at` reviews the head (the
  * default), the first head (`first`) or a commit by its sha. Clones, logs and records go under `--cache`
- * (`~/.efferent-review` by default; never inside a repository). `gh` and `git` run with the host's environment. It
- * runs none of the pull request's commands: it provides no `Validations`, since none that is a sandbox ships yet.
- * Answers the exit code: 0 once printed.
+ * (`~/.efferent-review` by default; never inside a repository). `gh` and `git` run with the host's environment.
+ * `--run <command>` (again for more) and `--validate` (the repository's profile), for either command, run the pull
+ * request's commands in bubblewrap sandboxes (`validationLayers`), only for a head in the repository whose author may
+ * write to it; without either nothing of the pull request's runs. Answers the exit code: 0 once printed.
  */
 export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<string>, host: CliHost) {
   const line = yield* cliLine(raw)
@@ -140,17 +156,22 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const options: PrepareOptions = {
     at: yield* Option.match(one(line, "--at"), { onNone: () => Effect.succeed<ReviewAt>({ _tag: "Head" }), onSome: atOf }),
     budgetTokens: yield* Option.match(one(line, "--budget"), { onNone: () => Effect.succeed(DEFAULT_BUDGET_TOKENS), onSome: (text) => wholeNumber(text, "--budget") }),
-    run: [],
+    run: line.values.get("--run") ?? [],
+    validate: line.switches.has("--validate"),
     workflows: line.values.get("--workflow") ?? [],
     limits: DIGEST_LIMITS,
-    timeoutMs: 600_000,
+    timeoutMs: VALIDATION_TIMES.commandTimeoutMs,
+    budgetMs: VALIDATION_TIMES.budgetMs,
   }
   const cacheRoot = Option.getOrElse(one(line, "--cache"), () => join(host.home, ".efferent-review"))
   const json = line.switches.has("--json")
+  const asked = options.run.length > 0 || options.validate
   if (command === "prepare") {
     const ofReview = REVIEW_ONLY.find((flag) => Option.isSome(one(line, flag)))
     if (ofReview !== undefined) return yield* Effect.fail(usage(`${ofReview} is a flag of review, not of prepare`))
-    const prepared = yield* prepareReview(repo, number, options).pipe(Effect.provide(reviewLayers(repo, cacheRoot, host)))
+    const prepared = asked
+      ? yield* prepareReview(repo, number, options).pipe(Effect.provide(validationLayers(repo, cacheRoot, host)))
+      : yield* prepareReview(repo, number, options).pipe(Effect.provide(reviewLayers(repo, cacheRoot, host)))
     yield* Console.log(json ? JSON.stringify(yield* Schema.encodeEffect(PreparedReview)(prepared).pipe(Effect.orDie), null, 2) : summaryText(prepared))
     return 0
   }
@@ -160,7 +181,8 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const apiKey = yield* Config.Redacted(model.keyVariable).parse(ConfigProvider.fromEnv({ env: host.env })).pipe(
     Effect.mapError(() => usage(`review needs the model's key in the environment variable ${model.keyVariable}`)),
   )
-  const needs = Layer.mergeAll(reviewLayers(repo, cacheRoot, host), findingsInMemory, modelSpendMemory)
+  const base = asked ? validationLayers(repo, cacheRoot, host) : reviewLayers(repo, cacheRoot, host)
+  const needs = Layer.mergeAll(base, findingsInMemory, modelSpendMemory)
   const layers = kernelPasses().pipe(Layer.provideMerge(reviewModel(model, apiKey, maxCost).pipe(Layer.provideMerge(needs))))
   const report = yield* reviewPullRequest(repo, number, { prepare: options, pass: { maxSteps }, model: model.model }).pipe(Effect.provide(layers))
   yield* Console.log(json ? JSON.stringify(yield* Schema.encodeEffect(ReviewReport)(report).pipe(Effect.orDie), null, 2) : reportText(report))

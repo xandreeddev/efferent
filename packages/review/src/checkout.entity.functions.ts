@@ -4,20 +4,42 @@ import type { GrepHit, Transport, TreeEntry } from "./checkout.entity.js"
 
 /**
  * A host-side git command's argv: no hook runs (`core.hooksPath=/dev/null`), no file-system monitor starts, no
- * transport but `transports` is allowed (`protocol.allow=never`, then each one `always`), and every path is literal
- * (`--literal-pathspecs`: a folder named `:(glob)x` or `:!x` is a name, never pathspec magic). `gitDir` is the
- * repository the command runs in (`-C`), none for a clone.
+ * filter of the host's runs on a pull request's files (`core.attributesFile=/dev/null`, and git-lfs's process, smudge
+ * and clean emptied, so a repository's `.gitattributes` naming `filter=lfs` fetches nothing from an lfs server it
+ * configures), no transport but `transports` is allowed (`protocol.allow=never`, then each one `always`), and every
+ * path is literal (`--literal-pathspecs`: a folder named `:(glob)x` or `:!x` is a name, never pathspec magic).
+ * `gitDir` is the repository the command runs in (`-C`), none for a clone.
  */
 export const gitArgv = (transports: ReadonlyArray<Transport>, gitDir: string | null, args: ReadonlyArray<string>): ReadonlyArray<string> => [
   "git",
   "-c", "core.hooksPath=/dev/null",
   "-c", "core.fsmonitor=false",
+  "-c", "core.attributesFile=/dev/null",
+  "-c", "filter.lfs.process=",
+  "-c", "filter.lfs.smudge=",
+  "-c", "filter.lfs.clean=",
+  "-c", "filter.lfs.required=false",
   "-c", "protocol.allow=never",
   ...transports.flatMap((transport) => ["-c", `protocol.${transport}.allow=always`]),
   "--literal-pathspecs",
   ...(gitDir === null ? [] : ["-C", gitDir]),
   ...args,
 ]
+
+/**
+ * The `-c` options that turn off every filter driver `git config --get-regexp '^filter\.'` names (`filter.<driver>.<key>
+ * <value>` a line, a driver's name may hold dots): its smudge, clean and process emptied and `required=false`, so a
+ * `.gitattributes` the pull request commits can name no driver of the host's (git-crypt, a custom smudge) and run it.
+ */
+export const neutralFilters = (configured: string): ReadonlyArray<string> => {
+  const drivers = new Set<string>()
+  for (const line of configured.split("\n")) {
+    const key = line.split(/\s/, 1)[0] ?? ""
+    const match = /^filter\.(.+)\.[^.]+$/i.exec(key)
+    if (match?.[1] !== undefined) drivers.add(match[1])
+  }
+  return [...drivers].flatMap((driver) => ["smudge=", "clean=", "process=", "required=false"].flatMap((setting) => ["-c", `filter.${driver}.${setting}`]))
+}
 
 /** A regular file's modes in a tree: the only entries a tool reads. */
 export const REGULAR: ReadonlyArray<string> = ["100644", "100755"]

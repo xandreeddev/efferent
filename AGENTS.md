@@ -31,7 +31,7 @@ Human process: `CONTRIBUTING.md`. A package's own rules:
 - `sdk` → core (`src`): the workflow contracts (memory, tools and their turn, approvals, skills, facts, knowledge, tasks, the inbox, files, shell, search, ranking by meaning, a store of bytes for the model) with their kits, and the stock plugins, each a plain Effect layer; `src/node`, the ports that need a runtime's modules (the durable journals, the model providers and a remote embedder that charge the ledger, a media folder, a disk workspace and a process shell, OTLP export). There is no loop: the host's program is the loop (`docs/kernel.md`).
 - The kernel is each package's `src` and root entry: `@xandreed/core`, `@xandreed/sdk` and the sdk's Node entry `@xandreed/sdk/node` (ADR 0036).
 - `evals` ← `evals-cli`, `evals-langfuse`, `evals-langsmith`: tasks, trials, graders, suites; the CLI and exporters run on Node 24. `evals` → core's kernel for the `ModelSpend` ledger a run shares across its trials, nothing else.
-- `review` → sdk (and its Node entry), core: `efferent-review`, a pull request reviewer on Node 24 that prepares a pull request's diff, rules and CI and reviews it with a model in a host's loop on the kernel (`packages/review/AGENTS.md`). Private until its evals pass: out of the build's `names`, `CURATED_ENTRIES` and the Changesets group.
+- `review` → sdk (and its Node entry), core: `efferent-review`, a pull request reviewer on Node 24 that prepares a pull request's diff, rules and CI, runs its commands in bubblewrap sandboxes when asked, and reviews it with a model in a host's loop on the kernel (`packages/review/AGENTS.md`). Private until its evals pass: out of the build's `names`, `CURATED_ENTRIES` and the Changesets group.
 - `foundry` runs the gates (development tooling); `website` is the docs site and the learn track. Neither is published.
 
 The `boundaries` layers in `foundry.config.ts` enforce the direction; inside
@@ -189,7 +189,10 @@ still verify complete coverage of each row; a citation alone proves none.
 ## Definition of done
 
 `.github/workflows/ci.yml`, in order; tests run with `HTTP_PROXY` and
-`HTTPS_PROXY` unset.
+`HTTPS_PROXY` unset. Before the tests, CI runs `sudo sh scripts/ci-bubblewrap.sh`
+(bubblewrap and unprivileged user namespaces for the reviewer's isolation
+probe, which fails rather than skips in CI); on a workstation the probe needs
+`bwrap` and user namespaces, or skips. Never run the script there.
 
 ```bash
 bun install --frozen-lockfile

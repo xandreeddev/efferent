@@ -49,7 +49,14 @@ export const summaryText = (prepared: PreparedReview): string => {
     ...Match.valueTags(prepared.validation, {
       NotAsked: () => ["Commands: none asked"],
       Skipped: ({ reason }) => [`Commands: skipped, ${SKIPPED_BECAUSE[reason]}`],
-      Ran: ({ digests }) => ["Commands:", ...digests.flatMap((digest) => digestLines(digest.source._tag === "Command" ? digest.source.command : digest.source.name, digest))],
+      Refused: ({ reason }) => [`Commands: not run, ${reason}`],
+      Ran: ({ manager, profile, install, digests, unrun }) => [
+        `Commands (installed with ${manager}):`,
+        ...profile.filter((entry) => !entry.kept).map((entry) => `  dropped ${shownPath(entry.command)}: ${entry.reason}`),
+        ...Option.match(install, { onNone: () => [], onSome: (digest) => digestLines("install", digest) }),
+        ...digests.flatMap((digest) => digestLines(digest.source._tag === "Command" ? shownPath(digest.source.command) : digest.source.name, digest)),
+        ...unrun.map((entry) => `  not run ${shownPath(entry.command)}: ${entry.reason}`),
+      ],
     }),
   ].join("\n")
 }

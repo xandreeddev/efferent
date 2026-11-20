@@ -9,8 +9,11 @@ import { CommandFailed } from "./host-command.entity.js"
 import { commandLine } from "./host-command.entity.functions.js"
 import { runWhole } from "./host-shell.adapter.js"
 import type { HostShell } from "./host-shell.port.js"
-import { Permission, PullRequest } from "./pull-request.entity.js"
+import { BranchName, Permission, PullRequest } from "./pull-request.entity.js"
 import type { CommitSha, PullNumber, PullRequest as Pull, RepoName } from "./pull-request.entity.js"
+
+/** What `gh api repos/<repo>` is read for: the default branch's name. */
+const GhRepo = Schema.Struct({ default_branch: BranchName })
 
 /** The fields `gh pr view --json` is asked for. */
 export const PULL_FIELDS = "number,title,body,author,baseRefName,baseRefOid,headRefName,headRefOid,headRepository,headRepositoryOwner,isCrossRepository,files,commits"
@@ -202,5 +205,10 @@ export const ghForge: Layer.Layer<Forge, never, HostShell> = Layer.effect(Forge,
     })
   }, provided)
 
-  return Forge.of({ pullRequest, ciRuns, firstHead, failedLog })
+  const defaultBranch = Effect.fn("forge.default_branch")(function* (repo: RepoName) {
+    const args = ["gh", "api", `repos/${repo}`]
+    return (yield* decoded(GhRepo, args, (yield* runWhole(args)).stdout)).default_branch
+  }, provided)
+
+  return Forge.of({ pullRequest, ciRuns, firstHead, failedLog, defaultBranch })
 }))
