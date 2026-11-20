@@ -173,7 +173,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   only for a bucket no check has confirmed, so passes that report one defect
   cost one check when it holds. The report shows the finding its check
   confirmed, and each check in `review.json` names the finding it was shown
-  (`BucketCheck.finding`).
+  (`BucketCheck.finding`). A finding no check confirmed but one judged
+  unsure is no longer dropped: the report lists it apart, under
+  `UNSETTLED_HEAD` (`ReviewReport.unsettled`), and says `No confirmed
+  findings.` instead of `No findings.`; on #644's full run the gold leak's
+  check was unsure and the report said nothing.
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

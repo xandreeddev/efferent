@@ -225,15 +225,16 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   // What a check keeps back for its closing call when it runs alone (one at a time, or the only one): at most half the
   // verify stage. Checks beside each other keep nothing back, for the reason passes do: under $0.20, three checks each
   // keeping a call's hold (about $0.09 at a long pull request's size) would leave no room for their own calls.
-  const checkReserve = Math.min(options.verifyConcurrency, rounds[0]?.length ?? 0) === 1 ? Math.min(options.pass.reserve, options.budget.verify / 2) : 0
-  const runCheck = (target: CheckTarget, check: CheckNumber, prefix: ReadonlyArray<PromptPart>) => {
+  // Decided per round, from the checks it runs.
+  const checkReserve = (due: number) => Math.min(options.verifyConcurrency, due) === 1 ? Math.min(options.pass.reserve, options.budget.verify / 2) : 0
+  const runCheck = (target: CheckTarget, check: CheckNumber, prefix: ReadonlyArray<PromptPart>, reserve: number) => {
     const stage: ReviewStage = { _tag: "Verify", check }
     return Effect.gen(function* () {
       return yield* passes.run({
         prompt: verifyPrompt(prefix, target.finding),
         reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
         journalAt: yield* logs.folder(`${folder}/check-${check}`),
-        options: { maxSteps: options.verifySteps, reserve: checkReserve },
+        options: { maxSteps: options.verifySteps, reserve },
         spend: verifySpend,
       })
     }).pipe(Effect.catchCause(couldNotRun(stage)), Effect.flatMap((result) => Effect.gen(function* () {
@@ -250,7 +251,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
     const due = round.filter((target) => !confirmed.has(target.bucket.number))
     const numbered = due.map((target, index) => ({ target, check: CheckNumber.make(checked.length + index + 1) }))
     const prefixes = numbered.map(({ target, check }) => prefixOf(target.finding, check))
-    checked.push(...yield* Effect.forEach(numbered, ({ target, check }, index) => runCheck(target, check, prefixes[index] ?? wholePrefix), { concurrency: options.verifyConcurrency }))
+    checked.push(...yield* Effect.forEach(numbered, ({ target, check }, index) => runCheck(target, check, prefixes[index] ?? wholePrefix, checkReserve(numbered.length)), { concurrency: options.verifyConcurrency }))
   }
 
   return yield* record({ passes: found, groups: groupRuns, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })

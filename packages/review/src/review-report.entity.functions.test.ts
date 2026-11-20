@@ -53,7 +53,7 @@ const CHECK_RESULT: PassResult = {
   opened: ["src/z.ts"],
 }
 
-const REPORT = reviewReport({
+const INPUT: Parameters<typeof reviewReport>[0] = {
   run: runNameOf(Date.UTC(2026, 10, 19, 22, 1, 51, 123)),
   prepared: PREPARED,
   focus: "whole",
@@ -75,7 +75,9 @@ const REPORT = reviewReport({
   toolsVersion: "review-tools-3",
   model: "deepseek/deepseek-v4.1-flash-1017",
   wallMs: 41_250,
-})
+}
+
+const REPORT = reviewReport(INPUT)
 
 describe("the review's report", () => {
   test("reportText: six confirmed findings by severity then path then line, each with its evidence, votes and the check's reason, the rest counted; the passes, buckets, checks, files, each stage's use and the wall time", () => {
@@ -107,6 +109,12 @@ describe("the review's report", () => {
       "    > next",
       "    checked: Reason 7.",
       "1 more finding not shown.",
+      "",
+      "Unsettled: a check could not tell whether these are real; read them before trusting either way.",
+      "f.ts:2 high bug — Claim 9. (1/3 passes)",
+      "    > line 2",
+      "    > next",
+      "    checked: Reason 9.",
       "Not checked (the spend cap refused a model call): g.ts:2 high bug — Claim 10.",
       "",
       "Pass 1: Seven problems.",
@@ -121,9 +129,9 @@ describe("the review's report", () => {
   })
 
   test("reportText: no findings, and a pass that stopped before it answered says why; the passes it kept from starting are said", () => {
-    const answered = { ...REPORT, reported: [], verdicts: [], passesAsked: 1, passes: REPORT.passes.slice(0, 1) }
+    const answered = { ...REPORT, reported: [], unsettled: [], verdicts: [], passesAsked: 1, passes: REPORT.passes.slice(0, 1) }
     expect(reportText(answered).split("\n").filter((line) => line === "No findings." || line.includes("did not start"))).toEqual(["No findings."])
-    const stopped = { ...REPORT, reported: [], verdicts: [], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "SpendRefused" as const, message: "the ledger's total cap of 0.1 refused 0.04" } })) }
+    const stopped = { ...REPORT, reported: [], unsettled: [], verdicts: [], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "SpendRefused" as const, message: "the ledger's total cap of 0.1 refused 0.04" } })) }
     expect(reportText(stopped).split("\n").slice(0, 6)).toEqual([
       "Review of #7 in owner/project at bbbbbbbbbbbb, its head",
       "",
@@ -192,7 +200,7 @@ describe("the review's report", () => {
 
   test("reportText: the model's claim, evidence, reason and summary are printed plain, escape sequences and control characters stripped", () => {
     const sneaky = finding("src/a.ts", 3, "high", 1, { claim: "Bad\u001b[2J\u001b[31m red\u0007 claim.", evidence: "ok\u001b]8;;http://x\u0007link\u001b]8;;\u0007 line" })
-    const report = { ...REPORT, verdicts: [], reported: [{ ...sneaky, bucket: BucketNumber.make(1), votes: 1, checked: "Real\u001b[1A.", restatesCi: false }], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "Answered" as const, summary: "Done\u001b[1A\rover" } })) }
+    const report = { ...REPORT, verdicts: [], unsettled: [], reported: [{ ...sneaky, bucket: BucketNumber.make(1), votes: 1, checked: "Real\u001b[1A.", restatesCi: false }], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "Answered" as const, summary: "Done\u001b[1A\rover" } })) }
     expect(reportText(report).split("\n").slice(2, 7)).toEqual([
       "src/a.ts:3 high bug — Bad red claim. (1/1 pass)",
       "    > oklink line",
@@ -203,8 +211,34 @@ describe("the review's report", () => {
   })
 
   test("reportText: a kept bucket no check gave a verdict on is listed, never read as no finding", () => {
-    const none = { ...REPORT, reported: [] }
+    const none = { ...REPORT, reported: [], unsettled: [] }
     expect(reportText(none).split("\n").slice(2, 4)).toEqual(["No findings.", "Not checked (the spend cap refused a model call): g.ts:2 high bug — Claim 10."])
+  })
+
+  test("reportText: findings no check settled are shown apart, under their own line, never as no finding", () => {
+    // Bucket 9's check was unsure (its quote not found); no confirmed finding is shown.
+    expect<unknown>([REPORT.unsettled.map((one) => [one.bucket, one.claim, one.checked]), reportText({ ...REPORT, reported: [], verdicts: [] }).split("\n").slice(2, 10)]).toEqual([
+      [[9, "Claim 9.", "Reason 9."]],
+      [
+        "No confirmed findings.",
+        "",
+        "Unsettled: a check could not tell whether these are real; read them before trusting either way.",
+        "f.ts:2 high bug — Claim 9. (1/3 passes)",
+        "    > line 2",
+        "    > next",
+        "    checked: Reason 9.",
+        "",
+      ],
+    ])
+  })
+
+  test("reviewReport: a bucket a check confirmed is never unsettled, whatever another of its checks said", () => {
+    const bucket = BUCKETS[8]!
+    const second = { pass: PassNumber.make(2), number: 1 }
+    const both = reviewReport({ ...INPUT, findings: [...FINDINGS, finding("f.ts", 2, "high", 1, { pass: second.pass, claim: "Claim 9b." })], verdicts: [
+      ...CHECKS, { bucket: bucket.number, finding: second, check: CheckNumber.make(11), verdict: Option.none(), quoteHolds: true, outcome: "confirmed", why: "" },
+    ] })
+    expect([both.unsettled, both.reported.filter((one) => one.bucket === bucket.number).map((one) => one.claim)]).toEqual([[], ["Claim 9b."]])
   })
 
   test("runNameOf: a run named by the UTC time it started, safe in a folder's name", () => {

@@ -173,6 +173,34 @@ describe("reviewPullRequest", () => {
     expect([again.run === report.run, existsSync(join(folder, "review.json")), existsSync(join(logsRoot, "2", fixture.head, again.run, "review.json"))]).toEqual([false, true, true])
   })
 
+  test("a bucket's best refuted, its second finding checked in the next round, confirmed and reported in its own words", async () => {
+    const asked: Array<PassInput> = []
+    const layer = Layer.effect(ReviewPasses, Effect.gen(function* () {
+      const findings = yield* Findings
+      return ReviewPasses.of({
+        run: (input) => Effect.gen(function* () {
+          asked.push(input)
+          const stage = input.reviewed.stage
+          if (stage._tag === "Find") {
+            // Two mechanisms on one line: pass 1's medium one is the bucket's best, pass 2's low one its second.
+            yield* findings.record(input.reviewed.run, stage.pass, stage.pass === 1 ? { ...FINDING, severity: "medium", claim: "Claim A." } : { ...FINDING, claim: "Claim B." })
+            if (input.onFirstAnswer !== undefined) yield* input.onFirstAnswer(true)
+          } else yield* findings.judge(input.reviewed.run, stage.check, stage.check === 1
+            ? { outcome: "refuted", reason: "Not A.", quote: "total += value * 1" }
+            : { outcome: "confirmed", reason: "B holds.", quote: "total += value * 1" })
+          return { stage, session: Option.none(), ended: stage._tag === "Find" ? { _tag: "Answered" as const, summary: "One." } : { _tag: "Judged" as const }, calls: [], opened: [] }
+        }),
+      })
+    }))
+    const report = await reviewWith(layer, { ...REVIEW_OPTIONS, passes: 2 })
+    const checks = asked.filter((input) => input.reviewed.stage._tag === "Verify")
+    expect<unknown>([
+      checks.map((input) => input.prompt.tail.includes("Claim A.") ? "A" : input.prompt.tail.includes("Claim B.") ? "B" : "?"),
+      report.verdicts.map((check) => [check.check, check.finding.pass, check.outcome, check.quoteHolds]),
+      report.reported.map((one) => [one.pass, one.claim, one.severity, one.votes, one.checked]),
+    ]).toEqual([["A", "B"], [[1, 1, "refuted", true], [2, 2, "confirmed", true]], [[2, "Claim B.", "low", 2, "B holds."]]])
+  })
+
   test("a confirmed verdict whose quote is not in the file near the cited lines counts as unsure, and is not reported", async () => {
     const report = await reviewWith(scripted("return total * 2").layer)
     // The bucket holds the three passes' findings: none confirmed, so each is checked in a round of its own.
