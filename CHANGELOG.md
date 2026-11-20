@@ -80,9 +80,13 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   same-repository pull request whose author may write. Each run gets a
   throwaway clone; `bwrap` starts with an empty environment, every namespace
   unshared, `/usr` and the toolchain read-only, the clone the only writable
-  folder. The install runs first with the network and `--ignore-scripts`
-  from the lockfile into the bot's own package cache, then each check runs
-  offline, within five minutes a command and fifteen a clone. A host
+  folder. Only a base on the repository's default branch installs, the one
+  step with the network, its package manager by absolute path with
+  `--ignore-scripts` into the bot's own package cache; any other base runs
+  nothing. A pull request's head never installs: it restores the base's
+  `node_modules` when every lockfile and `package.json` is the base's, and
+  otherwise is not validated locally. Every check runs offline, within five
+  minutes a command and fifteen a clone. A host
   without bwrap or unprivileged user namespaces fails with
   `SandboxUnavailable` and runs nothing. CI installs bubblewrap and allows
   user namespaces so the isolation probe runs there.
