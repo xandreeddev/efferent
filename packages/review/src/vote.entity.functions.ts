@@ -2,7 +2,7 @@ import { Array as Arr, Order } from "effect"
 import type { FileDiff } from "./diff.entity.js"
 import { SEVERITY_RANK } from "./finding.entity.js"
 import type { Finding } from "./finding.entity.js"
-import { BucketNumber, CHANGED_SLACK, NEAR_LINES, QUOTE_LINE_CHARS, QUOTE_SLACK, SPAN_COUNTED } from "./vote.entity.js"
+import { BucketNumber, CHANGED_SLACK, CITED_SLACK, NEAR_LINES, QUOTE_LINE_CHARS, QUOTE_SLACK, SPAN_COUNTED } from "./vote.entity.js"
 import type { Bucket, BucketWhy, MergeOptions } from "./vote.entity.js"
 
 /**
@@ -52,19 +52,23 @@ export const evidenceMatches = (evidence: string, file: FileDiff | undefined): b
 const telling = (line: string): boolean => line.replace(/\s/g, "").length >= QUOTE_LINE_CHARS && /[A-Za-z_$][\w$]{2,}/.test(line)
 
 /**
- * Whether a verdict's quote is in the head's file near the lines the check was shown: the window is from `line` to
- * `endLine`, at most `SPAN_COUNTED` lines whatever `endLine` says, and `QUOTE_SLACK` around them. The quote's lines,
- * normalized (`normalizedLine`) and joined by a space, must be held by the window's lines normalized and joined the
- * same way, and one of them must be a whole line of the window that stands for code (`telling`): a brace, a
- * `return` or an empty quote is not one.
+ * Whether a verdict's quote is in the head's file at the lines the check was shown. The finding's own lines are
+ * `line` to `endLine`, at most `SPAN_COUNTED` whatever `endLine` says. The quote's lines, normalized (`normalizedLine`)
+ * and joined by a space, must be held by those lines and `QUOTE_SLACK` around them, normalized and joined the same
+ * way; and one of them must be a whole line of the finding's own lines (`CITED_SLACK` either side, for a numbering off
+ * by one) that stands for code (`telling`): a brace, a `return`, an empty quote, or a line from around the cited
+ * ones is not one.
  */
 export const quoteWithin = (text: string, quote: string, line: number, endLine: number): boolean => {
   const quoted = quotedLines(quote)
   if (quoted.length === 0) return false
   const last = Math.min(Math.max(line, endLine), line + SPAN_COUNTED - 1)
-  const lines = text.split("\n")
-  const window = lines.slice(Math.max(0, line - 1 - QUOTE_SLACK), Math.min(lines.length, last + QUOTE_SLACK)).map(normalizedLine).filter((one) => one.length > 0)
-  return window.join(" ").includes(quoted.join(" ")) && quoted.some((one) => telling(one) && window.includes(one))
+  const lines = text.split("\n").map(normalizedLine)
+  /** The normalized, non-empty lines `from` to `to`, numbered from 1. */
+  const between = (from: number, to: number) => lines.slice(Math.max(0, from - 1), Math.min(lines.length, to)).filter((one) => one.length > 0)
+  const window = between(line - QUOTE_SLACK, last + QUOTE_SLACK)
+  const cited = between(line - CITED_SLACK, last + CITED_SLACK)
+  return window.join(" ").includes(quoted.join(" ")) && quoted.some((one) => telling(one) && cited.includes(one))
 }
 
 /** The last line of a finding that counts: its `endLine`, at most `SPAN_COUNTED` lines from its first, never before it. */

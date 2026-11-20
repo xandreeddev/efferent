@@ -89,7 +89,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   checked (unless `--no-verify`) on the same cached prefix: the model tries to
   refute it and answers with the new `verdict` tool, and a confirmed verdict
   counts as unsure unless its quote holds a whole line of real code from the
-  head's file within forty lines of where the finding starts.
+  head's file at the lines the finding cites (one either side; at most forty
+  from where it starts), not one from around them.
   The report shows the confirmed findings with how many passes found each and
   the check's reason, and each stage's calls, tokens and cost. Every stage is
   offered the same six tools, since a changed tool list or `tool_choice: none`

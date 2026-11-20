@@ -98,17 +98,29 @@ describe("the quotes", () => {
     expect([evidenceMatches("added(5)\nkept(7)", FILE), evidenceMatches("added(5)\ngone()", FILE), evidenceMatches("", FILE), evidenceMatches("x", undefined)]).toEqual([true, false, false, false])
   })
 
-  test("quoteWithin: the quote is in the file within the cited lines and three around them; elsewhere, or empty, it is not", () => {
+  test("quoteWithin: a whole line of the cited lines (one either side) in a quote the cited lines and three around them hold; elsewhere, or empty, it is not", () => {
     const text = Array.from({ length: 30 }, (_, index) => `const value${index + 1} = compute(${index + 1});`).join("\n")
     expect([
       quoteWithin(text, "const value10 = compute(10);\n  const value11 = compute(11);", 10, 10),
+      quoteWithin(text, "const value9 = compute(9);", 10, 10),
+      quoteWithin(text, "  11| const value11 = compute(11);", 10, 10),
+      quoteWithin(text, "const value7 = compute(7);\nconst value8 = compute(8);\nconst value9 = compute(9);", 10, 10),
+      quoteWithin(text, "const value12 = compute(12);\nconst value13 = compute(13);", 10, 10),
       quoteWithin(text, "const value13 = compute(13);", 10, 10),
-      quoteWithin(text, "const value14 = compute(14);", 10, 10),
       quoteWithin(text, "const value7 = compute(7);", 10, 10),
-      quoteWithin(text, "const value6 = compute(6);", 10, 10),
-      quoteWithin(text, "  12| const value12 = compute(12);", 10, 10),
+      quoteWithin(text, "const value14 = compute(14);", 10, 10),
       quoteWithin(text, "", 10, 10),
-    ]).toEqual([true, true, false, true, false, true, false])
+    ]).toEqual([true, true, true, true, false, false, false, false, false])
+  })
+
+  test("quoteWithin: a generic line elsewhere in the window proves nothing; the cited line does", () => {
+    const text = ["export const total = (items: Items) => {", "  const result = sum(items)", "  if (result > limit) {", "    log(result)", "  }", "  return result", "}"].join("\n")
+    expect([
+      quoteWithin(text, "  return result", 3, 3),
+      quoteWithin(text, "  }\n  return result", 3, 3),
+      quoteWithin(text, "  if (result > limit) {", 3, 3),
+      quoteWithin(text, "  const result = sum(items)", 3, 3),
+    ]).toEqual([false, false, true, true])
   })
 
   test("quoteWithin: a quote must hold a whole line that stands for code; a brace, a keyword or part of a line is not enough", () => {
@@ -123,8 +135,13 @@ describe("the quotes", () => {
     ]).toEqual([false, false, false, false, true, true])
   })
 
-  test("quoteWithin: the window never runs past forty lines from the cited first line, whatever endLine says", () => {
+  test("quoteWithin: the cited lines never run past forty from the first, whatever endLine says", () => {
     const text = Array.from({ length: 1_000 }, (_, index) => `const value${index + 1} = compute(${index + 1});`).join("\n")
-    expect([quoteWithin(text, "const value43 = compute(43);", 1, 1_000), quoteWithin(text, "const value44 = compute(44);", 1, 1_000), quoteWithin(text, "const value900 = compute(900);", 1, 1_000)]).toEqual([true, false, false])
+    expect([
+      quoteWithin(text, "const value41 = compute(41);", 1, 1_000),
+      quoteWithin(text, "const value42 = compute(42);", 1, 1_000),
+      quoteWithin(text, "const value43 = compute(43);", 1, 1_000),
+      quoteWithin(text, "const value900 = compute(900);", 1, 1_000),
+    ]).toEqual([true, false, false, false])
   })
 })

@@ -12,6 +12,9 @@ export const CHANGED_SLACK = 2
 /** How near the cited lines a verdict's quote must be found in the head's file. */
 export const QUOTE_SLACK = 3
 
+/** How far from the cited lines the quote's telling line may be: one, for a numbering off by one. */
+export const CITED_SLACK = 1
+
 /** The most lines from a finding's first that count: for its bucket's place and for where its check's quote is looked for. */
 export const SPAN_COUNTED = 40
 
