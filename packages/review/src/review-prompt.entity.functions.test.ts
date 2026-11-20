@@ -70,14 +70,15 @@ const ORDER = [
 
 describe("reviewPrompt", () => {
   test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates pass's tail", () => {
-    expect(REVIEW_PROMPT).toBe("review-prompt-3")
+    expect(REVIEW_PROMPT).toBe("review-prompt-4")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
       tail: [
         "Review the pull request above and report every plausible defect its changed lines bring in.",
         "",
         "- Look for wrong logic, an error or an edge case left unhandled, state that two callers, turns or processes share and can race on, a resource not released, a security hole, and a rule of the repository's that a changed line breaks.",
-        "- Read each file's changed lines and what they call and are called by. Report a defect with reportFinding as soon as you see it, citing its file and lines as they are at the commit under review and quoting those lines.",
+        "- Read each file's changed lines and what they call and are called by.",
+        "- Call reportFinding the moment you see a defect, before you read on, citing its file and lines as they are at the commit under review and quoting those lines: the review can stop at any call, and a defect you have not reported is lost.",
         "- Report a defect you are not sure of too, and say in its claim what would make it real: another reviewer checks every report against the code before anyone reads it.",
         "- Report nothing about lines the pull request does not change, nothing that was already wrong before it, no matter of style, and nothing a linter or the type checker catches.",
         "- When you are done, answer with a one-line summary.",
@@ -91,7 +92,7 @@ describe("reviewPrompt", () => {
       "Review the pull request above for real bugs and security problems, and for rules of the repository's that a changed line breaks.",
       "",
       "- Review only the lines this pull request changes. Report nothing about lines it does not change, nothing that was already wrong before it, no matter of style, and nothing a linter or the type checker catches.",
-      "- Report each problem once with reportFinding, citing its file and lines as they are at the commit under review and quoting those lines.",
+      "- Report each problem once with reportFinding the moment you see it, before you read on, citing its file and lines as they are at the commit under review and quoting those lines: the review can stop at any call, and a problem you have not reported is lost.",
       "- When nothing is wrong, report nothing.",
       "- When you are done, answer with a one-line summary of what you found.",
       ...ORDER,

@@ -73,33 +73,45 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   sessions, each call's tokens, cached tokens and cost) and its pass's
   journal, for offline scoring.
 - `efferent-review review` runs several passes and checks what they find.
-  `--passes` (3) passes, the first alone until its first call returns, then
-  the others beside it, each walking every changed file the model reads (the
+  `--passes` (1 by default, until an evaluation shows more find more)
+  passes, the first alone until its first call returns, then the others
+  beside it (none when the first's call failed or it could not run), each walking every changed file the model reads (the
   ones the packed diff leaves out included, marked) in an order of its own, so
   the passes start in different files. `--finder candidates` (the default)
   asks for every plausible defect with its evidence; `--finder strict` for
-  only what the pass is sure of. The findings merge into buckets by file, kind
-  and near lines, every bucket recorded with its votes; `--vote` keeps only
-  those two passes found (or one, for a security problem). Each kept bucket is
+  only what the pass is sure of; both ask for each finding the moment it is
+  seen. `reportFinding` refuses a path the pull request does not change (it
+  names the changed files), an `endLine` before `line` and more than 40
+  lines. The findings merge into buckets by place, each anchored at its
+  first finding, one finding a pass, kinds together, a span counted at most
+  40 lines, every bucket recorded with its votes; `--vote` keeps only those
+  two passes found (or one, for a security problem). Each kept bucket is
   checked (unless `--no-verify`) on the same cached prefix: the model tries to
   refute it and answers with the new `verdict` tool, and a confirmed verdict
-  whose quote is not in the head's file near the cited lines counts as unsure.
+  counts as unsure unless its quote holds a whole line of real code from the
+  head's file within forty lines of where the finding starts.
   The report shows the confirmed findings with how many passes found each and
   the check's reason, and each stage's calls, tokens and cost. Every stage is
   offered the same six tools, since a changed tool list or `tool_choice: none`
   loses the gateway's prompt cache (measured: 16,384 cached tokens to 0). A
-  pass at its step cap stores a host note and asks once more, running only its
-  reporting calls. Each stage has a budget inside `--max-cost` ($0.50:
-  `--find-cost` $0.30, `--verify-cost` $0.20), and a call that other open
-  holds crowd out waits for one to close rather than being refused. The
+  pass keeps $0.10 back from its start, and at its step cap, or when a later
+  call is refused, releases it, stores a host note and asks once more,
+  running only its reporting calls. Each stage has a budget inside
+  `--max-cost` ($0.50: `--find-cost` $0.30, `--verify-cost` $0.20), and a
+  call that other open calls crowd out waits for one to close (ten minutes at
+  most) rather than being refused. `review.json` is kept as the review runs
+  and replaced whole as each stage ends, in a run folder no other run can
+  share; a pass that cannot run is recorded, not a failed review; the report
+  says `Incomplete: no pass finished.` rather than `No findings.` when no
+  pass finished. The
   repository's rules are shown whole nearest the changed paths first (16,000
   characters), then by their headings; the output cap is 4,096 tokens. Records
   go under `--records` (`~/.efferent-review/records/<owner>/<repo>/<pr>/<sha>/<run>/`),
   apart from the clones, and nothing cleans them. New model-facing texts:
-  `REVIEW_PROMPT` `review-prompt-3` (a system text both stages share, the two
+  `REVIEW_PROMPT` `review-prompt-4` (a system text both stages share, the two
   finders' tails, the check's tail, the step-cap notes),
-  `REVIEW_TOOLS_VERSION` `review-tools-3` (`verdict`, and each stage's refusal
-  of the other's tool).
+  `REVIEW_TOOLS_VERSION` `review-tools-4` (`verdict`, each stage's refusal of
+  the other's tool, and `reportFinding`'s refusals).
 
 - `@xandreed/review` runs a pull request's commands in bubblewrap sandboxes:
   `--run <command>` and `--validate` (the repository's profile: the base's

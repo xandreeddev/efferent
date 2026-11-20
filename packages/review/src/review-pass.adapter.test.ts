@@ -25,6 +25,8 @@ import { PassJournalFailed } from "./review-pass.entity.js"
 import { ReviewPasses } from "./review-pass.port.js"
 import type { ReviewStage } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
+import type { StageLedger } from "./stage-spend.port.js"
+import { DEFAULT_CLOSING_RESERVE } from "./review.entity.js"
 
 const fixture = gitFixture()
 afterAll(() => fixture.cleanup())
@@ -92,6 +94,7 @@ interface PassOptionsForTest {
   readonly price?: ReviewModel["price"]
   readonly passes?: Omit<KernelPassesOptions, "model">
   readonly stage?: ReviewStage
+  readonly reserve?: number
 }
 
 const testModel = (options: PassOptionsForTest) =>
@@ -104,13 +107,25 @@ const pass = async (script: Parameters<typeof endpoint>[0], options: PassOptions
   const needs = Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)
   const layers = kernelPasses({ model: testModel(options), ...options.passes }).pipe(Layer.provideMerge(needs))
   const stage = options.stage ?? { _tag: "Find", pass: PassNumber.make(1) }
+  /** Each first-answer signal, with how many requests had been sent when it came. */
+  const signals: Array<readonly [boolean, number]> = []
   const ran = await Effect.runPromise(Effect.gen(function* () {
-    const spend = yield* ModelSpend
-    const result = yield* (yield* ReviewPasses).run({ prompt: PROMPT, reviewed: { repo, at: head, files, stage }, journalAt, options: { maxSteps: options.maxSteps ?? 16 }, spend })
+    const root = yield* ModelSpend
+    const spend = yield* stageSpend(root, Option.none())
+    const result = yield* (yield* ReviewPasses).run({
+      prompt: PROMPT,
+      reviewed: { run: "run-1", repo, at: head, files, stage },
+      journalAt,
+      options: { maxSteps: options.maxSteps ?? 16, reserve: options.reserve ?? 0 },
+      spend,
+      onFirstAnswer: (answered) => Effect.sync(() => {
+        signals.push([answered, kept.length])
+      }),
+    })
     const findings = yield* Findings
-    return { result, findings: yield* findings.all, verdict: yield* findings.verdictOf(CheckNumber.make(1)), settled: (yield* spend.totals).settled }
+    return { result, findings: yield* findings.all("run-1"), verdict: yield* findings.verdictOf("run-1", CheckNumber.make(1)), settled: (yield* root.totals).settled }
   }).pipe(Effect.provide(layers), Effect.provideService(FetchHttpClient.Fetch, fetch)))
-  return { ...ran, sent: kept.map((one) => one.messages), kept, journal: existsSync(journalAt) ? readdirSync(journalAt) : [] }
+  return { ...ran, signals, sent: kept.map((one) => one.messages), kept, journal: existsSync(journalAt) ? readdirSync(journalAt) : [] }
 }
 
 const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "Multiplying by one changes nothing.", evidence: "total += value * 1" }
@@ -135,7 +150,30 @@ describe("a pass over the kernel", () => {
 
   test("the step cap ends a pass that keeps asking, with the findings so far, after one more call", async () => {
     const ran = await pass([asks(["reportFinding", FINDING]), asks(["listFiles", { glob: "src/*" }])], { maxSteps: 3 })
-    expect([ran.result.ended, ran.result.calls.length, ran.findings.length, ran.sent.length]).toEqual([{ _tag: "StepCap", steps: 3, summary: "" }, 4, 1, 4])
+    expect([ran.result.ended, ran.result.calls.length, ran.findings.length, ran.sent.length]).toEqual([{ _tag: "StepCap", steps: 3, summary: "", why: "" }, 4, 1, 4])
+  })
+
+  test("a closing call that fails is said: the step cap with why", async () => {
+    const ran = await pass([asks(["listFiles", { glob: "src/*" }]), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }], { maxSteps: 1 })
+    expect([ran.result.ended._tag, ran.result.ended._tag === "StepCap" && ran.result.ended.why.includes("the model does not exist")]).toEqual(["StepCap", true])
+  })
+
+  test("onFirstAnswer through the real loop: once, after the first call returns, true when it answered; false when it failed, or when the pass ended before any call", async () => {
+    const answered = await pass([asks(["listFiles", { glob: "src/*" }]), says("Done.")])
+    const refused = await pass([says("never sent")], { maxCost: 0.000_01 })
+    const broken = await pass([says("never sent")], { passes: { journal: () => Layer.effect(JournalStorage, Effect.fail(new PassJournalFailed({ message: "the disk is full" }))) } })
+    expect([answered.signals, refused.signals, broken.signals]).toEqual([[[true, 1]], [[false, 0]], [[false, 0]]])
+  })
+
+  test("a spend refusal mid-pass, with a reserve kept back from the start: the reserve released, the host's note, and the closing call's finding kept", async () => {
+    // Each call holds $0.004096 (4,096 tokens of output at $1 a million) and is billed $0.0004. With $0.0045 kept back
+    // under a cap of $0.0089, the first call fits and the second does not; released, the reserve makes room to close.
+    const closingAnswer = asks(["reportFinding", FINDING])
+    const price = { input: 0, output: 1, cacheRead: 0 }
+    const kept = await pass([asks(["listFiles", { glob: "src/*" }]), closingAnswer], { maxCost: 0.0089, price, reserve: 0.0045 })
+    const none = await pass([asks(["listFiles", { glob: "src/*" }]), closingAnswer], { maxCost: 0.0089 - 0.0045, price })
+    expect([kept.result.ended._tag, kept.findings.length, kept.kept.length, none.result.ended._tag, none.findings.length, none.kept.length]).toEqual(["SpendRefused", 1, 2, "SpendRefused", 0, 1])
+    expect(kept.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]" })
   })
 
   test("at the step cap: the host's note, the same tools offered, and only the last answer's reportFinding calls run", async () => {
@@ -147,7 +185,7 @@ describe("a pass over the kernel", () => {
       usage(1_000, 800, 50, 0.0004),
     ])
     const ran = await pass([asks(["listFiles", { glob: "src/*" }]), asks(["listFiles", { glob: "*" }]), lastAnswer], { maxSteps: 2 })
-    expect<unknown>([ran.result.ended, ran.findings.length, ran.result.opened, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 2, summary: "One more problem." }, 1, [], 3])
+    expect<unknown>([ran.result.ended, ran.findings.length, ran.result.opened, ran.kept.length]).toEqual([{ _tag: "StepCap", steps: 2, summary: "One more problem.", why: "" }, 1, [], 3])
     expect(ran.kept.at(-1)?.messages.at(-1)).toEqual({ role: "user", content: "[Host note: You have used the tool calls this review allows. Report now with reportFinding each problem you found and have not reported, then answer with a one-line summary. No other tool runs now.]" })
     expect(ran.kept.map((one) => one.tools)).toEqual([0, 1, 2].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
   })
@@ -225,32 +263,38 @@ describe("three passes at once under the review's budget", () => {
     return new Response(billed(asked < 15 ? asks(["listFiles", { glob: "src/*" }]) : says("Done.")), { status: 200, headers: { "content-type": "text/event-stream" } })
   }, { preconnect: () => {} })
 
-  /** Three passes at once on `spend(root)`, the review's ledger capped at the default total: how each ended and what was settled. */
-  const threePasses = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<Context.Service.Shape<typeof ModelSpend>>) => {
+  /** `count` passes at once on `spend(root)`, the review's ledger capped at the default total, each keeping `reserve` back: how each ended and what was settled. */
+  const passesAtOnce = (spend: (root: Context.Service.Shape<typeof ModelSpend>) => Effect.Effect<StageLedger>, count = 3, reserve = 0) => {
     const layers = kernelPasses({ model: testModel({ maxCost: DEFAULT_MAX_COST }) }).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)))
     const folder = mkdtempSync(join(fixture.root, "three-"))
     return Effect.runPromise(Effect.gen(function* () {
       const root = yield* ModelSpend
       const stage = yield* spend(root)
       const passes = yield* ReviewPasses
-      const results = yield* Effect.forEach([1, 2, 3], (number) => passes.run({
+      const results = yield* Effect.forEach(Array.from({ length: count }, (_, index) => index + 1), (number) => passes.run({
         prompt: { prefix: PREFIX, tail: "Review it." },
-        reviewed: { repo, at: head, files, stage: { _tag: "Find", pass: PassNumber.make(number) } },
+        reviewed: { run: "run-1", repo, at: head, files, stage: { _tag: "Find", pass: PassNumber.make(number) } },
         journalAt: join(folder, `pass-${number}`),
-        options: { maxSteps: 16 },
+        options: { maxSteps: 16, reserve },
         spend: stage,
       }), { concurrency: "unbounded" })
-      return { ended: results.map((result) => result.ended._tag), settled: Math.round((yield* root.totals).settled * 1e6) / 1e6 }
+      return { ended: results.map((result) => result.ended._tag), settled: Math.round((yield* root.totals).settled * 1e6) / 1e6, held: (yield* root.totals).reserved }
     }).pipe(Effect.provide(layers), Effect.provideService(FetchHttpClient.Fetch, steady)))
   }
+  const defaultStages = (root: Context.Service.Shape<typeof ModelSpend>) => Effect.flatMap(stageSpend(root, Option.some(DEFAULT_BUDGET.total)), (total) => stageSpend(total, Option.some(DEFAULT_BUDGET.find)))
 
   test("under the default budget's find stage, none ends on a spend refusal: a call the others' holds crowd out waits", async () => {
-    const ran = await threePasses((root) => Effect.flatMap(stageSpend(root, Option.some(DEFAULT_BUDGET.total)), (total) => stageSpend(total, Option.some(DEFAULT_BUDGET.find))))
-    expect(ran).toEqual({ ended: ["Answered", "Answered", "Answered"], settled: 0.12 })
+    const ran = await passesAtOnce(defaultStages)
+    expect(ran).toEqual({ ended: ["Answered", "Answered", "Answered"], settled: 0.12, held: 0 })
+  }, 60_000)
+
+  test("one pass keeping the default closing reserve back answers under the default budget, and its reserve is released", async () => {
+    const ran = await passesAtOnce(defaultStages, 1, DEFAULT_CLOSING_RESERVE)
+    expect(ran).toEqual({ ended: ["Answered"], settled: 0.04, held: 0 })
   }, 60_000)
 
   test("control: on the same cap, a ledger that refuses whatever open holds crowd out ends a pass on a refusal", async () => {
-    const ran = await threePasses((root) => Effect.succeed(ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) })))
+    const ran = await passesAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)
 })

@@ -1,7 +1,7 @@
 import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Prompt } from "effect/ai"
 import { JournalStorage, kernel, ModelSpend, Sessions, userMessage } from "@xandreed/core"
-import type { SessionId } from "@xandreed/core"
+import type { SessionId, SpendHold } from "@xandreed/core"
 import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, sessions } from "@xandreed/sdk"
 import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
@@ -60,8 +60,11 @@ const folderJournal = (at: string): Layer.Layer<JournalStorage, PassJournalFaile
  * results). It ends when the model answers without a call; for a check, once its verdict is recorded; when the ledger
  * refuses a call, when a call fails, when an answer is cut at the output cap (its finish says `length`; the calls it
  * asked for run first, so a finding it reported is kept), or when the journal fails: each with the findings recorded
- * so far. At its step cap it stores the host's note (`stepCapNote`) and asks once more, offering the same tools so the
- * provider's cache holds, and runs only the calls that report (`reportFinding` in a pass, `verdict` in a check).
+ * so far. From its start it holds back `options.reserve` from its stage for its closing call; at its step cap, or
+ * when the ledger refuses a later call while that reserve is held, it releases the reserve, stores the host's note
+ * (`stepCapNote`) and asks once more, offering the same tools so the provider's cache holds, and runs only the calls
+ * that report (`reportFinding` in a pass, `verdict` in a check); a closing call that fails is said in `StepCap`'s
+ * `why`. `onFirstAnswer` is given, once, whether its first call answered (`false` when it ended before one returned).
  */
 const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Required<KernelPassesOptions>) {
   const own = yield* stageSpend(input.spend, Option.none())
@@ -71,12 +74,26 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
   const reports = Match.valueTags(stage, { Find: () => REPORT_FINDING, Verify: () => VERDICT })
   const judged = Match.valueTags(stage, {
     Find: () => Effect.succeed(false),
-    Verify: ({ check }) => Effect.map(findings.verdictOf(check), Option.isSome),
+    Verify: ({ check }) => Effect.map(findings.verdictOf(input.reviewed.run, check), Option.isSome),
   })
   const calls: Array<CallUsage> = []
   const opened = new Set<string>()
   let made: Option.Option<SessionId> = Option.none()
   let signalled = false
+  /** The hold kept back for the closing call, while it is held. */
+  let reserved: Option.Option<SpendHold> = Option.none()
+  const releaseReserve = Effect.suspend(() => Option.match(reserved, {
+    onNone: () => Effect.void,
+    onSome: (hold) => {
+      reserved = Option.none()
+      return input.spend.release(hold).pipe(Effect.tapError((error) => Effect.logWarning("a review pass's reserve could not be released", error)), Effect.ignore)
+    },
+  }))
+  const signal = (answered: boolean) => Effect.suspend(() => {
+    if (signalled || input.onFirstAnswer === undefined) return Effect.void
+    signalled = true
+    return input.onFirstAnswer(answered)
+  })
 
   const loop = Effect.scoped(Effect.gen(function* () {
     yield* kept(recoverTurns)
@@ -87,6 +104,8 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
     made = Option.some(id)
     const session = yield* kept(conversations.open(id))
     yield* kept(session.append(userMessage(input.prompt.tail)))
+    // What the closing call will need, held back from the stage now; a stage with no room for it goes on without.
+    if (input.options.reserve > 0) reserved = yield* input.spend.keepBack(input.options.reserve)
 
     /** One model call: its answer and whether it was cut at the output cap, or how the pass ends when it failed. */
     const ask = (step: number) => Effect.gen(function* () {
@@ -102,10 +121,7 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       const answered = yield* Effect.result(modelAnswer(stream, session))
       // What the pass's own ledger settled while the call ran, rounded past the float noise of a difference.
       const cost = Math.max(0, Math.round(((yield* settled) - before) * 1e12) / 1e12)
-      if (!signalled && input.onFirstAnswer !== undefined) {
-        signalled = true
-        yield* input.onFirstAnswer
-      }
+      yield* signal(Result.isSuccess(answered))
       if (Result.isFailure(answered)) {
         calls.push({ step, tokens: Option.none(), cost })
         const error = answered.failure
@@ -119,9 +135,26 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       return Result.succeed({ answer, cut: finish === "length" })
     })
 
+    /**
+     * The closing call, at the step cap or after a spend refusal: the reserve released, the host's note, then one more
+     * call whose reporting calls alone run. Its words, or why it failed.
+     */
+    const closing = (step: number) => Effect.gen(function* () {
+      yield* releaseReserve
+      yield* kept(session.append(userMessage(stepCapNote(stage))))
+      const last = yield* ask(step)
+      if (Result.isFailure(last)) return { summary: "", why: "message" in last.failure ? last.failure.message : last.failure._tag }
+      for (const call of last.success.answer.toolCalls.filter((call) => call.name === reports)) yield* kept(callTool(toolkit, call, session))
+      return { summary: clipTo(last.success.answer.text.trim(), SUMMARY_KEPT), why: "" }
+    })
+
     for (let step = 1; step <= input.options.maxSteps; step++) {
       const asked = yield* ask(step)
-      if (Result.isFailure(asked)) return asked.failure
+      if (Result.isFailure(asked)) {
+        // A spend refusal after the first call: the closing call may still report on the reserve kept for it.
+        if (asked.failure._tag === "SpendRefused" && step > 1 && Option.isSome(reserved)) yield* closing(step + 1)
+        return asked.failure
+      }
       const { answer, cut } = asked.success
       if (!cut && answer.toolCalls.length === 0) return { _tag: "Answered", summary: clipTo(answer.text.trim(), SUMMARY_KEPT) } satisfies PassEnded
       // Every call the answer asked for runs, also when the answer was cut: a call that did not decode is a failed result.
@@ -133,14 +166,10 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       if (yield* judged) return { _tag: "Judged" } satisfies PassEnded
       if (cut) return { _tag: "OutputCut" } satisfies PassEnded
     }
-    // The step cap: the host's note, then one more call whose reporting calls alone run.
-    yield* kept(session.append(userMessage(stepCapNote(stage))))
-    const last = yield* ask(input.options.maxSteps + 1)
-    if (Result.isFailure(last)) return { _tag: "StepCap", steps: input.options.maxSteps, summary: "" } satisfies PassEnded
-    for (const call of last.success.answer.toolCalls.filter((call) => call.name === reports)) yield* kept(callTool(toolkit, call, session))
+    const closed = yield* closing(input.options.maxSteps + 1)
     if (yield* judged) return { _tag: "Judged" } satisfies PassEnded
-    return { _tag: "StepCap", steps: input.options.maxSteps, summary: clipTo(last.success.answer.text.trim(), SUMMARY_KEPT) } satisfies PassEnded
-  }))
+    return { _tag: "StepCap", steps: input.options.maxSteps, ...closed } satisfies PassEnded
+  }).pipe(Effect.ensuring(releaseReserve)))
 
   const model = parts.model.pipe(Layer.provide(Layer.succeed(ModelSpend, own)))
   const stack = Layer.mergeAll(parts.memory, parts.tools(input.reviewed), model).pipe(
@@ -154,8 +183,8 @@ const runPass = Effect.fn("review.pass")(function* (input: PassInput, parts: Req
       Effect.as<PassEnded>({ _tag: "JournalFailed", message: clipTo(failed.message, 300) }),
     )),
   )
-  // A pass that ended before its first call returned still lets the others start.
-  if (!signalled && input.onFirstAnswer !== undefined) yield* input.onFirstAnswer
+  // A pass that ended before its first call returned says so: no answer.
+  yield* signal(false)
   const result: PassResult = { stage, session: made, ended, calls, opened: Arr.sort(Array.from(opened), Order.String) }
   return result
 })

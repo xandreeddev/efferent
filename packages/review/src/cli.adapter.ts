@@ -17,7 +17,7 @@ import { directoryCache } from "./review-cache.adapter.js"
 import { directoryLogs } from "./review-logs.adapter.js"
 import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
 import type { Finder } from "./review-prompt.entity.js"
-import { DEFAULT_PASSES, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
+import { DEFAULT_CLOSING_RESERVE, DEFAULT_PASSES, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
 import type { ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
 import { kernelPasses } from "./review-pass.adapter.js"
@@ -206,7 +206,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const report = yield* reviewPullRequest(repo, number, {
     prepare: options,
     passes,
-    pass: { maxSteps },
+    pass: { maxSteps, reserve: DEFAULT_CLOSING_RESERVE },
     finder,
     vote: line.switches.has("--vote"),
     verify: !line.switches.has("--no-verify"),

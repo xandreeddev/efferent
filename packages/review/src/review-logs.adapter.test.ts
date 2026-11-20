@@ -1,5 +1,5 @@
 import { afterAll, describe, expect, test } from "bun:test"
-import { existsSync, mkdtempSync, readFileSync, rmSync } from "node:fs"
+import { existsSync, mkdtempSync, readdirSync, readFileSync, rmSync } from "node:fs"
 import { tmpdir } from "node:os"
 import { join } from "node:path"
 import { Effect, Exit } from "effect"
@@ -18,6 +18,21 @@ describe("directoryLogs", () => {
     const exit = await keep(root, "7-abc/ci-11.log", "error: boom\n")
     expect(exit).toEqual(Exit.succeed(join(root, "7-abc", "ci-11.log")))
     expect(readFileSync(join(root, "7-abc", "ci-11.log"), "utf8")).toBe("error: boom\n")
+  })
+
+  test("a log written again is replaced whole, through a temporary file that does not stay", async () => {
+    await keep(root, "8/run/review.json", "{\"complete\": false}\n")
+    await keep(root, "8/run/review.json", "{\"complete\": true}\n")
+    expect([readFileSync(join(root, "8", "run", "review.json"), "utf8"), readdirSync(join(root, "8", "run"))]).toEqual(["{\"complete\": true}\n", ["review.json"]])
+  })
+
+  test("a fresh folder is made only when nothing is there: a second run of the name is refused", async () => {
+    const fresh = (name: string) => Effect.runPromiseExit(Effect.gen(function* () {
+      return yield* (yield* ReviewLogs).fresh(name)
+    }).pipe(Effect.provide(directoryLogs(root))))
+    const first = await fresh("9/sha/run-a")
+    const again = await fresh("9/sha/run-a")
+    expect([first, Exit.isFailure(again)]).toEqual([Exit.succeed(join(root, "9", "sha", "run-a")), true])
   })
 
   test("a name that leads out of the folder, an absolute name or a folder that is not absolute is refused, nothing written", async () => {

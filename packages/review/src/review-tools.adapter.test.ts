@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { mkdtempSync } from "node:fs"
 import { join } from "node:path"
-import { Effect, Layer, Option } from "effect"
+import { Effect, Layer, Option, Result } from "effect"
 import { Tool } from "effect/ai"
 import { kernel, Sessions, userMessage } from "@xandreed/core"
 import { callTool, inProcessJournal, sessions } from "@xandreed/sdk"
@@ -11,7 +11,7 @@ import { Checkout } from "./checkout.port.js"
 import type { CheckoutError } from "./checkout.port.js"
 import { CommandFailed, OutputCut } from "./host-command.entity.js"
 import type { FileDiff } from "./diff.entity.js"
-import { parseUnifiedDiff } from "./diff.entity.functions.js"
+import { parseUnifiedDiff, shownPath } from "./diff.entity.functions.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import { findingsInMemory } from "./findings.adapter.js"
 import { Findings } from "./findings.port.js"
@@ -20,6 +20,7 @@ import { hostShell } from "./host-shell.adapter.js"
 import { BranchName, CommitSha, FetchRef, RepoName } from "./pull-request.entity.js"
 import { ListFiles, ReadDiff, ReadLines, reviewToolHandlers, reviewTools, ReportFinding, SearchCode, Verdict } from "./review-tools.adapter.js"
 import type { ReviewStage } from "./review-tools.entity.js"
+import { checkedReport } from "./review-tools.entity.functions.js"
 
 const fixture = gitFixture()
 afterAll(() => fixture.cleanup())
@@ -47,9 +48,9 @@ const calls = (made: ReadonlyArray<readonly [string, unknown]>, stage: ReviewSta
     const toolkit = yield* reviewTools
     const stored = yield* Effect.forEach(made, ([name, params], index) =>
       Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
-    return { stored, findings: yield* (yield* Findings).all }
+    return { stored, findings: yield* (yield* Findings).all("run-1") }
   }).pipe(Effect.provide(Layer.mergeAll(
-    reviewToolHandlers({ repo, at: head, files, stage }),
+    reviewToolHandlers({ run: "run-1", repo, at: head, files, stage }),
     sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
   ).pipe(Layer.provideMerge(Layer.mergeAll(checkoutLayer, findingsInMemory)))))))
 
@@ -161,6 +162,37 @@ describe("the review's tools say what they do, in fixed words", () => {
 
   test("every stage is offered the same tools, in one order", () => {
     expect(Object.keys(reviewTools.tools)).toEqual(["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"])
+  })
+})
+
+describe("what reportFinding keeps", () => {
+  const FINDING = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "c", evidence: "e" }
+
+  test("a path read as a tree path and one the pull request changes; endLine at or after line; at most 40 lines: else a failed result in words that say what to give", async () => {
+    const changed = files.filter((file) => file.change !== "deleted").map((file) => file.path).sort()
+    const ran = await calls([
+      ["reportFinding", { ...FINDING, path: "./src/sum.ts" }],
+      ["reportFinding", { ...FINDING, path: "src/never-changed.ts" }],
+      ["reportFinding", { ...FINDING, path: "../outside.ts" }],
+      ["reportFinding", { ...FINDING, line: 9, endLine: 4 }],
+      ["reportFinding", { ...FINDING, line: 1, endLine: 41 }],
+      ["reportFinding", { ...FINDING, line: 1, endLine: 40 }],
+    ])
+    expect<unknown>(ran.stored).toEqual([
+      ["recorded finding 1", false],
+      [`src/never-changed.ts is not a file this pull request changes, so a finding cannot cite it. Cite one of the changed files: ${files.filter((file) => file.change !== "deleted").map((file) => shownPath(file.path)).join(", ")}.`, true],
+      ["../outside.ts is not a path in the repository: give one relative to its root, such as src/index.ts, with no .. part and no leading /.", true],
+      ["endLine (4) is before line (9): give the problem's first line as line and its last as endLine.", true],
+      ["A finding cites at most 40 lines: give the problem's first line and an endLine at most 39 lines after it.", true],
+      ["recorded finding 2", false],
+    ])
+    expect([ran.findings.map((finding) => finding.path), changed.length > 0]).toEqual([["src/sum.ts", "src/sum.ts"], true])
+  })
+
+  test("past twenty changed files, the refusal names twenty and counts the rest", () => {
+    const many = Array.from({ length: 23 }, (_, index) => ({ ...files[0]!, path: `f${String(index).padStart(2, "0")}.ts`, change: "modified" as const }))
+    const refused = checkedReport({ path: "x.ts", line: 1 }, many)
+    expect(Result.isFailure(refused) && refused.failure).toBe(`x.ts is not a file this pull request changes, so a finding cannot cite it. Cite one of the changed files: ${many.slice(0, 20).map((file) => file.path).join(", ")}, and 3 more.`)
   })
 })
 
@@ -326,7 +358,7 @@ describe("a git command of a tool's that fails", () => {
       return yield* Effect.forEach(made, ([name, params], index) =>
         Effect.map(callTool(toolkit, { id: `c${index}`, name, params }, session), (record) => (record.message?._tag === "ToolResult" ? [record.message.result, record.message.isFailure] : record.message)), { concurrency: 1 })
     }).pipe(Effect.provide(Layer.mergeAll(
-      reviewToolHandlers({ repo, at: head, files: [], stage: { _tag: "Find", pass: PassNumber.make(1) } }),
+      reviewToolHandlers({ run: "run-1", repo, at: head, files: [], stage: { _tag: "Find", pass: PassNumber.make(1) } }),
       sessions().pipe(Layer.provideMerge(inProcessJournal()), Layer.provideMerge(kernel())),
     ).pipe(Layer.provideMerge(Layer.mergeAll(checkout, findingsInMemory)))))))
 

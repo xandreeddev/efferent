@@ -6,7 +6,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE, VERDICT
  * passes and of the checks. A change to any of them is a new version, kept with each review's record so results are
  * compared prompt to prompt.
  */
-export const REVIEW_PROMPT = "review-prompt-3"
+export const REVIEW_PROMPT = "review-prompt-4"
 
 /** The most characters of instruction files shown whole, nearest to the changed paths first; past it, their headings. */
 export const RULES_WHOLE = 16_000
@@ -65,7 +65,7 @@ export const FIND_TAIL: Readonly<Record<Finder, string>> = {
     "Review the pull request above for real bugs and security problems, and for rules of the repository's that a changed line breaks.",
     "",
     "- Review only the lines this pull request changes. Report nothing about lines it does not change, nothing that was already wrong before it, no matter of style, and nothing a linter or the type checker catches.",
-    `- Report each problem once with ${REPORT_FINDING}, citing its file and lines as they are at the commit under review and quoting those lines.`,
+    `- Report each problem once with ${REPORT_FINDING} the moment you see it, before you read on, citing its file and lines as they are at the commit under review and quoting those lines: the review can stop at any call, and a problem you have not reported is lost.`,
     "- When nothing is wrong, report nothing.",
     "- When you are done, answer with a one-line summary of what you found.",
   ].join("\n"),
@@ -73,7 +73,8 @@ export const FIND_TAIL: Readonly<Record<Finder, string>> = {
     "Review the pull request above and report every plausible defect its changed lines bring in.",
     "",
     "- Look for wrong logic, an error or an edge case left unhandled, state that two callers, turns or processes share and can race on, a resource not released, a security hole, and a rule of the repository's that a changed line breaks.",
-    `- Read each file's changed lines and what they call and are called by. Report a defect with ${REPORT_FINDING} as soon as you see it, citing its file and lines as they are at the commit under review and quoting those lines.`,
+    "- Read each file's changed lines and what they call and are called by.",
+    `- Call ${REPORT_FINDING} the moment you see a defect, before you read on, citing its file and lines as they are at the commit under review and quoting those lines: the review can stop at any call, and a defect you have not reported is lost.`,
     "- Report a defect you are not sure of too, and say in its claim what would make it real: another reviewer checks every report against the code before anyone reads it.",
     "- Report nothing about lines the pull request does not change, nothing that was already wrong before it, no matter of style, and nothing a linter or the type checker catches.",
     "- When you are done, answer with a one-line summary.",

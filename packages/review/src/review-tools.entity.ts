@@ -15,7 +15,7 @@ export const VERDICT = "verdict"
  * The version of the review's tool set: their names, descriptions, parameters and answers. A change to any of them
  * is a new version, kept with each review's record so results are compared tool set to tool set.
  */
-export const REVIEW_TOOLS_VERSION = "review-tools-3"
+export const REVIEW_TOOLS_VERSION = "review-tools-4"
 
 /** The most lines one `readLines` call reads. */
 export const READ_LINES_LIMIT = 150
@@ -60,10 +60,12 @@ export const ReviewStage = Schema.Union([
 export type ReviewStage = typeof ReviewStage.Type
 
 /**
- * What the tools read: the repository, the commit under review, every file the pull request changes (the whole
- * parsed diff, not only what was packed), and the stage the calls are made in.
+ * What the tools read: the run of the review the calls are for (where `Findings` keeps what they report), the
+ * repository, the commit under review, every file the pull request changes (the whole parsed diff, not only what was
+ * packed), and the stage the calls are made in.
  */
 export const Reviewed = Schema.Struct({
+  run: Schema.String,
   repo: RepoName,
   at: CommitSha,
   files: Schema.Array(FileDiff),

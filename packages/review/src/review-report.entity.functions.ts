@@ -6,7 +6,7 @@ import type { Finding, FindingReport } from "./finding.entity.js"
 import { plainText } from "./log-digest.entity.functions.js"
 import { AT_SOURCE_WORDS } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
+import { FINISHED, INCOMPLETE_BECAUSE } from "./review-pass.entity.js"
 import type { PassEnded, PassResult } from "./review-pass.entity.js"
 import type { Finder } from "./review-prompt.entity.js"
 import { EVIDENCE_SHOWN, FINDINGS_SHOWN } from "./review-report.entity.js"
@@ -58,6 +58,7 @@ export interface ReportInput {
   readonly finder: Finder
   readonly vote: boolean
   readonly verify: boolean
+  readonly complete: boolean
   readonly passes: ReadonlyArray<PassResult>
   readonly checks: ReadonlyArray<PassResult>
   readonly findings: ReadonlyArray<Finding>
@@ -115,6 +116,7 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     finder: input.finder,
     vote: input.vote,
     verify: input.verify,
+    complete: input.complete,
     passes: input.passes,
     checks: input.checks,
     findings: input.findings,
@@ -139,7 +141,8 @@ const printable = (text: string): string => plainText(text.replaceAll("\n", " ")
 const incompleteOf = (ended: PassEnded): Option.Option<string> => Match.valueTags(ended, {
   Answered: () => Option.none(),
   Judged: () => Option.none(),
-  StepCap: ({ steps, summary }) => Option.some(`${INCOMPLETE_BECAUSE.StepCap} (${steps})${summary.length > 0 ? `; ${printable(summary)}` : ""}`),
+  StepCap: ({ steps, summary, why }) => Option.some(`${INCOMPLETE_BECAUSE.StepCap} (${steps})${why.length > 0 ? `; its closing call failed: ${printable(clipTo(why, 300))}` : ""}${summary.length > 0 ? `; ${printable(summary)}` : ""}`),
+  Failed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.Failed}: ${printable(clipTo(message, 300))}`),
   SpendRefused: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.SpendRefused}: ${printable(clipTo(message, 300))}`),
   ModelFailed: ({ message }) => Option.some(`${INCOMPLETE_BECAUSE.ModelFailed}: ${printable(clipTo(message, 300))}`),
   OutputCut: () => Option.some(INCOMPLETE_BECAUSE.OutputCut),
@@ -181,7 +184,7 @@ const tallies = (report: ReviewReport): ReadonlyArray<string> => {
 /**
  * The report a person reads: the pull request and the commit reviewed; at most `FINDINGS_SHOWN` findings in their
  * order, each with its evidence, how many passes found it and the check's reason, and how many more there are, or
- * `No findings.`; each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
+ * `No findings.` (`Incomplete: no pass finished.` when no pass answered or reached its step cap); each kept bucket no check gave a verdict on (`Not checked (<why>): …`, at most `FINDINGS_SHOWN`),
  * so an unchecked finding is never read as none; `incomplete: <why>` for each pass that stopped before it answered, else its summary; the passes and
  * how the buckets and checks came out; the files in the pack against those changed and the files the passes opened;
  * each stage's calls, tokens (the cached share) and cost, the total and the wall time.
@@ -198,7 +201,8 @@ export const reportText = (report: ReviewReport): string => {
   return [
     `Review of #${report.number} in ${report.repo} at ${report.at.sha.slice(0, 12)}, ${AT_SOURCE_WORDS[report.at.source]}`,
     "",
-    ...(shown.length === 0 ? ["No findings."] : shown.flatMap((finding) => findingLines(finding, report.passes.length))),
+    ...(shown.length > 0 ? shown.flatMap((finding) => findingLines(finding, report.passes.length))
+      : report.passes.some((pass) => FINISHED.includes(pass.ended._tag)) ? ["No findings."] : ["Incomplete: no pass finished."]),
     ...(more > 0 ? [`${more} more ${more === 1 ? "finding" : "findings"} not shown.`] : []),
     ...unchecked.slice(0, FINDINGS_SHOWN),
     ...(unchecked.length > FINDINGS_SHOWN ? [`${unchecked.length - FINDINGS_SHOWN} more not checked.`] : []),

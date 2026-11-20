@@ -1,5 +1,6 @@
-import { Array as Arr, Clock, Deferred, Effect, Fiber, Match, Option, Result, Schema } from "effect"
+import { Array as Arr, Cause, Clock, Deferred, Effect, Fiber, Match, Option, Random, Result, Schema } from "effect"
 import { ModelSpend } from "@xandreed/core"
+import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
 import { CheckNumber, PassNumber } from "./finding.entity.js"
 import type { Verdict } from "./finding.entity.js"
@@ -19,7 +20,9 @@ import { reviewPrefix, reviewPrompt, verifyPrompt, walkOrders } from "./review-p
 import { ReviewReport } from "./review-report.entity.js"
 import type { BucketCheck } from "./review-report.entity.js"
 import { reviewReport, runNameOf } from "./review-report.entity.functions.js"
+import type { ReportInput } from "./review-report.entity.functions.js"
 import { REVIEW_TOOLS_VERSION } from "./review-tools.entity.js"
+import type { ReviewStage } from "./review-tools.entity.js"
 import { treePath } from "./review-tools.entity.functions.js"
 import type { ReviewOptions } from "./review.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
@@ -40,6 +43,7 @@ const uncheckedWhy = (ended: PassEnded): string => Match.valueTags(ended, {
   ModelFailed: () => INCOMPLETE_BECAUSE.ModelFailed,
   OutputCut: () => INCOMPLETE_BECAUSE.OutputCut,
   JournalFailed: () => INCOMPLETE_BECAUSE.JournalFailed,
+  Failed: () => INCOMPLETE_BECAUSE.Failed,
 })
 
 /** Whether a verdict's quote is in the head's file within the cited lines (`quoteWithin`); a file that cannot be read is no. */
@@ -85,69 +89,107 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const passes = yield* ReviewPasses
   const findings = yield* Findings
   const prepared = yield* prepareReview(repo, number, options.prepare, policies)
-  const run = runNameOf(started)
-  const folder = `${reviewFolderOf(prepared.pullRequest.number, prepared.at.sha)}/${run}`
+  const { run, folder } = yield* freshRun(reviewFolderOf(prepared.pullRequest.number, prepared.at.sha), started)
   yield* logs.keep(`${folder}/prepared.json`, yield* jsonOf(PreparedReview, prepared))
+
+  /** The report as it stands, kept as `review.json` (whole or not at all), `complete` once every stage ran. */
+  const record = (parts: Pick<ReportInput, "passes" | "checks" | "findings" | "buckets" | "verdicts" | "complete">) => Effect.gen(function* () {
+    const report = reviewReport({
+      ...parts,
+      run,
+      prepared,
+      finder: options.finder,
+      vote: options.vote,
+      verify: options.verify,
+      promptVersion: REVIEW_PROMPT,
+      toolsVersion: REVIEW_TOOLS_VERSION,
+      model: options.model,
+      wallMs: (yield* Clock.currentTimeMillis) - started,
+    })
+    yield* logs.keep(`${folder}/review.json`, yield* jsonOf(ReviewReport, report))
+    return report
+  })
+  yield* record({ passes: [], checks: [], findings: [], buckets: [], verdicts: [], complete: false })
 
   const ledger = yield* ModelSpend
   const total = yield* stageSpend(ledger, Option.some(options.budget.total))
   const findSpend = yield* stageSpend(total, Option.some(options.budget.find))
   const verifySpend = yield* stageSpend(total, Option.some(options.budget.verify))
   const orders = walkOrders(prepared, options.passes)
+  // What each pass keeps back for its closing call: at most half the find stage split among the passes, so their
+  // reserves never take the room their calls need.
+  const passOptions = { ...options.pass, reserve: Math.min(options.pass.reserve, options.budget.find / (2 * options.passes)) }
 
-  const find = (index: number, onFirstAnswer?: Effect.Effect<void>) => Effect.gen(function* () {
-    const pass = PassNumber.make(index + 1)
-    return yield* passes.run({
-      prompt: reviewPrompt(prepared, { finder: options.finder, order: orders[index] ?? [] }),
-      reviewed: { repo, at: prepared.at.sha, files: prepared.files, stage: { _tag: "Find", pass } },
-      journalAt: yield* logs.folder(`${folder}/pass-${pass}`),
-      options: options.pass,
-      spend: findSpend,
-      ...(onFirstAnswer === undefined ? {} : { onFirstAnswer }),
-    })
-  })
-  const firstAnswered = yield* Deferred.make<void>()
-  // Whatever becomes of the first pass (a folder that cannot be made, a defect), the others are let go, and its
-  // failure is the review's when it is joined.
-  const first = yield* Effect.forkChild(find(0, Deferred.succeed(firstAnswered, undefined).pipe(Effect.asVoid)).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, undefined))))
-  yield* Deferred.await(firstAnswered)
-  const others = yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index), { concurrency: "unbounded" })
+  const find = (index: number, onFirstAnswer?: (answered: boolean) => Effect.Effect<void>) => {
+    const stage: ReviewStage = { _tag: "Find", pass: PassNumber.make(index + 1) }
+    return Effect.gen(function* () {
+      return yield* passes.run({
+        prompt: reviewPrompt(prepared, { finder: options.finder, order: orders[index] ?? [] }),
+        reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
+        journalAt: yield* logs.folder(`${folder}/pass-${index + 1}`),
+        options: passOptions,
+        spend: findSpend,
+        ...(onFirstAnswer === undefined ? {} : { onFirstAnswer }),
+      })
+    }).pipe(Effect.catchCause(couldNotRun(stage)))
+  }
+  const firstAnswered = yield* Deferred.make<boolean>()
+  // Whatever becomes of the first pass, the review learns whether it answered; the others start only if it did.
+  const first = yield* Effect.forkChild(find(0, (answered) => Deferred.succeed(firstAnswered, answered).pipe(Effect.asVoid)).pipe(Effect.ensuring(Deferred.succeed(firstAnswered, false))))
+  const answered = yield* Deferred.await(firstAnswered)
+  const others = answered ? yield* Effect.forEach(Arr.range(1, options.passes - 1).filter((index) => index < options.passes), (index) => find(index), { concurrency: "unbounded" }) : []
   const found = [yield* Fiber.join(first), ...others]
 
-  const all = yield* findings.all
+  const all = yield* findings.all(run)
   const buckets = mergeFindings(all, prepared.files, { vote: options.vote })
+  yield* record({ passes: found, checks: [], findings: all, buckets, verdicts: [], complete: false })
   const prefix = reviewPrefix(prepared)
   const toCheck = options.verify ? Arr.sort(buckets.filter((bucket) => bucket.kept), CHECK_ORDER) : []
-  const checked = yield* Effect.forEach(toCheck, (bucket, index) => Effect.gen(function* () {
+  const checked = yield* Effect.forEach(toCheck, (bucket, index) => {
     const check = CheckNumber.make(index + 1)
-    const result = yield* passes.run({
-      prompt: verifyPrompt(prefix, bucket.best),
-      reviewed: { repo, at: prepared.at.sha, files: prepared.files, stage: { _tag: "Verify", check } },
-      journalAt: yield* logs.folder(`${folder}/check-${check}`),
-      options: { maxSteps: options.verifySteps },
-      spend: verifySpend,
-    })
-    const verdict = yield* findings.verdictOf(check)
-    const holds = Option.isSome(verdict) ? yield* quoteHolds(repo, prepared.at.sha, bucket, verdict.value) : false
-    return { result, check: checkOf(bucket, check, result, verdict, holds) }
-  }), { concurrency: options.verifyConcurrency })
+    const stage: ReviewStage = { _tag: "Verify", check }
+    return Effect.gen(function* () {
+      const result = yield* passes.run({
+        prompt: verifyPrompt(prefix, bucket.best),
+        reviewed: { run, repo, at: prepared.at.sha, files: prepared.files, stage },
+        journalAt: yield* logs.folder(`${folder}/check-${check}`),
+        options: { maxSteps: options.verifySteps, reserve: 0 },
+        spend: verifySpend,
+      })
+      return result
+    }).pipe(Effect.catchCause(couldNotRun(stage)), Effect.flatMap((result) => Effect.gen(function* () {
+      const verdict = yield* findings.verdictOf(run, check)
+      const holds = Option.isSome(verdict) ? yield* quoteHolds(repo, prepared.at.sha, bucket, verdict.value) : false
+      return { result, check: checkOf(bucket, check, result, verdict, holds) }
+    })))
+  }, { concurrency: options.verifyConcurrency })
 
-  const report = reviewReport({
-    run,
-    prepared,
-    finder: options.finder,
-    vote: options.vote,
-    verify: options.verify,
-    passes: found,
-    checks: checked.map((one) => one.result),
-    findings: all,
-    buckets,
-    verdicts: checked.map((one) => one.check),
-    promptVersion: REVIEW_PROMPT,
-    toolsVersion: REVIEW_TOOLS_VERSION,
-    model: options.model,
-    wallMs: (yield* Clock.currentTimeMillis) - started,
-  })
-  yield* logs.keep(`${folder}/review.json`, yield* jsonOf(ReviewReport, report))
-  return report
+  return yield* record({ passes: found, checks: checked.map((one) => one.result), findings: all, buckets, verdicts: checked.map((one) => one.check), complete: true })
 })
+
+/** How many times a run tries a fresh folder's name before it gives up. */
+const RUN_TRIES = 5
+
+/**
+ * A run of its own: named by when it started (`runNameOf`) and six random hexadecimal digits, its folder made only
+ * when nothing is there (`ReviewLogs.fresh`), another name tried when one is taken.
+ */
+const freshRun = (base: string, started: number) => Effect.gen(function* () {
+  const logs = yield* ReviewLogs
+  const attempt = Effect.gen(function* () {
+    const suffix = (yield* Random.nextIntBetween(0, 0xffffff)).toString(16).padStart(6, "0")
+    const run = `${runNameOf(started)}-${suffix}`
+    return { run, folder: `${base}/${run}`, made: yield* logs.fresh(`${base}/${run}`) }
+  })
+  return yield* attempt.pipe(Effect.retry({ times: RUN_TRIES - 1 }))
+})
+
+/** A pass or a check that could not run at all (its folder not made, a defect), as its result: `Failed`, in its failure's words, logged. */
+const couldNotRun = (stage: ReviewStage) => (cause: Cause.Cause<unknown>) =>
+  Effect.logWarning("a review pass could not run", cause).pipe(Effect.as<PassResult>({
+    stage,
+    session: Option.none(),
+    ended: { _tag: "Failed", message: clipTo(Cause.prettyErrors(cause).map((error) => error.message).join("; ") || "it could not run", 300) },
+    calls: [],
+    opened: [],
+  }))

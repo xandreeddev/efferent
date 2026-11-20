@@ -1,6 +1,6 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
-import type { ModelSpend } from "@xandreed/core"
+import type { StageLedger } from "./stage-spend.port.js"
 import type { PassOptions, PassResult } from "./review-pass.entity.js"
 import type { ReviewPrompt } from "./review-prompt.entity.js"
 import type { Reviewed } from "./review-tools.entity.js"
@@ -9,16 +9,17 @@ import type { Reviewed } from "./review-tools.entity.js"
  * What one pass or check is given: its prompt, what its tools read and the stage its calls are made in, where its
  * journal is kept (`journalAt`: a place the passes' journal reads, for the stock passes a folder made for it), its
  * options, the ledger of its stage, which every call it makes is charged to (`spend`), and what to do once its first
- * model call returns, answered or failed (`onFirstAnswer`: the review starts its other passes then, once the first has
- * written the provider's cache).
+ * model call returns (`onFirstAnswer`, given whether it answered, once: also with `false` when the pass ends before
+ * any call returned; the review starts its other passes on an answer, once the first has written the provider's
+ * cache, and none on a failure).
  */
 export interface PassInput {
   readonly prompt: ReviewPrompt
   readonly reviewed: Reviewed
   readonly journalAt: string
   readonly options: PassOptions
-  readonly spend: Context.Service.Shape<typeof ModelSpend>
-  readonly onFirstAnswer?: Effect.Effect<void>
+  readonly spend: StageLedger
+  readonly onFirstAnswer?: (answered: boolean) => Effect.Effect<void>
 }
 
 /**

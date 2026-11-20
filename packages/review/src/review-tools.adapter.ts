@@ -6,7 +6,7 @@ import { CLAIM_LIMIT, EVIDENCE_LIMIT, FindingKind, LineNumber, QUOTE_LIMIT, REAS
 import { Findings } from "./findings.port.js"
 import type { Reviewed } from "./review-tools.entity.js"
 import { DIFF_PAGE, GLOB_LIMIT, LIST_FILES, LIST_LIMIT, PAGE_CHARS, PATTERN_LIMIT, READ_DIFF, READ_FILE_BYTES, READ_LINES, READ_LINES_LIMIT, REPORT_FINDING, SEARCH_CODE, SEARCH_LIMIT, SEARCH_LINE_SHOWN, VERDICT } from "./review-tools.entity.js"
-import { diffPage, GIT_FAILED, globRefusal, judgedText, linesPage, listText, NOT_CHECKING_NOW, NOT_FINDING_NOW, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, tooLarge, treePath } from "./review-tools.entity.functions.js"
+import { checkedReport, diffPage, GIT_FAILED, globRefusal, judgedText, linesPage, listText, NOT_CHECKING_NOW, NOT_FINDING_NOW, NOT_READ_BECAUSE, patternRefusal, recordedText, REGEX_REFUSED, SEARCH_TOO_BIG, SEARCH_TOO_LONG, searchText, tooLarge, treePath } from "./review-tools.entity.functions.js"
 import type { CheckoutError } from "./checkout.port.js"
 
 /** A git command of a tool's that failed: logged whole for the host, and answered in fixed words, never git's. */
@@ -149,12 +149,12 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
     }),
     readDiff: ({ path, page }) => Effect.fromResult(diffPage(reviewed.files, path, page ?? 1)),
     reportFinding: (report) => Match.valueTags(reviewed.stage, {
-      Find: ({ pass }) => Effect.map(findings.record(pass, report), recordedText),
+      Find: ({ pass }) => Effect.flatMap(Effect.fromResult(checkedReport(report, reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, pass, checked), recordedText)),
       Verify: () => Effect.fail(NOT_FINDING_NOW),
     }),
     verdict: (report) => Match.valueTags(reviewed.stage, {
       Find: () => Effect.fail(NOT_CHECKING_NOW),
-      Verify: ({ check }) => Effect.map(findings.judge(check, report), judgedText),
+      Verify: ({ check }) => Effect.map(findings.judge(reviewed.run, check, report), judgedText),
     }),
   })
 }))

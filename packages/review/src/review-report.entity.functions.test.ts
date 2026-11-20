@@ -57,7 +57,8 @@ const REPORT = reviewReport({
   finder: "candidates",
   vote: false,
   verify: true,
-  passes: [passResult(1, { _tag: "Answered", summary: "Seven problems." }, 0.0101), passResult(2, { _tag: "StepCap", steps: 16, summary: "Two more." }, 0.0011), passResult(3, { _tag: "OutputCut" }, 0.0011)],
+  complete: true,
+  passes: [passResult(1, { _tag: "Answered", summary: "Seven problems." }, 0.0101), passResult(2, { _tag: "StepCap", steps: 16, summary: "Two more.", why: "" }, 0.0011), passResult(3, { _tag: "OutputCut" }, 0.0011)],
   checks: [CHECK_RESULT],
   findings: FINDINGS,
   buckets: [...BUCKETS, { ...BUCKETS[0]!, number: BucketNumber.make(11), kept: false, why: "off-changed-lines" }],
@@ -112,18 +113,29 @@ describe("the review's report", () => {
   })
 
   test("reportText: no findings, and a pass that stopped before it answered says why", () => {
+    const answered = { ...REPORT, reported: [], verdicts: [], passes: REPORT.passes.slice(0, 1) }
+    expect(reportText(answered).split("\n")[2]).toBe("No findings.")
     const stopped = { ...REPORT, reported: [], verdicts: [], passes: REPORT.passes.slice(0, 1).map((one) => ({ ...one, ended: { _tag: "SpendRefused" as const, message: "the ledger's total cap of 0.1 refused 0.04" } })) }
     expect(reportText(stopped).split("\n").slice(0, 5)).toEqual([
       "Review of #7 in owner/project at bbbbbbbbbbbb, its head",
       "",
-      "No findings.",
+      "Incomplete: no pass finished.",
       "",
       "Pass 1: incomplete: the spend cap refused a model call: the ledger's total cap of 0.1 refused 0.04",
     ])
   })
 
+  test("reportText: a closing call that failed and a pass that could not run say why", () => {
+    const ended = [{ _tag: "StepCap" as const, steps: 16, summary: "", why: "the key is wrong" }, { _tag: "Failed" as const, message: "the disk is full" }]
+    const report = { ...REPORT, passes: ended.map((one, index) => ({ ...passResult(index + 1, one, 0) })) }
+    expect(reportText(report).split("\n").filter((line) => line.startsWith("Pass "))).toEqual([
+      "Pass 1: incomplete: the pass reached its step cap (16); its closing call failed: the key is wrong",
+      "Pass 2: incomplete: the pass could not run: the disk is full",
+    ])
+  })
+
   test("reportText: with no check run, the kept buckets' findings are shown and the checks said to be none", () => {
-    const unchecked = reviewReport({ ...{ run: REPORT.run, prepared: PREPARED, finder: "strict", vote: true, verify: false, checks: [], findings: FINDINGS, verdicts: [] }, passes: REPORT.passes.slice(0, 1), buckets: BUCKETS.slice(0, 2), promptVersion: "p", toolsVersion: "t", model: "m", wallMs: 1 })
+    const unchecked = reviewReport({ ...{ run: REPORT.run, prepared: PREPARED, finder: "strict", vote: true, verify: false, complete: true, checks: [], findings: FINDINGS, verdicts: [] }, passes: REPORT.passes.slice(0, 1), buckets: BUCKETS.slice(0, 2), promptVersion: "p", toolsVersion: "t", model: "m", wallMs: 1 })
     const lines = reportText(unchecked).split("\n")
     expect([lines[2], lines.find((line) => line.startsWith("Passes")), lines.find((line) => line.startsWith("Checks"))]).toEqual([
       "src/sum.ts:4 high bug — Claim 2. (3/1 pass) (restates a CI failure)", "Passes: 1, finding strictly; buckets: 2 kept, 0 left out by the vote, 0 off the changed lines", "Checks: none run",

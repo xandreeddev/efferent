@@ -32,19 +32,21 @@ export type CallUsage = typeof CallUsage.Type
 /**
  * How a pass ended: the model answered without a tool call (`Answered`, its one-line summary), a check gave its
  * verdict (`Judged`), or the pass stopped with the findings so far because it reached its step cap (`StepCap`, after
- * one more call that may only report, with what that call answered in words), the ledger refused a call
- * (`SpendRefused`), a call failed (`ModelFailed`, the failure's words), an answer was cut at the output cap
- * (`OutputCut`, after the calls it asked for ran), or the pass's journal could not be opened or written
- * (`JournalFailed`, its words).
+ * one more call that may only report, with what that call answered in words, and why it failed when it did), the
+ * ledger refused a call (`SpendRefused`, also after one more such call), a call failed (`ModelFailed`, the failure's
+ * words), an answer was cut at the output cap (`OutputCut`, after the calls it asked for ran), the pass's journal
+ * could not be opened or written (`JournalFailed`, its words), or the pass could not run at all (`Failed`: the host's
+ * failure in its words, its folder not made, a defect).
  */
 export const PassEnded = Schema.Union([
   Schema.TaggedStruct("Answered", { summary: Schema.String }),
   Schema.TaggedStruct("Judged", {}),
-  Schema.TaggedStruct("StepCap", { steps: Count, summary: Schema.String }),
+  Schema.TaggedStruct("StepCap", { steps: Count, summary: Schema.String, why: Schema.String }),
   Schema.TaggedStruct("SpendRefused", { message: Schema.String }),
   Schema.TaggedStruct("ModelFailed", { message: Schema.String }),
   Schema.TaggedStruct("OutputCut", {}),
   Schema.TaggedStruct("JournalFailed", { message: Schema.String }),
+  Schema.TaggedStruct("Failed", { message: Schema.String }),
 ]).pipe(Schema.toTaggedUnion("_tag"))
 export type PassEnded = typeof PassEnded.Type
 
@@ -55,7 +57,11 @@ export const INCOMPLETE_BECAUSE: Readonly<Record<Exclude<PassEnded["_tag"], "Ans
   ModelFailed: "a model call failed",
   OutputCut: "an answer was cut at the output cap",
   JournalFailed: "the pass's journal could not be kept",
+  Failed: "the pass could not run",
 }
+
+/** The ends of a pass that finished its work: it answered, a check gave its verdict, or it reached its step cap. */
+export const FINISHED: ReadonlyArray<PassEnded["_tag"]> = ["Answered", "Judged", "StepCap"]
 
 /** A pass's journal could not be opened, read or written: what failed, in its words, and the failure. */
 export class PassJournalFailed extends Schema.TaggedError<PassJournalFailed>()("PassJournalFailed", {
@@ -63,9 +69,14 @@ export class PassJournalFailed extends Schema.TaggedError<PassJournalFailed>()("
   cause: Schema.optional(Schema.Defect()),
 }) {}
 
-/** What a pass is asked: the most model calls it makes. */
+/**
+ * What a pass is asked: the most model calls it makes, and what it holds back from its stage, in USD, from its start
+ * for its closing call (`reserve`, released just before that call), so a spend refusal mid-pass still leaves room to
+ * report what it found.
+ */
 export const PassOptions = Schema.Struct({
   maxSteps: Count.check(Schema.isGreaterThanOrEqualTo(1)),
+  reserve: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0)),
 })
 export type PassOptions = typeof PassOptions.Type
 
