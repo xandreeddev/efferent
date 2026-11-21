@@ -6,7 +6,6 @@ const headings = [
   { depth: 2, slug: "memory", text: "Memory tied to the codebase" },
   { depth: 2, slug: "lsp", text: "Language-server tools, as an add-on" },
   { depth: 2, slug: "skills", text: "Review skills by path" },
-  { depth: 2, slug: "preloading", text: "Deterministic context preloading" },
 ]
 ---
 
@@ -47,13 +46,5 @@ const headings = [
   <p>
     Instruction files apply by folder. The plan is review skills attached to paths of the repository: guidance on what
     to look for in one part of the code, given to a review by the paths it changes.
-  </p>
-
-  <h2 id="preloading">Deterministic context preloading</h2>
-  <p><span class="rv-tag planned">planned</span></p>
-  <p>
-    A finder turn spends its first steps reading: its tail asks it to read each file under review whole, then what its
-    changed lines call and are called by. The plan is to have code, not the model, load context before the turn starts,
-    the same way every time for the same pull request.
   </p>
 </ReviewLayout>
