@@ -19,8 +19,8 @@ const headings = [
 >
   <h2 id="what-it-does">What it does</h2>
   <p>
-    <code>@xandreed/review</code> is a package of this repository with one command, <code>efferent-review</code>. It
-    is private: it is gated and tested like every package, but it is not on npm. It has two commands:
+    <code>@xandreed/review</code> is a package of this repository whose program is <code>efferent-review</code>. It
+    is private: it is gated and tested like every package, but it is not on npm. The program has two commands:
   </p>
   <ul>
     <li>
@@ -29,7 +29,7 @@ const headings = [
     </li>
     <li>
       <code>efferent-review review &lt;number&gt; --repo &lt;owner/name&gt;</code> prepares it, runs the model's turns
-      over it, merges what they find, checks every finding with the model again, and prints the report.
+      over it, merges what they find, has the model check the findings again, and prints the report.
     </li>
   </ul>
   <p>
@@ -42,7 +42,7 @@ const headings = [
   <h2 id="the-pipeline">The pipeline</h2>
   <p>
     A review is six stages. Four are plain code, each a pure function with table tests or an adapter behind a port.
-    Two are a model's <strong>turns</strong>: one turn reviews a group of changed files, and one turn checks each
+    Two are a model's <strong>turns</strong>: one turn reviews a group of changed files, and one turn checks one
     finding. Every turn is the host's own loop on the kernel, made of <strong>steps</strong>, one model call each.
   </p>
   <PipelineDiagram />

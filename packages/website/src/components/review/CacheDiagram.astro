@@ -29,7 +29,7 @@ const y = (i: number) => 26 + i * 56
             <text x="8" y={y(i) + 25} class="t-mono t-sm">{s.label}</text>
             <rect class="fill-accent" x={X0} y={y(i)} width={PREFIX} height="38" rx="5"></rect>
             <text x={X0 + PREFIX / 2} y={y(i) + 24} text-anchor="middle" class="t-xs">prefix (never stored)</text>
-            <rect class="fill-accent" x={X0 + PREFIX + 4} y={y(i)} width={TAIL} height="38" rx="5"></rect>
+            <rect class={i === 0 ? "fill-new" : "fill-accent"} x={X0 + PREFIX + 4} y={y(i)} width={TAIL} height="38" rx="5"></rect>
             <text x={X0 + PREFIX + 4 + TAIL / 2} y={y(i) + 24} text-anchor="middle" class="t-xs">tail</text>
             {s.parts.map((p, j) => (
               <g>
@@ -50,7 +50,8 @@ const y = (i: number) => 26 + i * 56
     <strong>Nothing earlier is ever rewritten.</strong> The memory (<code>flatMemory</code> by default) reads the
     journal back whole, and the journal only grows at its end, so each request begins with every byte of the one
     before. A memory that dropped or summarised an earlier step would change the start of the request, and the cache
-    would miss from that point on. Even the closing call keeps the same six tools offered and the model's tool choice
+    would miss from that point on. At step 1 only the prefix can come from the cache, and only when an earlier turn
+    or check of the same pull request sent it. Even the closing call keeps the same six tools offered and the model's tool choice
     left as it was, since a narrower tool list changes the request ahead of the messages.
   </Fragment>
 </Figure>

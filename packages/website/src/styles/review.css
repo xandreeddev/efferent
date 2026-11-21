@@ -61,10 +61,9 @@
   color: var(--text-faint);
   padding: 0.4rem 1rem 0;
 }
-@media (max-width: 720px) {
-  .rv-hint {
-    display: block;
-  }
+/* Said only while the drawing shown is wider than its figure (the Figure's script marks it). */
+.rv-fig.rv-scrolls .rv-hint {
+  display: block;
 }
 /* A figure with a narrow drawing of its own shows it at phone width, the wide one above. */
 .rv-narrow {
@@ -76,9 +75,6 @@
   }
   .rv-has-narrow .rv-narrow {
     display: block;
-  }
-  .rv-has-narrow .rv-hint {
-    display: none;
   }
 }
 

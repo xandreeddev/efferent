@@ -134,7 +134,8 @@ const verifyTail = excerpt("review-prompt.entity.ts", "export const VERIFY_TAIL"
 
   <h3 id="harvest">The harvest and the closing call</h3>
   <p>
-    A group's turn makes at most 24 model calls. When it answers in words, it is asked once more: the host's note asks
+    A group's turn is capped at 24 steps; the harvest and the closing call come after the cap. When it answers in
+    words, it is asked once more: the host's note asks
     it to report each possible defect it noticed or weighed and did not report, also one it judged too small or was
     not sure of; only that answer's <code>reportFinding</code> calls run. A turn that reaches its step cap gets a
     closing call instead, which may only report. Both are on
@@ -190,7 +191,7 @@ const verifyTail = excerpt("review-prompt.entity.ts", "export const VERIFY_TAIL"
                                           <span class="c">verdicts on the base, node_modules snapshots, scratch</span>
   records/&lt;owner&gt;/&lt;repo&gt;/                 <span class="c">the records root (--records)</span>
     &lt;number&gt;/&lt;sha&gt;/                       <span class="c">the commit under review, its full sha</span>
-      ci-&lt;run&gt;.log                        <span class="c">each failed CI log, whole</span>
+      ci-&lt;run id&gt;.log                     <span class="c">each failed CI run's log, whole</span>
       &lt;run&gt;/                              <span class="c">one run: when it started, and six random hex digits</span>
         prepared.json                     <span class="c">the prepared review</span>
         turn-1/ turn-2/ …                 <span class="c">each finder turn's journal</span>

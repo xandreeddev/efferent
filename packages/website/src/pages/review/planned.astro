@@ -26,11 +26,9 @@ const headings = [
   <h2 id="memory">Memory tied to the codebase</h2>
   <p><span class="rv-tag planned">planned</span></p>
   <p>
-    Today every review starts from nothing but the repository's instruction files. The plan is a memory of the
-    codebase's own rules, the kind a maintainer repeats in review after review, kept as records on the kernel's
-    journal, the same journal every turn already writes. It would learn from merged pull requests: what reviewers asked
-    for and what was changed because of it. And evals would decide whether a remembered rule earns its place in the
-    prompt, before it ever does.
+    Today every review starts from nothing but the repository's instruction files. The plan is a memory tied to the
+    codebase: rules kept as records on the kernel's journal, where every turn already keeps its own records, learned
+    from merged pull requests, and held to evals.
   </p>
 
   <h2 id="lsp">Language-server tools, as an add-on</h2>
@@ -38,8 +36,8 @@ const headings = [
   <p>
     The six tools read text: lines, a search, a glob, a diff. A language server answers what text cannot, such as where
     a name is defined and every place that refers to it. The plan is tools backed by <code>tsgo</code>'s language
-    server, for definitions and references, as an add-on beside the six, not a part of the core: a host that wants them
-    plugs them in, and an eval shows whether they help. Today the turn's tool list is fixed (see
+    server, for definitions and references, as an add-on beside the six, not a part of the core. Today the turn's tool
+    list is fixed (see
     <a href={reviewHref("plugins") + "#not-yet"}>what cannot be swapped yet</a>), so this needs that list to open up
     first.
   </p>
@@ -47,17 +45,15 @@ const headings = [
   <h2 id="skills">Review skills by path</h2>
   <p><span class="rv-tag planned">planned</span></p>
   <p>
-    Instruction files apply by folder. The plan is review skills attached to paths: what to look for in a migration,
-    a sandbox, a public API, given to a turn only when its group holds files those paths match, so a turn reads the
-    guidance for the code in front of it and nothing else.
+    Instruction files apply by folder. The plan is review skills attached to paths of the repository: guidance on what
+    to look for in one part of the code, given to a review by the paths it changes.
   </p>
 
   <h2 id="preloading">Deterministic context preloading</h2>
   <p><span class="rv-tag planned">planned</span></p>
   <p>
-    A finder turn spends its first steps reading: each file under review whole, then what its changed lines call and
-    are called by. Much of that is predictable. The plan is to have code, not the model, load that context before the
-    turn starts, the same way every time for the same pull request, so the turn's steps go to judging instead of
-    fetching.
+    A finder turn spends its first steps reading: its tail asks it to read each file under review whole, then what its
+    changed lines call and are called by. The plan is to have code, not the model, load context before the turn starts,
+    the same way every time for the same pull request.
   </p>
 </ReviewLayout>

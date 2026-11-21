@@ -27,3 +27,15 @@ const narrow = Astro.slots.has("narrow")
   }
   <figcaption><slot name="caption" /></figcaption>
 </figure>
+
+<script>
+  // Mark each figure whose shown drawing is wider than the figure, so its hint says to scroll; again on a resize.
+  const mark = () => {
+    for (const figure of document.querySelectorAll(".rv-fig")) {
+      const shown = Array.from(figure.querySelectorAll<HTMLElement>(".rv-scroll")).filter((box) => box.offsetParent !== null)
+      figure.classList.toggle("rv-scrolls", shown.some((box) => box.scrollWidth > box.clientWidth + 1))
+    }
+  }
+  mark()
+  addEventListener("resize", mark)
+</script>

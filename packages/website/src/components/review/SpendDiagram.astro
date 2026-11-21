@@ -21,7 +21,7 @@ import Figure from "./Figure.astro"
       [0, 1, 2].map((i) => (
         <g>
           <rect class="box-2" x={40 + i * 126} y="88" width="116" height="94" rx="8"></rect>
-          <text x={52 + i * 126} y="108" class="t-sm">turn {i + 1}</text>
+          <text x={52 + i * 126} y="108" class="t-sm">group {i + 1}'s turn</text>
           <text x={52 + i * 126} y="126" class="t-xs t-dim">its own ledger,</text>
           <text x={52 + i * 126} y="141" class="t-xs t-dim">no cap of its own</text>
           <rect class="fill-new" x={52 + i * 126} y="152" width="92" height="20" rx="4"></rect>
@@ -29,7 +29,8 @@ import Figure from "./Figure.astro"
         </g>
       ))
     }
-    <text x="40" y="214" class="t-xs t-dim">a group starts only while the stage has room for its first call and its reserve</text>
+    <text x="40" y="200" class="t-xs t-dim">one after another; a group starts only while the stage</text>
+    <text x="40" y="216" class="t-xs t-dim">has room for its first call and its reserve</text>
 
     <rect class="box" x="440" y="50" width="396" height="180" rx="12"></rect>
     <text x="454" y="72" class="t-b t-sm">Verify stage</text>
@@ -51,8 +52,9 @@ import Figure from "./Figure.astro"
   </svg>
   <Fragment slot="caption">
     <strong>Every model call is charged before it is sent.</strong> A stage refuses a call that what it already
-    settled leaves no room for, so a turn stops with its findings so far instead of overspending; the reserve each
-    turn keeps back from its start is released just before its closing call, so a turn the ledger cuts short can still
-    report what it found.
+    settled leaves no room for, so a turn stops with its findings so far instead of overspending. A turn that runs
+    alone (each group's turn, or a whole review's single turn) keeps a reserve back from its start and releases it just
+    before its closing call, so a turn the ledger cuts short can still report what it found. Turns that run beside each
+    other keep nothing back: each one's reserve would crowd out the others' calls.
   </Fragment>
 </Figure>

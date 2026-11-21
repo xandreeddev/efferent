@@ -56,7 +56,7 @@ const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPol
     The core is what every host runs the same. <span class="rv-tag core">core</span> It is small on purpose:
   </p>
   <ul>
-    <li><strong>Two use cases</strong>: <code>prepareReview</code> (fetch and prepare) and <code>reviewPullRequest</code> (groups, find, merge, check, records). Each asks only for ports.</li>
+    <li><strong>Three use cases</strong>: <code>prepareReview</code> (fetch and prepare), <code>reviewPullRequest</code> (groups, find, merge, check, records) and <code>validate</code> (the pull request's own commands: the trusted base, the unchanged dependency files, the install and the snapshot). Each asks only for ports.</li>
     <li><strong>The pure functions</strong>: reading and rendering the diff, the file verdicts, packing, grouping, the prompts, merging into buckets, the quote check, the report. Each has table tests; the text the model reads is pinned word for word.</li>
     <li><strong>The six tools' declarations</strong> (<code>reviewTools</code>): their names, descriptions and parameters, which every turn is offered in one order.</li>
     <li><strong>The turn's loop</strong>, inside the stock <code>kernelTurns</code>: steps, the closing call, the harvest. A host that replaces the whole <code>ReviewTurns</code> port brings its own loop instead.</li>
