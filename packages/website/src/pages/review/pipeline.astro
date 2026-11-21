@@ -1,0 +1,204 @@
+---
+import ReviewLayout from "../../layouts/ReviewLayout.astro"
+import SourceFile from "../../components/SourceFile.astro"
+import PrefixDiagram from "../../components/review/PrefixDiagram.astro"
+import MergeCheckDiagram from "../../components/review/MergeCheckDiagram.astro"
+import { reviewHref } from "../../lib/nav"
+import { excerpt } from "../../lib/review-source"
+
+const headings = [
+  { depth: 2, slug: "fetch", text: "1. Fetch" },
+  { depth: 2, slug: "prepare", text: "2. Prepare" },
+  { depth: 3, slug: "packing", text: "Which files, in which order" },
+  { depth: 3, slug: "groups", text: "File groups" },
+  { depth: 2, slug: "find", text: "3. Find" },
+  { depth: 3, slug: "tools", text: "The six tools" },
+  { depth: 3, slug: "harvest", text: "The harvest and the closing call" },
+  { depth: 3, slug: "whole", text: "A whole review instead" },
+  { depth: 2, slug: "merge-and-check", text: "4. Merge and 5. Check" },
+  { depth: 2, slug: "report", text: "6. Report" },
+  { depth: 2, slug: "records", text: "Records on disk" },
+]
+const verifyTail = excerpt("review-prompt.entity.ts", "export const VERIFY_TAIL", "].join")
+---
+
+<ReviewLayout
+  title="The pipeline"
+  description="Fetch, prepare, find, merge, check, report: what each stage reads, what it decides, and what it keeps on disk."
+  current="pipeline"
+  headings={headings}
+>
+  <h2 id="fetch">1. Fetch</h2>
+  <p>
+    The reviewer runs <code>gh</code> and <code>git</code> on the host's own shell (<code>HostShell</code>), with the
+    host's environment, since <code>gh</code> reads its login there. Every command whose output is parsed is read
+    whole: an output the shell had to cut fails, and is never parsed half.
+  </p>
+  <ul>
+    <li><strong>The pull request</strong> (<code>Forge.pullRequest</code>): its files, commits and its author's permission.</li>
+    <li>
+      <strong>The commit under review</strong>: the head by default; with <code>--at first</code>, the commit the pull
+      request was first pushed at; or any commit by its sha. Any commit but the head is reviewed against where its
+      history meets the base, with the description as it stood when the commit was made, since a later edit often lists
+      the fixes made after it.
+    </li>
+    <li>
+      <strong>The clone</strong> (<code>Checkout.fetch</code>): a bare mirror clone, kept between reviews in a cache
+      folder outside every git repository. Nothing is checked out for the model: what it reads comes from the clone's
+      objects at the commit, by tree entry and blob.
+    </li>
+    <li><strong>The diff</strong>: from where the commit left the base to the commit (<code>base...head</code>), whole.</li>
+    <li>
+      <strong>The repository's rules</strong>: the instruction files along the changed paths (<code>AGENTS.md</code>,
+      <code>CLAUDE.md</code> and the like), read at the <em>base</em>, so the pull request cannot rewrite the rules it is
+      reviewed by. A text met twice (a link from one name to another) is kept once.
+    </li>
+    <li>
+      <strong>The CI</strong>: every run for the commit started by a pull request, a push or a merge queue; each failed
+      run's log digested (escape codes stripped, repeated failures counted, lines cut), the whole log kept beside the
+      records.
+    </li>
+  </ul>
+
+  <h2 id="prepare">2. Prepare</h2>
+  <p>
+    Preparing asks no model: <code>efferent-review prepare</code> stops here and prints the result. Every decision in it
+    is a policy, a plain function the host may replace (<a href={reviewHref("plugins") + "#policies"}>ReviewPolicies</a>).
+  </p>
+  <h3 id="packing">Which files, in which order</h3>
+  <p>
+    Lockfiles, files the base's <code>.gitattributes</code> marks generated or vendored, binary and deleted files are
+    left out; each is still named in a line with its counts, and a lockfile's line says whether a manifest changed too.
+    The rest is packed under a token budget (24,000 by default, <code>--budget</code>) in this order:
+  </p>
+  <ol>
+    <li>manifests, CI files and small config, smallest first;</li>
+    <li>the source, in git's order;</li>
+    <li>the tests;</li>
+    <li>large config;</li>
+    <li>pages and docs, each group largest first.</li>
+  </ol>
+  <p>
+    A file the budget leaves out is listed at the end of the packed diff with why, and the model can read its diff
+    with <code>readDiff</code> all the same.
+  </p>
+  <h3 id="groups">File groups</h3>
+  <p>
+    By default a review is <em>focused</em> (<code>--focus groups</code>): the changed code files are grouped by
+    package, the nearest folder holding a <code>package.json</code>. A package within the bounds (6,000 tokens of diff,
+    8 files) is one group; a larger one is cut into units of one stem in one folder (an adapter with its test) and
+    filled in order. Source groups come first, then groups of tests alone, then, only with <code>--config-turn</code>,
+    one group of config. Within each tier the riskiest group goes first: a group whose added lines touch shared state,
+    concurrency, processes, files, the network or secrets. Docs get no turn; every file no group holds is listed with
+    why. A pull request with no code at all is reviewed whole instead.
+  </p>
+
+  <h2 id="find">3. Find</h2>
+  <p>
+    Each group gets one finder turn, one group after another. A group starts only while the find stage's ledger still
+    has room for its first call and the reserve its closing call needs, so a turn that starts can always report what
+    it found; the groups after that are listed as not reviewed, with why. Every request of every turn starts with the
+    same prefix:
+  </p>
+  <PrefixDiagram />
+  <p>
+    The turn's own message, its <em>tail</em>, asks it to read each file under review whole, then what its changed lines
+    call and are called by, asking for reads that do not depend on each other in one answer; to hold the description's
+    claims against the code; and to call <code>reportFinding</code> the moment it sees a defect, before it reads on,
+    since a turn can be stopped at any call and a defect it has not reported is lost. By default it reports every
+    plausible defect, sure or not (<code>--finder candidates</code>): the checks settle each one.
+  </p>
+
+  <h3 id="tools">The six tools</h3>
+  <p>
+    Every turn, finder's or check's, is offered all six tools in one order, so their declarations stay in the cached
+    part of the request. They read the clone's objects at the commit under review, never a folder on disk, and each
+    one bounds and pages its own answer, so no answer grows with a file.
+  </p>
+  <table>
+    <thead><tr><th>Tool</th><th>What it does</th><th>Its limits</th></tr></thead>
+    <tbody>
+      <tr><td><code>readLines</code></td><td>Numbered lines of a file at the commit, and the call that reads on.</td><td>150 lines a call, 30,000 characters a page, each line cut at 500; files of at most 1 MiB; never a folder, a link, a submodule or a binary file.</td></tr>
+      <tr><td><code>searchCode</code></td><td>Lines of tracked files that hold a text (<code>git grep</code>, fixed text unless <code>regex</code> is set), optionally under one path.</td><td>50 lines shown, each cut at 200 characters; a pattern of at most 300; a search too long or too big answered in fixed words.</td></tr>
+      <tr><td><code>listFiles</code></td><td>Tracked files whose paths match a glob.</td><td>200 paths; a glob of at most 200 characters, matched by the reviewer's own code in linear time.</td></tr>
+      <tr><td><code>readDiff</code></td><td>The diff of any changed file, those the packed diff left out included.</td><td>Pages of 150 lines or 30,000 characters.</td></tr>
+      <tr><td><code>reportFinding</code></td><td>Records a finding under its turn; a failed result in a check.</td><td>A file the pull request changes, at most 40 lines; the claim kept to 1,500 characters, the evidence to its first whole lines within 1,000.</td></tr>
+      <tr><td><code>verdict</code></td><td>Records a check's verdict: confirmed, refuted or unsure, a reason and a quote; a failed result in a finder turn.</td><td>The first verdict stands. Reason 1,500 characters, quote 1,000.</td></tr>
+    </tbody>
+  </table>
+  <p>
+    A refusal is a failed result in words that say what to do instead (a path the pull request does not change names
+    the files it does), so the model can try again in its next step. A git command that fails is answered in fixed
+    words, never git's own, which may name a path on the host.
+  </p>
+
+  <h3 id="harvest">The harvest and the closing call</h3>
+  <p>
+    A group's turn makes at most 24 model calls. When it answers in words, it is asked once more: the host's note asks
+    it to report each possible defect it noticed or weighed and did not report, also one it judged too small or was
+    not sure of; only that answer's <code>reportFinding</code> calls run. A turn that reaches its step cap gets a
+    closing call instead, which may only report. Both are on
+    <a href={reviewHref("loop") + "#closing"}>the loop's page</a>.
+  </p>
+
+  <h3 id="whole">A whole review instead</h3>
+  <p>
+    With <code>--focus whole</code> every turn reads the whole packed diff: <code>--turns</code> turns (one by
+    default), each walking the changed files in an order of its own, dealt like cards, and capped at
+    <code>--max-steps</code> (16). The first turn runs alone until its first model call returns, having written the
+    provider's cache of the shared prefix; then the others start beside it.
+  </p>
+
+  <h2 id="merge-and-check">4. Merge and 5. Check</h2>
+  <MergeCheckDiagram />
+  <p>
+    Checks run in rounds: first each kept bucket's best finding, the most severe, then the one with the longest
+    evidence the file's diff holds. A later round checks a bucket's next finding only while no check has confirmed the
+    bucket, up to three a bucket, and up to three checks at once. Each check is a turn of its own, capped at 12 calls,
+    on the prefix of the group holding its finding's file, and its tail asks it to refute first:
+  </p>
+  <SourceFile file="review-prompt.entity.ts" code={verifyTail} />
+  <p>
+    A confirmed verdict counts only when its quote is in the head's file near the cited lines: held by those lines,
+    with a few lines of slack, whitespace and a tool's line numbers taken off, and with at least one quoted line a whole
+    line of the cited lines that is long enough and holds a name. A brace or a bare <code>return</code> proves nothing.
+    A confirmed verdict whose quote fails counts as unsure.
+  </p>
+
+  <h2 id="report">6. Report</h2>
+  <p>
+    Only confirmed findings are reported, each bucket once. At most six are shown, sorted by severity, high first,
+    then by path and line, each with its claim, its quoted evidence and the check's reason. Then, apart, the findings no
+    check settled (unsure, or confirmed with a quote that was not found), and each kept bucket no check gave a verdict
+    on, with why. With nothing confirmed the report says so: <code>No findings.</code>, or
+    <code>No confirmed findings.</code> when some are unsettled, or <code>Incomplete: no turn finished.</code> when no
+    turn answered or reached its step cap. It also lists each turn's summary or why it is incomplete, each group with
+    its turn or why it was not reviewed, and what each stage's calls used.
+  </p>
+  <p>
+    The report is printed, or written as JSON with <code>--json</code>. Nothing is posted to the pull request.
+  </p>
+
+  <h2 id="records">Records on disk</h2>
+  <p>
+    Each run keeps everything it was given and everything it did, for offline scoring, in a folder of its own. Every
+    file is written whole or not at all (a temporary file renamed over it), and nothing cleans them up.
+  </p>
+  <pre class="rv-tree not-prose">~/.efferent-review/                       <span class="c">the cache root (--cache), outside every git repository</span>
+  &lt;owner&gt;/&lt;repo&gt;/mirror.git              <span class="c">the bare clone</span>
+  &lt;owner&gt;/&lt;repo&gt;/clones/ packages/ …     <span class="c">what the sandboxes use: throwaway clones, the bot's package cache,</span>
+                                          <span class="c">verdicts on the base, node_modules snapshots, scratch</span>
+  records/&lt;owner&gt;/&lt;repo&gt;/                 <span class="c">the records root (--records)</span>
+    &lt;number&gt;/&lt;sha&gt;/                       <span class="c">the commit under review, its full sha</span>
+      ci-&lt;run&gt;.log                        <span class="c">each failed CI log, whole</span>
+      &lt;run&gt;/                              <span class="c">one run: when it started, and six random hex digits</span>
+        prepared.json                     <span class="c">the prepared review</span>
+        turn-1/ turn-2/ …                 <span class="c">each finder turn's journal</span>
+        check-1/ check-2/ …               <span class="c">each check's journal</span>
+        review.json                       <span class="c">kept as it runs (complete: false), replaced as each stage ends</span></pre>
+  <p>
+    <code>review.json</code> holds the prompt's and the tool set's versions, every finding with its turn, every
+    bucket with its votes and why it was kept, every check with the finding it was shown, its verdict and whether its
+    quote held, and each call's tokens and cost.
+  </p>
+</ReviewLayout>

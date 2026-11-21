@@ -1,0 +1,63 @@
+---
+import ReviewLayout from "../../layouts/ReviewLayout.astro"
+import { reviewHref } from "../../lib/nav"
+
+const headings = [
+  { depth: 2, slug: "memory", text: "Memory tied to the codebase" },
+  { depth: 2, slug: "lsp", text: "Language-server tools, as an add-on" },
+  { depth: 2, slug: "skills", text: "Review skills by path" },
+  { depth: 2, slug: "preloading", text: "Deterministic context preloading" },
+]
+---
+
+<ReviewLayout
+  title="Planned"
+  description="What is not built yet. Everything on this page is a direction, not a feature: no flag, export or file of the package does any of it today."
+  current="planned"
+  headings={headings}
+>
+  <div class="rv-note planned">
+    <p>
+      <span class="rv-tag planned">planned</span> Each section below is planned work, not shipped. The pages before
+      this one describe only what the code at the repository's main branch does.
+    </p>
+  </div>
+
+  <h2 id="memory">Memory tied to the codebase</h2>
+  <p><span class="rv-tag planned">planned</span></p>
+  <p>
+    Today every review starts from nothing but the repository's instruction files. The plan is a memory of the
+    codebase's own rules, the kind a maintainer repeats in review after review, kept as records on the kernel's
+    journal, the same journal every turn already writes. It would learn from merged pull requests: what reviewers asked
+    for and what was changed because of it. And evals would decide whether a remembered rule earns its place in the
+    prompt, before it ever does.
+  </p>
+
+  <h2 id="lsp">Language-server tools, as an add-on</h2>
+  <p><span class="rv-tag planned">planned</span></p>
+  <p>
+    The six tools read text: lines, a search, a glob, a diff. A language server answers what text cannot, such as where
+    a name is defined and every place that refers to it. The plan is tools backed by <code>tsgo</code>'s language
+    server, for definitions and references, as an add-on beside the six, not a part of the core: a host that wants them
+    plugs them in, and an eval shows whether they help. Today the turn's tool list is fixed (see
+    <a href={reviewHref("plugins") + "#not-yet"}>what cannot be swapped yet</a>), so this needs that list to open up
+    first.
+  </p>
+
+  <h2 id="skills">Review skills by path</h2>
+  <p><span class="rv-tag planned">planned</span></p>
+  <p>
+    Instruction files apply by folder. The plan is review skills attached to paths: what to look for in a migration,
+    a sandbox, a public API, given to a turn only when its group holds files those paths match, so a turn reads the
+    guidance for the code in front of it and nothing else.
+  </p>
+
+  <h2 id="preloading">Deterministic context preloading</h2>
+  <p><span class="rv-tag planned">planned</span></p>
+  <p>
+    A finder turn spends its first steps reading: each file under review whole, then what its changed lines call and
+    are called by. Much of that is predictable. The plan is to have code, not the model, load that context before the
+    turn starts, the same way every time for the same pull request, so the turn's steps go to judging instead of
+    fetching.
+  </p>
+</ReviewLayout>

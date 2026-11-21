@@ -9,8 +9,8 @@
     "build": "astro build",
     "preview": "astro preview",
     "linkcheck": "bun scripts/linkcheck.mjs dist /efferent",
-    "check": "tsc -p tsconfig.learn.json && astro build && bun scripts/linkcheck.mjs dist /efferent",
-    "typecheck": "tsc -p tsconfig.learn.json"
+    "check": "tsc -p tsconfig.learn.json && tsc -p tsconfig.review.json && astro build && bun scripts/linkcheck.mjs dist /efferent",
+    "typecheck": "tsc -p tsconfig.learn.json && tsc -p tsconfig.review.json"
   },
   "dependencies": {
     "@astrojs/mdx": "^6.0.3",

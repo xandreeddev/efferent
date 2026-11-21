@@ -1,0 +1,56 @@
+---
+/**
+ * Three requests of one turn: each the prefix and the journal read back whole (`flatMemory`), so each request is the
+ * one before it with the last step's answer and results added at the end, and a provider's cache can serve all of the
+ * earlier bytes.
+ */
+import Figure from "./Figure.astro"
+
+const steps = [
+  { label: "step 1", parts: [] as ReadonlyArray<string> },
+  { label: "step 2", parts: ["answer 1", "results 1"] },
+  { label: "step 3", parts: ["answer 1", "results 1", "answer 2", "results 2"] },
+]
+const X0 = 90
+const PREFIX = 190
+const TAIL = 70
+const PART = 86
+const y = (i: number) => 26 + i * 56
+---
+
+<Figure label="Why a turn's history is append-only" minWidth={720}>
+  <svg class="rv-svg" viewBox="0 0 860 236" role="img" aria-labelledby="cd-t">
+    <title id="cd-t">Each step's request is the previous request with the newest answer and tool results appended, so everything before them can come from the cache</title>
+    {
+      steps.map((s, i) => {
+        const fresh = i === 0 ? 0 : 2
+        return (
+          <g>
+            <text x="8" y={y(i) + 25} class="t-mono t-sm">{s.label}</text>
+            <rect class="fill-accent" x={X0} y={y(i)} width={PREFIX} height="38" rx="5"></rect>
+            <text x={X0 + PREFIX / 2} y={y(i) + 24} text-anchor="middle" class="t-xs">prefix (never stored)</text>
+            <rect class="fill-accent" x={X0 + PREFIX + 4} y={y(i)} width={TAIL} height="38" rx="5"></rect>
+            <text x={X0 + PREFIX + 4 + TAIL / 2} y={y(i) + 24} text-anchor="middle" class="t-xs">tail</text>
+            {s.parts.map((p, j) => (
+              <g>
+                <rect class={j >= s.parts.length - fresh ? "fill-new" : "fill-accent"} x={X0 + PREFIX + TAIL + 8 + j * (PART + 4)} y={y(i)} width={PART} height="38" rx="5"></rect>
+                <text x={X0 + PREFIX + TAIL + 8 + j * (PART + 4) + PART / 2} y={y(i) + 24} text-anchor="middle" class="t-xs">{p}</text>
+              </g>
+            ))}
+          </g>
+        )
+      })
+    }
+    <rect class="fill-accent" x={X0} y="204" width="12" height="12" rx="2"></rect>
+    <text x={X0 + 18} y="214" class="t-xs t-dim">the bytes of the request before: a provider's prompt cache may serve them</text>
+    <rect class="fill-new" x={X0 + 470} y="204" width="12" height="12" rx="2"></rect>
+    <text x={X0 + 488} y="214" class="t-xs t-dim">new at this step</text>
+  </svg>
+  <Fragment slot="caption">
+    <strong>Nothing earlier is ever rewritten.</strong> The memory (<code>flatMemory</code> by default) reads the
+    journal back whole, and the journal only grows at its end, so each request begins with every byte of the one
+    before. A memory that dropped or summarised an earlier step would change the start of the request, and the cache
+    would miss from that point on. Even the closing call keeps the same six tools offered and the model's tool choice
+    left as it was, since a narrower tool list changes the request ahead of the messages.
+  </Fragment>
+</Figure>

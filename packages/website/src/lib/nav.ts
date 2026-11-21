@@ -15,8 +15,22 @@ export const GITHUB = "https://github.com/xandreeddev/efferent"
 export const topNav = [
   { label: "Learn", href: "/learn" },
   { label: "Docs", href: "/docs/getting-started" },
+  { label: "Review", href: "/review" },
   { label: "Ecosystem", href: "/#ecosystem" },
 ]
+
+/** The pages that explain the pull request reviewer, `@xandreed/review`, in reading order: drives its sidebar and pager. */
+export const reviewNav: DocItem[] = [
+  { slug: "", label: "Overview" },
+  { slug: "pipeline", label: "The pipeline" },
+  { slug: "loop", label: "The loop inside a turn" },
+  { slug: "plugins", label: "Core and plugins" },
+  { slug: "safety", label: "Safety" },
+  { slug: "planned", label: "Planned" },
+]
+
+/** A review page's path: `/review` for the overview, `/review/<slug>` for the others. */
+export const reviewHref = (slug: string): string => href(slug === "" ? "/review" : `/review/${slug}`)
 
 export interface DocItem {
   slug: string

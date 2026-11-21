@@ -1,0 +1,79 @@
+---
+/**
+ * The review's six stages, as `reviewPullRequest` runs them: code alone (`core`) or a model's turns (`model`), and
+ * what each leaves in the run's folder. A wide drawing, and a stacked one for phone widths.
+ */
+import Figure from "./Figure.astro"
+
+const stages = [
+  { n: "1", name: "Fetch", kind: "core", a: "gh · git, host's shell", b: "PR, diff, rules, CI", rec: "" },
+  { n: "2", name: "Prepare", kind: "core", a: "no model", b: "filter · pack · group", rec: "prepared.json" },
+  { n: "3", name: "Find", kind: "model", a: "a turn per group", b: "steps of tool calls", rec: "turn-N/" },
+  { n: "4", name: "Merge", kind: "core", a: "no model", b: "findings → buckets", rec: "" },
+  { n: "5", name: "Check", kind: "model", a: "a turn per finding", b: "refute first · quote", rec: "check-N/" },
+  { n: "6", name: "Report", kind: "core", a: "confirmed only", b: "≤ 6, by severity", rec: "review.json" },
+] as const
+const W = 148
+const GAP = 16
+const x = (i: number) => 12 + i * (W + GAP)
+---
+
+<Figure label="The review pipeline" minWidth={820}>
+  <svg class="rv-svg" viewBox="0 0 992 268" role="img" aria-labelledby="pl-t">
+    <title id="pl-t">Fetch, prepare, find, merge, check, report: code stages and model stages, and the records each keeps</title>
+    <defs>
+      <marker id="pl-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0L10 5L0 10z"></path></marker>
+    </defs>
+    <rect class="core" x="12" y="8" width="14" height="14" rx="3"></rect>
+    <text x="32" y="20" class="t-sm t-dim">code: no model, table-tested</text>
+    <rect class="model" x="236" y="8" width="14" height="14" rx="3"></rect>
+    <text x="256" y="20" class="t-sm t-dim">a model's turns on the kernel</text>
+    <rect class="box-2" x="12" y="208" width="968" height="48" rx="8"></rect>
+    {
+      stages.map((s, i) => (
+        <g>
+          <rect class={s.kind} x={x(i)} y="40" width={W} height="112" rx="10"></rect>
+          <text x={x(i) + 12} y="64" class={`t-mono t-sm ${s.kind === "core" ? "t-core" : "t-model"}`}>{s.n}</text>
+          <text x={x(i) + 28} y="65" class="t-b" style="font-size:15px">{s.name}</text>
+          <text x={x(i) + 12} y="96" class="t-xs t-dim">{s.a}</text>
+          <text x={x(i) + 12} y="116" class="t-xs t-dim">{s.b}</text>
+          {i < stages.length - 1 && <path class="line" d={`M${x(i) + W + 2} 96 H${x(i + 1) - 3}`} marker-end="url(#pl-a)"></path>}
+          {s.rec !== "" && <path class="line" d={`M${x(i) + W / 2} 152 V204`} stroke-dasharray="3 4" marker-end="url(#pl-a)"></path>}
+          {s.rec !== "" && <text x={x(i) + W / 2} y="232" text-anchor="middle" class="t-mono t-xs t-accent">{s.rec}</text>}
+        </g>
+      ))
+    }
+    <text x="24" y="250" class="t-mono t-xs t-faint">records/&lt;owner&gt;/&lt;repo&gt;/&lt;number&gt;/&lt;sha&gt;/&lt;run&gt;/   ·   each written whole or not at all, never cleaned</text>
+  </svg>
+
+  <svg slot="narrow" class="rv-svg" viewBox="0 0 340 676" role="img" aria-labelledby="pl-tn">
+    <title id="pl-tn">The review pipeline, stacked</title>
+    <defs>
+      <marker id="pl-an" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0L10 5L0 10z"></path></marker>
+    </defs>
+    <rect class="core" x="8" y="6" width="13" height="13" rx="3"></rect>
+    <text x="26" y="17" class="t-xs t-dim">code, no model</text>
+    <rect class="model" x="150" y="6" width="13" height="13" rx="3"></rect>
+    <text x="168" y="17" class="t-xs t-dim">a model's turns</text>
+    {
+      stages.map((s, i) => (
+        <g>
+          <rect class={s.kind} x="8" y={34 + i * 104} width="324" height="80" rx="10"></rect>
+          <text x="22" y={58 + i * 104} class={`t-mono t-sm ${s.kind === "core" ? "t-core" : "t-model"}`}>{s.n}</text>
+          <text x="38" y={59 + i * 104} class="t-b" style="font-size:15px">{s.name}</text>
+          {s.rec !== "" && <text x="320" y={58 + i * 104} text-anchor="end" class="t-mono t-xs t-accent">{s.rec}</text>}
+          <text x="22" y={80 + i * 104} class="t-sm t-dim">{s.a}</text>
+          <text x="22" y={99 + i * 104} class="t-sm t-dim">{s.b}</text>
+          {i < stages.length - 1 && <path class="line" d={`M170 ${115 + i * 104} V${136 + i * 104}`} marker-end="url(#pl-an)"></path>}
+        </g>
+      ))
+    }
+    <text x="8" y="666" class="t-mono t-xs t-faint">records: &lt;number&gt;/&lt;sha&gt;/&lt;run&gt;/</text>
+  </svg>
+
+  <Fragment slot="caption">
+    <strong>The orchestration is code, never a model.</strong> Fetching, filtering, packing, merging and the report
+    are plain functions and adapters; a model only runs inside the turns of stages 3 and 5. Each run keeps its records
+    in a folder of its own, so a rerun never writes over the one before it.
+  </Fragment>
+</Figure>

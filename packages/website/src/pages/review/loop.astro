@@ -1,0 +1,129 @@
+---
+import ReviewLayout from "../../layouts/ReviewLayout.astro"
+import SourceFile from "../../components/SourceFile.astro"
+import TurnLoopDiagram from "../../components/review/TurnLoopDiagram.astro"
+import CacheDiagram from "../../components/review/CacheDiagram.astro"
+import SpendDiagram from "../../components/review/SpendDiagram.astro"
+import { href, reviewHref } from "../../lib/nav"
+import { excerpt } from "../../lib/review-source"
+
+const headings = [
+  { depth: 2, slug: "steps", text: "Steps and tool calls" },
+  { depth: 2, slug: "the-code", text: "The loop, as written" },
+  { depth: 2, slug: "endings", text: "How a turn ends" },
+  { depth: 2, slug: "closing", text: "The closing call" },
+  { depth: 2, slug: "cache", text: "A cache-friendly history" },
+  { depth: 2, slug: "spend", text: "Spend: held, then settled" },
+]
+const loop = excerpt("review-turn.adapter.ts", "for (let step = 1; step <= input.options.maxSteps; step++) {", "return { _tag: \"StepCap\"")
+const request = excerpt("review-turn.adapter.ts", "const context = yield* kept(memory.context(session))", "const stream = LanguageModel.streamText")
+const ledger = excerpt("stage-spend.port.ts", "export interface StageLedger", "}")
+---
+
+<ReviewLayout
+  title="The loop inside a turn"
+  description="A turn is the host's own loop on the kernel: steps of one model call each, the tool calls their answers ask for, a closing call that may only report, and a ledger that charges every call before it is sent."
+  current="loop"
+  headings={headings}
+>
+  <h2 id="steps">Steps and tool calls</h2>
+  <p>
+    The kernel has no loop of its own: the host's program is the loop (the guide's
+    <a href={href("/docs/guide")}>"the program is the loop"</a>). The reviewer's turn is such a loop, written with two
+    of the kernel's functions: <code>modelAnswer</code> reads the model's answer and stores it, and
+    <code>callTool</code> runs one tool call and stores its result. A <strong>step</strong> is one model call and the
+    tool calls its answer asks for. A finder turn and a check are the same loop; what differs is the tail they are
+    given, the tool that reports (<code>reportFinding</code> or <code>verdict</code>) and the step cap.
+  </p>
+  <TurnLoopDiagram />
+  <table>
+    <thead><tr><th>Turn</th><th>Step cap</th><th>Flag</th></tr></thead>
+    <tbody>
+      <tr><td>A group's finder turn (focused review, the default)</td><td>24</td><td><code>--group-steps</code></td></tr>
+      <tr><td>A finder turn of a whole review</td><td>16</td><td><code>--max-steps</code></td></tr>
+      <tr><td>A check</td><td>12</td><td><code>--verify-steps</code></td></tr>
+    </tbody>
+  </table>
+  <p>
+    The cap is a guard against a turn that never ends; the stage's spend ledger is the real limit. The harvest and the
+    closing call come after it.
+  </p>
+
+  <h2 id="the-code">The loop, as written</h2>
+  <p>
+    This is the loop of <code>kernelTurns</code>, cut from the package's source when this site is built. Each step
+    calls <code>ask</code>, which builds the request and calls the model once:
+  </p>
+  <SourceFile file="review-turn.adapter.ts: one request" code={request} />
+  <SourceFile file="review-turn.adapter.ts: the steps" code={loop} />
+
+  <h2 id="endings">How a turn ends</h2>
+  <p>A turn never fails the review: how it ended is part of its result, with the findings it recorded so far.</p>
+  <table>
+    <thead><tr><th>Ending</th><th>When</th></tr></thead>
+    <tbody>
+      <tr><td><code>Answered</code></td><td>The model answered without a tool call (a finder turn after its harvest call). Its one-line summary is kept.</td></tr>
+      <tr><td><code>Judged</code></td><td>A check's verdict is recorded: the check ends at once.</td></tr>
+      <tr><td><code>StepCap</code></td><td>The turn reached its step cap, and made its closing call.</td></tr>
+      <tr><td><code>SpendRefused</code></td><td>The ledger refused a call: there was no room left in the stage.</td></tr>
+      <tr><td><code>ModelFailed</code></td><td>A model call failed, in the provider's words.</td></tr>
+      <tr><td><code>OutputCut</code></td><td>An answer was cut at the output cap. The calls it asked for still ran first, so a finding it reported is kept.</td></tr>
+      <tr><td><code>JournalFailed</code></td><td>The turn's journal could not be opened or written.</td></tr>
+      <tr><td><code>Failed</code></td><td>The turn could not run at all (its folder was not made, a defect).</td></tr>
+    </tbody>
+  </table>
+
+  <h2 id="closing">The closing call</h2>
+  <p>
+    A turn that is stopped has usually seen something it has not reported yet. So at its step cap, or when the ledger
+    refuses a later call while its reserve is held, the turn:
+  </p>
+  <ol>
+    <li>releases the reserve it kept back from its stage when it started;</li>
+    <li>stores the host's note, which says the review allows no more reading and asks it to report now;</li>
+    <li>asks the model once more, with the same six tools offered and the tool choice left as it was;</li>
+    <li>runs only that answer's reporting calls (<code>reportFinding</code>, or <code>verdict</code> in a check) and keeps its words;</li>
+    <li>asks once more if the tool refused one of them (a path the pull request does not change, lines out of order), since the refusal says what to give: at most two calls in all.</li>
+  </ol>
+  <p>
+    The same closing call, with another note, is the <strong>harvest</strong> of a finder turn that answered in words:
+    it asks for each possible defect the turn weighed and did not report. A check that answered in words gets one too,
+    asking for its verdict, since a verdict written as text has no quote to check and is never counted.
+  </p>
+
+  <h2 id="cache">A cache-friendly history</h2>
+  <p>
+    Each request is the prompt's prefix, then the memory's context: the turn's journal read back as messages. The
+    prefix is sent first at every step and never stored; the tail is stored as the conversation's first message. With
+    the stock <code>flatMemory</code>, the journal is sent whole, and it only ever grows at its end:
+  </p>
+  <CacheDiagram />
+  <p>
+    That is why the reviewer keeps the history append-only, and why its prefix holds nothing that changes between
+    steps, turns or checks of one pull request: a provider's prompt cache serves the bytes it has seen, from the start
+    of the request up to the first byte that differs. The kernel took the same lesson: it dropped its window memory,
+    which removed old turns as the conversation grew and so changed the start of every request.
+  </p>
+
+  <h2 id="spend">Spend: held, then settled</h2>
+  <p>
+    Every model call is charged to the kernel's <code>ModelSpend</code> ledger, through the stage it is made in. A
+    stage's ledger is the same contract with one more method, for the reserve a turn keeps back:
+  </p>
+  <SourceFile file="stage-spend.port.ts" code={ledger} />
+  <SpendDiagram />
+  <p>
+    Before a call is sent its worst case is held: the request's bytes counted one token each, the bound for any
+    tokenizer since the request is the pull request's text, and the output cap. Once the answer is read the call is
+    settled at what the provider billed for it, so the cost a report shows is the provider's bill, not an estimate.
+    A stage refuses a call it has no room for; a call that the open calls crowd out waits, holding nothing, until one
+    of them closes, so checks that run at once under a tight cap run one after another instead of failing. The caps
+    are flags: <code>--max-cost</code>, <code>--find-cost</code> and <code>--verify-cost</code>, a stage's never above
+    the total.
+  </p>
+  <p>
+    The model itself is not a port of the reviewer's: it is a <code>LanguageModel</code> layer the host hands to
+    <code>kernelTurns</code>, built for each turn over that turn's own ledger. See
+    <a href={reviewHref("plugins") + "#turn-parts"}>a turn's parts</a>.
+  </p>
+</ReviewLayout>

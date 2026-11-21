@@ -1,0 +1,90 @@
+---
+/**
+ * Merge and check: findings of one file into buckets by place (`mergeFindings`), then checks in rounds
+ * (`checkRounds`), each bucket's best finding first and a bucket's next only while no check confirmed it, and each
+ * verdict's outcome after its quote is checked against the head's file (`quoteWithin`).
+ */
+import Figure from "./Figure.astro"
+
+const findings = [
+  { id: "turn 1 · #1", line: 40, y: 70, bucket: "A" },
+  { id: "turn 2 · #1", line: 42, y: 100, bucket: "A" },
+  { id: "turn 1 · #2", line: 43, y: 130, bucket: "B" },
+  { id: "turn 2 · #2", line: 96, y: 200, bucket: "C" },
+] as const
+---
+
+<Figure label="Merging findings and checking them" minWidth={780}>
+  <svg class="rv-svg" viewBox="0 0 940 300" role="img" aria-labelledby="mc-t">
+    <title id="mc-t">Findings near each other from different turns share a bucket; checks run in rounds; a confirmed verdict counts only when its quote is in the file</title>
+    <defs>
+      <marker id="mc-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0L10 5L0 10z"></path></marker>
+    </defs>
+    <text x="10" y="22" class="t-b t-sm">Findings in src/store.ts</text>
+    <text x="10" y="40" class="t-xs t-dim">line · turn · number in that turn</text>
+    {
+      findings.map((f) => (
+        <g>
+          <rect class={f.bucket === "C" ? "box" : "box-2"} x="10" y={f.y - 16} width="190" height="26" rx="6" stroke-dasharray={f.bucket === "C" ? "4 4" : undefined}></rect>
+          <text x="22" y={f.y + 2} class="t-mono t-xs">{`line ${f.line}`}</text>
+          <text x="90" y={f.y + 2} class="t-xs t-dim">{f.id}</text>
+        </g>
+      ))
+    }
+    <text x="10" y="240" class="t-xs t-dim">more than two lines from any changed line:</text>
+    <text x="10" y="256" class="t-xs t-dim">bucketed apart, off the changed lines</text>
+
+    <path class="line" d="M200 70 H262" marker-end="url(#mc-a)"></path>
+    <path class="line" d="M200 100 C232 100 232 80 262 80" marker-end="url(#mc-a)"></path>
+    <path class="line" d="M200 130 H262" marker-end="url(#mc-a)"></path>
+    <path class="line" d="M200 200 H262" marker-end="url(#mc-a)"></path>
+
+    <rect class="box" x="266" y="52" width="230" height="44" rx="8"></rect>
+    <text x="278" y="70" class="t-sm t-b">bucket A</text>
+    <text x="278" y="86" class="t-xs t-dim">anchored at line 40; two votes</text>
+    <rect class="box" x="266" y="112" width="230" height="44" rx="8"></rect>
+    <text x="278" y="130" class="t-sm t-b">bucket B</text>
+    <text x="278" y="146" class="t-xs t-dim">turn 1 already in A: never twice</text>
+    <rect class="box" x="266" y="180" width="230" height="44" rx="8" stroke-dasharray="4 4"></rect>
+    <text x="278" y="198" class="t-sm t-b">bucket C</text>
+    <text x="278" y="214" class="t-xs t-dim">kept apart: off the changed lines</text>
+
+    <path class="line" d="M496 74 H540" marker-end="url(#mc-a)"></path>
+    <path class="line" d="M496 134 H540" marker-end="url(#mc-a)"></path>
+
+    <rect class="model" x="544" y="38" width="190" height="118" rx="10"></rect>
+    <text x="556" y="60" class="t-sm t-b">round 1</text>
+    <text x="556" y="80" class="t-xs t-dim">each kept bucket's best</text>
+    <text x="556" y="96" class="t-xs t-dim">finding: the most severe,</text>
+    <text x="556" y="112" class="t-xs t-dim">then the longest evidence</text>
+    <text x="556" y="134" class="t-xs t-dim">round 2, 3: a bucket's next,</text>
+    <text x="556" y="150" class="t-xs t-dim">only while none confirmed it</text>
+
+    <path class="line" d="M734 96 H770" marker-end="url(#mc-a)"></path>
+    {
+      [
+        ["confirmed", "and its quote holds: reported", "core"],
+        ["unsure", "or confirmed, quote not found", "box-2"],
+        ["refuted", "not reported", "box"],
+        ["unchecked", "no verdict: listed, with why", "box"],
+      ].map(([name, why, cls], i) => (
+        <g>
+          <rect class={cls} x="774" y={20 + i * 52} width="160" height="44" rx="8"></rect>
+          <text x="786" y={38 + i * 52} class="t-sm t-b">{name}</text>
+          <text x="786" y={55 + i * 52} class="t-xs t-dim">{why}</text>
+        </g>
+      ))
+    }
+    <text x="544" y="190" class="t-xs t-dim">each check: a turn of stage Verify</text>
+    <text x="544" y="206" class="t-xs t-dim">on the same prefix, asked to refute</text>
+    <text x="544" y="222" class="t-xs t-dim">first, ending once its verdict is</text>
+    <text x="544" y="238" class="t-xs t-dim">recorded; up to three a bucket</text>
+    <text x="10" y="290" class="t-xs t-faint">The paths, lines and turns are an example drawn for this page.</text>
+  </svg>
+  <Fragment slot="caption">
+    <strong>Merge is code; a check is a model's turn.</strong> A finding joins the first bucket whose first finding it
+    starts within three lines of and that holds nothing of its own turn, so buckets never chain and one turn never
+    votes twice. By default every bucket on the changed lines is kept and checked; <code>--vote</code> (whole focus only) keeps a bucket
+    only with two votes or a security finding.
+  </Fragment>
+</Figure>

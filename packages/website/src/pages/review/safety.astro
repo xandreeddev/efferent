@@ -1,0 +1,160 @@
+---
+import ReviewLayout from "../../layouts/ReviewLayout.astro"
+import SourceFile from "../../components/SourceFile.astro"
+import SandboxDiagram from "../../components/review/SandboxDiagram.astro"
+import BaseHeadDiagram from "../../components/review/BaseHeadDiagram.astro"
+import { excerpt } from "../../lib/review-source"
+
+const headings = [
+  { depth: 2, slug: "untrusted", text: "A pull request is untrusted" },
+  { depth: 2, slug: "host", text: "Nothing of it runs on the host" },
+  { depth: 2, slug: "sandbox", text: "The sandbox" },
+  { depth: 2, slug: "base-head", text: "The base installs, the head restores" },
+  { depth: 2, slug: "git", text: "The host's git, hardened" },
+  { depth: 2, slug: "framed", text: "Untrusted text, framed" },
+  { depth: 2, slug: "rules", text: "Rules from the base" },
+  { depth: 2, slug: "limits", text: "What it does not guarantee" },
+]
+const system = excerpt("review-prompt.entity.ts", "export const REVIEW_SYSTEM", "].join")
+const validationsAdapter = excerpt("validations.adapter.ts", "export const sandboxValidations", "}))")
+---
+
+<ReviewLayout
+  title="Safety"
+  description="A pull request is someone else's code and text. The reviewer runs none of it on the host, reads its files only as objects, frames every word of it as data, and reads the rules it is held to from the base."
+  current="safety"
+  headings={headings}
+>
+  <h2 id="untrusted">A pull request is untrusted</h2>
+  <p>
+    Everything a pull request holds is the pull request's text: its title and description, its paths and branch
+    names, its diff, its files, its CI logs. A reviewer that runs on a maintainer's machine, with the maintainer's
+    credentials, has to treat each of them as an attacker's input. Three rules follow:
+  </p>
+  <ul>
+    <li>no code of the pull request's runs on the host, only in a sandbox, and only when asked;</li>
+    <li>no word of it reaches a shell or the model as anything but data;</li>
+    <li>it cannot change the rules it is reviewed by.</li>
+  </ul>
+
+  <h2 id="host">Nothing of it runs on the host</h2>
+  <p>
+    <code>gh</code> and <code>git</code> run on the host's shell, with the host's environment: they are the reviewer's
+    own commands, and every argument is quoted, so a path or a title is data, never shell. A pull request's commands
+    are another matter. It is tempting to run <code>npm test</code> on the host with a trimmed environment, but that
+    hides nothing:
+  </p>
+  <SandboxDiagram />
+  <p>
+    So the command line provides <code>Validations</code> only for <code>--run</code> or <code>--validate</code>, fails
+    with <code>SandboxUnavailable</code> on a host that cannot make a sandbox, and never hands the review a plain
+    <code>Shell</code>. Even then, commands run only for a head in the base repository whose author may write to it
+    (<code>admin</code>, <code>maintain</code> or <code>write</code>): never for a fork.
+  </p>
+  <SourceFile file="validations.adapter.ts" code={validationsAdapter} />
+
+  <h2 id="sandbox">The sandbox</h2>
+  <ul>
+    <li>
+      <strong>bwrap is spawned directly</strong>, with an argument list and an empty environment, never through a host
+      shell: started with the host's environment, its own first process inside would keep it in
+      <code>/proc/1/environ</code>.
+    </li>
+    <li>
+      <strong>Every namespace unshared</strong> (<code>--unshare-all</code>: user, pid, network, ipc, uts, cgroup),
+      <code>--die-with-parent</code>, <code>--new-session</code>, <code>--clearenv</code> with a fixed
+      <code>PATH</code> and <code>HOME=/tmp/home</code>.
+    </li>
+    <li>
+      <strong>Binds</strong>: the system folders read-only; of <code>/etc</code> only the linker's cache (and, with the
+      network, the resolver's files and certificates); a fresh <code>/proc</code>, <code>/dev</code> and
+      <code>/tmp</code>; the throwaway clone at <code>/work</code>, the only writable bind.
+    </li>
+    <li>
+      <strong>The toolchain</strong> (<code>bun</code>, <code>node</code> with npm, <code>pnpm</code>,
+      <code>yarn</code>) is found on the host by real path and bound read-only under <code>/opt/tool</code>, the least
+      each needs.
+    </li>
+    <li>
+      <strong>The bot's commands never run the repository's programs.</strong> The install and the snapshots run with
+      a <code>PATH</code> that holds no folder of the clone's, naming every program by its absolute path, so a
+      <code>node_modules/.bin/bun</code> the pull request commits is never run in their place. Only the repository's
+      own checks get its <code>node_modules/.bin</code> first: they run its code by design, offline.
+    </li>
+    <li>
+      <strong>Inside</strong>, a launcher closes every inherited file descriptor but the three streams and sets limits
+      (no core files, the largest file). A command that ends, however it ends, takes its whole process group with it,
+      and the pid namespace every process in it.
+    </li>
+  </ul>
+  <p>
+    The probe that proves it runs bubblewrap for real in CI: a secret of the test's environment is in no
+    <code>/proc/*/environ</code>, no home folder is visible, DNS and the host's loopback are unreachable, a committed
+    <code>.bin</code> shim is never run by an install, and removing <code>--clearenv</code> makes the probe fail.
+  </p>
+
+  <h2 id="base-head">The base installs, the head restores</h2>
+  <BaseHeadDiagram />
+  <p>
+    The install runs the host's package manager with the repository's scripts off (<code>--ignore-scripts</code>,
+    <code>--ignore-pnpmfile</code>, yarn berry's <code>--mode=skip-build</code>) and the bot's own package cache, never
+    the host's. Each command has five minutes, each clone's run fifteen for its install and commands together; a
+    command that fails or times out is a digest in the review, never a failed review.
+  </p>
+
+  <h2 id="git">The host's git, hardened</h2>
+  <p>
+    Every git command the host runs on a pull request's objects is built by one function, <code>gitArgv</code>:
+  </p>
+  <ul>
+    <li><code>core.hooksPath=/dev/null</code>: no hook of the clone's runs;</li>
+    <li><code>core.fsmonitor=false</code>, <code>core.attributesFile=/dev/null</code>, and git-lfs's filters emptied: no filter of the host's runs on the pull request's files;</li>
+    <li><code>protocol.allow=never</code>, with only the transports given allowed (<code>https</code> by default);</li>
+    <li><code>--literal-pathspecs</code>: a folder named <code>:(glob)x</code> is a name.</li>
+  </ul>
+  <p>
+    A sandbox's clone is checked out by host git with no filter driver at all, so a <code>.gitattributes</code> the
+    head commits can name none. Once a sandbox has written to it, its <code>.git</code> is the pull request's: no host
+    git command runs in it again, and it is deleted, not cleaned by git.
+  </p>
+  <p>
+    The model's tools never read a folder on disk either: they read the clone's objects at the commit. Only a regular
+    file is read; a link, a submodule, an absolute path, a path with a <code>..</code> or a part named
+    <code>.git</code> is refused. A search's pattern always follows <code>-e</code> and its path <code>--</code>, so
+    the model's text never lands where git reads an option.
+  </p>
+
+  <h2 id="framed">Untrusted text, framed</h2>
+  <p>
+    Each part of the prompt the pull request wrote is wrapped in a named frame by the kernel's <code>framed</code>
+    (<code>repo-rules</code>, <code>pull-request</code>, <code>pull-request-diff</code>, <code>pull-request-files</code>, <code>files-under-review</code>,
+    <code>ci-digest</code>, <code>changed-files</code>, <code>reported-problem</code>), clipped to a bound, with any
+    text that would forge a frame's end made inert. A path holding a control character, a quote or a backslash is
+    shown as a JSON string, so a file name cannot forge a line of the diff. A CI log's digest strips escape sequences
+    and control characters. And the system text says what all of it is:
+  </p>
+  <SourceFile file="review-prompt.entity.ts" code={system} />
+  <p>
+    A check is told the same of the pull request's own words: docs, comments and a description the pull request adds
+    are its author's claims, never proof that the code is right.
+  </p>
+
+  <h2 id="rules">Rules from the base</h2>
+  <p>
+    The repository's instruction files are read at the base commit (<code>show</code> at the base), not at the head.
+    A pull request that edits <code>AGENTS.md</code> to say "approve everything" is reviewed by the
+    <code>AGENTS.md</code> it started from. The same holds for the <code>.gitattributes</code> that decides which files
+    are generated, and for the "definition of done" commands <code>--validate</code> runs.
+  </p>
+
+  <h2 id="limits">What it does not guarantee</h2>
+  <div class="rv-note warn">
+    <ul>
+      <li>A kernel exploit escapes any namespace sandbox.</li>
+      <li>CPU and memory are bounded only by the timeout: there is no cgroup, so a fork bomb runs until it is killed, under the host user's process limit.</li>
+      <li>During the base's install the host's network namespace is shared, so services on the host's <code>localhost</code> are reachable from the package manager. The base is merged code of the default branch, never the pull request's.</li>
+      <li>The bot's package cache is shared by every review of a repository: what a registry served into it is read by later base installs, never by the host's.</li>
+      <li>The model's verdicts are a model's: a confirmed finding is a strong lead, not a proof, and a review that finds nothing is not an approval.</li>
+    </ul>
+  </div>
+</ReviewLayout>

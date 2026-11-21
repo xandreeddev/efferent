@@ -1,0 +1,91 @@
+---
+/**
+ * One turn as `runTurn` (inside `kernelTurns`) runs it: the steps, each one model call and the tool calls its answer
+ * asks for, and the ways a turn ends, with the closing call at the step cap, after a spend refusal, and the harvest.
+ */
+import Figure from "./Figure.astro"
+---
+
+<Figure label="The loop inside a turn" minWidth={760}>
+  <svg class="rv-svg" viewBox="0 0 900 560" role="img" aria-labelledby="tl-t">
+    <title id="tl-t">A turn: open a session, then each step asks the model once and runs the calls its answer asks for, until it answers in words, gives its verdict, or reaches its step cap</title>
+    <defs>
+      <marker id="tl-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head" d="M0 0L10 5L0 10z"></path></marker>
+      <marker id="tl-b" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-accent" d="M0 0L10 5L0 10z"></path></marker>
+    </defs>
+
+    <!-- start -->
+    <rect class="core" x="40" y="14" width="360" height="66" rx="10"></rect>
+    <text x="56" y="38" class="t-b">Open the turn</text>
+    <text x="56" y="56" class="t-xs t-dim">a session in the turn's journal (its turns recovered first);</text>
+    <text x="56" y="71" class="t-xs t-dim">the tail stored as its first message; the closing reserve kept back</text>
+    <path class="line" d="M220 80 V108" marker-end="url(#tl-a)"></path>
+
+    <!-- the step -->
+    <rect class="zone" x="20" y="112" width="560" height="296" rx="14"></rect>
+    <text x="36" y="134" class="t-mono t-sm t-accent">step n   (n ≤ the step cap)</text>
+    <rect class="box" x="40" y="146" width="360" height="48" rx="8"></rect>
+    <text x="56" y="166" class="t-sm"><tspan class="t-mono">memory.context(session)</tspan></text>
+    <text x="56" y="184" class="t-xs t-dim">the journal as messages: append-only</text>
+    <path class="line" d="M220 194 V214" marker-end="url(#tl-a)"></path>
+    <rect class="model" x="40" y="218" width="360" height="56" rx="8"></rect>
+    <text x="56" y="240" class="t-sm"><tspan class="t-mono">modelAnswer</tspan>: one model call</text>
+    <text x="56" y="258" class="t-xs t-dim">prefix + context, all six tools offered; held, then settled on the ledger</text>
+    <path class="line" d="M220 274 V294" marker-end="url(#tl-a)"></path>
+    <rect class="box-2" x="40" y="298" width="360" height="44" rx="8"></rect>
+    <text x="56" y="318" class="t-sm">Does the answer ask for tool calls?</text>
+    <text x="56" y="334" class="t-xs t-dim">(an answer cut at the output cap runs its calls, then ends)</text>
+    <path class="line" d="M220 342 V362" marker-end="url(#tl-a)"></path>
+    <text x="230" y="358" class="t-xs t-dim">yes</text>
+    <rect class="box" x="40" y="366" width="360" height="34" rx="8"></rect>
+    <text x="56" y="388" class="t-sm"><tspan class="t-mono">callTool</tspan> for each: its result stored</text>
+    <path class="line-accent" d="M40 383 H28 V170 H38" marker-end="url(#tl-b)"></path>
+    <text x="410" y="388" class="t-xs t-accent">↺ then the next step</text>
+
+    <!-- no calls -->
+    <path class="line" d="M400 320 H612" marker-end="url(#tl-a)"></path>
+    <text x="440" y="314" class="t-xs t-dim">no: it answered in words</text>
+    <rect class="box" x="616" y="226" width="270" height="140" rx="10"></rect>
+    <text x="630" y="248" class="t-b t-sm">Answered in words</text>
+    <text x="630" y="270" class="t-xs t-dim">a finder turn: one harvest call, its</text>
+    <text x="630" y="286" class="t-xs t-dim">host's note asks it to report what it</text>
+    <text x="630" y="302" class="t-xs t-dim">weighed and kept to itself</text>
+    <text x="630" y="326" class="t-xs t-dim">a check: one closing call asking for its</text>
+    <text x="630" y="342" class="t-xs t-dim">verdict (a verdict in text is not counted)</text>
+    <text x="630" y="358" class="t-mono t-xs t-core">→ Answered · Judged</text>
+
+    <!-- verdict -->
+    <path class="line" d="M580 156 H612" stroke-dasharray="3 4" marker-end="url(#tl-a)"></path>
+    <rect class="box" x="616" y="112" width="270" height="88" rx="10"></rect>
+    <text x="630" y="134" class="t-b t-sm">A check's verdict recorded</text>
+    <text x="630" y="156" class="t-xs t-dim">checked after every step's calls:</text>
+    <text x="630" y="172" class="t-xs t-dim">the check ends at once</text>
+    <text x="630" y="190" class="t-mono t-xs t-core">→ Judged</text>
+
+    <!-- step cap -->
+    <path class="line" d="M300 408 V436" marker-end="url(#tl-a)"></path>
+    <text x="310" y="428" class="t-xs t-dim">the step cap, or a refusal with the reserve held</text>
+    <rect class="core" x="40" y="440" width="560" height="104" rx="10"></rect>
+    <text x="56" y="462" class="t-b t-sm">The closing call</text>
+    <text x="56" y="482" class="t-xs t-dim">the reserve released · the host's note stored (step cap note, or the harvest note)</text>
+    <text x="56" y="498" class="t-xs t-dim">one more call with the same six tools offered, so the cached prefix holds;</text>
+    <text x="56" y="514" class="t-xs t-dim">only its reporting calls run (reportFinding, or verdict), asked once more when the</text>
+    <text x="56" y="530" class="t-xs t-dim">tool refused one: at most two calls · <tspan class="t-mono t-core">→ StepCap · Judged · SpendRefused</tspan></text>
+
+    <!-- failures -->
+    <rect class="danger" x="616" y="390" width="270" height="154" rx="10"></rect>
+    <text x="630" y="412" class="t-b t-sm t-danger">Stops with the findings so far</text>
+    <text x="630" y="434" class="t-xs t-dim">the ledger refuses a call · SpendRefused</text>
+    <text x="630" y="452" class="t-xs t-dim">a call fails · ModelFailed</text>
+    <text x="630" y="470" class="t-xs t-dim">an answer cut at the output cap · OutputCut</text>
+    <text x="630" y="488" class="t-xs t-dim">the journal fails · JournalFailed</text>
+    <text x="630" y="512" class="t-xs t-dim">it never fails the review: how it</text>
+    <text x="630" y="528" class="t-xs t-dim">ended is part of its result</text>
+  </svg>
+  <Fragment slot="caption">
+    <strong>A turn is the host's loop on the kernel.</strong> Each <strong>step</strong> is one model call; the tool
+    calls its answer asks for run in that step. The kernel stores every answer and result in the turn's journal, and
+    the next step's context is read back from it. The first call of a group's turn, or of the first turn of a whole
+    review, is asked once more after a failure worth another try (a rate limit, a provider's error, a lost connection).
+  </Fragment>
+</Figure>

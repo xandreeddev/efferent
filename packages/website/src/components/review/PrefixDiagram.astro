@@ -1,0 +1,55 @@
+---
+/**
+ * What each request of a focused review starts with (`focusPrefix`): three messages sent first at every step and never
+ * stored, the first two the same for every group's turn, the third the group's diffs, which the checks of that group's
+ * findings send again byte for byte; then the turn's own tail and its journal.
+ */
+import Figure from "./Figure.astro"
+
+const LX = 176
+const rows = [
+  { label: "Group 1's turn", sub: "finder, stage Find", third: "group 1's diffs", thirdClass: "fill-new", tail: "focus tail", steps: "answers · tool results …" },
+  { label: "Group 2's turn", sub: "finder, stage Find", third: "group 2's diffs", thirdClass: "box-2", tail: "focus tail", steps: "answers · tool results …" },
+  { label: "A check of a", sub: "group 1 finding", third: "group 1's diffs", thirdClass: "fill-new", tail: "check tail + finding", steps: "reads · verdict" },
+] as const
+const y = (i: number) => 72 + i * 70
+---
+
+<Figure label="The prefix a focused review shares" minWidth={760}>
+  <svg class="rv-svg" viewBox="0 0 940 300" role="img" aria-labelledby="px-t">
+    <title id="px-t">Three requests: the system text and the pull request message are the same bytes in all; the group's diffs are shared by a group's turn and the checks of its findings</title>
+    <path class="line-accent" d={`M${LX} 46 V38 H${LX + 470} V46`}></path>
+    <text x={LX} y="28" class="t-sm t-accent">prefix: three messages, sent first at every step, never stored</text>
+    <path class="line" d={`M${LX + 482} 46 V38 H930 V46`}></path>
+    <text x={LX + 482} y="28" class="t-sm t-dim">the conversation: stored in the turn's journal</text>
+    {
+      rows.map((r, i) => (
+        <g>
+          <text x="8" y={y(i) + 18} class="t-b t-sm">{r.label}</text>
+          <text x="8" y={y(i) + 36} class="t-xs t-dim">{r.sub}</text>
+          <rect class="fill-accent" x={LX} y={y(i)} width="96" height="46" rx="6"></rect>
+          <text x={LX + 48} y={y(i) + 28} text-anchor="middle" class="t-xs">system text</text>
+          <rect class="fill-accent" x={LX + 100} y={y(i)} width="230" height="46" rx="6"></rect>
+          <text x={LX + 215} y={y(i) + 20} text-anchor="middle" class="t-xs">rules · title and description</text>
+          <text x={LX + 215} y={y(i) + 36} text-anchor="middle" class="t-xs">every changed file · CI digest</text>
+          <rect class={r.thirdClass} x={LX + 334} y={y(i)} width="136" height="46" rx="6"></rect>
+          <text x={LX + 402} y={y(i) + 28} text-anchor="middle" class="t-xs">{r.third}</text>
+          <rect class="box" x={LX + 482} y={y(i)} width="122" height="46" rx="6"></rect>
+          <text x={LX + 543} y={y(i) + 28} text-anchor="middle" class="t-xs">{r.tail}</text>
+          <rect class="box" x={LX + 608} y={y(i)} width="146" height="46" rx="6" stroke-dasharray="4 4"></rect>
+          <text x={LX + 681} y={y(i) + 28} text-anchor="middle" class="t-xs t-dim">{r.steps}</text>
+        </g>
+      ))
+    }
+    <rect class="fill-accent" x={LX} y="282" width="12" height="12" rx="2"></rect>
+    <text x={LX + 18} y="292" class="t-xs t-dim">the same bytes in every request of the review</text>
+    <rect class="fill-new" x={LX + 300} y="282" width="12" height="12" rx="2"></rect>
+    <text x={LX + 318} y="292" class="t-xs t-dim">the same bytes in a group's turn and its checks</text>
+  </svg>
+  <Fragment slot="caption">
+    <strong>Why the prefix is byte-stable.</strong> It holds no date, sha or run number, and nothing of one turn's: so
+    a provider's prompt cache can serve it again across steps, groups and checks. A check runs on the prefix of the
+    group holding its finding's file, so its request starts with that turn's three messages exactly. With
+    <code>--focus whole</code> the second message holds the packed diff instead, and there is no third.
+  </Fragment>
+</Figure>

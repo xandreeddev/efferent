@@ -225,6 +225,16 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `SandboxUnavailable` and runs nothing. CI installs bubblewrap and allows
   user namespaces so the isolation probe runs there.
 
+- The docs site has a `/review` section that explains the pull request
+  reviewer: the pipeline (fetch, prepare, find, merge, check, report and the
+  records on disk), the loop inside a turn (steps, the closing call, the
+  spend ledgers, the append-only history), its core and its plugins (each
+  port with its stock adapter, and what a host can swap), its safety (the
+  bubblewrap sandbox, untrusted text framed, rules read from the base) and
+  what is planned. Its diagrams are inline SVG drawn in both themes; its
+  code is cut from the package's source at build time, and its host examples
+  are compiled by the site's check (`tsconfig.review.json`).
+
 ## 0.23.0 — 2026-11-19
 
 0.23.0 replaces the engine of earlier releases with the kernel: a small core

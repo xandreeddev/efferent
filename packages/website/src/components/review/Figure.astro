@@ -1,0 +1,29 @@
+---
+/**
+ * A diagram of the /review pages: the drawing (the default slot, an SVG of class `rv-svg`), scrolled inside the figure
+ * at a width below `minWidth` so the page itself never scrolls sideways, and its caption (slot `caption`). A figure with
+ * a `narrow` slot shows that drawing at phone width instead of the wide one.
+ */
+interface Props {
+  /** The narrowest the wide drawing is drawn, in CSS pixels; below it the figure scrolls. */
+  minWidth?: number
+  label: string
+}
+const { minWidth = 640, label } = Astro.props
+const narrow = Astro.slots.has("narrow")
+---
+
+<figure class:list={["rv-fig", "not-prose", { "rv-has-narrow": narrow }]} role="group" aria-label={label}>
+  <p class="rv-hint" aria-hidden="true">scroll the drawing sideways →</p>
+  <div class="rv-scroll rv-wide">
+    <div style={`min-width:${minWidth}px`}><slot /></div>
+  </div>
+  {
+    narrow && (
+      <div class="rv-scroll rv-narrow">
+        <slot name="narrow" />
+      </div>
+    )
+  }
+  <figcaption><slot name="caption" /></figcaption>
+</figure>
