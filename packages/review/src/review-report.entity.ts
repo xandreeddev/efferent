@@ -94,6 +94,8 @@ export const ReviewReport = Schema.Struct({
   at: ReviewedAt,
   promptVersion: Schema.String,
   toolsVersion: Schema.String,
+  /** The tools a host added after the six (`kernelTurns`' `hostTools`), by name in the order offered: none for the six alone. */
+  hostTools: Schema.Array(Schema.String),
   model: Schema.String,
   focus: Focus,
   effort: Schema.Struct({ find: Effort, check: Effort }),

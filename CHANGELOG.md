@@ -44,7 +44,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `REVIEW_TOOLS_VERSION` unchanged (`review-tools-5`). A host tool's
   description and parameters are the host's model-facing text. What a
   host's tools need beyond their handlers (`HostToolNeeds`) is in the
-  layer's requirements, `never` for plain tools.
+  layer's requirements, `never` for plain tools. `ReviewTurns` now says what
+  each request offers beyond the six (`hostTools`: `HostToolsOffered`, the
+  names and their declarations' bytes): `review.json` keeps the names
+  (`hostTools`, empty for the six alone), and a focused group's first-call
+  hold counts the declarations' bytes (`firstCallHold`'s third argument; the
+  hold is unchanged with none). A host tool that fails or dies is a failed
+  result and the turn goes on. The command line offers the six alone; a host
+  that adds tools composes the review with its own `kernelTurns`.
 
 - A new package, `@xandreed/review`, is the start of a pull request
   reviewer: `efferent-review prepare <number> --repo <owner/name>` reads a

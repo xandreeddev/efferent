@@ -126,6 +126,33 @@ const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPol
     wrong type, do not compile; nor does a host tool that takes the name of one of the six. What a host's tool says to
     the model, its description and its parameters, is the host's own text.
   </p>
+  <ul>
+    <li>
+      <strong>Long-lived resources.</strong> The handlers are made again for every turn and check. A language server or
+      a connection belongs in a service the tool declares in its <code>dependencies</code>: the turns' layer then needs
+      it, and the host provides it once.
+    </li>
+    <li>
+      <strong>Bounded answers.</strong> Every result a tool gives is sent again in every later request of its turn, so a
+      host's tool bounds and pages its own answer, as the six do.
+    </li>
+    <li>
+      <strong>Failures.</strong> A host's tool that fails, or whose handler dies, is a failed result the model reads; the
+      turn goes on.
+    </li>
+    <li>
+      <strong>The record and the budget.</strong> <code>review.json</code> names the host's tools offered
+      (<code>hostTools</code>), so runs with and without an add-on are told apart, and a group's first call is held with
+      room for their declarations.
+    </li>
+    <li>
+      <strong>Where it plugs in.</strong> The command line offers the six alone. A host that adds tools composes the
+      review itself, as the command line does above: the forge, the checkout and the logs from the package's adapters
+      (<code>ghForge</code>, <code>gitCheckout</code>, <code>directoryLogs</code> over <code>hostShell</code>),
+      <code>findingsInMemory</code> and the spend ledger, its own <code>kernelTurns</code> layer over them, then
+      <code>reviewPullRequest</code>.
+    </li>
+  </ul>
   <SourceFile file="review-turn.adapter.ts" code={hostTools} />
   <SourceFile file="a host's tools" code={hostToolsExample} />
 

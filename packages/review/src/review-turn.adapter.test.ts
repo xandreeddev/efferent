@@ -231,6 +231,38 @@ describe("a host's own tools", () => {
     expect<unknown>([ran.result.ended, ran.result.opened]).toEqual([{ _tag: "Answered", summary: "Read." }, ["src/sum.ts"]])
   })
 
+  test("a host's tool that fails as data, fails as an error or dies is stored as a failed result, and the turn goes on", async () => {
+    const empty = Schema.Struct({})
+    const Failing = Tool.make("failing", { description: "Fails as data.", parameters: empty, success: Schema.String, failure: Schema.String, failureMode: "return" })
+    const Erroring = Tool.make("erroring", { description: "Fails as an error.", parameters: empty, success: Schema.String, failure: Schema.String })
+    const Dying = Tool.make("dying", { description: "Dies.", parameters: empty, success: Schema.String })
+    const brokenTools = Toolkit.make(Failing, Erroring, Dying)
+    const broken: HostTools<typeof brokenTools.tools> = {
+      toolkit: brokenTools,
+      handlers: () => brokenTools.toLayer({
+        failing: () => Effect.fail("No definition of that name."),
+        erroring: () => Effect.fail("The language server is down."),
+        dying: () => Effect.die(new Error("The handler broke.")),
+      }),
+    }
+    const ran = await turn([asks(["failing", {}], ["erroring", {}], ["dying", {}]), says("Done."), says("none")], { turnsOf: (model) => kernelTurns({ model, hostTools: broken }) })
+    const results = JSON.stringify(ran.kept[1]?.messages.slice(-3))
+    expect<unknown>([ran.result.ended, ran.kept.length, ["No definition of that name.", "The language server is down.", "The handler broke."].map((text) => results.includes(text))]).toEqual([
+      { _tag: "Answered", summary: "Done." }, 3, [true, true, true],
+    ])
+  })
+
+  test("what a host's tools add to a request is the bytes the wire sends for their declarations: none, nothing", async () => {
+    const offered = (layer: Layer.Layer<ReviewTurns, never, Checkout | Findings>) =>
+      Effect.runPromise(Effect.map(ReviewTurns, (turns) => turns.hostTools).pipe(Effect.provide(layer.pipe(Layer.provide(Layer.mergeAll(checkoutLayer, findingsInMemory))))))
+    const model = testModel({})
+    const none = await offered(kernelTurns({ model }))
+    const added = await offered(kernelTurns({ model, hostTools: definitions([]) }))
+    const alone = await turn([says("Nothing."), says("none")])
+    const withHost = await turn([says("Nothing."), says("none")], { turnsOf: withDefinitions([]) })
+    expect<unknown>([none, added.names, (withHost.kept[0]?.bytes ?? 0) - (alone.kept[0]?.bytes ?? 0)]).toEqual([{ names: [], declarationBytes: 0 }, ["findDefinition"], added.declarationBytes])
+  })
+
   test("a closing call runs its reporting calls alone: a host's tool asked for at the step cap or on the harvest does not run", async () => {
     const capped: Array<string> = []
     const atCap = await turn([asks(["findDefinition", { name: "sum" }]), asks(["findDefinition", { name: "total" }], ["reportFinding", FINDING])], { maxSteps: 1, turnsOf: withDefinitions(capped) })

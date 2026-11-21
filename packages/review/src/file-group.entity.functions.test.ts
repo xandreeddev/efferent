@@ -45,7 +45,7 @@ describe("the groups of a focused review", () => {
     // A newline-heavy prompt: each line break is two bytes in JSON, each quote two.
     const prompt = { prefix: [{ role: "system" as const, content: "\n".repeat(1_000) }, { role: "user" as const, content: "\"".repeat(500) }], tail: "é".repeat(500) }
     const json = new TextEncoder().encode(JSON.stringify({ messages: [...prompt.prefix, { role: "user", content: prompt.tail }] })).length
-    expect([json > 4_000, firstCallBytes(prompt)]).toEqual([true, json + REQUEST_SLACK_BYTES])
+    expect([json > 4_000, firstCallBytes(prompt), firstCallBytes(prompt, 0), firstCallBytes(prompt, 1_234)]).toEqual([true, json + REQUEST_SLACK_BYTES, json + REQUEST_SLACK_BYTES, json + REQUEST_SLACK_BYTES + 1_234])
     const price = { input: 0.3, output: 1.2, maxOutputTokens: 4_096, bytesPerToken: 1 }
     expect(Math.round(firstCallHold(prompt, price) * 1e9)).toBe(Math.round((((json + 8_000) * 0.3) / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))
     expect(Math.round(firstCallHold(prompt, { ...price, bytesPerToken: 4 }) * 1e9)).toBe(Math.round((((json + 8_000) / 4) * 0.3 / 1e6 + (4_096 * 1.2) / 1e6) * 1e9))

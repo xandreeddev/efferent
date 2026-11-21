@@ -75,6 +75,7 @@ export interface ReportInput {
   readonly verdicts: ReadonlyArray<BucketCheck>
   readonly promptVersion: string
   readonly toolsVersion: string
+  readonly hostTools: ReadonlyArray<string>
   readonly model: string
   readonly wallMs: number
 }
@@ -132,6 +133,7 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     at: input.prepared.at,
     promptVersion: input.promptVersion,
     toolsVersion: input.toolsVersion,
+    hostTools: input.hostTools,
     model: input.model,
     focus: input.focus,
     effort: input.effort,

@@ -17,7 +17,7 @@ import { BranchName, CommitSha, PullRequest, RepoName } from "./pull-request.ent
 import { directoryLogs } from "./review-logs.adapter.js"
 import { LogsUnavailable } from "./review-logs.entity.js"
 import { ReviewLogs } from "./review-logs.port.js"
-import type { TurnInput } from "./review-turn.port.js"
+import type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import { ReviewReport } from "./review-report.entity.js"
 import { DEFAULT_GROUP_OPTIONS } from "./review.entity.js"
@@ -96,11 +96,14 @@ describe("at the first head", () => {
 
 const FINDING = { path: "src/sum.ts", line: 4, kind: "bug" as const, severity: "low" as const, claim: "A multiplication by one.", evidence: "total += value * 1" }
 
+/** Turns that offer the six tools alone. */
+const NO_HOST_TOOLS: HostToolsOffered = { names: [], declarationBytes: 0 }
+
 /**
  * Turns and checks by hand: each turn reports the multiplication, the third also a line no change touches; each
  * check answers `verdict`, quoting `quote`. What each was asked, and in what order the turns started and answered.
  */
-const scripted = (quote: string, firstFails = false, extra?: typeof FINDING) => {
+const scripted = (quote: string, firstFails = false, extra?: typeof FINDING, hostTools: HostToolsOffered = NO_HOST_TOOLS) => {
   const asked: Array<TurnInput> = []
   const events: Array<string> = []
   /** What `review.json` said while the first turn ran: whether it was there, and its `complete`. */
@@ -129,6 +132,7 @@ const scripted = (quote: string, firstFails = false, extra?: typeof FINDING) => 
         } else yield* findings.judge(input.reviewed.run, stage.check, { outcome: "confirmed", reason: "It does multiply by one.", quote })
         return { stage, session: Option.some(SessionId.make("s-1")), ended: stage._tag === "Find" ? { _tag: "Answered" as const, summary: "One." } : { _tag: "Judged" as const }, calls: [{ step: 1, tokens: Option.some({ input: 10, cached: 4, output: 2 }), cost: 0.001 }], opened: ["src/sum.ts"] }
       }),
+      hostTools,
     })
   }))
   return { asked, events, during, layer }
@@ -144,7 +148,7 @@ const REVIEW_OPTIONS: ReviewOptions = {
 const ONE_A_GROUP = { ...DEFAULT_GROUP_OPTIONS, bounds: { tokens: 6_000, files: 1 }, order: "git" as const }
 
 /** Turns that charge `cost` to their stage per turn and end as `ended` with `calls`, counting how many started. */
-const charging = (cost: number, ended: TurnResult["ended"], answered: boolean) => {
+const charging = (cost: number, ended: TurnResult["ended"], answered: boolean, hostTools: HostToolsOffered = NO_HOST_TOOLS) => {
   const started: Array<number> = []
   const layer = Layer.succeed(ReviewTurns, ReviewTurns.of({
     run: (input) => Effect.gen(function* () {
@@ -155,6 +159,7 @@ const charging = (cost: number, ended: TurnResult["ended"], answered: boolean) =
       }
       return { stage: input.reviewed.stage, session: Option.none(), ended, calls: [{ step: 1, tokens: answered ? Option.some({ input: 10, cached: 0, output: 2 }) : Option.none(), cost }], opened: [] }
     }),
+    hostTools,
   }))
   return { started, layer }
 }
@@ -176,8 +181,8 @@ describe("reviewPullRequest", () => {
     ])
     // The one check runs alone, so it keeps back its closing call's reserve.
     expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6, reserve: 0.1 }, finds[0]?.prompt.prefix, true])
-    expect<unknown>([report.promptVersion, report.toolsVersion, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
-      "review-prompt-9", "review-tools-5", 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
+    expect<unknown>([report.promptVersion, report.toolsVersion, report.hostTools, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
+      "review-prompt-9", "review-tools-5", [], 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
     ])
     expect<unknown>([report.reported.map((one) => [one.path, one.line, one.votes, one.checked]), report.stages.find, report.stages.verify.calls]).toEqual([
       [["src/sum.ts", 4, 3, "It does multiply by one."]], { input: 30, cached: 12, output: 6, cost: 0.003, calls: 3 }, 1,
@@ -208,6 +213,7 @@ describe("reviewPullRequest", () => {
             : { outcome: "confirmed", reason: "B holds.", quote: "total += value * 1" })
           return { stage, session: Option.none(), ended: stage._tag === "Find" ? { _tag: "Answered" as const, summary: "One." } : { _tag: "Judged" as const }, calls: [], opened: [] }
         }),
+        hostTools: NO_HOST_TOOLS,
       })
     }))
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, turns: 2 })
@@ -305,6 +311,24 @@ describe("reviewPullRequest", () => {
     expect([hold > 0.004 && hold < 0.02, await run(2 * hold - 0.0005), await run(2 * hold + 0.0005)]).toEqual([true, [[false, NOT_REVIEWED_BECAUSE.spent]], [[true, ""]]])
   })
 
+  test("review.json names the tools a host added, in the order offered, beside the six's unchanged version", async () => {
+    const hostTools = { names: ["findDefinition", "findReferences"], declarationBytes: 0 }
+    const report = await reviewWith(scripted("total += value * 1", false, undefined, hostTools).layer)
+    const kept = await Effect.runPromise(Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewReport))(readFileSync(join(logsRoot, "2", fixture.head, report.run, "review.json"), "utf8")))
+    expect<unknown>([report.toolsVersion, report.hostTools, kept.hostTools]).toEqual(["review-tools-5", ["findDefinition", "findReferences"], ["findDefinition", "findReferences"]])
+  })
+
+  test("focused: a host's tool declarations count in a group's first call's hold; none counts nothing", async () => {
+    const sized = scripted("q")
+    await reviewWith(sized.layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false })
+    const prompt = sized.asked[0]!.prompt
+    const declarationBytes = 20_000
+    const hold = firstCallHold(prompt, REVIEW_OPTIONS.price, declarationBytes)
+    const run = async (find: number) => (await reviewWith(scripted("q", false, undefined, { names: ["findDefinition"], declarationBytes }).layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false, budget: { total: 0.5, find, verify: 0.2 } })).groups.map((one) => [Option.isSome(one.turn), one.notReviewed])
+    // A stage that fits the six's hold but not the host's declarations too does not start the group.
+    expect([firstCallHold(prompt, REVIEW_OPTIONS.price, 0) === firstCallHold(prompt, REVIEW_OPTIONS.price), hold > firstCallHold(prompt, REVIEW_OPTIONS.price), await run(2 * hold - 0.0005), await run(2 * hold + 0.0005)]).toEqual([true, true, [[false, NOT_REVIEWED_BECAUSE.spent]], [[true, ""]]])
+  })
+
   test("focused, on a budget: turns that settle $0.03 each run groups 1 to 3 under $0.15, and the rest are listed as not reviewed", async () => {
     const { started, layer } = charging(0.03, { _tag: "Answered", summary: "" }, true)
     // Input free, so every first call holds its output alone (4,096 tokens at $1.20 a million, about $0.005) whatever its group's size.
@@ -374,6 +398,7 @@ describe("reviewPullRequest", () => {
           else yield* findings.judge(input.reviewed.run, stage.check, { outcome: "refuted", reason: "r", quote: "q" })
           return { stage, session: Option.none(), ended: { _tag: "ModelFailed" as const, message: "no answer" }, calls: [{ step: 1, tokens: Option.none(), cost: 0 }], opened: [] }
         }),
+        hostTools: NO_HOST_TOOLS,
       })
     }))
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups" })

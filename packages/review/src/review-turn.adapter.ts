@@ -1,6 +1,5 @@
 import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, Schema, Stream } from "effect"
-import { AiError, LanguageModel, Prompt, Toolkit } from "effect/ai"
-import type { Tool } from "effect/ai"
+import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { JournalStorage, kernel, messageOf, ModelSpend, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId, SpendHold } from "@xandreed/core"
 import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retryable, sessions } from "@xandreed/sdk"
@@ -11,7 +10,7 @@ import { Findings } from "./findings.port.js"
 import { CLOSING_ASKS, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
 import type { CallUsage, TurnEnded, TurnResult } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
-import type { TurnInput } from "./review-turn.port.js"
+import type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
 import { harvestNote, stepCapNote } from "./review-prompt.entity.functions.js"
 import { reviewToolHandlers, reviewTools } from "./review-tools.adapter.js"
 import { READ_DIFF, READ_LINES, REPORT_FINDING, VERDICT } from "./review-tools.entity.js"
@@ -72,6 +71,17 @@ type Offered<Tools extends Record<string, Tool.Any>> = Toolkit.Tools<ReturnType<
 export type HostToolNeeds<Tools extends Record<string, Tool.Any>> =
   | ToolNeeds<Tools>
   | Tool.ParametersEncodingServices<Offered<Tools>[keyof Offered<Tools>]>
+
+/**
+ * What a host's tools add to every request (`HostToolsOffered`): their names in order, and their declarations' bytes
+ * as the reviewer's wire (`openAiCompatibleModel`) sends each, `{"type":"function","function":{name, description,
+ * parameters}}` and the comma before it.
+ */
+const offeredOf = <Tools extends Record<string, Tool.Any>>(host: HostTools<Tools>): HostToolsOffered => {
+  const tools: ReadonlyArray<Tool.Any> = Object.values(host.toolkit.tools)
+  const declared = tools.map((tool) => JSON.stringify({ type: "function", function: { name: tool.name, description: Tool.getDescription(tool) ?? "", parameters: Tool.getJsonSchema(tool) } }))
+  return { names: tools.map((tool) => tool.name), declarationBytes: declared.reduce((sum, text) => sum + new TextEncoder().encode(text).length + 1, 0) }
+}
 
 /** The tools of a host that adds none, as `Toolkit.empty` holds them. */
 type NoTools = Toolkit.Tools<typeof Toolkit.empty>
@@ -291,9 +301,10 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
 /** The turns over their parts: what the tools need, the host's included (`HostToolNeeds`), is the layer's to be given. */
 const turnsOver = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelTurnsOptions<Tools>>): Layer.Layer<ReviewTurns, never, Checkout | Findings | HostToolNeeds<Tools>> => {
   const run = runTurn(parts)
+  const hostTools = offeredOf(parts.hostTools)
   return Layer.effect(ReviewTurns, Effect.gen(function* () {
     const needs = yield* Effect.context<Checkout | Findings | HostToolNeeds<Tools>>()
-    return ReviewTurns.of({ run: (input) => run(input).pipe(Effect.provide(needs)) })
+    return ReviewTurns.of({ run: (input) => run(input).pipe(Effect.provide(needs)), hostTools })
   }))
 }
 
