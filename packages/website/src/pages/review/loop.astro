@@ -81,7 +81,7 @@ const ledger = excerpt("stage-spend.port.ts", "export interface StageLedger", "}
   <ol>
     <li>releases the reserve it kept back from its stage when it started;</li>
     <li>stores the host's note, which says the review allows no more reading and asks it to report now;</li>
-    <li>asks the model once more, with the same six tools offered and the tool choice left as it was;</li>
+    <li>asks the model once more, with the same tools offered and the tool choice left as it was;</li>
     <li>runs only that answer's reporting calls (<code>reportFinding</code>, or <code>verdict</code> in a check) and keeps its words;</li>
     <li>asks once more if the tool refused one of them (a path the pull request does not change, lines out of order), since the refusal says what to give: at most two calls in all.</li>
   </ol>

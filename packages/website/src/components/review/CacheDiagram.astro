@@ -51,7 +51,7 @@ const y = (i: number) => 26 + i * 56
     journal back whole, and the journal only grows at its end, so each request begins with every byte of the one
     before. A memory that dropped or summarised an earlier step would change the start of the request, and the cache
     would miss from that point on. At step 1 only the prefix can come from the cache, and only when an earlier turn
-    or check of the same pull request sent it. Even the closing call keeps the same six tools offered and the model's tool choice
+    or check of the same pull request sent it. Even the closing call keeps the same tools offered and the model's tool choice
     left as it was, since a narrower tool list changes the request ahead of the messages.
   </Fragment>
 </Figure>

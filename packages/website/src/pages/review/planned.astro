@@ -35,10 +35,9 @@ const headings = [
   <p>
     The six tools read text: lines, a search, a glob, a diff. A language server answers what text cannot, such as where
     a name is defined and every place that refers to it. The plan is tools backed by <code>tsgo</code>'s language
-    server, for definitions and references, as an add-on beside the six, not a part of the core. Today the turn's tool
-    list is fixed (see
-    <a href={reviewHref("plugins") + "#not-yet"}>what cannot be swapped yet</a>), so this needs that list to open up
-    first.
+    server, for definitions and references, as an add-on beside the six, not a part of the core. A host can already add
+    tools after the six (see <a href={reviewHref("plugins") + "#host-tools"}>tools of your own</a>), so the add-on is a
+    toolkit and its handlers handed to <code>kernelTurns</code>; what is planned is the tools themselves.
   </p>
 
   <h2 id="skills">Review skills by path</h2>

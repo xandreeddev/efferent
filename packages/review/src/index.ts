@@ -51,7 +51,7 @@ export { DEFAULT_MAX_STEPS, TurnEnded, TurnResult } from "./review-turn.entity.j
 export { ReviewTurns } from "./review-turn.port.js"
 export type { TurnInput } from "./review-turn.port.js"
 export { kernelTurns } from "./review-turn.adapter.js"
-export type { KernelTurnsOptions } from "./review-turn.adapter.js"
+export type { HostToolNeeds, HostTools, KernelTurnsOptions, NoStockNames } from "./review-turn.adapter.js"
 export { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, Effort, ReviewModel } from "./review-model.entity.js"
 export { withEffort } from "./review-model.entity.functions.js"
 export { reviewModel } from "./review-model.adapter.js"
