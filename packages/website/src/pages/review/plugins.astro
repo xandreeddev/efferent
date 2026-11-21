@@ -1,0 +1,154 @@
+---
+import ReviewLayout from "../../layouts/ReviewLayout.astro"
+import SourceFile from "../../components/SourceFile.astro"
+import PortsDiagram from "../../components/review/PortsDiagram.astro"
+import { href, reviewHref } from "../../lib/nav"
+import { excerpt } from "../../lib/review-source"
+import turnPartsExample from "../../review/examples/turn-parts.ts?raw"
+import policiesExample from "../../review/examples/policies.ts?raw"
+import reporterExample from "../../review/examples/reporter.ts?raw"
+import sandboxExample from "../../review/examples/sandbox.ts?raw"
+
+const headings = [
+  { depth: 2, slug: "core", text: "The core" },
+  { depth: 2, slug: "ports", text: "Every port and its stock plugin" },
+  { depth: 2, slug: "composition", text: "How the command line composes it" },
+  { depth: 2, slug: "swap", text: "What a host can swap" },
+  { depth: 3, slug: "turn-parts", text: "A turn's parts" },
+  { depth: 3, slug: "policies", text: "Policies" },
+  { depth: 3, slug: "reporters", text: "Reporters" },
+  { depth: 3, slug: "sandbox", text: "A sandbox of your own" },
+  { depth: 2, slug: "not-yet", text: "What cannot be swapped yet" },
+]
+const ports = [
+  { port: "Forge", asks: "The pull request, its CI runs and failed logs, its first head, its description's history, the default branch. Read-only.", adapter: "ghForge", over: "gh on the host's shell" },
+  { port: "Checkout", asks: "The clone: fetch, the diff, a file at a commit, tree entries, blobs, grep, the merge base; a throwaway clone for a sandbox.", adapter: "gitCheckout", over: "git, every command hardened by gitArgv" },
+  { port: "HostShell", asks: "The reviewer's own commands, gh and git, with the host's environment, read whole.", adapter: "hostShell", over: "a process on the host" },
+  { port: "ReviewLogs", asks: "Where whole logs and a run's records are kept; a fresh folder per run.", adapter: "directoryLogs", over: "a folder" },
+  { port: "Validations", asks: "Run the pull request's own commands and answer their digests.", adapter: "sandboxValidations", over: "Sandboxes, Checkout, Forge, ReviewCache, ReviewLogs" },
+  { port: "Sandboxes", asks: "A Shell whose every command runs in a sandbox of a plan.", adapter: "bwrapSandboxes", over: "bubblewrap" },
+  { port: "ReviewCache", asks: "What is kept between reviews: verdicts on a base, the bot's package cache, node_modules snapshots.", adapter: "directoryCache", over: "a folder" },
+  { port: "Findings", asks: "Each run's findings and verdicts, under the run.", adapter: "findingsInMemory", over: "the process's memory" },
+  { port: "ReviewTurns", asks: "Run one turn, a finder's or a check's, and say how it ended.", adapter: "kernelTurns", over: "the kernel: a model, a memory, tools, a journal" },
+] as const
+
+const reviewTurnsPort = excerpt("review-turn.port.ts", "export class ReviewTurns", "}>()(")
+const sandboxesPort = excerpt("sandboxes.port.ts", "export class Sandboxes", "}>()(")
+const layers = excerpt("cli.adapter.ts", "export const reviewLayers", "  )")
+const composition = excerpt("cli.adapter.ts", "const base = asked ? validationLayers", "}).pipe(Layer.provideMerge(needs))")
+const turnOptions = excerpt("review-turn.adapter.ts", "export interface KernelTurnsOptions", "}")
+const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPolicies", "}")
+---
+
+<ReviewLayout
+  title="Core and plugins"
+  description="Neovim-style: a small core of fixed code, and everything it touches behind a port, each with a stock plugin the host can replace."
+  current="plugins"
+  headings={headings}
+>
+  <p class="rv-legend not-prose">
+    <span><span class="rv-tag core">core</span> fixed code: the flow, the pure functions, the model's words</span>
+    <span><span class="rv-tag plug">plugin</span> a layer behind a port, or a part a host hands in</span>
+  </p>
+
+  <h2 id="core">The core</h2>
+  <p>
+    The core is what every host runs the same. <span class="rv-tag core">core</span> It is small on purpose:
+  </p>
+  <ul>
+    <li><strong>Three use cases</strong>: <code>prepareReview</code> (fetch and prepare), <code>reviewPullRequest</code> (groups, find, merge, check, records) and <code>validate</code> (the pull request's own commands: the trusted base, the unchanged dependency files, the install and the snapshot). Each asks only for ports.</li>
+    <li><strong>The pure functions</strong>: reading and rendering the diff, the file verdicts, packing, grouping, the prompts, merging into buckets, the quote check, the report. Each has table tests; the text the model reads is pinned word for word.</li>
+    <li><strong>The six tools' declarations</strong> (<code>reviewTools</code>): their names, descriptions and parameters, which every turn is offered in one order.</li>
+    <li><strong>The turn's loop</strong>, inside the stock <code>kernelTurns</code>: steps, the closing call, the harvest. A host that replaces the whole <code>ReviewTurns</code> port brings its own loop instead.</li>
+  </ul>
+  <PortsDiagram />
+
+  <h2 id="ports">Every port and its stock plugin</h2>
+  <p>
+    A port is an Effect <code>Context.Service</code> in a <code>.port.ts</code> file. A plugin is a plain
+    <code>Layer</code> in an <code>.adapter.ts</code> file, whose type says what it needs; there is no plugin graph.
+    <span class="rv-tag plug">plugin</span>
+  </p>
+  <table>
+    <thead><tr><th>Port</th><th>What the core asks of it</th><th>Stock plugin</th><th>Over</th></tr></thead>
+    <tbody>
+      {
+        ports.map((p) => (
+          <tr>
+            <td><code>{p.port}</code></td>
+            <td>{p.asks}</td>
+            <td><code>{p.adapter}</code></td>
+            <td>{p.over}</td>
+          </tr>
+        ))
+      }
+    </tbody>
+  </table>
+  <p>Two of them, as the package declares them:</p>
+  <SourceFile file="review-turn.port.ts" code={reviewTurnsPort} />
+  <SourceFile file="sandboxes.port.ts" code={sandboxesPort} />
+
+  <h2 id="composition">How the command line composes it</h2>
+  <p>
+    <code>efferent-review</code> is one host. It plugs the stock plugin into every port: the forge, the clone and the
+    records over the host's shell; the sandboxed validations only when <code>--run</code> or <code>--validate</code>
+    asks for them, and never a plain <code>Shell</code>.
+  </p>
+  <SourceFile file="cli.adapter.ts: the layers" code={layers} />
+  <SourceFile file="cli.adapter.ts: the turns" code={composition} />
+
+  <h2 id="swap">What a host can swap</h2>
+  <p>
+    Each example below is compiled against the package by this site's own check, so it stays true to the code.
+  </p>
+
+  <h3 id="turn-parts">A turn's parts</h3>
+  <p>
+    <code>kernelTurns</code> takes its parts as options. Only the model is required: a <code>LanguageModel</code> layer
+    that charges the <code>ModelSpend</code> ledger it is given. The rest have stock defaults.
+  </p>
+  <SourceFile file="review-turn.adapter.ts" code={turnOptions} />
+  <SourceFile file="a host's turns" code={turnPartsExample} />
+
+  <h3 id="policies">Policies</h3>
+  <p>
+    Every decision of the preparation is a plain function in <code>ReviewPolicies</code>, given as an argument:
+    how files are grouped, which files a review reads, how the diff is packed, which instruction files apply to a path,
+    how a CI log is digested, whose pull request may run commands, and which CI runs count as failed.
+  </p>
+  <SourceFile file="prepare-review.entity.ts" code={policies} />
+  <SourceFile file="a host's policies" code={policiesExample} />
+
+  <h3 id="reporters">Reporters</h3>
+  <p>
+    There is no reporter port: <code>reviewPullRequest</code> returns the whole <code>ReviewReport</code> as a value
+    (every finding, bucket, check and call), and the command line's <code>reportText</code> is one way to render it.
+    A host renders it however it likes, or posts it itself.
+  </p>
+  <SourceFile file="a host's reporter" code={reporterExample} />
+
+  <h3 id="sandbox">A sandbox of your own</h3>
+  <p>
+    <code>Validations</code> is built over <code>Sandboxes</code>, so another kind of sandbox is one layer. The rules
+    that decide whether anything may run at all (a trusted base, unchanged dependency files) are in the core's
+    <code>validate</code>, not in the sandbox, so a host's sandbox cannot loosen them. See <a href={reviewHref("safety")}>Safety</a>.
+  </p>
+  <SourceFile file="a host's sandbox" code={sandboxExample} />
+
+  <h2 id="not-yet">What cannot be swapped yet</h2>
+  <ul>
+    <li>
+      <strong>New tools.</strong> <code>kernelTurns</code> offers the six tools of <code>reviewTools</code>; its
+      <code>tools</code> option swaps their handlers, not the list. A host that wants more tools has to bring its own
+      <code>ReviewTurns</code>. Tools as add-ons are <a href={reviewHref("planned")}>planned</a>.
+    </li>
+    <li>
+      <strong>The model's words.</strong> The system text, the tails and the host's notes are part of the core, versioned
+      with each review's record so results are compared prompt to prompt.
+    </li>
+  </ul>
+  <p>
+    The kernel's own parts (sessions, journals, memories, the spend ledger) are swapped the same way, and the
+    <a href={href("/learn")}>learn track</a> builds each of them by hand.
+  </p>
+</ReviewLayout>

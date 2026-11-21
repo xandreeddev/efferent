@@ -1,0 +1,60 @@
+---
+/**
+ * The review's spend ledgers (`stageSpend`): the review's `ModelSpend` ledger and its total cap, the find and verify
+ * stages inside it with caps of their own, and inside each stage one ledger per turn or check, with no cap of its own,
+ * so each call is costed alone whatever runs beside it.
+ */
+import Figure from "./Figure.astro"
+---
+
+<Figure label="The spend ledgers" minWidth={700}>
+  <svg class="rv-svg" viewBox="0 0 860 300" role="img" aria-labelledby="sp-t">
+    <title id="sp-t">The review's ledger holds the find stage and the verify stage; each stage holds one ledger per turn or check</title>
+    <rect class="core" x="10" y="10" width="840" height="234" rx="14"></rect>
+    <text x="26" y="34" class="t-b">The review's ledger</text>
+    <text x="180" y="34" class="t-mono t-xs t-dim">ModelSpend · cap --max-cost</text>
+
+    <rect class="box" x="26" y="50" width="400" height="180" rx="12"></rect>
+    <text x="40" y="72" class="t-b t-sm">Find stage</text>
+    <text x="130" y="72" class="t-mono t-xs t-dim">stageSpend · cap --find-cost</text>
+    {
+      [0, 1, 2].map((i) => (
+        <g>
+          <rect class="box-2" x={40 + i * 126} y="88" width="116" height="94" rx="8"></rect>
+          <text x={52 + i * 126} y="108" class="t-sm">group {i + 1}'s turn</text>
+          <text x={52 + i * 126} y="126" class="t-xs t-dim">its own ledger,</text>
+          <text x={52 + i * 126} y="141" class="t-xs t-dim">no cap of its own</text>
+          <rect class="fill-new" x={52 + i * 126} y="152" width="92" height="20" rx="4"></rect>
+          <text x={98 + i * 126} y="166" text-anchor="middle" class="t-xs">closing reserve</text>
+        </g>
+      ))
+    }
+    <text x="40" y="200" class="t-xs t-dim">one after another; a group starts only while the stage</text>
+    <text x="40" y="216" class="t-xs t-dim">has room for its first call and its reserve</text>
+
+    <rect class="box" x="440" y="50" width="396" height="180" rx="12"></rect>
+    <text x="454" y="72" class="t-b t-sm">Verify stage</text>
+    <text x="548" y="72" class="t-mono t-xs t-dim">stageSpend · cap --verify-cost</text>
+    {
+      [0, 1, 2].map((i) => (
+        <g>
+          <rect class="box-2" x={454 + i * 126} y="88" width="116" height="94" rx="8"></rect>
+          <text x={466 + i * 126} y="108" class="t-sm">check {i + 1}</text>
+          <text x={466 + i * 126} y="126" class="t-xs t-dim">its own ledger;</text>
+          <text x={466 + i * 126} y="141" class="t-xs t-dim">up to 3 at once</text>
+        </g>
+      ))
+    }
+    <text x="454" y="214" class="t-xs t-dim">a check keeps a reserve back only when it runs alone</text>
+
+    <text x="10" y="268" class="t-sm"><tspan class="t-b">A call:</tspan> its worst case is <tspan class="t-accent">held</tspan> before it is sent (the request's bytes, one token each, and the output cap),</text>
+    <text x="10" y="288" class="t-sm">then <tspan class="t-accent">settled</tspan> at what the provider billed. A hold the open calls crowd out waits for one to close.</text>
+  </svg>
+  <Fragment slot="caption">
+    <strong>Every model call is charged before it is sent.</strong> A stage refuses a call that what it already
+    settled leaves no room for, so a turn stops with its findings so far instead of overspending. A turn that runs
+    alone (each group's turn, or a whole review's single turn) keeps a reserve back from its start and releases it just
+    before its closing call, so a turn the ledger cuts short can still report what it found. Turns that run beside each
+    other keep nothing back: each one's reserve would crowd out the others' calls.
+  </Fragment>
+</Figure>

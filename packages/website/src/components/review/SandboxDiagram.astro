@@ -1,0 +1,68 @@
+---
+/**
+ * Why trimming a command's environment is no isolation, against what a bubblewrap sandbox (`bwrapShell`) gives a
+ * pull request's command: what a process of the host's user can still reach, and what the sandbox leaves it.
+ */
+import Figure from "./Figure.astro"
+
+const host = [
+  ["the parent's environment", "read from /proc/<pid>/environ"],
+  ["the gh login, git credentials", "in the host's home folder"],
+  ["the shared mirror clone", "and every other review's files"],
+  ["services on localhost", "a database, a dashboard"],
+  ["the network", "to send any of it away"],
+] as const
+const inside = [
+  ["/work", "a throwaway clone: the only writable bind"],
+  ["/usr, /lib…", "the system's folders, read-only"],
+  ["/opt/tool", "the toolchain, read-only, the least each needs"],
+  ["/tmp", "its own tmpfs; HOME=/tmp/home"],
+  ["/proc, /dev", "fresh, of its own pid namespace"],
+  ["env", "cleared: a fixed PATH, nothing of the host's"],
+  ["network", "none (only a trusted base's install shares it)"],
+] as const
+---
+
+<Figure label="Environment trimming against a sandbox" minWidth={760}>
+  <svg class="rv-svg" viewBox="0 0 920 360" role="img" aria-labelledby="sb-t">
+    <title id="sb-t">A host process with a trimmed environment still reaches the host's secrets; a bubblewrap sandbox reaches only its own clone</title>
+    <defs>
+      <marker id="sb-a" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path class="head-danger" d="M0 0L10 5L0 10z"></path></marker>
+    </defs>
+    <rect class="danger" x="10" y="10" width="430" height="340" rx="14"></rect>
+    <text x="26" y="36" class="t-b t-danger">Trimmed environment: not isolation</text>
+    <text x="26" y="58" class="t-xs t-dim">a command run as the host's user, given only a few variables</text>
+    <rect class="box" x="26" y="76" width="140" height="56" rx="8"></rect>
+    <text x="40" y="100" class="t-mono t-sm">npm test</text>
+    <text x="40" y="118" class="t-xs t-dim">the PR's code</text>
+    {
+      host.map(([what, where], i) => (
+        <g>
+          <path class="line-danger" d={`M166 104 C200 104 200 ${170 + i * 36} 232 ${170 + i * 36}`} marker-end="url(#sb-a)"></path>
+          <text x="238" y={174 + i * 36} class="t-xs">{what}</text>
+          <text x="238" y={188 + i * 36} class="t-xs t-dim">{where}</text>
+        </g>
+      ))
+    }
+    <text x="26" y="160" class="t-xs t-dim">still reachable:</text>
+
+    <rect class="core" x="470" y="10" width="440" height="340" rx="14"></rect>
+    <text x="486" y="36" class="t-b t-core">bubblewrap sandbox</text>
+    <text x="486" y="58" class="t-mono t-xs t-dim">--unshare-all · --clearenv · --die-with-parent · --new-session</text>
+    {
+      inside.map(([path, why], i) => (
+        <g>
+          <rect class="box" x="486" y={74 + i * 38} width="408" height="30" rx="6"></rect>
+          <text x="498" y={94 + i * 38} class="t-mono t-xs t-b">{path}</text>
+          <text x="610" y={94 + i * 38} class="t-xs t-dim">{why}</text>
+        </g>
+      ))
+    }
+  </svg>
+  <Fragment slot="caption">
+    <strong>Only the sandbox isolates.</strong> A process of the host's user can read the parent's environment, the
+    host's credentials and the shared clone whatever variables it is given. So nothing of the pull request's runs on
+    the host: its commands run only through <code>Validations</code>, each in a bubblewrap sandbox over a throwaway
+    clone, and only when asked (<code>--run</code>, <code>--validate</code>).
+  </Fragment>
+</Figure>

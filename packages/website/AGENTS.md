@@ -9,8 +9,25 @@ two that `bun run docs:generate` writes and that are never edited by hand:
 `docs/adr/`; the learn track,
 `/learn`, is written by hand too: interactive lessons that run a learner's agent
 in the browser on the kernel. Check it with `bun run --cwd packages/website
-check` (tsc over the learn code, the build, the link check) and
-`bun test packages/website/src/learn`.
+check` (tsc over the learn code and over the review section's host examples,
+the build, the link check) and `bun test packages/website/src/learn`.
+
+## The review section (`src/pages/review`, `src/components/review`)
+
+- Six `.astro` pages that explain the pull request reviewer,
+  `@xandreed/review`, in `ReviewLayout` (its own sidebar and pager, from
+  `reviewNav` in `src/lib/nav.ts`). The diagrams are inline SVG classed
+  against `src/styles/review.css`'s tokens, so each reads in both themes; a
+  `Figure` scrolls inside itself, never the page, and may carry a narrow
+  drawing for phone widths.
+- Code from the package is cut from its source at build time
+  (`src/lib/review-source.ts`, `excerpt`): an anchor line that is gone, or an
+  excerpt that holds a dollar figure, a pull request's number, a model's name
+  or the word "pass", fails the build. The host examples
+  (`src/review/examples/*.ts`) are shown as written and compiled against the
+  package by `tsconfig.review.json`.
+- The pages publish no measurement, cost or model of the reviewer's, say
+  "turn" and "step", and mark what is planned as planned.
 
 ## The learn track (`src/learn`, `src/content/learn`, `src/components/learn`)
 
