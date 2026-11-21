@@ -25,7 +25,18 @@ export interface TurnInput {
 }
 
 /**
- * The model's turns over a prepared review, the finder's and the checks'. `run` runs one: a session of its own in a
+ * The tools a host adds to the review's six, offered after them in every request: their names in the order offered,
+ * which a review keeps in its record, and the bytes their declarations add to a request as the reviewer's wire sends
+ * them, which a group's first call must have room for. A host that adds none: no names and 0.
+ */
+export interface HostToolsOffered {
+  readonly names: ReadonlyArray<string>
+  readonly declarationBytes: number
+}
+
+/**
+ * The model's turns over a prepared review, the finder's and the checks'. `hostTools` is what each request offers
+ * beyond the six (`HostToolsOffered`). `run` runs one: a session of its own in a
  * journal kept at `journalAt`, the model asked step by step with the review's tools until it answers without a call, a
  * check gives its verdict, or it stops (its step cap, after one call that may only report; a refused or failed call, an
  * answer cut at the output cap, a journal that fails) with the findings so far. It never fails: how it ended is in its
@@ -33,4 +44,5 @@ export interface TurnInput {
  */
 export class ReviewTurns extends Context.Service<ReviewTurns, {
   readonly run: (input: TurnInput) => Effect.Effect<TurnResult>
+  readonly hostTools: HostToolsOffered
 }>()("@xandreed/review/ReviewTurns") {}

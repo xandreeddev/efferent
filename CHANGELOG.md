@@ -33,6 +33,26 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   is unchanged. The first program in the README and the getting started page
   uses `flatMemory`.
 
+- `@xandreed/review`: a host adds tools of its own to the reviewer's
+  turns with `kernelTurns({ model, hostTools })` (`HostTools`: a toolkit
+  and its handlers over what the turn reviews, typed together, so handlers
+  that lack a tool's do not compile, and no tool may take a name of the
+  six). Every finder turn and check offers the six, then the host's, and a
+  host tool's call runs through `callTool` in each step; the closing call
+  and the harvest still run only `reportFinding` or `verdict`. With no host
+  tools every request is as before: the six declarations byte for byte,
+  `REVIEW_TOOLS_VERSION` unchanged (`review-tools-5`). A host tool's
+  description and parameters are the host's model-facing text. What a
+  host's tools need beyond their handlers (`HostToolNeeds`) is in the
+  layer's requirements, `never` for plain tools. `ReviewTurns` now says what
+  each request offers beyond the six (`hostTools`: `HostToolsOffered`, the
+  names and their declarations' bytes): `review.json` keeps the names
+  (`hostTools`, empty for the six alone), and a focused group's first-call
+  hold counts the declarations' bytes (`firstCallHold`'s third argument; the
+  hold is unchanged with none). A host tool that fails or dies is a failed
+  result and the turn goes on. The command line offers the six alone; a host
+  that adds tools composes the review with its own `kernelTurns`.
+
 - A new package, `@xandreed/review`, is the start of a pull request
   reviewer: `efferent-review prepare <number> --repo <owner/name>` reads a
   pull request through `gh`, fetches it into a clone kept outside any

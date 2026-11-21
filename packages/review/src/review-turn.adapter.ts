@@ -1,18 +1,20 @@
 import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, Schema, Stream } from "effect"
-import { AiError, LanguageModel, Prompt } from "effect/ai"
+import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { JournalStorage, kernel, messageOf, ModelSpend, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId, SpendHold } from "@xandreed/core"
 import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retryable, sessions } from "@xandreed/sdk"
+import type { OwnTools, ToolNeeds } from "@xandreed/sdk"
 import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
 import { Findings } from "./findings.port.js"
 import { CLOSING_ASKS, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
 import type { CallUsage, TurnEnded, TurnResult } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
-import type { TurnInput } from "./review-turn.port.js"
+import type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
 import { harvestNote, stepCapNote } from "./review-prompt.entity.functions.js"
 import { reviewToolHandlers, reviewTools } from "./review-tools.adapter.js"
 import { READ_DIFF, READ_LINES, REPORT_FINDING, VERDICT } from "./review-tools.entity.js"
+import type { Reviewed } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
 
 /** The owner a turn's session is created under in its journal. */
@@ -37,18 +39,70 @@ const worthAnotherTry = (error: unknown): boolean =>
   retryable(error) || (Predicate.isTagged(error, "ModelAnswerFailed") && Predicate.hasProperty(error, "cause") && retryable(error.cause))
 
 /**
+ * Tools a host adds to the review's six: its toolkit, offered after them in every request of every turn and check, and
+ * its handlers over what the turn reviews, as `reviewToolHandlers` are. The two are typed together, so handlers that
+ * lack one of the toolkit's tools do not compile. The toolkit is also typed as what it yields, each tool with its own
+ * type (`OwnTools`), so a call of a host's tool runs through `callTool` with what its tools declare checked: a toolkit
+ * made with `Toolkit.make` or `Toolkit.merge` is both. Its descriptions and parameters are the host's text the model
+ * reads, and none of its tools may take a name of the six (`NoStockNames`).
+ */
+export interface HostTools<Tools extends Record<string, Tool.Any>> {
+  readonly toolkit: Toolkit.Toolkit<Tools> & Effect.Effect<Toolkit.WithHandler<Tools> & OwnTools<Tools>, never, Tool.HandlersFor<Tools>>
+  readonly handlers: (reviewed: Reviewed) => Layer.Layer<Tool.HandlersFor<Tools>, never, Checkout | Findings>
+}
+
+/**
+ * A host's tools that take no name of the six: `Toolkit.merge` lets a later tool replace an earlier one of its name. A
+ * toolkit keyed by any string (tools made from names known only at run time) may hold one, and is refused too.
+ */
+export type NoStockNames<Tools> = [Extract<keyof typeof reviewTools.tools, keyof Tools>] extends [never]
+  ? unknown
+  : "a host's tool cannot take the name of one of the review's six tools"
+
+/** The toolkit every request offers: the review's six in their order, then the host's tools in theirs. */
+const offeredWith = <Tools extends Record<string, Tool.Any>>(host: HostTools<Tools>) => Toolkit.merge(reviewTools, host.toolkit)
+
+type Offered<Tools extends Record<string, Tool.Any>> = Toolkit.Tools<ReturnType<typeof offeredWith<Tools>>>
+
+/**
+ * What a host's tools need of the program beyond their handlers: what they declare (`ToolNeeds`) and what the offered
+ * tools' parameters need to be sent. `never` for tools of plain schemas that declare nothing, as the six are.
+ */
+export type HostToolNeeds<Tools extends Record<string, Tool.Any>> =
+  | ToolNeeds<Tools>
+  | Tool.ParametersEncodingServices<Offered<Tools>[keyof Offered<Tools>]>
+
+/**
+ * What a host's tools add to every request (`HostToolsOffered`): their names in order, and their declarations' bytes
+ * as the reviewer's wire (`openAiCompatibleModel`) sends each, `{"type":"function","function":{name, description,
+ * parameters}}` and the comma before it.
+ */
+const offeredOf = <Tools extends Record<string, Tool.Any>>(host: HostTools<Tools>): HostToolsOffered => {
+  const tools: ReadonlyArray<Tool.Any> = Object.values(host.toolkit.tools)
+  const declared = tools.map((tool) => JSON.stringify({ type: "function", function: { name: tool.name, description: Tool.getDescription(tool) ?? "", parameters: Tool.getJsonSchema(tool) } }))
+  return { names: tools.map((tool) => tool.name), declarationBytes: declared.reduce((sum, text) => sum + new TextEncoder().encode(text).length + 1, 0) }
+}
+
+/** The tools of a host that adds none, as `Toolkit.empty` holds them. */
+type NoTools = Toolkit.Tools<typeof Toolkit.empty>
+
+/** No tools of a host's: the six alone, as a review offers them. */
+const NO_HOST_TOOLS: HostTools<NoTools> = { toolkit: Toolkit.empty, handlers: () => Layer.empty }
+
+/**
  * What a turn runs on, each a part a host may swap: the model (a layer charging the `ModelSpend` it is given: each turn
  * builds it over a ledger of its own inside its stage's), the memory that builds each step's context (`flatMemory` by
- * default), the tools' handlers over what the turn reviews (`reviewToolHandlers` by default), and the journal kept at
- * an input's `journalAt` (a `directoryJournal` in that folder by default), whose failure to open is a
- * `TurnJournalFailed`.
+ * default), the tools' handlers over what the turn reviews (`reviewToolHandlers` by default), the host's own tools
+ * offered after the six (`HostTools`; none by default), and the journal kept at an input's `journalAt` (a
+ * `directoryJournal` in that folder by default), whose failure to open is a `TurnJournalFailed`.
  */
-export interface KernelTurnsOptions {
+export interface KernelTurnsOptions<Tools extends Record<string, Tool.Any> = NoTools> {
   readonly model: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>
   /** The checks' model, when it differs from the finder turns' (another reasoning effort): `model` by default. */
   readonly verifyModel?: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>
   readonly memory?: Layer.Layer<Memory>
   readonly tools?: typeof reviewToolHandlers
+  readonly hostTools?: HostTools<Tools>
   readonly journal?: (at: string) => Layer.Layer<JournalStorage, TurnJournalFailed>
 }
 
@@ -60,10 +114,11 @@ const folderJournal = (at: string): Layer.Layer<JournalStorage, TurnJournalFaile
 
 /**
  * One turn, a finder's or a check's, over the kernel: a session in the journal at `journalAt` (its turns recovered
- * first), the memory, the review's tools, the model over a ledger of the turn's own inside its stage's (`stageSpend`, so
- * each call's cost is what that ledger settled while it ran, whatever runs beside it), and the host's loop with
- * `modelAnswer` and `callTool`. Each step sends the prompt's prefix, then what the memory gives (the tail message, the
- * calls and their results). It ends when the model answers without a call (a finder turn is first asked once more for
+ * first), the memory, the review's tools and the host's after them, the model over a ledger of the turn's own inside its
+ * stage's (`stageSpend`, so each call's cost is what that ledger settled while it ran, whatever runs beside it), and the
+ * host's loop with `modelAnswer` and `callTool`. Each step sends the prompt's prefix, then what the memory gives (the
+ * tail message, the calls and their results); a call of a host's tool runs as a call of the six does, through the
+ * host's toolkit. It ends when the model answers without a call (a finder turn is first asked once more for
  * what it weighed and did not report, `harvestNote`, and only that answer's `reportFinding` calls run); for a check,
  * once its verdict is recorded; when the ledger refuses a call, when a call fails, when an answer is cut at the output
  * cap (its finish says `length`; the calls it asked for run first, so a finding it reported is kept), or when the
@@ -76,7 +131,7 @@ const folderJournal = (at: string): Layer.Layer<JournalStorage, TurnJournalFaile
  * is given, the other turns wait on that call, so a failure of it worth another try (`retryable`: a rate limit, a
  * provider's error, a lost connection) is asked once more first; so is it with `retryFirstCall` (a focused group's turn).
  */
-const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Required<KernelTurnsOptions>) {
+const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelTurnsOptions<Tools>>) => Effect.fn("review.turn")(function* (input: TurnInput) {
   const own = yield* stageSpend(input.spend, Option.none())
   const settled = Effect.map(Effect.orDie(own.totals), (totals) => totals.settled)
   const findings = yield* Findings
@@ -110,6 +165,8 @@ const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Req
     yield* kept(recoverTurns)
     const memory = yield* Memory
     const toolkit = yield* reviewTools
+    const hostToolkit = yield* parts.hostTools.toolkit
+    const offered = offeredWith(parts.hostTools)
     const conversations = yield* Sessions
     const id = yield* kept(conversations.create({ owner: TURN_OWNER }))
     made = Option.some(id)
@@ -123,7 +180,7 @@ const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Req
       const context = yield* kept(memory.context(session))
       const prompt = Prompt.make([...input.prompt.prefix, ...context])
       let finish = ""
-      const stream = LanguageModel.streamText({ prompt, toolkit: reviewTools, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
+      const stream = LanguageModel.streamText({ prompt, toolkit: offered, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
         Stream.tap((part) => Effect.sync(() => {
           if (part.type === "finish") finish = part.reason
         })),
@@ -212,7 +269,8 @@ const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Req
       for (const call of answer.toolCalls) {
         const path = call.name === READ_LINES || call.name === READ_DIFF ? Schema.decodeUnknownOption(OpenedPath)(call.params) : Option.none()
         if (Option.isSome(path)) opened.add(path.value.path)
-        yield* kept(callTool(toolkit, call, session))
+        // A host's tool runs through the host's toolkit; any other name, one no toolkit has included, through the six's.
+        yield* kept(Object.hasOwn(hostToolkit.tools, call.name) ? callTool(hostToolkit, call, session) : callTool(toolkit, call, session))
       }
       if (yield* judged) return { _tag: "Judged" } satisfies TurnEnded
       if (cut) return { _tag: "OutputCut" } satisfies TurnEnded
@@ -223,7 +281,7 @@ const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Req
   }).pipe(Effect.ensuring(releaseReserve)))
 
   const model = (checking ? parts.verifyModel : parts.model).pipe(Layer.provide(Layer.succeed(ModelSpend, own)))
-  const stack = Layer.mergeAll(parts.memory, parts.tools(input.reviewed), model).pipe(
+  const stack = Layer.mergeAll(parts.memory, parts.tools(input.reviewed), parts.hostTools.handlers(input.reviewed), model).pipe(
     Layer.provideMerge(sessions()),
     Layer.provideMerge(parts.journal(input.journalAt)),
     Layer.provideMerge(kernel()),
@@ -240,21 +298,30 @@ const runTurn = Effect.fn("review.turn")(function* (input: TurnInput, parts: Req
   return result
 })
 
+/** The turns over their parts: what the tools need, the host's included (`HostToolNeeds`), is the layer's to be given. */
+const turnsOver = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelTurnsOptions<Tools>>): Layer.Layer<ReviewTurns, never, Checkout | Findings | HostToolNeeds<Tools>> => {
+  const run = runTurn(parts)
+  const hostTools = offeredOf(parts.hostTools)
+  return Layer.effect(ReviewTurns, Effect.gen(function* () {
+    const needs = yield* Effect.context<Checkout | Findings | HostToolNeeds<Tools>>()
+    return ReviewTurns.of({ run: (input) => run(input).pipe(Effect.provide(needs)), hostTools })
+  }))
+}
+
 /**
  * The finder turns and the checks over the kernel (`runTurn`), each part swappable (`KernelTurnsOptions`): the model is
  * the host's layer, built for each turn over a ledger of its own inside the stage's `spend`; the tools read the host's
- * `Checkout` and record in its `Findings`.
+ * `Checkout` and record in its `Findings`. A host's tools (`hostTools`) are offered after the six and their calls run
+ * in every step; what they need beyond their handlers (`HostToolNeeds`, `never` for plain tools) the layer needs too.
+ * With none, every request is the six's alone, as before there were host tools.
  */
-export const kernelTurns = (options: KernelTurnsOptions): Layer.Layer<ReviewTurns, never, Checkout | Findings> => {
-  const parts: Required<KernelTurnsOptions> = {
+export const kernelTurns = <Tools extends Record<string, Tool.Any> = NoTools>(options: KernelTurnsOptions<Tools> & NoStockNames<Tools>): Layer.Layer<ReviewTurns, never, Checkout | Findings | HostToolNeeds<Tools>> => {
+  const parts = {
     model: options.model,
     verifyModel: options.verifyModel ?? options.model,
     memory: options.memory ?? flatMemory,
     tools: options.tools ?? reviewToolHandlers,
     journal: options.journal ?? folderJournal,
   }
-  return Layer.effect(ReviewTurns, Effect.gen(function* () {
-    const needs = yield* Effect.context<Checkout | Findings>()
-    return ReviewTurns.of({ run: (input) => runTurn(input, parts).pipe(Effect.provide(needs)) })
-  }))
+  return options.hostTools === undefined ? turnsOver({ ...parts, hostTools: NO_HOST_TOOLS }) : turnsOver({ ...parts, hostTools: options.hostTools })
 }

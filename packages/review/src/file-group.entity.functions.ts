@@ -71,17 +71,19 @@ export const ungroupedOf = (files: ReadonlyArray<FileDiff>, groups: ReadonlyArra
 /**
  * The bytes of a group's first request as the ledger counts them (the request's body, UTF-8): its messages encoded as
  * JSON (the prefix, then the tail as a user message: JSON's escaping of line breaks and quotes counted), and
- * `REQUEST_SLACK_BYTES` for the tools' declarations and the request's other fields.
+ * `REQUEST_SLACK_BYTES` for the six tools' declarations and the request's other fields, and `hostToolBytes` for the
+ * declarations of the tools a host adds after the six (`HostToolsOffered.declarationBytes`; 0 when it adds none).
  */
-export const firstCallBytes = (prompt: ReviewPrompt): number =>
-  new TextEncoder().encode(JSON.stringify({ messages: [...prompt.prefix, { role: "user", content: prompt.tail }] })).length + REQUEST_SLACK_BYTES
+export const firstCallBytes = (prompt: ReviewPrompt, hostToolBytes = 0): number =>
+  new TextEncoder().encode(JSON.stringify({ messages: [...prompt.prefix, { role: "user", content: prompt.tail }] })).length + REQUEST_SLACK_BYTES + hostToolBytes
 
 /**
- * What a group's first call is held at before it is sent, in USD: its request's bytes (`firstCallBytes`) as tokens at
- * `bytesPerToken`, at the input price, and a full answer (`maxOutputTokens`) at the output price.
+ * What a group's first call is held at before it is sent, in USD: its request's bytes (`firstCallBytes`, a host's tools'
+ * declarations included) as tokens at `bytesPerToken`, at the input price, and a full answer (`maxOutputTokens`) at the
+ * output price.
  */
-export const firstCallHold = (prompt: ReviewPrompt, price: CallPrice): number =>
-  (firstCallBytes(prompt) / price.bytesPerToken) * (price.input / 1e6) + price.maxOutputTokens * (price.output / 1e6)
+export const firstCallHold = (prompt: ReviewPrompt, price: CallPrice, hostToolBytes = 0): number =>
+  (firstCallBytes(prompt, hostToolBytes) / price.bytesPerToken) * (price.input / 1e6) + price.maxOutputTokens * (price.output / 1e6)
 
 /** Words on an added line that mark shared state, concurrency, processes, files, the network or secrets: `RISKY_CASED` as written, `RISKY_ANY` in any case. */
 const RISKY_CASED = /\b(Ref|Semaphore|Deferred|Queue|PubSub|Fiber)\b/

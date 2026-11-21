@@ -73,13 +73,18 @@ const INPUT: Parameters<typeof reviewReport>[0] = {
   verdicts: CHECKS,
   promptVersion: "review-prompt-3",
   toolsVersion: "review-tools-3",
-  model: "deepseek/deepseek-v4.1-flash-1017",
+  hostTools: ["findDefinition"],
+  model:"deepseek/deepseek-v4.1-flash-1017",
   wallMs: 41_250,
 }
 
 const REPORT = reviewReport(INPUT)
 
 describe("the review's report", () => {
+  test("reviewReport keeps the versions and the tools a host added, by name in the order offered", () => {
+    expect<unknown>([REPORT.promptVersion, REPORT.toolsVersion, REPORT.hostTools]).toEqual(["review-prompt-3", "review-tools-3", ["findDefinition"]])
+  })
+
   test("reportText: six confirmed findings by severity then path then line, each with its evidence, votes and the check's reason, the rest counted; the turns, buckets, checks, files, each stage's use and the wall time", () => {
     expect(reportText(REPORT)).toBe([
       "Review of #7 in owner/project at bbbbbbbbbbbb, its head",
@@ -191,7 +196,7 @@ describe("the review's report", () => {
   })
 
   test("reportText: with no check run, the kept buckets' findings are shown and the checks said to be none", () => {
-    const unchecked = reviewReport({ ...{ run: REPORT.run, prepared: PREPARED, focus: "whole", effort: REPORT.effort, groups: [], ungrouped: [], notes: [], finder: "strict", vote: true, verify: false, complete: true, turnsAsked: 1, checks: [], findings: FINDINGS, verdicts: [] }, turns: REPORT.turns.slice(0, 1), buckets: BUCKETS.slice(0, 2), promptVersion: "p", toolsVersion: "t", model: "m", wallMs: 1 })
+    const unchecked = reviewReport({ ...{ run: REPORT.run, prepared: PREPARED, focus: "whole", effort: REPORT.effort, groups: [], ungrouped: [], notes: [], finder: "strict", vote: true, verify: false, complete: true, turnsAsked: 1, checks: [], findings: FINDINGS, verdicts: [] }, turns: REPORT.turns.slice(0, 1), buckets: BUCKETS.slice(0, 2), promptVersion: "p", toolsVersion: "t", hostTools: [], model: "m", wallMs: 1 })
     const lines = reportText(unchecked).split("\n")
     expect([lines[2], lines.find((line) => line.startsWith("Turns")), lines.find((line) => line.startsWith("Checks"))]).toEqual([
       "src/sum.ts:4 high bug — Claim 2. (3/1 turn) (restates a CI failure)", "Turns: 1, finding strictly; buckets: 2 kept, 0 left out by the vote, 0 off the changed lines", "Checks: none run",

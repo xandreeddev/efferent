@@ -1,10 +1,11 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { Deferred, Effect, Layer, Option, Redacted } from "effect"
+import { Deferred, Effect, Layer, Option, Redacted, Schema, Stream } from "effect"
 import type { Context } from "effect"
+import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
-import { JournalStorage, ModelSpend, modelSpendMemory } from "@xandreed/core"
+import { JournalStorage, ModelSpend, modelSpendMemory, Sessions } from "@xandreed/core"
 import { flatMemory, Memory } from "@xandreed/sdk"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import { Checkout } from "./checkout.port.js"
@@ -23,7 +24,8 @@ import { withEffort } from "./review-model.entity.functions.js"
 import { REQUEST_SLACK_BYTES } from "./file-group.entity.js"
 import { firstCallBytes } from "./file-group.entity.functions.js"
 import { kernelTurns } from "./review-turn.adapter.js"
-import type { KernelTurnsOptions } from "./review-turn.adapter.js"
+import type { HostTools, KernelTurnsOptions } from "./review-turn.adapter.js"
+import { reviewTools } from "./review-tools.adapter.js"
 import { TurnJournalFailed } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import type { ReviewStage } from "./review-tools.entity.js"
@@ -71,14 +73,17 @@ interface Sent {
   readonly reasoning: unknown
   /** The body's size in bytes, as the ledger counts it. */
   readonly bytes?: number
+  /** Each tool's declaration as sent, in order, as JSON. */
+  readonly declared: ReadonlyArray<string>
 }
 
 /** A request's body, read loosely: the test's own fake wire. */
 const sentOf = (body: unknown): Sent => {
   const messages = typeof body === "object" && body !== null && "messages" in body && Array.isArray(body.messages) ? body.messages : []
   const tools = typeof body === "object" && body !== null && "tools" in body && Array.isArray(body.tools) ? body.tools.map((tool: { readonly function?: { readonly name?: string } }) => tool.function?.name ?? "") : []
+  const declared = typeof body === "object" && body !== null && "tools" in body && Array.isArray(body.tools) ? body.tools.map((tool: unknown) => JSON.stringify(tool)) : []
   const reasoning = typeof body === "object" && body !== null && "reasoning" in body ? body.reasoning : undefined
-  return { messages, tools, reasoning }
+  return { messages, tools, reasoning, declared }
 }
 
 /** An endpoint that answers each request with the script's next answer (the last one again past its end), and keeps what it was sent. */
@@ -110,6 +115,8 @@ interface TurnOptionsForTest {
   readonly prompt?: { readonly prefix: ReadonlyArray<{ readonly role: "system" | "user"; readonly content: string }>; readonly tail: string }
   /** Whether the input asks its first call once more after a failure worth another try without `onFirstAnswer`. */
   readonly retryFirstCall?: boolean
+  /** The turns over the test's model, in place of `kernelTurns` with `turns`: a host's tools of another type. */
+  readonly turnsOf?: (model: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>) => Layer.Layer<ReviewTurns, never, Checkout | Findings>
 }
 
 const testModel = (options: TurnOptionsForTest) =>
@@ -120,7 +127,8 @@ const turn = async (script: Parameters<typeof endpoint>[0], options: TurnOptions
   const { fetch, kept } = endpoint(script)
   const journalAt = join(mkdtempSync(join(fixture.root, "review-")), "turn-1")
   const needs = Layer.mergeAll(checkoutLayer, findingsInMemory, modelSpendMemory)
-  const layers = kernelTurns({ model: testModel(options), ...options.turns }).pipe(Layer.provideMerge(needs))
+  const turns = options.turnsOf === undefined ? kernelTurns({ model: testModel(options), ...options.turns }) : options.turnsOf(testModel(options))
+  const layers = turns.pipe(Layer.provideMerge(needs))
   const stage = options.stage ?? { _tag: "Find", turn: TurnNumber.make(1) }
   /** Each first-answer signal, with how many requests had been sent when it came. */
   const signals: Array<readonly [boolean, number]> = []
@@ -166,6 +174,142 @@ describe("a focused turn and its check on the wire", () => {
     const checked = await turn([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { turns: { verifyModel: none }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     const same = await turn([asks(["verdict", { outcome: "refuted", reason: "r", quote: "q" }])], { stage: { _tag: "Verify", check: CheckNumber.make(1) } })
     expect([found.kept[0]?.reasoning, checked.kept[0]?.reasoning, same.kept[0]?.reasoning]).toEqual([undefined, { enabled: false }, undefined])
+  })
+})
+
+describe("a host's own tools", () => {
+  const SIX = ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]
+  const FindDefinition = Tool.make("findDefinition", {
+    description: "Find where a name is defined at the commit under review.",
+    parameters: Schema.Struct({ name: Schema.String.annotate({ description: "The name, such as sum." }) }),
+    success: Schema.String,
+    failure: Schema.String,
+    failureMode: "return",
+  })
+  const definitionTools = Toolkit.make(FindDefinition)
+  /** A host's tool over what the turn reviews, each name it is asked for kept in `asked`. */
+  const definitions = (asked: Array<string>): HostTools<typeof definitionTools.tools> => ({
+    toolkit: definitionTools,
+    handlers: (reviewed) => definitionTools.toLayer({
+      findDefinition: ({ name }) => Effect.sync(() => {
+        asked.push(name)
+        return `${name} is defined in src/sum.ts at ${reviewed.at}.`
+      }),
+    }),
+  })
+  const withDefinitions = (asked: Array<string>) => (model: Layer.Layer<LanguageModel.LanguageModel, never, ModelSpend>) => kernelTurns({ model, hostTools: definitions(asked) })
+
+  /** The tools a request declares when it is sent with `reviewTools` alone, as every request was before host tools. */
+  const declaredAlone = async () => {
+    const { fetch, kept } = endpoint([says("")])
+    await Effect.runPromise(LanguageModel.streamText({ prompt: Prompt.make([{ role: "user", content: "Review it." }]), toolkit: reviewTools, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
+      Stream.runDrain,
+      Effect.provide(testModel({}).pipe(Layer.provide(modelSpendMemory))),
+      Effect.provideService(FetchHttpClient.Fetch, fetch),
+    ))
+    return kept[0]?.declared ?? []
+  }
+
+  test("with no host tools, every request declares the six as reviewTools alone does, byte for byte and in order", async () => {
+    const ran = await turn([asks(["readLines", { path: "src/sum.ts" }]), says("Read."), says("none")])
+    const alone = await declaredAlone()
+    expect(alone.length).toBe(6)
+    expect(ran.kept.map((one) => one.tools)).toEqual([0, 1, 2].map(() => SIX))
+    expect(ran.kept.map((one) => one.declared)).toEqual([0, 1, 2].map(() => alone))
+  })
+
+  test("a host's tool is offered after the six in every request, and its call runs in a step as the six's do", async () => {
+    const asked: Array<string> = []
+    const ran = await turn([asks(["findDefinition", { name: "sum" }], ["readLines", { path: "src/sum.ts" }]), says("Read."), says("none")], { turnsOf: withDefinitions(asked) })
+    const alone = await declaredAlone()
+    expect(asked).toEqual(["sum"])
+    expect(ran.kept.map((one) => one.tools)).toEqual([0, 1, 2].map(() => [...SIX, "findDefinition"]))
+    expect<unknown>(ran.kept.map((one) => one.declared.slice(0, 6))).toEqual([0, 1, 2].map(() => alone))
+    expect(ran.kept[0]?.declared[6]).toContain("Find where a name is defined at the commit under review.")
+    expect(JSON.stringify(ran.kept[1]?.messages)).toContain(`sum is defined in src/sum.ts at ${head}.`)
+    // Only readLines and readDiff open a file: the host's tool names none.
+    expect<unknown>([ran.result.ended, ran.result.opened]).toEqual([{ _tag: "Answered", summary: "Read." }, ["src/sum.ts"]])
+  })
+
+  test("a host's tool that fails as data, fails as an error or dies is stored as a failed result, and the turn goes on", async () => {
+    const empty = Schema.Struct({})
+    const Failing = Tool.make("failing", { description: "Fails as data.", parameters: empty, success: Schema.String, failure: Schema.String, failureMode: "return" })
+    const Erroring = Tool.make("erroring", { description: "Fails as an error.", parameters: empty, success: Schema.String, failure: Schema.String })
+    const Dying = Tool.make("dying", { description: "Dies.", parameters: empty, success: Schema.String })
+    const brokenTools = Toolkit.make(Failing, Erroring, Dying)
+    const broken: HostTools<typeof brokenTools.tools> = {
+      toolkit: brokenTools,
+      handlers: () => brokenTools.toLayer({
+        failing: () => Effect.fail("No definition of that name."),
+        erroring: () => Effect.fail("The language server is down."),
+        dying: () => Effect.die(new Error("The handler broke.")),
+      }),
+    }
+    const ran = await turn([asks(["failing", {}], ["erroring", {}], ["dying", {}]), says("Done."), says("none")], { turnsOf: (model) => kernelTurns({ model, hostTools: broken }) })
+    const results = JSON.stringify(ran.kept[1]?.messages.slice(-3))
+    expect<unknown>([ran.result.ended, ran.kept.length, ["No definition of that name.", "The language server is down.", "The handler broke."].map((text) => results.includes(text))]).toEqual([
+      { _tag: "Answered", summary: "Done." }, 3, [true, true, true],
+    ])
+  })
+
+  test("what a host's tools add to a request is the bytes the wire sends for their declarations: none, nothing", async () => {
+    const offered = (layer: Layer.Layer<ReviewTurns, never, Checkout | Findings>) =>
+      Effect.runPromise(Effect.map(ReviewTurns, (turns) => turns.hostTools).pipe(Effect.provide(layer.pipe(Layer.provide(Layer.mergeAll(checkoutLayer, findingsInMemory))))))
+    const model = testModel({})
+    const none = await offered(kernelTurns({ model }))
+    const added = await offered(kernelTurns({ model, hostTools: definitions([]) }))
+    const alone = await turn([says("Nothing."), says("none")])
+    const withHost = await turn([says("Nothing."), says("none")], { turnsOf: withDefinitions([]) })
+    expect<unknown>([none, added.names, (withHost.kept[0]?.bytes ?? 0) - (alone.kept[0]?.bytes ?? 0)]).toEqual([{ names: [], declarationBytes: 0 }, ["findDefinition"], added.declarationBytes])
+  })
+
+  test("a closing call runs its reporting calls alone: a host's tool asked for at the step cap or on the harvest does not run", async () => {
+    const capped: Array<string> = []
+    const atCap = await turn([asks(["findDefinition", { name: "sum" }]), asks(["findDefinition", { name: "total" }], ["reportFinding", FINDING])], { maxSteps: 1, turnsOf: withDefinitions(capped) })
+    expect<unknown>([atCap.result.ended._tag, atCap.findings.length, capped, atCap.kept.map((one) => one.tools)]).toEqual(["StepCap", 1, ["sum"], [0, 1].map(() => [...SIX, "findDefinition"])])
+    const harvested: Array<string> = []
+    const harvest = await turn([says("Done."), asks(["findDefinition", { name: "sum" }], ["reportFinding", FINDING]), says("never sent")], { turnsOf: withDefinitions(harvested) })
+    expect<unknown>([harvest.result.ended, harvest.findings.length, harvested, harvest.kept.length]).toEqual([{ _tag: "Answered", summary: "Done." }, 1, [], 2])
+  })
+
+  test("type-level: a host's toolkit without its handlers, a handler of the wrong type or a tool named as one of the six does not compile", () => {
+    const model = testModel({})
+    // A host's tools as they compile: the layer needs what the six need, and nothing more.
+    const plain: Layer.Layer<ReviewTurns, never, Checkout | Findings> = kernelTurns({ model, hostTools: definitions([]) })
+    // @ts-expect-error: the handlers give no handler of findDefinition
+    const missing: HostTools<typeof definitionTools.tools> = { toolkit: definitionTools, handlers: () => Layer.empty }
+    // @ts-expect-error: findDefinition answers a string, not a number
+    const wrong = definitionTools.toLayer({ findDefinition: ({ name }) => Effect.succeed(name.length) })
+    const ReadLinesAgain = Tool.make("readLines", { parameters: Schema.Struct({}), success: Schema.String, failure: Schema.String, failureMode: "return" })
+    const clashing = Toolkit.make(ReadLinesAgain)
+    // @ts-expect-error: a host's tool cannot take the name of one of the six
+    const clash = kernelTurns({ model, hostTools: { toolkit: clashing, handlers: () => clashing.toLayer({ readLines: () => Effect.succeed("") }) } })
+    // Tools named at run time: a toolkit keyed by any string may hold one of the six's names.
+    const named: string = "findDefinition"
+    const anyNamed = Toolkit.make(Tool.make(named, { parameters: Schema.Struct({}), success: Schema.String, failure: Schema.String, failureMode: "return" }))
+    // @ts-expect-error: a toolkit keyed by any string is refused, as it may take a name of the six
+    const byString = kernelTurns({ model, hostTools: { toolkit: anyNamed, handlers: () => anyNamed.toLayer({}) } })
+    expect([Layer.isLayer(plain), typeof missing.handlers, Layer.isLayer(wrong), Layer.isLayer(clash), Layer.isLayer(byString)]).toEqual([true, "function", true, true, true])
+  })
+
+  test("type-level: what a host's tool declares is what the turns' layer needs", () => {
+    const model = testModel({})
+    const FindSession = Tool.make("findSession", { parameters: Schema.Struct({}), success: Schema.String, failure: Schema.String, failureMode: "return", dependencies: [Sessions] })
+    const sessionTools = Toolkit.make(FindSession)
+    const needing: HostTools<typeof sessionTools.tools> = { toolkit: sessionTools, handlers: () => sessionTools.toLayer({ findSession: () => Effect.succeed("") }) }
+    const turns = kernelTurns({ model, hostTools: needing })
+    type Needs<L> = L extends Layer.Layer<infer _Out, infer _Error, infer In> ? In : never
+    const needsSessions: [Sessions] extends [Needs<typeof turns>] ? true : false = true
+    // @ts-expect-error: the layer needs Sessions too, which the host gives
+    const short: Layer.Layer<ReviewTurns, never, Checkout | Findings> = turns
+    expect([needsSessions, Layer.isLayer(short)]).toEqual([true, true])
+  })
+
+  test("in a check, a host's tool is offered after the six and its call runs before the verdict", async () => {
+    const VERDICT = { outcome: "refuted", reason: "Multiplying by one is harmless.", quote: "total += value * 1" }
+    const asked: Array<string> = []
+    const ran = await turn([asks(["findDefinition", { name: "sum" }]), asks(["verdict", VERDICT]), says("never sent")], { stage: { _tag: "Verify", check: CheckNumber.make(1) }, turnsOf: withDefinitions(asked) })
+    expect<unknown>([ran.result.ended, ran.verdict, asked, ran.kept.map((one) => one.tools)]).toEqual([{ _tag: "Judged" }, Option.some({ ...VERDICT, check: 1 }), ["sum"], [0, 1].map(() => [...SIX, "findDefinition"])])
   })
 })
 

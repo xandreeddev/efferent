@@ -5,6 +5,7 @@ import PortsDiagram from "../../components/review/PortsDiagram.astro"
 import { href, reviewHref } from "../../lib/nav"
 import { excerpt } from "../../lib/review-source"
 import turnPartsExample from "../../review/examples/turn-parts.ts?raw"
+import hostToolsExample from "../../review/examples/host-tools.ts?raw"
 import policiesExample from "../../review/examples/policies.ts?raw"
 import reporterExample from "../../review/examples/reporter.ts?raw"
 import sandboxExample from "../../review/examples/sandbox.ts?raw"
@@ -15,6 +16,7 @@ const headings = [
   { depth: 2, slug: "composition", text: "How the command line composes it" },
   { depth: 2, slug: "swap", text: "What a host can swap" },
   { depth: 3, slug: "turn-parts", text: "A turn's parts" },
+  { depth: 3, slug: "host-tools", text: "Tools of your own" },
   { depth: 3, slug: "policies", text: "Policies" },
   { depth: 3, slug: "reporters", text: "Reporters" },
   { depth: 3, slug: "sandbox", text: "A sandbox of your own" },
@@ -37,6 +39,7 @@ const sandboxesPort = excerpt("sandboxes.port.ts", "export class Sandboxes", "}>
 const layers = excerpt("cli.adapter.ts", "export const reviewLayers", "  )")
 const composition = excerpt("cli.adapter.ts", "const base = asked ? validationLayers", "}).pipe(Layer.provideMerge(needs))")
 const turnOptions = excerpt("review-turn.adapter.ts", "export interface KernelTurnsOptions", "}")
+const hostTools = excerpt("review-turn.adapter.ts", "export interface HostTools", "}")
 const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPolicies", "}")
 ---
 
@@ -58,7 +61,7 @@ const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPol
   <ul>
     <li><strong>Three use cases</strong>: <code>prepareReview</code> (fetch and prepare), <code>reviewPullRequest</code> (groups, find, merge, check, records) and <code>validate</code> (the pull request's own commands: the trusted base, the unchanged dependency files, the install and the snapshot). Each asks only for ports.</li>
     <li><strong>The pure functions</strong>: reading and rendering the diff, the file verdicts, packing, grouping, the prompts, merging into buckets, the quote check, the report. Each has table tests; the text the model reads is pinned word for word.</li>
-    <li><strong>The six tools' declarations</strong> (<code>reviewTools</code>): their names, descriptions and parameters, which every turn is offered in one order.</li>
+    <li><strong>The six tools' declarations</strong> (<code>reviewTools</code>): their names, descriptions and parameters, which every turn is offered first, in one order, before any tools a host adds.</li>
     <li><strong>The turn's loop</strong>, inside the stock <code>kernelTurns</code>: steps, the closing call, the harvest. A host that replaces the whole <code>ReviewTurns</code> port brings its own loop instead.</li>
   </ul>
   <PortsDiagram />
@@ -110,6 +113,49 @@ const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPol
   <SourceFile file="review-turn.adapter.ts" code={turnOptions} />
   <SourceFile file="a host's turns" code={turnPartsExample} />
 
+  <h3 id="host-tools">Tools of your own</h3>
+  <p>
+    A host can add tools to the six: a toolkit and its handlers, handed to <code>kernelTurns</code> as
+    <code>hostTools</code>. Every finder turn and every check is offered the six first, in their order, then the host's,
+    and a call of a host's tool runs through <code>callTool</code> as a call of the six does. The closing call and the
+    harvest still run only the tool that reports (<code>reportFinding</code> in a finder turn, <code>verdict</code> in a
+    check). With no host tools, every request is the six alone, as before.
+  </p>
+  <p>
+    The toolkit and its handlers are typed together, so handlers that leave out one of the tools, or answer with the
+    wrong type, do not compile; nor does a host tool that takes the name of one of the six. What a host's tool says to
+    the model, its description and its parameters, is the host's own text.
+  </p>
+  <ul>
+    <li>
+      <strong>Long-lived resources.</strong> The handlers are made again for every turn and check. A language server or
+      a connection belongs in a service the tool declares in its <code>dependencies</code>: the turns' layer then needs
+      it, and the host provides it once.
+    </li>
+    <li>
+      <strong>Bounded answers.</strong> Every result a tool gives is sent again in every later request of its turn, so a
+      host's tool bounds and pages its own answer, as the six do.
+    </li>
+    <li>
+      <strong>Failures.</strong> A host's tool that fails, or whose handler dies, is a failed result the model reads; the
+      turn goes on.
+    </li>
+    <li>
+      <strong>The record and the budget.</strong> <code>review.json</code> names the host's tools offered
+      (<code>hostTools</code>), so runs with and without an add-on are told apart, and a group's first call is held with
+      room for their declarations.
+    </li>
+    <li>
+      <strong>Where it plugs in.</strong> The command line offers the six alone. A host that adds tools composes the
+      review itself, as the command line does above: the forge, the checkout and the logs from the package's adapters
+      (<code>ghForge</code>, <code>gitCheckout</code>, <code>directoryLogs</code> over <code>hostShell</code>),
+      <code>findingsInMemory</code> and the spend ledger, its own <code>kernelTurns</code> layer over them, then
+      <code>reviewPullRequest</code>.
+    </li>
+  </ul>
+  <SourceFile file="review-turn.adapter.ts" code={hostTools} />
+  <SourceFile file="a host's tools" code={hostToolsExample} />
+
   <h3 id="policies">Policies</h3>
   <p>
     Every decision of the preparation is a plain function in <code>ReviewPolicies</code>, given as an argument:
@@ -138,9 +184,10 @@ const policies = excerpt("prepare-review.entity.ts", "export interface ReviewPol
   <h2 id="not-yet">What cannot be swapped yet</h2>
   <ul>
     <li>
-      <strong>New tools.</strong> <code>kernelTurns</code> offers the six tools of <code>reviewTools</code>; its
-      <code>tools</code> option swaps their handlers, not the list. A host that wants more tools has to bring its own
-      <code>ReviewTurns</code>. Tools as add-ons are <a href={reviewHref("planned")}>planned</a>.
+      <strong>The six tools themselves.</strong> A host adds tools after the six
+      (<a href="#host-tools">tools of your own</a>) and swaps their handlers with the <code>tools</code> option, but it
+      cannot take one of the six away, rename it or change its words: they are part of the core, versioned with each
+      review's record. The language-server tools are <a href={reviewHref("planned")}>planned</a> as such an add-on.
     </li>
     <li>
       <strong>The model's words.</strong> The system text, the tails and the host's notes are part of the core, versioned

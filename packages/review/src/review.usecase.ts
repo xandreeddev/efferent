@@ -132,6 +132,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       turnsAsked: focus === "groups" ? parts.turns.length : options.turns,
       promptVersion: REVIEW_PROMPT,
       toolsVersion: REVIEW_TOOLS_VERSION,
+      hostTools: turns.hostTools.names,
       model: options.model,
       wallMs: (yield* Clock.currentTimeMillis) - started,
     })
@@ -178,7 +179,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       const prompt = focusPrompt(prefix, options.finder)
       if (stopped.length === 0) {
         const totals = yield* Effect.orDie(findSpend.totals)
-        if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + firstCallHold(prompt, options.price)) stopped = NOT_REVIEWED_BECAUSE.spent
+        if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + firstCallHold(prompt, options.price, turns.hostTools.declarationBytes)) stopped = NOT_REVIEWED_BECAUSE.spent
       }
       if (stopped.length > 0) {
         groupRuns.push({ group, turn: Option.none(), notReviewed: stopped })

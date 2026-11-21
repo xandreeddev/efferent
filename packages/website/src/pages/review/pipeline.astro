@@ -111,7 +111,8 @@ const verifyTail = excerpt("review-prompt.entity.ts", "export const VERIFY_TAIL"
 
   <h3 id="tools">The six tools</h3>
   <p>
-    Every turn, finder's or check's, is offered all six tools in one order, so their declarations stay in the cached
+    Every turn, finder's or check's, is offered all six tools in one order (then any a host adds, see
+    <a href={reviewHref("plugins") + "#host-tools"}>tools of your own</a>), so their declarations stay in the cached
     part of the request. They read the clone's objects at the commit under review, never a folder on disk, and each
     one bounds and pages its own answer, so no answer grows with a file.
   </p>
