@@ -11,7 +11,7 @@ import { Findings } from "./findings.port.js"
 import { CHARS_PER_TOKEN, CLOSING_ASKS, CONTEXT_FULL, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
 import { thoughtsOf, withThoughts } from "./review-turn.entity.functions.js"
 import type { Thought } from "./review-turn.entity.functions.js"
-import type { CallUsage, TurnEnded, TurnResult } from "./review-turn.entity.js"
+import type { CallUsage, TurnEnded, TurnLimits, TurnResult } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
 import { harvestNote, stepCapNote } from "./review-prompt.entity.functions.js"
@@ -40,6 +40,17 @@ const isModels = (error: unknown): boolean => AiError.isAiError(error) || Predic
 /** Whether a failed call is worth making again: the model's failure whose reason says so (`retryable`), also as a stream's error part's cause. */
 const worthAnotherTry = (error: unknown): boolean =>
   retryable(error) || (Predicate.isTagged(error, "ModelAnswerFailed") && Predicate.hasProperty(error, "cause") && retryable(error.cause))
+
+/** Whether a failure is the model's own (`AiError`) and says that one of its tool calls' parameters is not JSON. */
+const badParams = (error: unknown): boolean => AiError.isAiError(error) && Predicate.isTagged(error.reason, "ToolParameterValidationError")
+
+/**
+ * Whether an answer failed because a tool call's parameters were not JSON, also as a stream's error part's cause: the
+ * Anthropic provider fails the whole answer then, before any of its calls is known, so no failed result can tell the
+ * model. Measured on the review eval: one finder turn's harvest call was lost so (#463, draw 2).
+ */
+const malformedCall = (error: unknown): boolean =>
+  badParams(error) || (Predicate.isTagged(error, "ModelAnswerFailed") && Predicate.hasProperty(error, "cause") && badParams(error.cause))
 
 /**
  * Tools a host adds to the review's six: its toolkit, offered after them in every request of every turn and check, and
@@ -217,12 +228,16 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
       const before = yield* settled
       const tried = yield* Effect.result(modelAnswer(stream, session))
       // The call the other turns wait on is asked once more after a failure worth another try (a rate limit, a
-      // provider's error, a lost connection): one blip would otherwise end the whole find stage. A failed answer
-      // stores nothing, so the second try is the same request; the failed one is a call of its own in the record.
-      const again = Result.isFailure(tried) && step === 1 && (input.onFirstAnswer !== undefined || input.retryFirstCall === true) && worthAnotherTry(tried.failure)
-      if (again) {
+      // provider's error, a lost connection): one blip would otherwise end the whole find stage. So is any call whose
+      // answer failed on a tool call's parameters that were not JSON (`malformedCall`): its calls are lost whole, a
+      // closing call's reports with them. A failed answer stores nothing, so the second try is the same request; the
+      // failed one is a call of its own in the record. Once, either way.
+      const blip = Result.isFailure(tried) && step === 1 && (input.onFirstAnswer !== undefined || input.retryFirstCall === true) && worthAnotherTry(tried.failure)
+      const malformed = Result.isFailure(tried) && malformedCall(tried.failure)
+      const again = blip || malformed
+      if (Result.isFailure(tried) && again) {
         calls.push({ step, tokens: Option.none(), cost: yield* spentSince(before) })
-        yield* Effect.logWarning("a review turn's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed"))
+        yield* Effect.logWarning(malformed ? "a review turn's call answered with a tool call that was not JSON and is asked once more" : "a review turn's first call failed and is asked once more", wordsOf(tried.failure, "the model call failed"))
       }
       const retriedAt = yield* settled
       const answered = again ? yield* Effect.result(modelAnswer(stream, session)) : tried
@@ -340,9 +355,13 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
 const turnsOver = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelTurnsOptions<Tools>>): Layer.Layer<ReviewTurns, never, Checkout | Findings | HostToolNeeds<Tools>> => {
   const run = runTurn(parts)
   const hostTools = offeredOf(parts.hostTools)
+  const limits: TurnLimits = {
+    replayThinking: parts.replayThinking,
+    readTokens: Number.isFinite(parts.readTokens) ? Option.some(parts.readTokens) : Option.none(),
+  }
   return Layer.effect(ReviewTurns, Effect.gen(function* () {
     const needs = yield* Effect.context<Checkout | Findings | HostToolNeeds<Tools>>()
-    return ReviewTurns.of({ run: (input) => run(input).pipe(Effect.provide(needs)), hostTools })
+    return ReviewTurns.of({ run: (input) => run(input).pipe(Effect.provide(needs)), hostTools, limits })
   }))
 }
 

@@ -27,7 +27,7 @@ import { firstCallHold, lookupFailedNote, uncachedCheckNote } from "./file-group
 import { CommitMissing } from "./checkout.entity.js"
 import { Checkout } from "./checkout.port.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
-import type { TurnResult } from "./review-turn.entity.js"
+import type { TurnLimits, TurnResult } from "./review-turn.entity.js"
 import { FOCUS_TAIL } from "./review-prompt.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 import { reportText } from "./review-report.entity.functions.js"
@@ -99,6 +99,9 @@ const FINDING = { path: "src/sum.ts", line: 4, kind: "bug" as const, severity: "
 /** Turns that offer the six tools alone. */
 const NO_HOST_TOOLS: HostToolsOffered = { names: [], declarationBytes: 0 }
 
+/** What the scripted turns say they were given beyond the model, which `review.json` keeps. */
+const LIMITS: TurnLimits = { replayThinking: true, readTokens: Option.some(88_000) }
+
 /**
  * Turns and checks by hand: each turn reports the multiplication, the third also a line no change touches; each
  * check answers `verdict`, quoting `quote`. What each was asked, and in what order the turns started and answered.
@@ -133,6 +136,7 @@ const scripted = (quote: string, firstFails = false, extra?: typeof FINDING, hos
         return { stage, session: Option.some(SessionId.make("s-1")), ended: stage._tag === "Find" ? { _tag: "Answered" as const, summary: "One." } : { _tag: "Judged" as const }, calls: [{ step: 1, tokens: Option.some({ input: 10, cached: 4, output: 2 }), cost: 0.001 }], opened: ["src/sum.ts"] }
       }),
       hostTools,
+      limits: LIMITS,
     })
   }))
   return { asked, events, during, layer }
@@ -160,6 +164,7 @@ const charging = (cost: number, ended: TurnResult["ended"], answered: boolean, h
       return { stage: input.reviewed.stage, session: Option.none(), ended, calls: [{ step: 1, tokens: answered ? Option.some({ input: 10, cached: 0, output: 2 }) : Option.none(), cost }], opened: [] }
     }),
     hostTools,
+    limits: LIMITS,
   }))
   return { started, layer }
 }
@@ -190,6 +195,8 @@ describe("reviewPullRequest", () => {
     expect([existsSync(join(folder, "turn-1")), existsSync(join(folder, "check-1"))]).toEqual([true, true])
     const kept = await Effect.runPromise(Schema.decodeUnknownEffect(Schema.fromJsonString(ReviewReport))(readFileSync(join(folder, "review.json"), "utf8")))
     expect(kept).toEqual(report)
+    // What the turns were given beyond the model is kept, the read limit as a number on the wire.
+    expect<unknown>([report.limits, JSON.parse(readFileSync(join(folder, "review.json"), "utf8")).limits]).toEqual([LIMITS, { replayThinking: true, readTokens: 88_000 }])
     expect(readFileSync(join(folder, "prepared.json"), "utf8").includes(`"source": "first-ci-run"`)).toBe(true)
     await new Promise((resolve) => setTimeout(resolve, 5))
     const again = await reviewWith(scripted("total += value * 1").layer)
@@ -214,6 +221,7 @@ describe("reviewPullRequest", () => {
           return { stage, session: Option.none(), ended: stage._tag === "Find" ? { _tag: "Answered" as const, summary: "One." } : { _tag: "Judged" as const }, calls: [], opened: [] }
         }),
         hostTools: NO_HOST_TOOLS,
+        limits: LIMITS,
       })
     }))
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, turns: 2 })
@@ -399,6 +407,7 @@ describe("reviewPullRequest", () => {
           return { stage, session: Option.none(), ended: { _tag: "ModelFailed" as const, message: "no answer" }, calls: [{ step: 1, tokens: Option.none(), cost: 0 }], opened: [] }
         }),
         hostTools: NO_HOST_TOOLS,
+        limits: LIMITS,
       })
     }))
     const report = await reviewWith(layer, { ...REVIEW_OPTIONS, focus: "groups" })

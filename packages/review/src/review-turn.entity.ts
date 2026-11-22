@@ -16,15 +16,33 @@ export const CLOSING_ASKS = 2
 /**
  * The failed result a call gets, in place of running, once the turn's next request would pass its model's read limit
  * (`KernelTurnsOptions.readTokens`), by stage: a finder turn is told to report and answer, a check to give its verdict,
- * so it reads no more. Its answers still add to later requests, so a request may still grow past the limit by them.
+ * so it reads no more. Its answers still add to later requests, so a request may still grow past the limit by them:
+ * on the review eval, every request past 100,000 tokens grew by the model's own answers (10,000 to 15,000 tokens of
+ * thinking and reports in one), never by a read, and a gold was reported in one such request, so nothing stops them.
  */
 export const CONTEXT_FULL = {
   Find: "Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary.",
   Verify: "Not run: this check has read as much as one request can hold. Give your verdict with the verdict tool now, quoting the lines it rests on.",
 } as const
 
-/** Characters of a stored result counted as one token when the next request's size is estimated: fewer than code averages, so the estimate runs high. */
-export const CHARS_PER_TOKEN = 3
+/**
+ * Characters of a stored result counted as one token when the next request's size is estimated. Measured on the
+ * review eval's two draws with Claude Haiku 5.5 (2026-11-22, 396 steps that stored over 3,000 characters): a stored
+ * result's characters (as JSON, as the loop counts them) made 2.46 a token of the next request's growth, so 2.35
+ * estimates a little high, the safe side; the 3 used before counted reads about a fifth low.
+ */
+export const CHARS_PER_TOKEN = 2.35
+
+/**
+ * What a review's turns were given beyond the model (`ReviewTurns.limits`, kept in `review.json`): whether each
+ * answer's signed thinking was sent back in the turn's later requests, and the read limit past which a call that does
+ * not report is not run (none: no limit).
+ */
+export const TurnLimits = Schema.Struct({
+  replayThinking: Schema.Boolean,
+  readTokens: Schema.OptionFromNullOr(Count),
+})
+export type TurnLimits = typeof TurnLimits.Type
 
 /** What one model call of a turn used, as the provider reported it: tokens read (the cached share among them) and written. */
 export const CallTokens = Schema.Struct({

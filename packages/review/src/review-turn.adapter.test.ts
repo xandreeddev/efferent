@@ -1,7 +1,7 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { Deferred, Effect, Layer, Match, Option, Redacted, Schema, Stream } from "effect"
+import { Deferred, Effect, Layer, Match, Option, Predicate, Redacted, Schema, Stream } from "effect"
 import type { Context } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
@@ -700,7 +700,8 @@ describe("a turn over the Messages wire", () => {
       ]),
       Match.when("tool_use", () => [
         { type: "content_block_start", index, content_block: { type: "tool_use", id: String(block["id"]), name: String(block["name"]), input: {} } },
-        { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block["input"]) } },
+        // `raw`: the call's parameters as the model wrote them, JSON or not.
+        { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: Predicate.isString(block["raw"]) ? block["raw"] : JSON.stringify(block["input"]) } },
       ]),
       Match.orElse(() => [
         { type: "content_block_start", index, content_block: { type: "text", text: "" } },
@@ -742,6 +743,30 @@ describe("a turn over the Messages wire", () => {
     const plain = messagesSse([{ type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }], "tool_use")
     const ran = await turn([plain, answers, answers], { turnsOf: () => kernelTurns({ model: model(undefined) }) })
     expect([ran.result.ended._tag, answersSent(ran.kept, 1), ran.kept[0]?.thinking]).toEqual(["Answered", [[{ type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }]], undefined])
+  })
+
+  describe("an answer whose tool call's parameters are not JSON", () => {
+    // The provider fails such an answer whole, so its calls cannot be answered one by one: the call is asked once more.
+    const bad = messagesSse([{ type: "tool_use", id: "toolu_9", name: "reportFinding", raw: "{'path': 'src/sum.ts', mode: 1}" }], "tool_use")
+    const reports = messagesSse([{ type: "tool_use", id: "toolu_2", name: "reportFinding", input: FINDING }], "tool_use")
+    const turns = () => kernelTurns({ model: model(undefined) })
+
+    test("mid-turn, it is asked once more and the turn goes on; the failed call is one of its own in the record", async () => {
+      const ran = await turn([reads, bad, answers, answers], { turnsOf: turns })
+      expect<unknown>([ran.result.ended, ran.kept.length, ran.result.calls.map((call) => [call.step, Option.isSome(call.tokens)])]).toEqual([
+        { _tag: "Answered", summary: "Nothing to report." }, 4, [[1, true], [2, false], [2, true], [3, true]],
+      ])
+    })
+
+    test("on the harvest, it is asked once more and the finding it then reports is kept", async () => {
+      const ran = await turn([answers, bad, reports, answers], { turnsOf: turns })
+      expect<unknown>([ran.result.ended, ran.findings, ran.kept.length]).toEqual([{ _tag: "Answered", summary: "Nothing to report." }, [{ ...FINDING, turn: 1, number: 1 }], 3])
+    })
+
+    test("only once: a second such answer in a row ends the turn as a failed call", async () => {
+      const ran = await turn([reads, bad, bad, answers], { turnsOf: turns })
+      expect<unknown>([ran.result.ended._tag, ran.kept.length]).toEqual(["ModelFailed", 3])
+    })
   })
 
   test("the Haiku model on the Messages wire: an effort is adaptive thinking at it; default and none ask for none", async () => {

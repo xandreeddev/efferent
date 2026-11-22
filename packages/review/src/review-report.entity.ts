@@ -4,7 +4,7 @@ import { CheckNumber, Finding, Verdict } from "./finding.entity.js"
 import { Effort } from "./review-model.entity.js"
 import { ReviewedAt } from "./prepare-review.entity.js"
 import { PullNumber, RepoName } from "./pull-request.entity.js"
-import { TurnResult } from "./review-turn.entity.js"
+import { TurnLimits, TurnResult } from "./review-turn.entity.js"
 import { Finder } from "./review-prompt.entity.js"
 import { Bucket, BucketMember, BucketNumber } from "./vote.entity.js"
 
@@ -96,6 +96,8 @@ export const ReviewReport = Schema.Struct({
   toolsVersion: Schema.String,
   /** The tools a host added after the six (`kernelTurns`' `hostTools`), by name in the order offered: none for the six alone. */
   hostTools: Schema.Array(Schema.String),
+  /** What the turns were given beyond the model (`ReviewTurns.limits`): thinking sent back, the read limit. */
+  limits: TurnLimits,
   model: Schema.String,
   focus: Focus,
   effort: Schema.Struct({ find: Effort, check: Effort }),

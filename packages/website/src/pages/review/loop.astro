@@ -110,8 +110,10 @@ const ledger = excerpt("stage-spend.port.ts", "export interface StageLedger", "}
     (<code>replayThinking</code>), so a step goes on from what the model already worked out instead of thinking it all
     again. The journal does not keep it; it lives as long as the turn. A model may also name a read limit
     (<code>readTokens</code>): once the next request would pass it, the turn's further calls but the one that reports
-    are answered in fixed words without running, so the turn reads no more; its answers still add a little to each
-    later request.
+    are answered in fixed words without running, so the turn reads no more; its answers still add to each later
+    request, and nothing stops them, since a turn often reports what it found in the answers after that point. An
+    answer the provider refuses whole because one of its tool calls is not valid JSON is asked once more, in any
+    step: its calls cannot be answered one by one, and a closing call's reports would be lost with it.
   </p>
 
   <h2 id="spend">Spend: held, then settled</h2>

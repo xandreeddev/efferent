@@ -1,7 +1,7 @@
 import { Context } from "effect"
 import type { Effect } from "effect"
 import type { StageLedger } from "./stage-spend.port.js"
-import type { TurnOptions, TurnResult } from "./review-turn.entity.js"
+import type { TurnLimits, TurnOptions, TurnResult } from "./review-turn.entity.js"
 import type { ReviewPrompt } from "./review-prompt.entity.js"
 import type { Reviewed } from "./review-tools.entity.js"
 
@@ -36,7 +36,8 @@ export interface HostToolsOffered {
 
 /**
  * The model's turns over a prepared review, the finder's and the checks'. `hostTools` is what each request offers
- * beyond the six (`HostToolsOffered`). `run` runs one: a session of its own in a
+ * beyond the six (`HostToolsOffered`); `limits`, what the turns were given beyond the model (`TurnLimits`), which a
+ * review keeps in its record. `run` runs one: a session of its own in a
  * journal kept at `journalAt`, the model asked step by step with the review's tools until it answers without a call, a
  * check gives its verdict, or it stops (its step cap, after one call that may only report; a refused or failed call, an
  * answer cut at the output cap, a journal that fails) with the findings so far. It never fails: how it ended is in its
@@ -45,4 +46,5 @@ export interface HostToolsOffered {
 export class ReviewTurns extends Context.Service<ReviewTurns, {
   readonly run: (input: TurnInput) => Effect.Effect<TurnResult>
   readonly hostTools: HostToolsOffered
+  readonly limits: TurnLimits
 }>()("@xandreed/review/ReviewTurns") {}
