@@ -147,7 +147,7 @@ const modelOf = (id: Option.Option<string>, price: Option.Option<string>): Effec
   const base = known ?? { ...DEFAULT_REVIEW_MODEL, model: named }
   return Effect.succeed({
     ...base,
-    price: Option.match(prices, { onNone: () => base.price, onSome: ([input = 0, cacheRead = 0, output = 0]) => ({ input, cacheRead, output }) }),
+    price: Option.match(prices, { onNone: () => base.price, onSome: ([input = 0, cacheRead = 0, output = 0]) => ({ ...base.price, input, cacheRead, output }) }),
   })
 }
 

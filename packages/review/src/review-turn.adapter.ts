@@ -301,7 +301,7 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
       let added = 0
       for (const call of answer.toolCalls) {
         if (call.name !== reports && requested + added / CHARS_PER_TOKEN >= parts.readTokens) {
-          yield* kept(session.append(toolResult(call, CONTEXT_FULL, true)))
+          yield* kept(session.append(toolResult(call, CONTEXT_FULL[stage._tag], true)))
           continue
         }
         const path = call.name === READ_LINES || call.name === READ_DIFF ? Schema.decodeUnknownOption(OpenedPath)(call.params) : Option.none()

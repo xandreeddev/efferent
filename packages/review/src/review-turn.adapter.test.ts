@@ -671,12 +671,21 @@ describe("a turn's read limit", () => {
     const limited = await turn([asks(read, read, ["reportFinding", FINDING]), says("One.")], { turns: { readTokens: 1_100 } })
     const free = await turn([asks(read, read, ["reportFinding", FINDING]), says("One.")])
     const refused = resultsSent(limited.kept, 1)
-    expect([refused.length, refused[0]?.includes("lines 1 to"), refused[1], limited.findings.length]).toEqual([3, true, JSON.stringify(CONTEXT_FULL), 1])
+    expect([refused.length, refused[0]?.includes("lines 1 to"), refused[1], limited.findings.length]).toEqual([3, true, JSON.stringify(CONTEXT_FULL.Find), 1])
     expect([resultsSent(free.kept, 1).filter((text) => text.includes("lines 1 to")).length, free.findings.length]).toEqual([2, 1])
   })
 
-  test("the words a call past the limit gets", () => {
-    expect(CONTEXT_FULL).toBe("Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary.")
+  test("in a check past the limit a read gets the check's words, and the verdict still runs", async () => {
+    const verdict = ["verdict", { outcome: "confirmed", reason: "r", quote: "total += value * 1" }] as const
+    const checked = await turn([asks(read, read, verdict)], { turns: { readTokens: 1_100 }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    expect([checked.result.ended._tag, Option.isSome(checked.verdict)]).toEqual(["Judged", true])
+  })
+
+  test("the words a call past the limit gets, by stage", () => {
+    expect(CONTEXT_FULL).toEqual({
+      Find: "Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary.",
+      Verify: "Not run: this check has read as much as one request can hold. Give your verdict with the verdict tool now, quoting the lines it rests on.",
+    })
   })
 })
 
@@ -719,6 +728,14 @@ describe("a turn over the Messages wire", () => {
       "Answered", 3, [[{ type: "thinking", thinking: "", signature: "sig-1" }, call]], [{ type: "thinking", thinking: "", signature: "sig-1" }, call],
     ])
     expect([off.result.ended._tag, answersSent(off.kept, 1)]).toEqual(["Answered", [[call]]])
+  })
+
+  test("a first call cut after its signed thinking and asked again keeps only the second attempt's thinking", async () => {
+    // The first attempt streams a signed thinking block, then its connection ends before `message_stop`.
+    const cut = messagesSse([{ type: "thinking", signature: "sig-lost" }], "end_turn").split("event: message_delta")[0]!
+    const ran = await turn([cut, reads, answers, answers], { turnsOf: () => kernelTurns({ model: model("high") }) })
+    const call = { type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }
+    expect([ran.result.ended._tag, ran.kept.length, answersSent(ran.kept, 2)]).toEqual(["Answered", 4, [[{ type: "thinking", thinking: "", signature: "sig-1" }, call]]])
   })
 
   test("an answer with no signed thinking is sent as it was; no effort, no thinking asked for", async () => {

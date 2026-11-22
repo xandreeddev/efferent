@@ -15,9 +15,13 @@ export const CLOSING_ASKS = 2
 
 /**
  * The failed result a call gets, in place of running, once the turn's next request would pass its model's read limit
- * (`KernelTurnsOptions.readTokens`): the model is told to report and answer, so no later request crosses it.
+ * (`KernelTurnsOptions.readTokens`), by stage: a finder turn is told to report and answer, a check to give its verdict,
+ * so it reads no more. Its answers still add to later requests, so a request may still grow past the limit by them.
  */
-export const CONTEXT_FULL = "Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary."
+export const CONTEXT_FULL = {
+  Find: "Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary.",
+  Verify: "Not run: this check has read as much as one request can hold. Give your verdict with the verdict tool now, quoting the lines it rests on.",
+} as const
 
 /** Characters of a stored result counted as one token when the next request's size is estimated: fewer than code averages, so the estimate runs high. */
 export const CHARS_PER_TOKEN = 3
