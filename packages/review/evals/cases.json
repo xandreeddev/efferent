@@ -1,0 +1,4029 @@
+{
+ "dataset": "review-bugs",
+ "version": "1",
+ "cases": [
+  {
+   "gold": "fm-418-by-453",
+   "pr": 418,
+   "reviewSha": "eaea24a5df6380fc148655d2e4e090a6e85916db",
+   "baseSha": "755e774dbe7b470a1a526ec03a800832a41d6a8e",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "In the file session store a native call that never answers made healthy calls fail with store.stalled, and removing a session listed children before moving it away, so a child created meanwhile outlived it.",
+   "goldLines": {
+    "packages/plugin-session-files/src/session-log.adapter.ts": [
+     [
+      119,
+      120
+     ],
+     [
+      125,
+      127
+     ],
+     [
+      132,
+      135
+     ],
+     [
+      176,
+      176
+     ],
+     [
+      180,
+      180
+     ],
+     [
+      197,
+      197
+     ],
+     [
+      210,
+      212
+     ],
+     [
+      237,
+      237
+     ],
+     [
+      242,
+      242
+     ],
+     [
+      245,
+      245
+     ],
+     [
+      251,
+      252
+     ],
+     [
+      256,
+      257
+     ],
+     [
+      260,
+      261
+     ],
+     [
+      268,
+      268
+     ],
+     [
+      277,
+      277
+     ],
+     [
+      284,
+      284
+     ],
+     [
+      295,
+      295
+     ],
+     [
+      301,
+      306
+     ],
+     [
+      313,
+      317
+     ],
+     [
+      320,
+      320
+     ],
+     [
+      324,
+      328
+     ],
+     [
+      358,
+      359
+     ],
+     [
+      386,
+      386
+     ],
+     [
+      402,
+      404
+     ],
+     [
+      408,
+      408
+     ],
+     [
+      416,
+      416
+     ],
+     [
+      452,
+      452
+     ],
+     [
+      454,
+      454
+     ],
+     [
+      501,
+      501
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-426-by-455",
+   "pr": 426,
+   "reviewSha": "20870384874162ff374ef6413511f9be05e81e72",
+   "baseSha": "14299752388fbb913a202f8ee9da52d59e6d0683",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "concurrency",
+   "confidence": "low",
+   "description": "Once the assistant request became durable before its handlers ran, a concurrent run of the open turn was told a call still running elsewhere was interrupted.",
+   "goldLines": {
+    "packages/core/src/memory/memory-log.entity.functions.ts": [
+     [
+      276,
+      276
+     ],
+     [
+      299,
+      299
+     ],
+     [
+      522,
+      522
+     ],
+     [
+      524,
+      524
+     ],
+     [
+      526,
+      533
+     ],
+     [
+      539,
+      540
+     ],
+     [
+      542,
+      543
+     ],
+     [
+      558,
+      567
+     ],
+     [
+      569,
+      572
+     ],
+     [
+      585,
+      585
+     ],
+     [
+      590,
+      592
+     ]
+    ],
+    "packages/plugin-agent-loop/src/loop.ts": [
+     [
+      764,
+      764
+     ],
+     [
+      782,
+      782
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-431-by-452",
+   "pr": 431,
+   "reviewSha": "be9dcff8eff997563e8a7d56beb2db9966940c4e",
+   "baseSha": "ad247d83badab70841b368f4bb03095520748d14",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "The inbox drainer retried an input that kept failing forever ahead of all later inputs in its session, and resumed any interrupted turn, so a turn stopped by its time limit or by the host was restarted repeatedly.",
+   "goldLines": {
+    "packages/core/src/ports/sessions.port.ts": [
+     [
+      144,
+      145
+     ]
+    ],
+    "packages/core/src/session/sessions.conformance.ts": [
+     [
+      662,
+      664
+     ]
+    ],
+    "packages/plugin-sessions/src/inbox-drain.adapter.ts": [
+     [
+      5,
+      5
+     ],
+     [
+      7,
+      7
+     ],
+     [
+      9,
+      9
+     ],
+     [
+      13,
+      13
+     ],
+     [
+      27,
+      27
+     ],
+     [
+      34,
+      34
+     ],
+     [
+      56,
+      57
+     ],
+     [
+      61,
+      61
+     ],
+     [
+      64,
+      64
+     ],
+     [
+      79,
+      79
+     ],
+     [
+      81,
+      88
+     ],
+     [
+      92,
+      94
+     ],
+     [
+      96,
+      96
+     ],
+     [
+      101,
+      101
+     ],
+     [
+      103,
+      104
+     ],
+     [
+      152,
+      152
+     ]
+    ],
+    "packages/plugin-sessions/src/inbox-drain.entity.functions.ts": [
+     [
+      1,
+      2
+     ],
+     [
+      5,
+      5
+     ],
+     [
+      15,
+      15
+     ],
+     [
+      17,
+      17
+     ],
+     [
+      24,
+      24
+     ],
+     [
+      29,
+      29
+     ],
+     [
+      37,
+      39
+     ],
+     [
+      41,
+      45
+     ],
+     [
+      47,
+      47
+     ],
+     [
+      51,
+      53
+     ],
+     [
+      59,
+      59
+     ],
+     [
+      66,
+      66
+     ],
+     [
+      79,
+      79
+     ],
+     [
+      89,
+      89
+     ]
+    ],
+    "packages/plugin-sessions/src/inbox-drain.entity.ts": [
+     [
+      28,
+      28
+     ],
+     [
+      39,
+      39
+     ],
+     [
+      45,
+      45
+     ],
+     [
+      57,
+      57
+     ]
+    ],
+    "packages/plugin-sessions/src/sessions-state.entity.ts": [
+     [
+      139,
+      139
+     ]
+    ],
+    "packages/plugin-sessions/src/sessions.adapter.ts": [
+     [
+      209,
+      216
+     ],
+     [
+      225,
+      225
+     ],
+     [
+      229,
+      229
+     ],
+     [
+      291,
+      291
+     ],
+     [
+      799,
+      799
+     ],
+     [
+      802,
+      802
+     ],
+     [
+      831,
+      831
+     ],
+     [
+      850,
+      850
+     ]
+    ],
+    "packages/plugin-sessions/src/turn-writer.adapter.ts": [
+     [
+      106,
+      106
+     ],
+     [
+      273,
+      273
+     ]
+    ],
+    "packages/sdk/src/agent.adapter.ts": [
+     [
+      153,
+      153
+     ],
+     [
+      485,
+      485
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-436-by-450",
+   "pr": 436,
+   "reviewSha": "d8cb2e176567094fd426a7c2e0b4e26c2a868e0a",
+   "baseSha": "22870ff2e5c9b9fb4c4eb9489944e2e0b1f0be14",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "A successful response whose body lost its connection was classified as a permanent invalid response, and settled requests' headers were cut at requestTimeoutMs and the generation retried.",
+   "goldLines": {
+    "packages/plugin-models/src/llm/compat.ts": [
+     [
+      469,
+      469
+     ]
+    ],
+    "packages/plugin-models/src/llm/model-retry-policy.entity.functions.ts": [
+     [
+      6,
+      6
+     ],
+     [
+      9,
+      9
+     ],
+     [
+      17,
+      18
+     ],
+     [
+      21,
+      22
+     ],
+     [
+      43,
+      43
+     ]
+    ],
+    "packages/plugin-models/src/llm/model-retry-policy.entity.ts": [
+     [
+      30,
+      30
+     ]
+    ],
+    "packages/plugin-models/src/llm/retry.ts": [
+     [
+      7,
+      7
+     ]
+    ],
+    "packages/plugin-models/src/transport/models-transport.adapter.ts": [
+     [
+      218,
+      221
+     ],
+     [
+      231,
+      231
+     ],
+     [
+      246,
+      246
+     ],
+     [
+      257,
+      257
+     ]
+    ],
+    "packages/plugin-models/src/transport/resilient-http-client.adapter.ts": [
+     [
+      8,
+      8
+     ],
+     [
+      57,
+      57
+     ],
+     [
+      59,
+      59
+     ],
+     [
+      62,
+      62
+     ],
+     [
+      102,
+      102
+     ],
+     [
+      107,
+      110
+     ],
+     [
+      136,
+      136
+     ],
+     [
+      169,
+      169
+     ],
+     [
+      181,
+      182
+     ],
+     [
+      191,
+      191
+     ],
+     [
+      199,
+      201
+     ]
+    ],
+    "scripts/verify-packages.ts": [
+     [
+      542,
+      542
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-438-by-456",
+   "pr": 438,
+   "reviewSha": "5965163a9b6bf296cc6c8f73e198af4d3c33f952",
+   "baseSha": "a94dc5a64ffda50b5a28561e918ab31fcf57ffcc",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "low",
+   "description": "Memory maintenance ran between the loop and the turn's end, so a cancel, time limit or crash during a slow summary stored a completed turn as interrupted with no reply, and a failing summary failed a completed turn.",
+   "goldLines": {
+    "packages/core/src/memory/memory-session.ts": [
+     [
+      200,
+      202
+     ]
+    ],
+    "packages/core/src/ports/memory.port.ts": [
+     [
+      101,
+      101
+     ]
+    ],
+    "packages/plugin-memory-summary/src/plugin.adapter.ts": [
+     [
+      22,
+      22
+     ],
+     [
+      132,
+      132
+     ]
+    ],
+    "packages/sdk/src/agent.adapter.ts": [
+     [
+      113,
+      115
+     ]
+    ],
+    "packages/sdk/src/index.ts": [
+     [
+      8,
+      9
+     ]
+    ],
+    "packages/sdk/src/turn/turn-observation.entity.functions.ts": [
+     [
+      2,
+      3
+     ]
+    ],
+    "packages/sdk/src/turn/turn-observation.entity.ts": [
+     [
+      2,
+      2
+     ]
+    ],
+    "packages/sdk/src/turn/turn-run.usecase.functions.ts": [
+     [
+      91,
+      96
+     ],
+     [
+      151,
+      156
+     ],
+     [
+      160,
+      160
+     ],
+     [
+      187,
+      187
+     ],
+     [
+      306,
+      306
+     ],
+     [
+      345,
+      345
+     ],
+     [
+      351,
+      351
+     ],
+     [
+      354,
+      355
+     ],
+     [
+      357,
+      357
+     ],
+     [
+      365,
+      365
+     ],
+     [
+      368,
+      370
+     ]
+    ],
+    "scripts/verify-packages.ts": [
+     [
+      799,
+      800
+     ],
+     [
+      804,
+      805
+     ],
+     [
+      810,
+      811
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-441-by-454",
+   "pr": 441,
+   "reviewSha": "6335315632b0b76a09c1a331cad9fd8251611b57",
+   "baseSha": "c213fbbe31ccfb1f354fe25eddd6aac25326f526",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "A missing or damaged media blob failed every later turn begin of the session instead of degrading to a placeholder, and begins read image bytes they did not need.",
+   "goldLines": {
+    "packages/core/src/ports/media-store.port.ts": [
+     [
+      9,
+      9
+     ]
+    ],
+    "packages/core/src/session/media-reference.entity.functions.ts": [
+     [
+      36,
+      40
+     ]
+    ],
+    "packages/core/src/session/session-log-media.adapter.ts": [
+     [
+      5,
+      5
+     ],
+     [
+      18,
+      18
+     ],
+     [
+      40,
+      42
+     ],
+     [
+      44,
+      46
+     ],
+     [
+      48,
+      54
+     ],
+     [
+      69,
+      69
+     ],
+     [
+      71,
+      71
+     ],
+     [
+      83,
+      83
+     ],
+     [
+      85,
+      91
+     ],
+     [
+      97,
+      99
+     ],
+     [
+      103,
+      104
+     ],
+     [
+      114,
+      114
+     ]
+    ],
+    "packages/core/src/turn/request-part.entity.functions.ts": [
+     [
+      25,
+      25
+     ]
+    ],
+    "packages/plugin-session-files/src/media-store-directory.adapter.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      3,
+      4
+     ],
+     [
+      58,
+      58
+     ],
+     [
+      60,
+      60
+     ],
+     [
+      77,
+      77
+     ],
+     [
+      92,
+      98
+     ],
+     [
+      102,
+      102
+     ],
+     [
+      104,
+      105
+     ]
+    ],
+    "packages/plugin-sessions/src/sessions.adapter.ts": [
+     [
+      331,
+      331
+     ]
+    ],
+    "scripts/verify-packages.ts": [
+     [
+      853,
+      853
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-447-by-451",
+   "pr": 447,
+   "reviewSha": "d74d9208b947ce1ddb7a8a550aa344286f52822d",
+   "baseSha": "a34c0a18b37aa84b9ae43c257ac7cef817a7bb29",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "resource",
+   "confidence": "medium",
+   "description": "The stdio process host failed a writer immediately when every pending slot was taken instead of waiting for one, so bursts took the host down.",
+   "goldLines": {
+    "packages/process-host/src/process-host.adapter.ts": [
+     [
+      4,
+      4
+     ],
+     [
+      103,
+      103
+     ]
+    ],
+    "packages/process-host/src/process-peer.conformance.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      104,
+      106
+     ],
+     [
+      109,
+      110
+     ],
+     [
+      112,
+      112
+     ]
+    ],
+    "packages/process-host/src/process-runtime.adapter.ts": [
+     [
+      21,
+      21
+     ]
+    ],
+    "packages/process-host/src/stdio-peer.adapter.ts": [
+     [
+      245,
+      246
+     ],
+     [
+      256,
+      256
+     ],
+     [
+      263,
+      263
+     ]
+    ],
+    "scripts/verify-packages.ts": [
+     [
+      920,
+      920
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-450-by-539",
+   "pr": 450,
+   "reviewSha": "4a34d804a48f8088eded676caa01deade55d929e",
+   "baseSha": "746acb230cc322baae8591ff8bd082fe134f0938",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "error-handling",
+   "confidence": "low",
+   "description": "A settled header timeout that fired before the wall clock reached the deadline was still treated as retryable, so a request that may already have generated was sent again.",
+   "goldLines": {
+    "packages/plugin-models/src/transport/resilient-http-client.adapter.ts": [
+     [
+      209,
+      209
+     ],
+     [
+      253,
+      253
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-456-df584a5a",
+   "pr": 456,
+   "reviewSha": "df584a5ae069708ebd1b77129261e0b5f8723ebb",
+   "baseSha": "4a34d804a48f8088eded676caa01deade55d929e",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "A sealed turn kept only the reply's ending and not its closing drafts, so a takeover after the holder died during maintenance stored the turn completed without the reply's text.",
+   "goldLines": {
+    "packages/plugin-sessions/src/turn-writer.adapter.ts": [
+     [
+      541,
+      541
+     ]
+    ],
+    "packages/plugin-sessions/src/turn-writer.entity.functions.ts": [
+     [
+      171,
+      174
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-463-by-487",
+   "pr": 463,
+   "reviewSha": "055dc4dff37977089a2d0777b910f4281cf9bc6c",
+   "baseSha": "af94d9de27870422c6ebd0995e63d1e9f359b1fb",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "Quote re-anchoring used indexOf and only re-anchored a quote that occurs exactly once, so a repeated quote kept the model's wrong offsets and failed validation.",
+   "goldLines": {
+    "packages/core/src/knowledge/knowledge-extraction.entity.functions.ts": [
+     [
+      92,
+      94
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-463-by-500",
+   "pr": 463,
+   "reviewSha": "055dc4dff37977089a2d0777b910f4281cf9bc6c",
+   "baseSha": "af94d9de27870422c6ebd0995e63d1e9f359b1fb",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "high",
+   "description": "Knowledge engines recorded jobs under a constant engine id (rag:N / memory:N) and claims filtered on no engine, so processes with different embedding models on one store claimed and embedded each other's jobs.",
+   "goldLines": {
+    "packages/core/src/index.ts": [
+     [
+      482,
+      482
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge-store.conformance.ts": [
+     [
+      14,
+      14
+     ],
+     [
+      27,
+      27
+     ],
+     [
+      29,
+      29
+     ],
+     [
+      51,
+      51
+     ],
+     [
+      240,
+      241
+     ],
+     [
+      261,
+      261
+     ],
+     [
+      263,
+      267
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge.entity.ts": [
+     [
+      117,
+      117
+     ],
+     [
+      129,
+      129
+     ],
+     [
+      131,
+      131
+     ],
+     [
+      135,
+      135
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge.memory.adapter.ts": [
+     [
+      133,
+      133
+     ]
+    ],
+    "packages/plugin-knowledge-postgres/src/knowledge-store.adapter.ts": [
+     [
+      257,
+      258
+     ]
+    ],
+    "packages/plugin-memory/src/memory-engine.adapter.ts": [
+     [
+      4,
+      4
+     ],
+     [
+      16,
+      16
+     ],
+     [
+      104,
+      104
+     ],
+     [
+      192,
+      192
+     ]
+    ],
+    "packages/plugin-rag/src/rag-engine.adapter.ts": [
+     [
+      4,
+      4
+     ],
+     [
+      15,
+      15
+     ],
+     [
+      103,
+      103
+     ],
+     [
+      187,
+      187
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-463-by-501",
+   "pr": 463,
+   "reviewSha": "055dc4dff37977089a2d0777b910f4281cf9bc6c",
+   "baseSha": "af94d9de27870422c6ebd0995e63d1e9f359b1fb",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "resource",
+   "confidence": "low",
+   "description": "Knowledge extraction sent a whole source in one model call with no per-call size bound.",
+   "goldLines": {
+    "packages/core/src/index.ts": [
+     [
+      488,
+      488
+     ],
+     [
+      491,
+      491
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge-extraction.entity.functions.ts": [
+     [
+      6,
+      6
+     ],
+     [
+      60,
+      61
+     ],
+     [
+      69,
+      70
+     ],
+     [
+      87,
+      91
+     ]
+    ],
+    "packages/plugin-memory/src/memory-engine.adapter.ts": [
+     [
+      7,
+      7
+     ],
+     [
+      10,
+      10
+     ],
+     [
+      41,
+      41
+     ],
+     [
+      65,
+      67
+     ],
+     [
+      149,
+      149
+     ],
+     [
+      176,
+      176
+     ]
+    ],
+    "packages/plugin-memory/src/memory.entity.ts": [
+     [
+      38,
+      38
+     ]
+    ],
+    "packages/plugin-memory/src/memory.testing.ts": [
+     [
+      3,
+      4
+     ],
+     [
+      19,
+      19
+     ],
+     [
+      23,
+      24
+     ],
+     [
+      29,
+      29
+     ]
+    ],
+    "packages/plugin-rag/src/rag-engine.adapter.ts": [
+     [
+      5,
+      5
+     ],
+     [
+      9,
+      9
+     ],
+     [
+      38,
+      38
+     ],
+     [
+      40,
+      40
+     ],
+     [
+      46,
+      46
+     ],
+     [
+      48,
+      48
+     ],
+     [
+      56,
+      56
+     ],
+     [
+      58,
+      60
+     ],
+     [
+      83,
+      83
+     ],
+     [
+      143,
+      143
+     ],
+     [
+      173,
+      173
+     ]
+    ],
+    "packages/plugin-rag/src/rag.entity.ts": [
+     [
+      47,
+      47
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-463-by-505",
+   "pr": 463,
+   "reviewSha": "055dc4dff37977089a2d0777b910f4281cf9bc6c",
+   "baseSha": "af94d9de27870422c6ebd0995e63d1e9f359b1fb",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "With graph extraction on, a failed or invalid graph extraction failed the whole RAG job before chunks were published, and Invalid failures were never retried.",
+   "goldLines": {
+    "packages/core/src/index.ts": [
+     [
+      473,
+      473
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge-facade.conformance.ts": [
+     [
+      15,
+      15
+     ],
+     [
+      91,
+      91
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge-store.conformance.ts": [
+     [
+      80,
+      80
+     ],
+     [
+      85,
+      85
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge.entity.ts": [
+     [
+      100,
+      100
+     ],
+     [
+      181,
+      183
+     ]
+    ],
+    "packages/core/src/ports/knowledge.port.ts": [
+     [
+      13,
+      13
+     ]
+    ],
+    "packages/plugin-rag/src/rag-engine.adapter.ts": [
+     [
+      2,
+      2
+     ],
+     [
+      57,
+      57
+     ],
+     [
+      61,
+      64
+     ],
+     [
+      78,
+      78
+     ],
+     [
+      114,
+      114
+     ],
+     [
+      119,
+      119
+     ],
+     [
+      121,
+      121
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-463-by-519",
+   "pr": 463,
+   "reviewSha": "055dc4dff37977089a2d0777b910f4281cf9bc6c",
+   "baseSha": "af94d9de27870422c6ebd0995e63d1e9f359b1fb",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "error-handling",
+   "confidence": "low",
+   "description": "A world change that superseded a record without a stated date failed the whole extraction job as Invalid instead of using the source's occurrence time.",
+   "goldLines": {
+    "packages/core/src/knowledge/knowledge-extraction.entity.functions.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      11,
+      11
+     ],
+     [
+      16,
+      16
+     ],
+     [
+      18,
+      18
+     ],
+     [
+      67,
+      67
+     ],
+     [
+      87,
+      87
+     ],
+     [
+      101,
+      108
+     ],
+     [
+      111,
+      119
+     ],
+     [
+      122,
+      122
+     ],
+     [
+      127,
+      132
+     ],
+     [
+      135,
+      136
+     ],
+     [
+      138,
+      144
+     ],
+     [
+      146,
+      166
+     ],
+     [
+      168,
+      168
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge-facade.conformance.ts": [
+     [
+      11,
+      11
+     ],
+     [
+      36,
+      36
+     ],
+     [
+      89,
+      89
+     ]
+    ],
+    "packages/core/src/knowledge/knowledge.entity.ts": [
+     [
+      90,
+      90
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-463-27b20200",
+   "pr": 463,
+   "reviewSha": "a20d28396200a6cd0e5e14c1fd68888c7853d9c5",
+   "baseSha": "af94d9de27870422c6ebd0995e63d1e9f359b1fb",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "medium",
+   "description": "Forgetting a source cleared staged extractions only for affected source ids and the stage's version check ran after other validations, so staged or late extraction work could retain or republish forgotten evidence.",
+   "goldLines": {
+    "packages/core/src/knowledge/knowledge.memory.adapter.ts": [
+     [
+      151,
+      151
+     ],
+     [
+      156,
+      156
+     ],
+     [
+      234,
+      234
+     ]
+    ],
+    "packages/core/src/ports/background-workers.port.ts": [
+     [
+      7,
+      7
+     ],
+     [
+      9,
+      9
+     ]
+    ],
+    "packages/core/src/ports/knowledge.port.ts": [
+     [
+      11,
+      13
+     ],
+     [
+      15,
+      15
+     ]
+    ],
+    "packages/core/src/session/activity.entity.ts": [
+     [
+      49,
+      49
+     ]
+    ],
+    "packages/plugin-knowledge-postgres/src/knowledge-store.adapter.ts": [
+     [
+      86,
+      88
+     ],
+     [
+      96,
+      96
+     ],
+     [
+      278,
+      280
+     ],
+     [
+      289,
+      289
+     ],
+     [
+      407,
+      407
+     ]
+    ],
+    "packages/plugin-memory/src/memory-engine.adapter.ts": [
+     [
+      95,
+      102
+     ],
+     [
+      104,
+      110
+     ]
+    ],
+    "packages/plugin-rag/src/rag-engine.adapter.ts": [
+     [
+      94,
+      101
+     ],
+     [
+      103,
+      107
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-465-by-467",
+   "pr": 465,
+   "reviewSha": "b71ab9263fea995da0546843acff6cb547af97dd",
+   "baseSha": "7eb972d259e80a0c88a99d81e84e9440aed884f0",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "security",
+   "confidence": "low",
+   "description": "Release automation rewrote the workflow SHA npm signs into provenance, so the payload no longer matched its signing certificate and npm rejected it.",
+   "goldLines": {
+    "scripts/publish-packages.ts": [
+     [
+      141,
+      143
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-465-02f511b4",
+   "pr": 465,
+   "reviewSha": "02a83dfd3ee746f1271ba8bc99a0d3811ff37592",
+   "baseSha": "7eb972d259e80a0c88a99d81e84e9440aed884f0",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "low",
+   "description": "The release version check required every source manifest to declare private: true, rejecting the repository's real mix of private, public and default-public manifests.",
+   "goldLines": {
+    "scripts/release-version-plan.ts": [
+     [
+      18,
+      18
+     ],
+     [
+      38,
+      39
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-480-by-507",
+   "pr": 480,
+   "reviewSha": "5345c53f3a91c59591de83729bea176037a82742",
+   "baseSha": "98639003e40c092f06c1e71d9b63616a82fbee26",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "concurrency",
+   "confidence": "high",
+   "description": "RenderFeed.frames subscribed to the live stream only when the merged stream first pulled it, concurrently with the snapshot fold and backlog read, so payloads published in between were lost for a client joining mid-turn.",
+   "goldLines": {
+    "packages/plugin-render/src/ports/render.port.ts": [
+     [
+      120,
+      120
+     ]
+    ],
+    "packages/plugin-render/src/render-feed.adapter.ts": [
+     [
+      76,
+      81
+     ],
+     [
+      84,
+      90
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-328955e9",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "resource",
+   "confidence": "medium",
+   "description": "Each concurrent regex grep started its own worker isolate with no process-wide bound.",
+   "goldLines": {
+    "packages/plugin-workspace/src/regex-search.adapter.ts": [
+     [
+      11,
+      12
+     ],
+     [
+      15,
+      15
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-39f5b587",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "low",
+   "description": "Views, compaction and digests decoded the live session-log entries in place, so a codec that mutates its input changed what later requests sent.",
+   "goldLines": {
+    "packages/core/src/internal/index.ts": [
+     [
+      20,
+      20
+     ]
+    ],
+    "packages/core/src/turn/prepared-toolkit.adapter.ts": [
+     [
+      3,
+      5
+     ],
+     [
+      10,
+      10
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-58c2b8a2",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "The knowledge stage's cycle check counted supports that the stage retires or the snapshot no longer holds, so a valid stage was refused as cyclic.",
+   "goldLines": {
+    "packages/core/src/knowledge/knowledge.entity.functions.ts": [
+     [
+      429,
+      432
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-5e2f2b0c",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "api-contract",
+   "confidence": "high",
+   "description": "The stream tool-call fragment schema made index a required integer, so OpenAI-compatible gateways that omit or null it failed the whole stream (a regression from 0.19.2).",
+   "goldLines": {
+    "packages/plugin-models/src/llm/chat-wire.entity.ts": [
+     [
+      55,
+      55
+     ]
+    ],
+    "packages/plugin-models/src/llm/sse.ts": [
+     [
+      251,
+      251
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-6720d275",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "low",
+   "description": "The file store probed hard-link support only once rather than at every open, so a store moved to a filesystem without hard links was trusted.",
+   "goldLines": {
+    "packages/plugin-session-files/src/session-log.adapter.ts": [
+     [
+      213,
+      215
+     ],
+     [
+      218,
+      220
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-78479d9f",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "high",
+   "description": "writeJsonObject created every file 0600, making ordinary config.json private on each write, and its failure reason dropped the failing step and errno.",
+   "goldLines": {
+    "packages/plugin-models/src/storage/json-file.ts": [
+     [
+      51,
+      51
+     ],
+     [
+      53,
+      54
+     ],
+     [
+      59,
+      61
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-89369a66",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "The no-progress breaker's identity used canonicalJson of the decoded result, which turns every Date into {}, so tools whose results differ only by date were judged stuck and the run ended degenerate-loop.",
+   "goldLines": {
+    "packages/plugin-agent-loop/src/loop.ts": [
+     [
+      415,
+      415
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-99108cc5",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "resource",
+   "confidence": "high",
+   "description": "The foundry implementor was SIGKILLed alone, leaving the processes it started (watchers, builds, tests) running in the workspace that later gates read.",
+   "goldLines": {
+    "packages/foundry/src/adapters/claudeImplementor.ts": [
+     [
+      32,
+      38
+     ],
+     [
+      41,
+      43
+     ],
+     [
+      45,
+      48
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-9c0ef934",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "The release registry check treated the first failed provenance read (CDN 404, 503, reset) as Missing, refusing a tag or stopping a publish on a transient error.",
+   "goldLines": {
+    "scripts/npm-registry.ts": [
+     [
+      6,
+      6
+     ],
+     [
+      33,
+      35
+     ],
+     [
+      37,
+      42
+     ],
+     [
+      47,
+      47
+     ],
+     [
+      57,
+      60
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-aea05b31",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "Tool-call preparation decoded host-planned params as strict JSON values, so an undefined optional field or a Date made the step malformed and the model got a corrective for a call it never made.",
+   "goldLines": {
+    "packages/core/src/turn/prepared-toolkit.adapter.ts": [
+     [
+      7,
+      9
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-b2849ac7",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "A background handler's publish failed fast with events.capacity whenever any background lane's queue was full, not only its own, turning ordinary backpressure into turn failures.",
+   "goldLines": {
+    "packages/core/src/ports/turn-events.port.ts": [
+     [
+      22,
+      23
+     ]
+    ],
+    "packages/core/src/turn/turn-bus.adapter.ts": [
+     [
+      48,
+      50
+     ],
+     [
+      73,
+      74
+     ],
+     [
+      98,
+      98
+     ],
+     [
+      100,
+      100
+     ],
+     [
+      120,
+      120
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-c1913e87",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "The SQLite session log changed file mode/WAL settings before checking the stored format, so opening an unsupported file mutated it before refusing it.",
+   "goldLines": {
+    "packages/plugin-session-sqlite/src/session-log.adapter.ts": [
+     [
+      115,
+      115
+     ],
+     [
+      119,
+      127
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-c52c796d",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "The regex grep worker imported modules (breaking bundled hosts), counted its own start-up against the grep deadline, and an error or exit of the worker between files was not heard, so it could crash the host.",
+   "goldLines": {
+    "packages/plugin-workspace/src/read-tools.adapter.ts": [
+     [
+      2,
+      2
+     ],
+     [
+      6,
+      6
+     ],
+     [
+      155,
+      156
+     ],
+     [
+      161,
+      162
+     ],
+     [
+      174,
+      174
+     ],
+     [
+      176,
+      176
+     ],
+     [
+      178,
+      178
+     ],
+     [
+      180,
+      183
+     ]
+    ],
+    "packages/plugin-workspace/src/regex-search.adapter.ts": [
+     [
+      2,
+      2
+     ],
+     [
+      4,
+      4
+     ],
+     [
+      6,
+      6
+     ],
+     [
+      8,
+      8
+     ],
+     [
+      10,
+      10
+     ],
+     [
+      13,
+      14
+     ],
+     [
+      16,
+      16
+     ],
+     [
+      19,
+      28
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-c80d3aa2",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "Opening a fresh file store raced another handle that initialized it while this one inspected it, failing the open instead of using the now-initialized store.",
+   "goldLines": {
+    "packages/plugin-session-files/src/session-log.adapter.ts": [
+     [
+      198,
+      200
+     ],
+     [
+      205,
+      206
+     ],
+     [
+      210,
+      210
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-c81ce446",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "error-handling",
+   "confidence": "low",
+   "description": "A dying beforeChunk hook failed the scripted body with a raw Cause, so the client reported the Cause's text instead of the defect.",
+   "goldLines": {
+    "packages/plugin-models/src/transport/scripted-chat.adapter.ts": [
+     [
+      64,
+      64
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-544-d2df5f33",
+   "pr": 544,
+   "reviewSha": "cf508a857ec7fb14b4df70bc08a7a0477297b97f",
+   "baseSha": "b682e58e9cecf492d19ecead8f95b96ca25c0c29",
+   "split": "tuning-544",
+   "source": "within-pr",
+   "category": "resource",
+   "confidence": "medium",
+   "description": "The SSE reader held each data: line with no length bound before decoding, and merging packed tool-call fragments copied the map and part list per fragment (quadratic).",
+   "goldLines": {
+    "packages/plugin-models/src/llm/sse.ts": [
+     [
+      244,
+      248
+     ],
+     [
+      250,
+      250
+     ],
+     [
+      255,
+      255
+     ],
+     [
+      275,
+      277
+     ],
+     [
+      315,
+      315
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-552-24e13b02",
+   "pr": 552,
+   "reviewSha": "58be8ae92757062b25499fc9b64ae573f6131d55",
+   "baseSha": "b30ecaf73073bb6c95b38f8f658fb9ae5290bb75",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "Summary memory dropped the recall_context tool when boundOnWriteChars was 0 although earlier bounded results still carried notices naming it, and spill previews/pages could cut inside a surrogate pair.",
+   "goldLines": {
+    "packages/core/src/harness/capability.entity.ts": [
+     [
+      23,
+      23
+     ],
+     [
+      25,
+      25
+     ]
+    ],
+    "packages/core/src/memory/memory-log.entity.functions.ts": [
+     [
+      568,
+      573
+     ]
+    ],
+    "packages/plugin-memory-summary/src/plugin.adapter.ts": [
+     [
+      68,
+      74
+     ],
+     [
+      101,
+      101
+     ],
+     [
+      230,
+      231
+     ],
+     [
+      254,
+      255
+     ],
+     [
+      259,
+      260
+     ]
+    ],
+    "scripts/memory-maintenance-consumer.fixture.mjs": [
+     [
+      70,
+      70
+     ],
+     [
+      72,
+      72
+     ]
+    ],
+    "scripts/memory-snapshot-consumer.fixture.mjs": [
+     [
+      143,
+      144
+     ]
+    ],
+    "scripts/record-journal-fixture.ts": [
+     [
+      356,
+      356
+     ],
+     [
+      358,
+      358
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-555-by-560",
+   "pr": 555,
+   "reviewSha": "4fc0e7acad0efb780857f1742f0a73484ea63362",
+   "baseSha": "faad8960b86d73ee3c1d2f1e2591f8c85e8f540a",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "Under budget pressure the window compared compact views with shown text in characters while the budget is a JSON-based token estimate, so a 'shorter' view could raise the estimate and cause extra spills and drops.",
+   "goldLines": {
+    "packages/plugin-memory-window/src/plugin.adapter.ts": [
+     [
+      25,
+      30
+     ],
+     [
+      62,
+      62
+     ],
+     [
+      103,
+      103
+     ],
+     [
+      124,
+      125
+     ],
+     [
+      127,
+      128
+     ],
+     [
+      150,
+      153
+     ],
+     [
+      155,
+      156
+     ],
+     [
+      158,
+      159
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-556-by-558",
+   "pr": 556,
+   "reviewSha": "8203981354200445867f1336f4acfc5f10ef18d7",
+   "baseSha": "4fc0e7acad0efb780857f1742f0a73484ea63362",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "The ResultShown refusal text embedded the offset of the head the result showed; once memory later shortened that result, the stored refusal pointed the model past text its request no longer held.",
+   "goldLines": {
+    "packages/core/src/memory/recall.entity.functions.ts": [
+     [
+      7,
+      7
+     ],
+     [
+      60,
+      60
+     ],
+     [
+      130,
+      133
+     ],
+     [
+      135,
+      137
+     ],
+     [
+      139,
+      139
+     ],
+     [
+      144,
+      144
+     ],
+     [
+      146,
+      150
+     ],
+     [
+      153,
+      153
+     ],
+     [
+      155,
+      161
+     ],
+     [
+      165,
+      166
+     ],
+     [
+      183,
+      183
+     ]
+    ],
+    "packages/core/src/memory/recall.entity.ts": [
+     [
+      7,
+      10
+     ],
+     [
+      13,
+      15
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-564-by-566",
+   "pr": 564,
+   "reviewSha": "82048a825b7ad9e52dcb5df568d1d2fe077aa2ef",
+   "baseSha": "01b0716c54e25c0dcb200ff045391f5eba647715",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "The recall guard took 'already read' pages from the call's returned value rather than from the view the request showed, so pages a host presented differently were counted as read and refused.",
+   "goldLines": {
+    "packages/core/src/memory/recall.entity.functions.ts": [
+     [
+      137,
+      137
+     ],
+     [
+      141,
+      147
+     ],
+     [
+      218,
+      220
+     ],
+     [
+      227,
+      229
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-566-3dd98ffb",
+   "pr": 566,
+   "reviewSha": "4b341200355a5803fc6b2f337f481c907e95c83a",
+   "baseSha": "82048a825b7ad9e52dcb5df568d1d2fe077aa2ef",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "medium",
+   "description": "recordedEnd's loop accepted a continuation marker at offset 0 (a page with no text) and an end inside a surrogate pair, so such results were counted as recalled pages and the follow-up call was refused from a bogus offset.",
+   "goldLines": {
+    "packages/core/src/memory/recall.entity.functions.ts": [
+     [
+      137,
+      140
+     ],
+     [
+      148,
+      148
+     ],
+     [
+      153,
+      154
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-573-c14dd223",
+   "pr": 573,
+   "reviewSha": "5ec09df33743e60adf855a5672af23989a68316a",
+   "baseSha": "81e4c17f3fae29a7ae4a5baf9c65f686c9ce3ad9",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "A kernel turn's appends were not serialized with each other or with the turn end, so a concurrent write could interleave with or follow the end; handler interrupts were also re-raised as interrupts instead of the handler's own failure.",
+   "goldLines": {
+    "packages/core/src/kernel/core.adapter.ts": [
+     [
+      61,
+      65
+     ]
+    ],
+    "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts": [
+     [
+      37,
+      37
+     ],
+     [
+      41,
+      43
+     ],
+     [
+      91,
+      91
+     ],
+     [
+      99,
+      100
+     ],
+     [
+      114,
+      116
+     ],
+     [
+      139,
+      140
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-573-c4705225",
+   "pr": 573,
+   "reviewSha": "5ec09df33743e60adf855a5672af23989a68316a",
+   "baseSha": "81e4c17f3fae29a7ae4a5baf9c65f686c9ce3ad9",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "agent.with swapped agents immediately, so while an old turn ran both agents' listeners were on the shared bus and the replaced agent's parts could close before its background listeners finished.",
+   "goldLines": {
+    "packages/core/src/kernel/core.adapter.ts": [
+     [
+      1,
+      4
+     ],
+     [
+      14,
+      19
+     ],
+     [
+      25,
+      27
+     ],
+     [
+      31,
+      31
+     ],
+     [
+      33,
+      47
+     ],
+     [
+      54,
+      54
+     ],
+     [
+      66,
+      68
+     ],
+     [
+      70,
+      72
+     ],
+     [
+      79,
+      82
+     ],
+     [
+      86,
+      86
+     ],
+     [
+      89,
+      90
+     ]
+    ],
+    "packages/core/src/kernel/core.port.ts": [
+     [
+      16,
+      18
+     ],
+     [
+      24,
+      26
+     ],
+     [
+      40,
+      42
+     ],
+     [
+      45,
+      45
+     ]
+    ],
+    "packages/core/src/kernel/index.ts": [
+     [
+      45,
+      46
+     ]
+    ],
+    "packages/core/src/kernel/plugin.adapter.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      23,
+      25
+     ],
+     [
+      56,
+      58
+     ],
+     [
+      80,
+      82
+     ],
+     [
+      102,
+      103
+     ]
+    ],
+    "packages/core/src/kernel/plugin.entity.functions.ts": [
+     [
+      12,
+      13
+     ],
+     [
+      31,
+      33
+     ]
+    ],
+    "packages/core/src/kernel/plugin.entity.ts": [
+     [
+      43,
+      45
+     ],
+     [
+      49,
+      49
+     ]
+    ],
+    "packages/core/src/kernel/sessions.port.ts": [
+     [
+      35,
+      37
+     ]
+    ],
+    "packages/sdk/src/kernel/agent.adapter.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      3,
+      3
+     ],
+     [
+      5,
+      5
+     ],
+     [
+      27,
+      29
+     ],
+     [
+      42,
+      42
+     ],
+     [
+      59,
+      59
+     ],
+     [
+      66,
+      69
+     ],
+     [
+      76,
+      77
+     ],
+     [
+      85,
+      87
+     ],
+     [
+      89,
+      91
+     ],
+     [
+      99,
+      100
+     ],
+     [
+      112,
+      112
+     ],
+     [
+      120,
+      123
+     ],
+     [
+      126,
+      132
+     ],
+     [
+      143,
+      147
+     ],
+     [
+      158,
+      158
+     ],
+     [
+      161,
+      162
+     ]
+    ],
+    "packages/sdk/src/kernel/agent.entity.functions.ts": [
+     [
+      54,
+      57
+     ],
+     [
+      59,
+      61
+     ],
+     [
+      65,
+      65
+     ],
+     [
+      67,
+      68
+     ],
+     [
+      70,
+      70
+     ],
+     [
+      74,
+      75
+     ],
+     [
+      77,
+      79
+     ]
+    ],
+    "packages/sdk/src/kernel/agent.entity.ts": [
+     [
+      79,
+      80
+     ],
+     [
+      87,
+      87
+     ],
+     [
+      99,
+      99
+     ],
+     [
+      107,
+      118
+     ],
+     [
+      123,
+      123
+     ],
+     [
+      126,
+      126
+     ]
+    ],
+    "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      33,
+      35
+     ],
+     [
+      53,
+      60
+     ],
+     [
+      128,
+      129
+     ],
+     [
+      131,
+      133
+     ],
+     [
+      145,
+      145
+     ],
+     [
+      150,
+      150
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-573-d76834db",
+   "pr": 573,
+   "reviewSha": "5ec09df33743e60adf855a5672af23989a68316a",
+   "baseSha": "81e4c17f3fae29a7ae4a5baf9c65f686c9ce3ad9",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "After an append that was interrupted or whose store failed after keeping the event, the session plugin still trusted its cached sequence, so the turn end failed with SeqConflict and the session stayed busy; records named under the reserved core. prefix were also accepted from a body.",
+   "goldLines": {
+    "packages/core/src/kernel/core.port.ts": [
+     [
+      31,
+      33
+     ],
+     [
+      44,
+      44
+     ]
+    ],
+    "packages/core/src/kernel/event.entity.functions.ts": [
+     [
+      2,
+      2
+     ],
+     [
+      30,
+      30
+     ],
+     [
+      35,
+      35
+     ]
+    ],
+    "packages/core/src/kernel/event.entity.ts": [
+     [
+      34,
+      41
+     ],
+     [
+      48,
+      48
+     ],
+     [
+      50,
+      51
+     ],
+     [
+      54,
+      56
+     ],
+     [
+      58,
+      58
+     ],
+     [
+      62,
+      62
+     ]
+    ],
+    "packages/core/src/kernel/index.ts": [
+     [
+      10,
+      10
+     ]
+    ],
+    "packages/core/src/kernel/session.entity.ts": [
+     [
+      52,
+      52
+     ],
+     [
+      54,
+      54
+     ]
+    ],
+    "packages/core/src/kernel/sessions.port.ts": [
+     [
+      19,
+      19
+     ]
+    ],
+    "packages/sdk/src/kernel/plugins/session/sessions.adapter.ts": [
+     [
+      9,
+      9
+     ],
+     [
+      41,
+      41
+     ],
+     [
+      44,
+      44
+     ],
+     [
+      47,
+      49
+     ],
+     [
+      62,
+      64
+     ],
+     [
+      93,
+      94
+     ],
+     [
+      97,
+      98
+     ],
+     [
+      114,
+      114
+     ],
+     [
+      123,
+      123
+     ],
+     [
+      130,
+      132
+     ],
+     [
+      154,
+      154
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-577-by-582",
+   "pr": 577,
+   "reviewSha": "4f81a7341f4f0e90f82fefb793dfe66d993c1a3b",
+   "baseSha": "2bf40b10495611c4b7131ea33b731e34fa30e59e",
+   "split": "held-out",
+   "source": "fix-on-main",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "The learn page runtime kept one open turn for all sessions and stamped traces with it, so a sub-agent's turn in another session marked the chat idle and filed its context under the chat's turn.",
+   "goldLines": {
+    "packages/website/src/learn/runtime.ts": [
+     [
+      38,
+      39
+     ],
+     [
+      43,
+      43
+     ],
+     [
+      91,
+      91
+     ],
+     [
+      133,
+      134
+     ],
+     [
+      138,
+      139
+     ],
+     [
+      151,
+      151
+     ],
+     [
+      182,
+      182
+     ],
+     [
+      186,
+      186
+     ],
+     [
+      189,
+      189
+     ],
+     [
+      203,
+      203
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-595-by-606",
+   "pr": 595,
+   "reviewSha": "c6e62ed94c821de2c62edb78cfe0e53261974780",
+   "baseSha": "c73dd72bba5c079f859b93ad4d2148571a8203a2",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "high",
+   "description": "paired matched results to calls by id within one assistant message, so a model answer that used one id twice sent both calls, one without a result, which providers refuse.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/memory/memory.conformance.ts": [
+     [
+      191,
+      191
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/memory/memory.entity.functions.ts": [
+     [
+      98,
+      103
+     ],
+     [
+      108,
+      111
+     ],
+     [
+      113,
+      122
+     ],
+     [
+      127,
+      127
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "fm-618-by-630",
+   "pr": 618,
+   "reviewSha": "c913c5ed05d70e8e0a64036c14539ceaca2cc8e6",
+   "baseSha": "3adbda4cb7a59b772ef91e6ec31da9e3efa5944d",
+   "split": "tuning",
+   "source": "fix-on-main",
+   "category": "logic",
+   "confidence": "low",
+   "description": "The learn chat board kept tool calls in a map keyed by id, so a repeated id overwrote the earlier call and results were labelled with the wrong call.",
+   "goldLines": {
+    "packages/website/src/learn/task-chips.ts": [
+     [
+      36,
+      37
+     ],
+     [
+      78,
+      78
+     ],
+     [
+      80,
+      94
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-642-cfd20fcd",
+   "pr": 642,
+   "reviewSha": "5fc01b5ae77c1740bc799fc665dd6efa372726cb",
+   "baseSha": "10f010f39b2bbdb927a5a1188a12a59147341a6a",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "low",
+   "description": "The curator accepted quotes found in a tool call's parameters (text the model itself wrote) as evidence, and allowed an 'end' between two memories that share no stored entity.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge-curation.entity.functions.ts": [
+     [
+      9,
+      9
+     ],
+     [
+      109,
+      109
+     ],
+     [
+      150,
+      151
+     ],
+     [
+      156,
+      157
+     ],
+     [
+      171,
+      171
+     ],
+     [
+      304,
+      304
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge-shown.entity.functions.ts": [
+     [
+      4,
+      4
+     ],
+     [
+      43,
+      44
+     ],
+     [
+      58,
+      58
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge-source.entity.functions.ts": [
+     [
+      11,
+      13
+     ],
+     [
+      34,
+      35
+     ],
+     [
+      57,
+      57
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge.entity.functions.ts": [
+     [
+      36,
+      37
+     ],
+     [
+      47,
+      48
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge.entity.ts": [
+     [
+      143,
+      143
+     ],
+     [
+      175,
+      176
+     ],
+     [
+      181,
+      183
+     ],
+     [
+      185,
+      187
+     ],
+     [
+      189,
+      189
+     ],
+     [
+      555,
+      555
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge.testing.ts": [
+     [
+      30,
+      32
+     ]
+    ],
+    "packages/sdk/src/kernel/index.ts": [
+     [
+      69,
+      69
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-644-35bb6b0a",
+   "pr": 644,
+   "reviewSha": "25df77d41496b1310ee28dee9c8d92d1fbe0bfe1",
+   "baseSha": "8567c60411f8caf28cc1d1f66714444f75c4de8b",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "resource",
+   "confidence": "high",
+   "description": "chargedSend made a fresh scope per call and registered its close as a finalizer on the outer scope, so a long-lived host scope accumulated one finalizer (and the hold it keeps) per model call.",
+   "goldLines": {
+    "packages/sdk/src/kernel/node/model-spend/charge.adapter.ts": [
+     [
+      86,
+      86
+     ],
+     [
+      95,
+      97
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-645-24390d28",
+   "pr": 645,
+   "reviewSha": "346819bd1aec4ad723cee5345b71b6f1c0e1c350",
+   "baseSha": "aef717b8566ff6f824f1db43cf4c7d7025117ce2",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "concurrency",
+   "confidence": "medium",
+   "description": "A knowledge curation opened turns on the shared knowledge session without handling SessionBusy, so a curation failed whenever another writer (or a turn end still being announced) held the session.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/knowledge/knowledge.usecase.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      51,
+      53
+     ],
+     [
+      76,
+      76
+     ],
+     [
+      97,
+      97
+     ],
+     [
+      102,
+      102
+     ],
+     [
+      115,
+      115
+     ],
+     [
+      125,
+      125
+     ],
+     [
+      137,
+      137
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-646-79667697-0",
+   "pr": 646,
+   "reviewSha": "0d76544295c5348f03eeb5350b311edd689c0139",
+   "baseSha": "aef717b8566ff6f824f1db43cf4c7d7025117ce2",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "high",
+   "description": "diskFiles passed the replaced file's mode to open(), where the process umask masks it, so a rewritten file could silently lose permission bits (e.g. group/other or exec).",
+   "goldLines": {
+    "packages/sdk/src/kernel/node/files-disk/disk-files.adapter.ts": [
+     [
+      55,
+      56
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-646-79667697-1",
+   "pr": 646,
+   "reviewSha": "0d76544295c5348f03eeb5350b311edd689c0139",
+   "baseSha": "aef717b8566ff6f824f1db43cf4c7d7025117ce2",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "medium",
+   "description": "The workspace search ran caller-supplied regular expressions with no guard against catastrophic backtracking (nested quantifiers such as (a+)+), and a host could not turn regex off, though a running pattern cannot be stopped.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/search/search.entity.functions.ts": [
+     [
+      24,
+      25
+     ],
+     [
+      31,
+      36
+     ],
+     [
+      38,
+      39
+     ],
+     [
+      41,
+      41
+     ],
+     [
+      45,
+      45
+     ],
+     [
+      49,
+      55
+     ],
+     [
+      120,
+      120
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/search/search.entity.ts": [
+     [
+      48,
+      49
+     ],
+     [
+      53,
+      53
+     ]
+    ],
+    "packages/sdk/src/kernel/index.ts": [
+     [
+      56,
+      58
+     ]
+    ],
+    "packages/sdk/src/kernel/plugins/search-files/files-search.adapter.ts": [
+     [
+      3,
+      3
+     ],
+     [
+      5,
+      7
+     ],
+     [
+      10,
+      10
+     ],
+     [
+      15,
+      16
+     ],
+     [
+      21,
+      21
+     ],
+     [
+      23,
+      25
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-646-79667697-2",
+   "pr": 646,
+   "reviewSha": "0d76544295c5348f03eeb5350b311edd689c0139",
+   "baseSha": "aef717b8566ff6f824f1db43cf4c7d7025117ce2",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "resource",
+   "confidence": "medium",
+   "description": "processShell kept unbounded stream output and kept addressing a command's process group after its exit, so a chatty command grew memory without bound and a later kill could hit a reused group id.",
+   "goldLines": {
+    "packages/sdk/src/kernel/node/shell-process/process-shell.adapter.ts": [
+     [
+      63,
+      63
+     ],
+     [
+      78,
+      80
+     ],
+     [
+      103,
+      105
+     ],
+     [
+      124,
+      124
+     ]
+    ],
+    "packages/sdk/src/kernel/node/shell-process/process-shell.entity.ts": [
+     [
+      11,
+      11
+     ],
+     [
+      25,
+      25
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-648-2c736cac",
+   "pr": 648,
+   "reviewSha": "00eb12113c5bcb41117e979cbb0bdef73032c7c2",
+   "baseSha": "c5171d27bbfefd278458b0fcb4819a3dbf522276",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "concurrency",
+   "confidence": "low",
+   "description": "Inbox workers and background-task turns were forked under the short-lived span of the call that started them, so every later turn was parented to an already-ended trace.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/turn/telemetry.entity.functions.ts": [
+     [
+      41,
+      42
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-648-32df45ee",
+   "pr": 648,
+   "reviewSha": "00eb12113c5bcb41117e979cbb0bdef73032c7c2",
+   "baseSha": "c5171d27bbfefd278458b0fcb4819a3dbf522276",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "medium",
+   "description": "With telemetry content off, a failed span's exit (error message, stack, cause) was still handed to the OTLP exporter, leaking prompts, user text or file paths echoed in provider/tool errors.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/turn/telemetry.entity.ts": [
+     [
+      23,
+      25
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/turn/tool-call.entity.functions.ts": [
+     [
+      8,
+      8
+     ],
+     [
+      96,
+      96
+     ],
+     [
+      108,
+      108
+     ],
+     [
+      113,
+      113
+     ]
+    ],
+    "packages/sdk/src/kernel/node/telemetry-otlp/otlp-telemetry.adapter.ts": [
+     [
+      42,
+      42
+     ]
+    ],
+    "packages/sdk/src/kernel/node/telemetry-otlp/otlp-telemetry.entity.ts": [
+     [
+      142,
+      142
+     ],
+     [
+      144,
+      146
+     ]
+    ],
+    "packages/sdk/src/kernel/node/telemetry-otlp/span-policy.adapter.ts": [
+     [
+      1,
+      2
+     ],
+     [
+      7,
+      9
+     ],
+     [
+      11,
+      11
+     ],
+     [
+      15,
+      17
+     ],
+     [
+      62,
+      62
+     ],
+     [
+      73,
+      74
+     ],
+     [
+      87,
+      88
+     ],
+     [
+      90,
+      91
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-648-91e464bb",
+   "pr": 648,
+   "reviewSha": "00eb12113c5bcb41117e979cbb0bdef73032c7c2",
+   "baseSha": "c5171d27bbfefd278458b0fcb4819a3dbf522276",
+   "split": "held-out",
+   "source": "within-pr",
+   "category": "logic",
+   "confidence": "low",
+   "description": "Model calls and tokens were counted in modelAnswer while cost was counted in the spend charge, so calls that bypass modelAnswer (curator, summarizer) reported cost but no calls or tokens.",
+   "goldLines": {
+    "packages/sdk/src/kernel/contracts/turn/model-answer.entity.functions.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      8,
+      8
+     ],
+     [
+      51,
+      51
+     ],
+     [
+      54,
+      55
+     ],
+     [
+      64,
+      65
+     ],
+     [
+      71,
+      71
+     ],
+     [
+      74,
+      77
+     ],
+     [
+      84,
+      84
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/turn/telemetry.entity.functions.ts": [
+     [
+      1,
+      38
+     ]
+    ],
+    "packages/sdk/src/kernel/contracts/turn/telemetry.entity.ts": [
+     [
+      4,
+      4
+     ],
+     [
+      18,
+      18
+     ],
+     [
+      20,
+      20
+     ],
+     [
+      25,
+      25
+     ],
+     [
+      28,
+      33
+     ],
+     [
+      35,
+      36
+     ],
+     [
+      39,
+      41
+     ],
+     [
+      43,
+      46
+     ],
+     [
+      48,
+      50
+     ]
+    ],
+    "packages/sdk/src/kernel/node/model-spend/charge.adapter.ts": [
+     [
+      7,
+      7
+     ],
+     [
+      9,
+      9
+     ],
+     [
+      48,
+      52
+     ]
+    ],
+    "packages/sdk/src/kernel/node/model-spend/model-spend.entity.functions.ts": [
+     [
+      66,
+      69
+     ],
+     [
+      71,
+      74
+     ]
+    ],
+    "packages/sdk/src/kernel/node/model-spend/model-spend.entity.ts": [
+     [
+      96,
+      100
+     ],
+     [
+      103,
+      103
+     ],
+     [
+      106,
+      106
+     ],
+     [
+      108,
+      108
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-657-b6a0e274-0",
+   "pr": 657,
+   "reviewSha": "e51846d450f13c491695393bbd261ce22d1ceee4",
+   "baseSha": "65467b92a089674160f4fb46e18d2a5dc9ed0092",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "high",
+   "description": "The reviewer ran the pull request's own validation commands on the host through processShell (only PATH and HOME stripped), i.e. untrusted code from the PR executed unsandboxed.",
+   "goldLines": {
+    "packages/review/src/cli.adapter.ts": [
+     [
+      14,
+      14
+     ],
+     [
+      23,
+      25
+     ],
+     [
+      37,
+      37
+     ],
+     [
+      72,
+      73
+     ],
+     [
+      83,
+      83
+     ],
+     [
+      86,
+      86
+     ],
+     [
+      89,
+      92
+     ]
+    ],
+    "packages/review/src/cli.entity.ts": [
+     [
+      9,
+      12
+     ]
+    ],
+    "packages/review/src/prepare-review.entity.functions.ts": [
+     [
+      1,
+      3
+     ],
+     [
+      16,
+      16
+     ],
+     [
+      34,
+      34
+     ],
+     [
+      38,
+      39
+     ]
+    ],
+    "packages/review/src/prepare-review.entity.ts": [
+     [
+      26,
+      27
+     ],
+     [
+      32,
+      34
+     ]
+    ],
+    "packages/review/src/prepare-review.usecase.ts": [
+     [
+      11,
+      11
+     ],
+     [
+      35,
+      35
+     ],
+     [
+      42,
+      42
+     ],
+     [
+      76,
+      77
+     ],
+     [
+      79,
+      79
+     ],
+     [
+      81,
+      86
+     ]
+    ],
+    "packages/review/src/validations.adapter.ts": [
+     [
+      1,
+      3
+     ],
+     [
+      5,
+      5
+     ],
+     [
+      7,
+      8
+     ],
+     [
+      17,
+      17
+     ],
+     [
+      19,
+      27
+     ],
+     [
+      44,
+      45
+     ],
+     [
+      47,
+      73
+     ],
+     [
+      75,
+      75
+     ],
+     [
+      81,
+      82
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-657-b6a0e274-1",
+   "pr": 657,
+   "reviewSha": "e51846d450f13c491695393bbd261ce22d1ceee4",
+   "baseSha": "65467b92a089674160f4fb46e18d2a5dc9ed0092",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "medium",
+   "description": "Host-side git commands on the PR's checkout ran with hooks, fsmonitor and pathspec magic enabled, so a crafted repository or a folder named :(glob)x / :!x could run code or change what was read.",
+   "goldLines": {
+    "packages/review/src/checkout-git.adapter.ts": [
+     [
+      5,
+      7
+     ],
+     [
+      11,
+      11
+     ],
+     [
+      21,
+      23
+     ],
+     [
+      37,
+      39
+     ],
+     [
+      53,
+      53
+     ],
+     [
+      58,
+      58
+     ],
+     [
+      64,
+      64
+     ],
+     [
+      66,
+      67
+     ]
+    ],
+    "packages/review/src/checkout.entity.ts": [
+     [
+      12,
+      13
+     ]
+    ],
+    "packages/review/src/checkout.port.ts": [
+     [
+      5,
+      5
+     ],
+     [
+      11,
+      12
+     ],
+     [
+      18,
+      18
+     ]
+    ],
+    "packages/review/src/forge-gh.adapter.ts": [
+     [
+      104,
+      106
+     ]
+    ],
+    "packages/review/src/git-fixture.testing.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      23,
+      25
+     ],
+     [
+      47,
+      49
+     ],
+     [
+      58,
+      60
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-657-b6a0e274-2",
+   "pr": 657,
+   "reviewSha": "e51846d450f13c491695393bbd261ce22d1ceee4",
+   "baseSha": "65467b92a089674160f4fb46e18d2a5dc9ed0092",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "medium",
+   "description": "The prepared diff dropped files that only lost lines, marked files vendored by a folder name, and printed raw paths, so a crafted path could forge a header line and a PR could hide changes from the reviewer.",
+   "goldLines": {
+    "packages/review/src/diff.entity.functions.ts": [
+     [
+      39,
+      42
+     ],
+     [
+      44,
+      45
+     ],
+     [
+      50,
+      52
+     ],
+     [
+      71,
+      73
+     ],
+     [
+      85,
+      85
+     ],
+     [
+      91,
+      91
+     ],
+     [
+      155,
+      155
+     ],
+     [
+      159,
+      159
+     ],
+     [
+      161,
+      161
+     ],
+     [
+      165,
+      165
+     ]
+    ],
+    "packages/review/src/diff.entity.ts": [
+     [
+      37,
+      37
+     ],
+     [
+      41,
+      43
+     ]
+    ],
+    "packages/review/src/file-verdict.entity.functions.ts": [
+     [
+      1,
+      2
+     ],
+     [
+      4,
+      9
+     ],
+     [
+      11,
+      12
+     ],
+     [
+      63,
+      65
+     ],
+     [
+      68,
+      74
+     ],
+     [
+      76,
+      76
+     ]
+    ],
+    "packages/review/src/file-verdict.entity.ts": [
+     [
+      1,
+      2
+     ],
+     [
+      4,
+      6
+     ],
+     [
+      8,
+      8
+     ],
+     [
+      17,
+      17
+     ],
+     [
+      28,
+      30
+     ],
+     [
+      44,
+      45
+     ]
+    ],
+    "packages/review/src/packed-diff.entity.functions.ts": [
+     [
+      4,
+      6
+     ],
+     [
+      12,
+      12
+     ],
+     [
+      14,
+      14
+     ],
+     [
+      20,
+      20
+     ],
+     [
+      22,
+      22
+     ],
+     [
+      24,
+      25
+     ],
+     [
+      30,
+      30
+     ],
+     [
+      33,
+      34
+     ],
+     [
+      36,
+      37
+     ],
+     [
+      40,
+      40
+     ],
+     [
+      50,
+      50
+     ],
+     [
+      72,
+      72
+     ]
+    ],
+    "packages/review/src/packed-diff.entity.ts": [
+     [
+      27,
+      31
+     ]
+    ],
+    "packages/review/src/pull-request.entity.ts": [
+     [
+      5,
+      6
+     ],
+     [
+      19,
+      21
+     ],
+     [
+      51,
+      53
+     ],
+     [
+      67,
+      69
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-657-c76e587b-3",
+   "pr": 657,
+   "reviewSha": "e51846d450f13c491695393bbd261ce22d1ceee4",
+   "baseSha": "65467b92a089674160f4fb46e18d2a5dc9ed0092",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "error-handling",
+   "confidence": "medium",
+   "description": "CI runs were read only for pull_request events and the first page, an auth or repository failure was treated as 'no log', and one unreadable log failed the whole preparation.",
+   "goldLines": {
+    "packages/review/src/forge-gh.adapter.ts": [
+     [
+      1,
+      2
+     ],
+     [
+      47,
+      47
+     ],
+     [
+      63,
+      63
+     ],
+     [
+      73,
+      73
+     ],
+     [
+      117,
+      120
+     ],
+     [
+      124,
+      128
+     ],
+     [
+      137,
+      137
+     ],
+     [
+      146,
+      146
+     ]
+    ],
+    "packages/review/src/forge.port.ts": [
+     [
+      12,
+      15
+     ]
+    ],
+    "packages/review/src/prepare-review.entity.functions.ts": [
+     [
+      20,
+      22
+     ]
+    ],
+    "packages/review/src/prepare-review.entity.ts": [
+     [
+      1,
+      2
+     ],
+     [
+      44,
+      44
+     ],
+     [
+      48,
+      50
+     ],
+     [
+      67,
+      68
+     ]
+    ],
+    "packages/review/src/prepare-review.usecase.ts": [
+     [
+      1,
+      1
+     ],
+     [
+      4,
+      5
+     ],
+     [
+      8,
+      8
+     ],
+     [
+      10,
+      10
+     ],
+     [
+      14,
+      14
+     ],
+     [
+      18,
+      25
+     ],
+     [
+      31,
+      34
+     ],
+     [
+      37,
+      37
+     ],
+     [
+      45,
+      45
+     ],
+     [
+      51,
+      51
+     ],
+     [
+      54,
+      54
+     ],
+     [
+      62,
+      63
+     ],
+     [
+      70,
+      70
+     ],
+     [
+      80,
+      80
+     ]
+    ]
+   }
+  },
+  {
+   "gold": "wp-657-c76e587b-4",
+   "pr": 657,
+   "reviewSha": "e51846d450f13c491695393bbd261ce22d1ceee4",
+   "baseSha": "65467b92a089674160f4fb46e18d2a5dc9ed0092",
+   "split": "tuning",
+   "source": "within-pr",
+   "category": "security",
+   "confidence": "medium",
+   "description": "CI log digests kept escape sequences and control characters and had no bound on line length, failures or summary, though the logs are untrusted PR-controlled text.",
+   "goldLines": {
+    "packages/review/src/log-digest.entity.functions.ts": [
+     [
+      2,
+      2
+     ],
+     [
+      7,
+      7
+     ],
+     [
+      35,
+      36
+     ],
+     [
+      60,
+      60
+     ],
+     [
+      108,
+      108
+     ],
+     [
+      111,
+      112
+     ],
+     [
+      116,
+      117
+     ],
+     [
+      122,
+      123
+     ]
+    ],
+    "packages/review/src/log-digest.entity.ts": [
+     [
+      32,
+      34
+     ],
+     [
+      36,
+      37
+     ],
+     [
+      40,
+      42
+     ]
+    ]
+   }
+  }
+ ]
+}
