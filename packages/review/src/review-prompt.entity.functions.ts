@@ -5,7 +5,7 @@ import { shownPath } from "./diff.entity.functions.js"
 import type { Finding } from "./finding.entity.js"
 import { droppedLines, fileKind, isTestPath, packDiff } from "./packed-diff.entity.functions.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, GROUP_INTRO, HARVEST_NOTE, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
+import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, GROUP_INTRO, HARVEST_NOTE, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, NO_EVIDENCE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
 import type { Finder, FindTailOptions, PromptPart, ReviewPrompt, WalkedFile } from "./review-prompt.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
 import type { ReviewStage } from "./review-tools.entity.js"
@@ -159,8 +159,8 @@ export const verifyPrompt = (prefix: ReadonlyArray<PromptPart>, finding: Finding
     `Kind: ${finding.kind}`,
     `Severity: ${finding.severity}`,
     `Claim: ${finding.claim}`,
-    "Evidence:",
-    finding.evidence,
+    // A report recorded with no evidence (`withEvidence`) says so, so the check reads the cited lines for itself.
+    ...(finding.evidence.length > 0 ? ["Evidence:", finding.evidence] : [NO_EVIDENCE]),
   ].join("\n")
   return { prefix, tail: `${VERIFY_TAIL}\n\n${framed("reported-problem", problem)}` }
 }

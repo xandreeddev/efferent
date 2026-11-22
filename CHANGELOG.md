@@ -37,10 +37,14 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   Gateway sends it, is read as one with the key empty, as Anthropic's own
   API sends it; before, Effect AI refused the whole answer.
 
-- `@xandreed/review`: `reportFinding`'s `evidence` may be left out, and the
-  finding is recorded with none (`review-tools-6`). On the review eval one
-  turn left it out of 11 of its 13 reports, and the failed results that
-  named the missing key did not bring it back, so those findings were lost.
+- `@xandreed/review`: a `reportFinding` call that leaves out `evidence` is
+  run with an empty one (`withEvidence`), so its finding is recorded; the
+  tool still asks for evidence, its declaration unchanged. A check of such a
+  finding reads `Evidence: none was quoted; read the cited lines.`
+  (`NO_EVIDENCE`; `review-tools-6`, `review-prompt-10`). On the review eval
+  all but 11 of about 296 calls gave evidence; the 11 were one turn that left
+  it out again after each failed result named the missing key, and 3 of
+  their 5 findings were lost.
 
 - `@xandreed/review`: a turn whose answer fails because a tool call's
   parameters are not JSON (the Anthropic provider fails the whole answer

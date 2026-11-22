@@ -17,6 +17,7 @@ import type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
 import { harvestNote, stepCapNote } from "./review-prompt.entity.functions.js"
 import { reviewToolHandlers, reviewTools } from "./review-tools.adapter.js"
 import { READ_DIFF, READ_LINES, REPORT_FINDING, VERDICT } from "./review-tools.entity.js"
+import { withEvidence } from "./review-tools.entity.functions.js"
 import type { Reviewed } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
 
@@ -274,7 +275,7 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
         const last = yield* ask(step + asked)
         if (Result.isFailure(last)) return { summary, why: "message" in last.failure ? last.failure.message : last.failure._tag }
         let refused = false
-        for (const call of last.success.answer.toolCalls.filter((call) => call.name === reports)) {
+        for (const call of last.success.answer.toolCalls.filter((call) => call.name === reports).map(withEvidence)) {
           const stored = yield* kept(callTool(toolkit, call, session))
           if (Option.exists(messageOf(stored), (message) => Predicate.isTagged(message, "ToolResult") && message.isFailure)) refused = true
         }
@@ -314,7 +315,7 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
       // Past the model's read limit (`readTokens`), a call that does not report is answered in fixed words instead.
       const requested = Option.match(answer.usage, { onNone: () => 0, onSome: (usage) => usage.inputTokens + usage.outputTokens })
       let added = 0
-      for (const call of answer.toolCalls) {
+      for (const call of answer.toolCalls.map(withEvidence)) {
         if (call.name !== reports && requested + added / CHARS_PER_TOKEN >= parts.readTokens) {
           yield* kept(session.append(toolResult(call, CONTEXT_FULL[stage._tag], true)))
           continue

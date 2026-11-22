@@ -137,9 +137,9 @@ describe("the review's tools say what they do, in fixed words", () => {
         kind: { type: "string", enum: ["bug", "security", "rule"], description: "bug, security or rule (a rule the repository's instructions state)." },
         severity: { type: "string", enum: ["high", "medium", "low"], description: "high, medium or low: how much harm the problem does if it is merged." },
         claim: { type: "string", minLength: 1, description: "What is wrong and what it causes, in one to three sentences; past 1500 characters it is cut." },
-        evidence: { type: "string", description: "The lines the claim rests on, quoted exactly from the file; past 1000 characters only the first whole lines are kept. Left out, the finding is still recorded, and its check reads the cited lines." },
+        evidence: { type: "string", description: "The lines the claim rests on, quoted exactly from the file; past 1000 characters only the first whole lines are kept." },
       },
-      required: ["path", "line", "kind", "severity", "claim"],
+      required: ["path", "line", "kind", "severity", "claim", "evidence"],
       additionalProperties: true,
     })
   })
@@ -357,12 +357,6 @@ describe("reportFinding", () => {
       { ...report, turn: 1, number: 1 },
       { ...report, line: 2, endLine: 4, kind: "rule", severity: "medium", turn: 1, number: 2 },
     ])
-  })
-
-  test("a report with no evidence is recorded, with none", async () => {
-    const { evidence: _, ...bare } = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "Multiplying by one changes nothing.", evidence: "" }
-    const { stored, findings } = await calls([["reportFinding", bare]])
-    expect<unknown>([stored, findings]).toEqual([[["recorded finding 1", false]], [{ ...bare, evidence: "", turn: 1, number: 1 }]])
   })
 })
 
