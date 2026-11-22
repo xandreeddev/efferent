@@ -96,7 +96,7 @@ const goldProjection = Layer.succeed(EvidenceProjector, EvidenceProjector.of({
 
 /**
  * The gold grader, code: `found` when some finding of the replayed review was matched to the task's defect (the
- * recorded judge's match), `shown` when a bucket among the six a review with no check shows holds one.
+ * recorded judge's match), `shown` when the finding the report prints for one of its six buckets was matched to it.
  */
 const goldGrader = Layer.succeed(GraderAssessment, GraderAssessment.of({
   assess: (context) => Schema.decodeUnknownEffect(GoldInput)(context.input).pipe(

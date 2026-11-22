@@ -28,7 +28,7 @@ export const replayed = (findings: ReadonlyArray<RecordedFinding>, files: Readon
   return { found: goldsOf(findings), shown: goldsOf(printed), findings: findings.length, kept: kept.length }
 }
 
-/** How a replay scores one known defect: whether some finding matched it, and whether a shown bucket holds one that does. */
+/** How a replay scores one known defect: whether some finding matched it, and whether a finding the report prints did. */
 export const goldScore = (replay: Replayed, gold: GoldId): { readonly found: boolean; readonly shown: boolean } => ({
   found: replay.found.includes(gold),
   shown: replay.shown.includes(gold),
