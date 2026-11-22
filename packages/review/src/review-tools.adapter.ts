@@ -73,7 +73,7 @@ export const ReportFinding = Tool.make(REPORT_FINDING, {
     kind: FindingKind.annotate({ description: "bug, security or rule (a rule the repository's instructions state)." }),
     severity: Severity.annotate({ description: "high, medium or low: how much harm the problem does if it is merged." }),
     claim: Schema.String.check(Schema.isMinLength(1)).annotate({ description: `What is wrong and what it causes, in one to three sentences; past ${CLAIM_LIMIT} characters it is cut.` }),
-    evidence: Schema.String.annotate({ description: `The lines the claim rests on, quoted exactly from the file; past ${EVIDENCE_LIMIT} characters only the first whole lines are kept.` }),
+    evidence: Schema.optionalKey(Schema.String.annotate({ description: `The lines the claim rests on, quoted exactly from the file; past ${EVIDENCE_LIMIT} characters only the first whole lines are kept. Left out, the finding is still recorded, and its check reads the cited lines.` })),
   }),
   success: Schema.String,
   failure: Schema.String,
@@ -149,7 +149,9 @@ export const reviewToolHandlers = (reviewed: Reviewed) => reviewTools.toLayer(Ef
     }),
     readDiff: ({ path, page }) => Effect.fromResult(diffPage(reviewed.files, path, page ?? 1)),
     reportFinding: (report) => Match.valueTags(reviewed.stage, {
-      Find: ({ turn }) => Effect.flatMap(Effect.fromResult(checkedReport(keptReport(report), reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, turn, checked), recordedText)),
+      // A report with no evidence is recorded with none: on the eval one turn left it out of 11 of its 13 reports, and
+      // the failed results that named the missing key did not bring it back.
+      Find: ({ turn }) => Effect.flatMap(Effect.fromResult(checkedReport(keptReport({ ...report, evidence: report.evidence ?? "" }), reviewed.files)), (checked) => Effect.map(findings.record(reviewed.run, turn, checked), recordedText)),
       Verify: () => Effect.fail(NOT_FINDING_NOW),
     }),
     verdict: (report) => Match.valueTags(reviewed.stage, {
