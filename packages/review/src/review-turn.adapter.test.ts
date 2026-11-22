@@ -27,7 +27,7 @@ import { firstCallBytes } from "./file-group.entity.functions.js"
 import { kernelTurns } from "./review-turn.adapter.js"
 import type { HostTools, KernelTurnsOptions } from "./review-turn.adapter.js"
 import { reviewTools } from "./review-tools.adapter.js"
-import { TurnJournalFailed } from "./review-turn.entity.js"
+import { CONTEXT_FULL, TurnJournalFailed } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import type { ReviewStage } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
@@ -659,6 +659,25 @@ describe("three turns at once under the review's budget", () => {
     const ran = await turnsAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)
+})
+
+describe("a turn's read limit", () => {
+  const read = ["readLines", { path: "src/sum.ts" }] as const
+  /** The tool messages of a request, each as its content's text. */
+  const resultsSent = (sent: ReadonlyArray<Sent>, at: number) => (sent[at]?.messages ?? []).filter((message) => message.role === "tool").map((message) => JSON.stringify(message.content))
+
+  test("past the limit a read is answered in fixed words without running, and the report still runs; with none, every call runs", async () => {
+    // The answer's request and output are 1,050 tokens: the first read runs, its result takes the estimate past 1,100.
+    const limited = await turn([asks(read, read, ["reportFinding", FINDING]), says("One.")], { turns: { readTokens: 1_100 } })
+    const free = await turn([asks(read, read, ["reportFinding", FINDING]), says("One.")])
+    const refused = resultsSent(limited.kept, 1)
+    expect([refused.length, refused[0]?.includes("lines 1 to"), refused[1], limited.findings.length]).toEqual([3, true, JSON.stringify(CONTEXT_FULL), 1])
+    expect([resultsSent(free.kept, 1).filter((text) => text.includes("lines 1 to")).length, free.findings.length]).toEqual([2, 1])
+  })
+
+  test("the words a call past the limit gets", () => {
+    expect(CONTEXT_FULL).toBe("Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary.")
+  })
 })
 
 describe("a turn over the Messages wire", () => {

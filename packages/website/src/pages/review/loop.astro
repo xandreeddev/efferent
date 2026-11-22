@@ -16,7 +16,7 @@ const headings = [
   { depth: 2, slug: "spend", text: "Spend: held, then settled" },
 ]
 const loop = excerpt("review-turn.adapter.ts", "for (let step = 1; step <= input.options.maxSteps; step++) {", "return { _tag: \"StepCap\"")
-const request = excerpt("review-turn.adapter.ts", "const context = yield* kept(memory.context(session))", "const stream = LanguageModel.streamText")
+const request = excerpt("review-turn.adapter.ts", "const context = yield* kept(memory.context(session))", "const stream = Stream.suspend(")
 const ledger = excerpt("stage-spend.port.ts", "export interface StageLedger", "}")
 ---
 
@@ -103,6 +103,14 @@ const ledger = excerpt("stage-spend.port.ts", "export interface StageLedger", "}
     steps, turns or checks of one pull request: a provider's prompt cache serves the bytes it has seen, from the start
     of the request up to the first byte that differs. The kernel took the same lesson: it dropped its window memory,
     which removed old turns as the conversation grew and so changed the start of every request.
+  </p>
+  <p>
+    A model that thinks before it answers, and signs that thinking, gets it back: the turn keeps each answer's signed
+    thinking and puts it back at the start of that answer in every later request of the turn
+    (<code>replayThinking</code>), so a step goes on from what the model already worked out instead of thinking it all
+    again. The journal does not keep it; it lives as long as the turn. A model may also name a read limit
+    (<code>readTokens</code>): once the next request would pass it, the turn's further calls but the one that reports
+    are answered in fixed words without running, so no request grows past it.
   </p>
 
   <h2 id="spend">Spend: held, then settled</h2>

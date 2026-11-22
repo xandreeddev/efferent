@@ -40,6 +40,8 @@ export const ReviewModel = Schema.Struct({
   extra: Schema.JsonObject,
   provider: Schema.String,
   effort: Effort,
+  /** The most input tokens a turn's request may reach before its reads are refused (`KernelTurnsOptions.readTokens`): none, no limit. */
+  readTokens: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 })
 export type ReviewModel = typeof ReviewModel.Type
 
@@ -67,7 +69,10 @@ export const DEFAULT_REVIEW_MODEL: ReviewModel = {
  * 1.25 times the input, as a probe's bill showed) and 32,000 tokens of output a call (at high effort one step's
  * thinking reached 30,234). On the chat wire the gateway maps an effort to thinking, but the wire sends no thinking
  * back, and a finder turn on #644's gold group wrote 193k output over 14 unfinished steps; on this wire, with the
- * turn's thinking sent back, 32k over 8 steps that ended on their own.
+ * turn's thinking sent back, 32k over 8 steps that ended on their own. The gateway bills a request over 100k input
+ * tokens at five times these prices (measured: #431's and #436's groups, 8 of 14 and 9 of 21 calls over, billed about
+ * three times what these prices make, which the ledger, pricing one tier, did not see), so a turn's reads stop at
+ * 88,000 (`readTokens`), a page's worth under it.
  */
 export const HAIKU_REVIEW_MODEL: ReviewModel = {
   model: "anthropic/claude-haiku-5.5",
@@ -80,6 +85,7 @@ export const HAIKU_REVIEW_MODEL: ReviewModel = {
   extra: {},
   provider: "vercel.ai_gateway",
   effort: "default",
+  readTokens: 88_000,
 }
 
 /** The models `--model` names with their price and wire known, so it needs no `--price`. */

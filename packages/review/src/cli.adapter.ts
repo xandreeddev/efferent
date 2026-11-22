@@ -234,6 +234,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const layers = kernelTurns({
     model: reviewModel(withEffort(model, effortFind), apiKey, maxCost),
     verifyModel: reviewModel(withEffort(model, effortCheck), apiKey, maxCost),
+    ...(model.readTokens === undefined ? {} : { readTokens: model.readTokens }),
   }).pipe(Layer.provideMerge(needs))
   const report = yield* reviewPullRequest(repo, number, {
     prepare: options,

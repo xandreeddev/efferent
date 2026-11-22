@@ -1,14 +1,14 @@
 import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import type { Response } from "effect/ai"
-import { JournalStorage, kernel, messageOf, ModelSpend, Sessions, userMessage } from "@xandreed/core"
+import { JournalStorage, kernel, messageOf, ModelSpend, Sessions, toolResult, userMessage } from "@xandreed/core"
 import type { SessionId, SpendHold } from "@xandreed/core"
 import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retryable, sessions } from "@xandreed/sdk"
 import type { OwnTools, ToolNeeds } from "@xandreed/sdk"
 import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
 import { Findings } from "./findings.port.js"
-import { CLOSING_ASKS, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
+import { CHARS_PER_TOKEN, CLOSING_ASKS, CONTEXT_FULL, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
 import { thoughtsOf, withThoughts } from "./review-turn.entity.functions.js"
 import type { Thought } from "./review-turn.entity.functions.js"
 import type { CallUsage, TurnEnded, TurnResult } from "./review-turn.entity.js"
@@ -114,6 +114,14 @@ export interface KernelTurnsOptions<Tools extends Record<string, Tool.Any> = NoT
    * none) makes every request what it is without it.
    */
   readonly replayThinking?: boolean
+  /**
+   * The most input tokens a request of the turn may reach, for a model billed at a higher price past a size (a
+   * provider may bill a long request at several times the price): before each call of an answer, the next request is
+   * estimated as the answer's own request and output plus what the calls before it stored (`CHARS_PER_TOKEN`), and
+   * once that reaches this limit every further call but the reporting one is answered `CONTEXT_FULL` without running.
+   * None by default: every call runs.
+   */
+  readonly readTokens?: number
 }
 
 /** The stock journal: a `directoryJournal` in the folder `at`, a refusal to open it a `TurnJournalFailed`. */
@@ -288,11 +296,19 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
         return (yield* judged) ? { _tag: "Judged" } satisfies TurnEnded : answered
       }
       // Every call the answer asked for runs, also when the answer was cut: a call that did not decode is a failed result.
+      // Past the model's read limit (`readTokens`), a call that does not report is answered in fixed words instead.
+      const requested = Option.match(answer.usage, { onNone: () => 0, onSome: (usage) => usage.inputTokens + usage.outputTokens })
+      let added = 0
       for (const call of answer.toolCalls) {
+        if (call.name !== reports && requested + added / CHARS_PER_TOKEN >= parts.readTokens) {
+          yield* kept(session.append(toolResult(call, CONTEXT_FULL, true)))
+          continue
+        }
         const path = call.name === READ_LINES || call.name === READ_DIFF ? Schema.decodeUnknownOption(OpenedPath)(call.params) : Option.none()
         if (Option.isSome(path)) opened.add(path.value.path)
         // A host's tool runs through the host's toolkit; any other name, one no toolkit has included, through the six's.
-        yield* kept(Object.hasOwn(hostToolkit.tools, call.name) ? callTool(hostToolkit, call, session) : callTool(toolkit, call, session))
+        const stored = yield* kept(Object.hasOwn(hostToolkit.tools, call.name) ? callTool(hostToolkit, call, session) : callTool(toolkit, call, session))
+        added += Option.match(messageOf(stored), { onNone: () => 0, onSome: (message) => JSON.stringify(message).length })
       }
       if (yield* judged) return { _tag: "Judged" } satisfies TurnEnded
       if (cut) return { _tag: "OutputCut" } satisfies TurnEnded
@@ -343,6 +359,7 @@ export const kernelTurns = <Tools extends Record<string, Tool.Any> = NoTools>(op
     verifyModel: options.verifyModel ?? options.model,
     memory: options.memory ?? flatMemory,
     replayThinking: options.replayThinking ?? true,
+    readTokens: options.readTokens ?? Number.POSITIVE_INFINITY,
     tools: options.tools ?? reviewToolHandlers,
     journal: options.journal ?? folderJournal,
   }

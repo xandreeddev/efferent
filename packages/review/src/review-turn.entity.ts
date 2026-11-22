@@ -13,6 +13,15 @@ export const SUMMARY_KEPT = 600
 /** The most calls a closing ask makes: one, and one more when the tool refused a reporting call of the first. */
 export const CLOSING_ASKS = 2
 
+/**
+ * The failed result a call gets, in place of running, once the turn's next request would pass its model's read limit
+ * (`KernelTurnsOptions.readTokens`): the model is told to report and answer, so no later request crosses it.
+ */
+export const CONTEXT_FULL = "Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary."
+
+/** Characters of a stored result counted as one token when the next request's size is estimated: fewer than code averages, so the estimate runs high. */
+export const CHARS_PER_TOKEN = 3
+
 /** What one model call of a turn used, as the provider reported it: tokens read (the cached share among them) and written. */
 export const CallTokens = Schema.Struct({
   input: Count,

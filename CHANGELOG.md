@@ -46,7 +46,11 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   (`KernelTurnsOptions.replayThinking`, on by default; the journal does not
   keep it). Measured on #644's gold group: without it a step's thinking
   started over every time (193k output over 14 unfinished steps), with it
-  32k over 8 steps that ended on their own.
+  32k over 8 steps that ended on their own. A model may name a read limit
+  (`ReviewModel.readTokens`, `KernelTurnsOptions.readTokens`; Haiku's
+  88,000, since the gateway bills a request over 100k input tokens at five
+  times the price): past it a turn's further calls but the reporting one
+  are answered `CONTEXT_FULL` without running.
 
 - `@xandreed/sdk`: `flatMemoryWith({ pointers })` (`FlatOptions`), the flat
   memory with each long tool result sent as its start and a pointer
