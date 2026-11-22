@@ -44,6 +44,8 @@ describe("reviewCli", () => {
     [["review", "1", "--repo", "a/b", "--model", "other/model"], "--model other/model needs its --price (input,cached,output, USD per million tokens)"],
     [["review", "1", "--repo", "a/b", "--model", "other/model", "--price", "1,2"], "--price must be three numbers of USD per million tokens, input,cached,output, not \"1,2\""],
     [["review", "1", "--repo", "a/b", "--model", "other/model", "--price", "1,0.1,2"], "review needs the model's key in the environment variable VERCEL_API_KEY"],
+    // A known model needs no price: it gets as far as the key.
+    [["review", "1", "--repo", "a/b", "--model", "anthropic/claude-haiku-5.5"], "review needs the model's key in the environment variable VERCEL_API_KEY"],
     [["review", "1", "--repo", "a/b", "--turns", "0"], "--turns must be a whole number of at least 1, not \"0\""],
     [["review", "1", "--repo", "a/b", "--verify-steps", "x"], "--verify-steps must be a whole number of at least 1, not \"x\""],
     [["review", "1", "--repo", "a/b", "--finder", "loose"], "--finder must be strict or candidates, not \"loose\""],

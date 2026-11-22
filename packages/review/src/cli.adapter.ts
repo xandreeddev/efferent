@@ -16,7 +16,7 @@ import { CommitSha, PullNumber, RepoName } from "./pull-request.entity.js"
 import { directoryCache } from "./review-cache.adapter.js"
 import { directoryLogs } from "./review-logs.adapter.js"
 import { DEFAULT_FOCUS, DEFAULT_GROUP_STEPS, Focus, GroupOrder } from "./file-group.entity.js"
-import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, Effort } from "./review-model.entity.js"
+import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, Effort, KNOWN_REVIEW_MODELS } from "./review-model.entity.js"
 import { withEffort } from "./review-model.entity.functions.js"
 import type { Finder } from "./review-prompt.entity.js"
 import { DEFAULT_CLOSING_RESERVE, DEFAULT_GROUP_OPTIONS, DEFAULT_TURNS, DEFAULT_VERIFY_CONCURRENCY, DEFAULT_VERIFY_STEPS } from "./review.entity.js"
@@ -132,19 +132,22 @@ const oneOf = <A extends string>(flag: string, literals: ReadonlyArray<A>) => (t
 }
 
 /**
- * The model a review asks: `DEFAULT_REVIEW_MODEL`, or another id of the same endpoint (`--model`), which needs its
- * price (`--price <input>,<cached input>,<output>`, USD per million tokens), since the ledger holds and settles by it.
+ * The model a review asks: `DEFAULT_REVIEW_MODEL`, one of `KNOWN_REVIEW_MODELS` by its id (`--model`; its wire,
+ * endpoint and price known), or another id of the default's endpoint and wire, which needs its price (`--price
+ * <input>,<cached input>,<output>`, USD per million tokens), since the ledger holds and settles by it. A `--price`
+ * given for a known model replaces its price.
  */
 const modelOf = (id: Option.Option<string>, price: Option.Option<string>): Effect.Effect<ReviewModel, UsageError> => {
   const parsed = Option.map(price, (text) => text.split(",").map(Number))
   const prices = Option.filter(parsed, (numbers) => numbers.length === 3 && numbers.every((number) => Number.isFinite(number) && number >= 0))
   if (Option.isSome(price) && Option.isNone(prices)) return Effect.fail(usage(`--price must be three numbers of USD per million tokens, input,cached,output, not ${JSON.stringify(price.value)}`))
   const named = Option.getOrElse(id, () => DEFAULT_REVIEW_MODEL.model)
-  if (named !== DEFAULT_REVIEW_MODEL.model && Option.isNone(prices)) return Effect.fail(usage(`--model ${named} needs its --price (input,cached,output, USD per million tokens)`))
+  const known = KNOWN_REVIEW_MODELS.find((model) => model.model === named)
+  if (known === undefined && Option.isNone(prices)) return Effect.fail(usage(`--model ${named} needs its --price (input,cached,output, USD per million tokens)`))
+  const base = known ?? { ...DEFAULT_REVIEW_MODEL, model: named }
   return Effect.succeed({
-    ...DEFAULT_REVIEW_MODEL,
-    model: named,
-    price: Option.match(prices, { onNone: () => DEFAULT_REVIEW_MODEL.price, onSome: ([input = 0, cacheRead = 0, output = 0]) => ({ input, cacheRead, output }) }),
+    ...base,
+    price: Option.match(prices, { onNone: () => base.price, onSome: ([input = 0, cacheRead = 0, output = 0]) => ({ ...base.price, input, cacheRead, output }) }),
   })
 }
 
@@ -231,6 +234,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const layers = kernelTurns({
     model: reviewModel(withEffort(model, effortFind), apiKey, maxCost),
     verifyModel: reviewModel(withEffort(model, effortCheck), apiKey, maxCost),
+    ...(model.readTokens === undefined ? {} : { readTokens: model.readTokens }),
   }).pipe(Layer.provideMerge(needs))
   const report = yield* reviewPullRequest(repo, number, {
     prepare: options,

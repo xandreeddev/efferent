@@ -41,6 +41,7 @@ interface OtlpTelemetryOptions
 interface ProcessShellOptions
 interface SqliteJournalOptions
 interface Timeouts
+type AnthropicEffort
 type DirectoryMarker
 type ModelPrice
 type OpenRefusal

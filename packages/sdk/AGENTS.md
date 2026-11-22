@@ -878,8 +878,16 @@ the package roots.
   `AnthropicOptions`): Effect AI's Anthropic provider, the only layer here
   that names a provider package (`@effect/ai-anthropic`), its client's two
   sends wrapped by the charge, prompt caching by the API's top-level
-  `cache_control` (`cache`), and a stream that ends before `message_stop`
-  failed (the provider would end it as whole).
+  `cache_control` (`cache`), adaptive thinking at an effort (`effort`,
+  `AnthropicEffort`: `thinking: { type: "adaptive" }` and
+  `output_config.effort`, nothing sent without it; the thinking comes back
+  as reasoning parts whose metadata carries the signature, and a reasoning
+  part sent back with that metadata as its options is the thinking block),
+  a thinking block's start with no `signature` key (Vercel's gateway sends
+  one) read as one with the key empty, as Anthropic's API sends it
+  (`signedStarts`, line by line over a streamed body; Effect AI's schema
+  refuses the whole answer otherwise), and a stream that ends before
+  `message_stop` failed (the provider would end it as whole).
 - The charge (`model-spend/`): `ModelPrice` (USD per million tokens, the
   cache's reads and writes on their own, `maxOutput`) and `SpendOptions`
   (`prices` by model id, `uncapped`, `caps`, `bytesPerToken`); the pure rules

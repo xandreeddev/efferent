@@ -3,20 +3,45 @@ import { Schema } from "effect"
 const PerMillion = Schema.Finite.check(Schema.isGreaterThanOrEqualTo(0))
 
 /**
- * The model a review asks, over an OpenAI-compatible endpoint: its id, the endpoint, the environment variable its key
- * is read from, its price in USD per million tokens (`cacheRead` for input read from the provider's cache), the output
- * cap of each call (reasoning counts), how many bytes of a request the ledger's worst case counts as a token, and the
- * body fields sent as given (the gateway's `providerOptions`).
+ * How hard the model reasons in a stage: as the model does by default (`default`, nothing sent), not at all (`none`,
+ * the gateway's `reasoning: { enabled: false }`), or at an effort (`reasoning: { effort }`). Measured on DeepSeek V4.1
+ * Flash on Baseten through the gateway (2026-11-20): `none` took a call's reasoning from about 3,000 tokens to 0 and
+ * changed the prompt's template (25 tokens fewer), so its requests likely do not share a cache with default ones (not
+ * measured); `reasoning_effort: "low"`, `reasoning: { effort: "low" }` and `reasoning: { max_tokens: 256 }` were
+ * accepted with no change seen (every call of the long probe reasoned about 3,014 tokens, possibly a ceiling). On the
+ * Messages wire an effort is the API's adaptive thinking at it, and `none` sends no thinking at all.
+ */
+export const Effort = Schema.Literals(["default", "none", "low", "medium", "high"])
+export type Effort = typeof Effort.Type
+
+/**
+ * The wire a model is asked over: `chat`, OpenAI's chat completions (`openAiCompatibleModel`), or `messages`, Anthropic's
+ * Messages API (`anthropicModel`), which the gateway also serves for Claude models, adaptive thinking and its
+ * signature included.
+ */
+export const ModelWire = Schema.Literals(["chat", "messages"])
+export type ModelWire = typeof ModelWire.Type
+
+/**
+ * The model a review asks: its id, the endpoint and its wire, the environment variable its key is read from, its price
+ * in USD per million tokens (`cacheRead` for input read from the provider's cache, `cacheWrite` for input written to
+ * it, where the provider bills that apart), the output cap of each call (reasoning counts), how many bytes of a request
+ * the ledger's worst case counts as a token, the body fields sent as given on the chat wire (the gateway's
+ * `providerOptions`), and the effort the Messages wire asks at (`withEffort` sets it; the chat wire's is in `extra`).
  */
 export const ReviewModel = Schema.Struct({
   model: Schema.String,
   baseUrl: Schema.String,
+  wire: ModelWire,
   keyVariable: Schema.String,
-  price: Schema.Struct({ input: PerMillion, output: PerMillion, cacheRead: PerMillion }),
+  price: Schema.Struct({ input: PerMillion, output: PerMillion, cacheRead: PerMillion, cacheWrite: Schema.optionalKey(PerMillion) }),
   maxOutputTokens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   bytesPerToken: Schema.Finite.check(Schema.isGreaterThanOrEqualTo(1)),
   extra: Schema.JsonObject,
   provider: Schema.String,
+  effort: Effort,
+  /** The most input tokens a turn's request may reach before its reads are refused (`KernelTurnsOptions.readTokens`): none, no limit. */
+  readTokens: Schema.optionalKey(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
 })
 export type ReviewModel = typeof ReviewModel.Type
 
@@ -29,24 +54,42 @@ export type ReviewModel = typeof ReviewModel.Type
 export const DEFAULT_REVIEW_MODEL: ReviewModel = {
   model: "deepseek/deepseek-v4.1-flash-1017",
   baseUrl: "https://ai-gateway.vercel.sh/v1",
+  wire: "chat",
   keyVariable: "VERCEL_API_KEY",
   price: { input: 0.3, output: 1.2, cacheRead: 0.007 },
   maxOutputTokens: 4_096,
   bytesPerToken: 1,
   extra: { providerOptions: { gateway: { order: ["baseten"] } } },
   provider: "vercel.ai_gateway",
+  effort: "default",
 }
 
 /**
- * How hard the model reasons in a stage: as the model does by default (`default`, nothing sent), not at all (`none`,
- * the gateway's `reasoning: { enabled: false }`), or at an effort (`reasoning: { effort }`). Measured on DeepSeek V4.1
- * Flash on Baseten through the gateway (2026-11-20): `none` took a call's reasoning from about 3,000 tokens to 0 and
- * changed the prompt's template (25 tokens fewer), so its requests likely do not share a cache with default ones (not
- * measured); `reasoning_effort: "low"`, `reasoning: { effort: "low" }` and `reasoning: { max_tokens: 256 }` were
- * accepted with no change seen (every call of the long probe reasoned about 3,014 tokens, possibly a ceiling).
+ * Claude Haiku 5.5 through the gateway's Messages API (2026-11-22): the gateway's prices (the cache's write billed at
+ * 1.25 times the input, as a probe's bill showed) and 32,000 tokens of output a call (at high effort one step's
+ * thinking reached 30,234). On the chat wire the gateway maps an effort to thinking, but the wire sends no thinking
+ * back, and a finder turn on #644's gold group wrote 193k output over 14 unfinished steps; on this wire, with the
+ * turn's thinking sent back, 32k over 8 steps that ended on their own. The gateway bills a request over 100k input
+ * tokens at five times these prices (measured: #431's and #436's groups, 8 of 14 and 9 of 21 calls over, billed about
+ * three times what these prices make, which the ledger, pricing one tier, did not see), so a turn's reads stop at
+ * 88,000 (`readTokens`), a page's worth under it.
  */
-export const Effort = Schema.Literals(["default", "none", "low", "medium", "high"])
-export type Effort = typeof Effort.Type
+export const HAIKU_REVIEW_MODEL: ReviewModel = {
+  model: "anthropic/claude-haiku-5.5",
+  baseUrl: "https://ai-gateway.vercel.sh",
+  wire: "messages",
+  keyVariable: "VERCEL_API_KEY",
+  price: { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 },
+  maxOutputTokens: 32_000,
+  bytesPerToken: 1,
+  extra: {},
+  provider: "vercel.ai_gateway",
+  effort: "default",
+  readTokens: 88_000,
+}
+
+/** The models `--model` names with their price and wire known, so it needs no `--price`. */
+export const KNOWN_REVIEW_MODELS: ReadonlyArray<ReviewModel> = [DEFAULT_REVIEW_MODEL, HAIKU_REVIEW_MODEL]
 
 /**
  * What a review may spend by default, in USD: $0.80 in all, $0.50 on its finder turns, $0.30 on its checks. First sized

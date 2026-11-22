@@ -1,12 +1,13 @@
 import { afterAll, beforeAll, describe, expect, test } from "bun:test"
 import { existsSync, mkdtempSync, readdirSync } from "node:fs"
 import { join } from "node:path"
-import { Deferred, Effect, Layer, Option, Redacted, Schema, Stream } from "effect"
+import { Deferred, Effect, Layer, Match, Option, Redacted, Schema, Stream } from "effect"
 import type { Context } from "effect"
 import { LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
 import { FetchHttpClient } from "effect/http"
 import { JournalStorage, ModelSpend, modelSpendMemory, Sessions } from "@xandreed/core"
 import { flatMemory, Memory } from "@xandreed/sdk"
+import { anthropicModel } from "@xandreed/sdk/node"
 import { gitCheckout } from "./checkout-git.adapter.js"
 import { Checkout } from "./checkout.port.js"
 import type { FileDiff } from "./diff.entity.js"
@@ -17,8 +18,8 @@ import { Findings } from "./findings.port.js"
 import { gitFixture } from "./git-fixture.testing.js"
 import { hostShell } from "./host-shell.adapter.js"
 import { BranchName, CommitSha, FetchRef, RepoName } from "./pull-request.entity.js"
-import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL } from "./review-model.entity.js"
-import type { ReviewModel } from "./review-model.entity.js"
+import { DEFAULT_BUDGET, DEFAULT_MAX_COST, DEFAULT_REVIEW_MODEL, HAIKU_REVIEW_MODEL } from "./review-model.entity.js"
+import type { Effort, ReviewModel } from "./review-model.entity.js"
 import { reviewModel } from "./review-model.adapter.js"
 import { withEffort } from "./review-model.entity.functions.js"
 import { REQUEST_SLACK_BYTES } from "./file-group.entity.js"
@@ -26,7 +27,7 @@ import { firstCallBytes } from "./file-group.entity.functions.js"
 import { kernelTurns } from "./review-turn.adapter.js"
 import type { HostTools, KernelTurnsOptions } from "./review-turn.adapter.js"
 import { reviewTools } from "./review-tools.adapter.js"
-import { TurnJournalFailed } from "./review-turn.entity.js"
+import { CONTEXT_FULL, TurnJournalFailed } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import type { ReviewStage } from "./review-tools.entity.js"
 import { stageSpend } from "./stage-spend.adapter.js"
@@ -75,6 +76,8 @@ interface Sent {
   readonly bytes?: number
   /** Each tool's declaration as sent, in order, as JSON. */
   readonly declared: ReadonlyArray<string>
+  /** On the Messages wire, the body's `thinking` and `output_config`, as sent (none: absent). */
+  readonly thinking: unknown
 }
 
 /** A request's body, read loosely: the test's own fake wire. */
@@ -83,7 +86,8 @@ const sentOf = (body: unknown): Sent => {
   const tools = typeof body === "object" && body !== null && "tools" in body && Array.isArray(body.tools) ? body.tools.map((tool: { readonly function?: { readonly name?: string } }) => tool.function?.name ?? "") : []
   const declared = typeof body === "object" && body !== null && "tools" in body && Array.isArray(body.tools) ? body.tools.map((tool: unknown) => JSON.stringify(tool)) : []
   const reasoning = typeof body === "object" && body !== null && "reasoning" in body ? body.reasoning : undefined
-  return { messages, tools, reasoning, declared }
+  const thinking = typeof body === "object" && body !== null && "thinking" in body ? [body.thinking, "output_config" in body ? body.output_config : undefined] : undefined
+  return { messages, tools, reasoning, declared, thinking }
 }
 
 /** An endpoint that answers each request with the script's next answer (the last one again past its end), and keeps what it was sent. */
@@ -655,4 +659,97 @@ describe("three turns at once under the review's budget", () => {
     const ran = await turnsAtOnce((root) => Effect.succeed({ ...ModelSpend.of({ ...root, reserve: (request) => root.reserve({ ...request, caps: { total: DEFAULT_BUDGET.find } }) }), keepBack: () => Effect.succeed(Option.none()) }), 3, 0, steady(15, 3))
     expect(ran.ended).toContain("SpendRefused")
   }, 60_000)
+})
+
+describe("a turn's read limit", () => {
+  const read = ["readLines", { path: "src/sum.ts" }] as const
+  /** The tool messages of a request, each as its content's text. */
+  const resultsSent = (sent: ReadonlyArray<Sent>, at: number) => (sent[at]?.messages ?? []).filter((message) => message.role === "tool").map((message) => JSON.stringify(message.content))
+
+  test("past the limit a read is answered in fixed words without running, and the report still runs; with none, every call runs", async () => {
+    // The answer's request and output are 1,050 tokens: the first read runs, its result takes the estimate past 1,100.
+    const limited = await turn([asks(read, read, ["reportFinding", FINDING]), says("One.")], { turns: { readTokens: 1_100 } })
+    const free = await turn([asks(read, read, ["reportFinding", FINDING]), says("One.")])
+    const refused = resultsSent(limited.kept, 1)
+    expect([refused.length, refused[0]?.includes("lines 1 to"), refused[1], limited.findings.length]).toEqual([3, true, JSON.stringify(CONTEXT_FULL.Find), 1])
+    expect([resultsSent(free.kept, 1).filter((text) => text.includes("lines 1 to")).length, free.findings.length]).toEqual([2, 1])
+  })
+
+  test("in a check past the limit a read gets the check's words, and the verdict still runs", async () => {
+    const verdict = ["verdict", { outcome: "confirmed", reason: "r", quote: "total += value * 1" }] as const
+    const checked = await turn([asks(read, read, verdict)], { turns: { readTokens: 1_100 }, stage: { _tag: "Verify", check: CheckNumber.make(1) } })
+    expect([checked.result.ended._tag, Option.isSome(checked.verdict)]).toEqual(["Judged", true])
+  })
+
+  test("the words a call past the limit gets, by stage", () => {
+    expect(CONTEXT_FULL).toEqual({
+      Find: "Not run: this turn has read as much as one request can hold. Report each defect you found with reportFinding now, then answer with a one-line summary.",
+      Verify: "Not run: this check has read as much as one request can hold. Give your verdict with the verdict tool now, quoting the lines it rests on.",
+    })
+  })
+})
+
+describe("a turn over the Messages wire", () => {
+  /** A Messages stream, as the gateway sends one: a thinking block's start with no `signature` key. */
+  const messagesSse = (blocks: ReadonlyArray<Record<string, unknown>>, stop: string) => [
+    { type: "message_start", message: { id: "msg_1", type: "message", role: "assistant", model: "claude-test", content: [], stop_reason: null, stop_sequence: null, usage: { input_tokens: 50, output_tokens: 1, cache_read_input_tokens: 1000 } } },
+    ...blocks.flatMap((block, index) => Match.value(block["type"]).pipe(
+      Match.when("thinking", () => [
+        { type: "content_block_start", index, content_block: { type: "thinking", thinking: "" } },
+        { type: "content_block_delta", index, delta: { type: "signature_delta", signature: String(block["signature"]) } },
+      ]),
+      Match.when("tool_use", () => [
+        { type: "content_block_start", index, content_block: { type: "tool_use", id: String(block["id"]), name: String(block["name"]), input: {} } },
+        { type: "content_block_delta", index, delta: { type: "input_json_delta", partial_json: JSON.stringify(block["input"]) } },
+      ]),
+      Match.orElse(() => [
+        { type: "content_block_start", index, content_block: { type: "text", text: "" } },
+        { type: "content_block_delta", index, delta: { type: "text_delta", text: String(block["text"]) } },
+      ]),
+      (events) => [...events, { type: "content_block_stop", index }],
+    )),
+    { type: "message_delta", delta: { stop_reason: stop, stop_sequence: null }, usage: { output_tokens: 30 } },
+    { type: "message_stop" },
+  ].map((event) => `event: ${String(event.type)}\ndata: ${JSON.stringify(event)}\n\n`).join("")
+  const reads = messagesSse([{ type: "thinking", signature: "sig-1" }, { type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }], "tool_use")
+  const answers = messagesSse([{ type: "text", text: "Nothing to report." }], "end_turn")
+  const model = (effort: "high" | undefined) => anthropicModel({
+    model: "claude-test", apiKey: Redacted.make("test-key"), baseUrl: "https://anthropic.test", maxOutputTokens: 1000, ...(effort === undefined ? {} : { effort }),
+    spend: { prices: { "claude-test": { input: 0.1, output: 0.5, cacheRead: 0.01, cacheWrite: 0.125 } }, caps: { total: 0.05 } },
+  })
+  /** The assistant messages a request sent, each as its content. */
+  const answersSent = (sent: ReadonlyArray<Sent>, at: number) => (sent[at]?.messages ?? []).filter((message) => message.role === "assistant").map((message) => message.content)
+
+  test("the thinking an answer signed is sent back at its start in the turn's later requests; replay off sends none", async () => {
+    const on = await turn([reads, answers, answers], { turnsOf: () => kernelTurns({ model: model("high") }) })
+    const off = await turn([reads, answers, answers], { turnsOf: () => kernelTurns({ model: model("high"), replayThinking: false }) })
+    const call = { type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }
+    expect([on.result.ended._tag, on.kept.length, answersSent(on.kept, 1), answersSent(on.kept, 2)[0]]).toEqual([
+      "Answered", 3, [[{ type: "thinking", thinking: "", signature: "sig-1" }, call]], [{ type: "thinking", thinking: "", signature: "sig-1" }, call],
+    ])
+    expect([off.result.ended._tag, answersSent(off.kept, 1)]).toEqual(["Answered", [[call]]])
+  })
+
+  test("a first call cut after its signed thinking and asked again keeps only the second attempt's thinking", async () => {
+    // The first attempt streams a signed thinking block, then its connection ends before `message_stop`.
+    const cut = messagesSse([{ type: "thinking", signature: "sig-lost" }], "end_turn").split("event: message_delta")[0]!
+    const ran = await turn([cut, reads, answers, answers], { turnsOf: () => kernelTurns({ model: model("high") }) })
+    const call = { type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }
+    expect([ran.result.ended._tag, ran.kept.length, answersSent(ran.kept, 2)]).toEqual(["Answered", 4, [[{ type: "thinking", thinking: "", signature: "sig-1" }, call]]])
+  })
+
+  test("an answer with no signed thinking is sent as it was; no effort, no thinking asked for", async () => {
+    const plain = messagesSse([{ type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }], "tool_use")
+    const ran = await turn([plain, answers, answers], { turnsOf: () => kernelTurns({ model: model(undefined) }) })
+    expect([ran.result.ended._tag, answersSent(ran.kept, 1), ran.kept[0]?.thinking]).toEqual(["Answered", [[{ type: "tool_use", id: "toolu_1", name: "readLines", input: { path: "src/sum.ts" } }]], undefined])
+  })
+
+  test("the Haiku model on the Messages wire: an effort is adaptive thinking at it; default and none ask for none", async () => {
+    const haiku = { ...HAIKU_REVIEW_MODEL, baseUrl: "https://anthropic.test" }
+    const at = (effort: Effort) => turn([answers, answers], { turnsOf: () => kernelTurns({ model: reviewModel(withEffort(haiku, effort), Redacted.make("test-key"), 0.05) }) })
+    const [high, none, plain] = [await at("high"), await at("none"), await at("default")]
+    expect([high.kept[0]?.thinking, high.kept[0]?.reasoning, none.kept[0]?.thinking, plain.kept[0]?.thinking]).toEqual([
+      [{ type: "adaptive" }, { effort: "high" }], undefined, undefined, undefined,
+    ])
+  })
 })

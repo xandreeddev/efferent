@@ -1,6 +1,6 @@
-import { Duration, Effect, Layer, Match, Option, Result, Stream } from "effect"
+import { Duration, Effect, Layer, Match, Option, Predicate, Result, Schema, Stream } from "effect"
 import { AiError, LanguageModel } from "effect/ai"
-import { FetchHttpClient } from "effect/http"
+import { FetchHttpClient, HttpClient, HttpClientResponse } from "effect/http"
 import { AnthropicClient, AnthropicLanguageModel } from "@effect/ai-anthropic"
 import { ModelSpend } from "@xandreed/core"
 import { chargedEffect, chargedSend, reaching } from "../model-spend/charge.adapter.js"
@@ -25,6 +25,35 @@ const reportedOf = (usage: MessageUsage): Reported => {
   const cacheWrite = usage.cache_creation_input_tokens ?? 0
   return { input: (usage.input_tokens ?? 0) + cacheRead + cacheWrite, output: usage.output_tokens ?? 0, cacheRead, cacheWrite, billed: undefined }
 }
+
+const json = Schema.fromJsonString(Schema.Json)
+
+/**
+ * One line of a Messages stream, as Effect AI's client can read it: the start of a thinking block gets the `signature`
+ * key, empty, when it has none. Anthropic's own API sends it empty there and fills it in a later delta; an
+ * Anthropic-compatible endpoint (Vercel's gateway, measured 2026-11-22) leaves it out, and Effect AI's schema, which
+ * requires it, would refuse the whole answer. Every other line is kept as it came.
+ */
+const signedStart = (line: string): string => {
+  if (!line.startsWith("data: ") || !line.includes("content_block_start")) return line
+  return Option.match(Schema.decodeUnknownOption(json)(line.slice("data: ".length)), {
+    onNone: () => line,
+    onSome: (event) => {
+      if (!Predicate.isObject(event) || Array.isArray(event) || event["type"] !== "content_block_start") return line
+      const block = event["content_block"]
+      if (!Predicate.isObject(block) || Array.isArray(block) || block["type"] !== "thinking" || "signature" in block) return line
+      return `data: ${JSON.stringify(Object.assign({}, event, { content_block: Object.assign({}, block, { signature: "" }) }))}`
+    },
+  })
+}
+
+/** A client whose streamed answers (`text/event-stream`) are read line by line through `signedStart`. */
+const signedStarts = (client: HttpClient.HttpClient): HttpClient.HttpClient =>
+  client.pipe(HttpClient.transformResponse(Effect.map((response) => {
+    if (!(response.headers["content-type"] ?? "").startsWith("text/event-stream")) return response
+    const lines = response.stream.pipe(Stream.decodeText, Stream.splitLines, Stream.map((line) => `${signedStart(line)}\n`), Stream.encodeText)
+    return HttpClientResponse.fromWeb(response.request, new Response(Stream.toReadableStream(lines), { status: response.status, headers: response.headers }))
+  })))
 
 const lostPartWay = (description: string) =>
   AiError.make({ module: ANTHROPIC, method: "streamText", reason: new AiError.InternalProviderError({ description }) })
@@ -70,7 +99,7 @@ export const anthropicModel = (options: AnthropicOptions): Layer.Layer<LanguageM
     const client = yield* AnthropicClient.make({
       apiKey: options.apiKey,
       ...(options.baseUrl === undefined ? {} : { apiUrl: options.baseUrl.replace(/\/+$/, "") }),
-      transformClient: reaching(options.timeouts ?? {}),
+      transformClient: (client) => signedStarts(reaching(options.timeouts ?? {})(client)),
     })
     const charging: Charging = { spend, options: options.spend, model: options.model, operation: "chat", module: ANTHROPIC }
     const idle = Duration.fromInputUnsafe(options.timeouts?.idle ?? DEFAULT_TIMEOUTS.idle)
@@ -100,6 +129,7 @@ export const anthropicModel = (options: AnthropicOptions): Layer.Layer<LanguageM
       config: {
         ...Option.match(bound, { onNone: () => ({}), onSome: (cap) => ({ max_tokens: cap }) }),
         ...(options.cache === "off" ? {} : { cache_control: { type: "ephemeral", ...(options.cache === "1h" ? { ttl: "1h" } : {}) } }),
+        ...(options.effort === undefined ? {} : { thinking: { type: "adaptive" }, output_config: { effort: options.effort } }),
       },
     }).pipe(Effect.provideService(AnthropicClient.AnthropicClient, charged))
   })).pipe(Layer.provide(FetchHttpClient.layer))

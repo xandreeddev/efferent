@@ -27,6 +27,31 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/sdk/node`: `anthropicModel({ effort })` (`AnthropicEffort`:
+  `low`, `medium` or `high`) asks for the API's adaptive thinking at that
+  effort (`thinking: { type: "adaptive" }`, `output_config.effort`); left
+  out, nothing of it is sent. Its thinking comes back as reasoning parts
+  whose metadata carries the signature, and a reasoning part sent back with
+  that metadata as its options is the thinking block it came as. A thinking
+  block's start that comes without a `signature` key, as Vercel's AI
+  Gateway sends it, is read as one with the key empty, as Anthropic's own
+  API sends it; before, Effect AI refused the whole answer.
+
+- `@xandreed/review`: Claude Haiku 5.5 through the gateway's Messages API
+  (`HAIKU_REVIEW_MODEL`, `--model anthropic/claude-haiku-5.5`, no
+  `--price` needed: `KNOWN_REVIEW_MODELS`). A model names its wire
+  (`ReviewModel.wire`, `chat` or `messages`); on the Messages wire an
+  effort (`--effort-find high`) is adaptive thinking, and a turn sends each
+  answer's signed thinking back at its start in its later requests
+  (`KernelTurnsOptions.replayThinking`, on by default; the journal does not
+  keep it). Measured on #644's gold group: without it a step's thinking
+  started over every time (193k output over 14 unfinished steps), with it
+  32k over 8 steps that ended on their own. A model may name a read limit
+  (`ReviewModel.readTokens`, `KernelTurnsOptions.readTokens`; Haiku's
+  88,000, since the gateway bills a request over 100k input tokens at five
+  times the price): past it a turn's further calls but the reporting one
+  are answered `CONTEXT_FULL` without running.
+
 - `@xandreed/sdk`: `flatMemoryWith({ pointers })` (`FlatOptions`), the flat
   memory with each long tool result sent as its start and a pointer
   (`pointed`, ADR 0011), the same text the summary memory sends; `flatMemory`
