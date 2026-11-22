@@ -40,7 +40,7 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 - `@xandreed/review`: a `reportFinding` call that leaves out `evidence` is
   run with an empty one (`withEvidence`), so its finding is recorded; the
   tool still asks for evidence, its declaration unchanged. A check of such a
-  finding reads `Evidence: none was quoted; read the cited lines.`
+  finding reads `Evidence: none was quoted.`
   (`NO_EVIDENCE`; `review-tools-6`, `review-prompt-10`). On the review eval
   all but 11 of about 296 calls gave evidence; the 11 were one turn that left
   it out again after each failed result named the missing key, and 3 of

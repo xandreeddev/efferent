@@ -221,7 +221,7 @@ describe("reviewPrompt", () => {
       "Kind: bug",
       "Severity: low",
       "Claim: It multiplies by one.",
-      "Evidence: none was quoted; read the cited lines.",
+      "Evidence: none was quoted.",
       "</reported-problem>",
     ].join("\n"))
   })

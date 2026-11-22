@@ -139,8 +139,11 @@ export const VERIFY_TAIL = [
   "- Quote the lines of the cited file your verdict rests on, as they are at the commit under review.",
 ].join("\n")
 
-/** The framed finding's last line when its reporter quoted no evidence, in place of `Evidence:` and the quote. */
-export const NO_EVIDENCE = "Evidence: none was quoted; read the cited lines."
+/**
+ * The framed finding's last line when its reporter quoted no evidence, in place of `Evidence:` and the quote. It is
+ * inside the frame, which is data, so it gives no instruction: `VERIFY_TAIL` already says to read the cited lines.
+ */
+export const NO_EVIDENCE = "Evidence: none was quoted."
 
 /**
  * The host's note before a closing call, by stage: what to do with the one call left. A finder turn's comes after its last
