@@ -11,7 +11,7 @@ export { isSpendRefusal, spendRefusalOf } from "./model-spend/model-spend.entity
 export { openAiCompatibleModel } from "./model-openai-compatible/openai-compatible.adapter.js"
 export type { OpenAiCompatibleOptions } from "./model-openai-compatible/openai-compatible.entity.js"
 export { anthropicModel } from "./model-anthropic/anthropic.adapter.js"
-export type { AnthropicOptions } from "./model-anthropic/anthropic.entity.js"
+export type { AnthropicEffort, AnthropicOptions } from "./model-anthropic/anthropic.entity.js"
 export { openAiCompatibleEmbedder } from "./embedder-openai-compatible/openai-compatible-embedder.adapter.js"
 export { EMBEDDER_NAME_LIMIT, EMBEDDING_TIMEOUTS } from "./embedder-openai-compatible/openai-compatible-embedder.entity.js"
 export type { EmbedPrefixes, OpenAiCompatibleEmbedderOptions } from "./embedder-openai-compatible/openai-compatible-embedder.entity.js"

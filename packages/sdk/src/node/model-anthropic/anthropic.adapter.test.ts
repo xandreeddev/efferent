@@ -86,6 +86,41 @@ describe("the Anthropic provider", () => {
     expect([off.sent[0]!.body["cache_control"], hour.sent[0]!.body["cache_control"]]).toEqual([undefined, { type: "ephemeral", ttl: "1h" }])
   })
 
+  test("asks for adaptive thinking at an effort, and nothing of it without one; the thinking comes back signed and goes back as it came", async () => {
+    const plain = fakeFetch(stream(words))
+    await over(plain.fetch, options(priced), streamed)
+    expect([plain.sent[0]!.body["thinking"], plain.sent[0]!.body["output_config"]]).toEqual([undefined, undefined])
+    // A thinking block's start as the gateway sends it, with no `signature` key (Anthropic's own API sends it empty).
+    const thought = sse([
+      start({ input_tokens: 40, output_tokens: 1 }),
+      { type: "content_block_start", index: 0, content_block: { type: "thinking", thinking: "" } },
+      { type: "content_block_delta", index: 0, delta: { type: "thinking_delta", thinking: "Twelve threes." } },
+      { type: "content_block_delta", index: 0, delta: { type: "signature_delta", signature: "sig-1" } },
+      { type: "content_block_stop", index: 0 },
+      ...textBlock(["36."]).map((event) => ("index" in event ? { ...event, index: 1 } : event)),
+      ...end("end_turn", { output_tokens: 9 }),
+    ])
+    const high = fakeFetch(stream(thought))
+    const run = await over(high.fetch, options(priced, { effort: "high" }), streamed)
+    expect([high.sent[0]!.body["thinking"], high.sent[0]!.body["output_config"]]).toEqual([{ type: "adaptive" }, { effort: "high" }])
+    const parts = run.outcome._tag === "Success" ? run.outcome.success : []
+    expect(parts.flatMap((part) => (part.type === "reasoning-delta" ? [part.delta] : [])).join("")).toBe("Twelve threes.")
+    const signed = parts.flatMap((part) => (part.type === "reasoning-delta" && Object.keys(part.metadata).length > 0 ? [part.metadata] : []))
+    expect(signed).toEqual([{ anthropic: { info: { type: "thinking", signature: "sig-1" } } }])
+    // The reasoning part sent back with that metadata as its options is the thinking block, before the answer's text.
+    const again = fakeFetch(stream(words))
+    const back = Prompt.make([
+      { role: "user", content: [{ type: "text", text: "What is 12 * 3?" }] },
+      { role: "assistant", content: [{ type: "reasoning", text: "Twelve threes.", options: signed[0]! }, { type: "text", text: "36." }] },
+      { role: "user", content: [{ type: "text", text: "And 12 * 4?" }] },
+    ])
+    await over(again.fetch, options(priced, { effort: "high" }), LanguageModel.streamText({ prompt: back }).pipe(Stream.runCollect))
+    expect((again.sent[0]!.body["messages"] as ReadonlyArray<{ readonly content: unknown }>)[1]!.content).toEqual([
+      { type: "thinking", thinking: "Twelve threes.", signature: "sig-1" },
+      { type: "text", text: "36." },
+    ])
+  })
+
   test("says in each failure's reason whether another try is worth it; a refusal releases its hold, an overload settles at it", async () => {
     const cases = [[401, "authentication_error"], [403, "permission_error"], [400, "invalid_request_error"], [429, "rate_limit_error"], [529, "overloaded_error"]] as const
     const runs = await Promise.all(cases.map(([status, type]) => over(fakeFetch(stream(refusal(type), status)).fetch, options(priced), streamed)))

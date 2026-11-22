@@ -1,5 +1,6 @@
 import { Array as Arr, Effect, Layer, Match, Option, Order, Predicate, Result, Schema, Stream } from "effect"
 import { AiError, LanguageModel, Prompt, Tool, Toolkit } from "effect/ai"
+import type { Response } from "effect/ai"
 import { JournalStorage, kernel, messageOf, ModelSpend, Sessions, userMessage } from "@xandreed/core"
 import type { SessionId, SpendHold } from "@xandreed/core"
 import { callTool, clipTo, flatMemory, Memory, modelAnswer, recoverTurns, retryable, sessions } from "@xandreed/sdk"
@@ -8,6 +9,8 @@ import { directoryJournal, isSpendRefusal } from "@xandreed/sdk/node"
 import type { Checkout } from "./checkout.port.js"
 import { Findings } from "./findings.port.js"
 import { CLOSING_ASKS, SUMMARY_KEPT, TurnJournalFailed } from "./review-turn.entity.js"
+import { thoughtsOf, withThoughts } from "./review-turn.entity.functions.js"
+import type { Thought } from "./review-turn.entity.functions.js"
 import type { CallUsage, TurnEnded, TurnResult } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
@@ -104,6 +107,13 @@ export interface KernelTurnsOptions<Tools extends Record<string, Tool.Any> = NoT
   readonly tools?: typeof reviewToolHandlers
   readonly hostTools?: HostTools<Tools>
   readonly journal?: (at: string) => Layer.Layer<JournalStorage, TurnJournalFailed>
+  /**
+   * Whether each answer's thinking that came with the provider's metadata (a signature) is sent back, as it came, at
+   * the start of that answer in every later request of the turn (`withThoughts`): on by default. The journal does not
+   * keep it, so it lives as long as the turn. A model that sends no such thinking (the OpenAI-compatible wire sends
+   * none) makes every request what it is without it.
+   */
+  readonly replayThinking?: boolean
 }
 
 /** The stock journal: a `directoryJournal` in the folder `at`, a refusal to open it a `TurnJournalFailed`. */
@@ -175,14 +185,23 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
     // What the closing call will need, held back from the stage now; a stage with no room for it goes on without.
     if (input.options.reserve > 0) reserved = yield* input.spend.keepBack(input.options.reserve)
 
+    // Each answer's thinking, by its first call's id, for the later requests of this turn (`replayThinking`).
+    const thoughts = new Map<string, ReadonlyArray<Thought>>()
+
     /** One model call: its answer and whether it was cut at the output cap, or how the turn ends when it failed. */
     const ask = (step: number) => Effect.gen(function* () {
       const context = yield* kept(memory.context(session))
-      const prompt = Prompt.make([...input.prompt.prefix, ...context])
+      const prompt = Prompt.make([...input.prompt.prefix, ...(parts.replayThinking ? withThoughts(context, thoughts) : context)])
       let finish = ""
-      const stream = LanguageModel.streamText({ prompt, toolkit: offered, disableToolCallResolution: true, toolCallValidation: "deferred" }).pipe(
+      // The parts of the attempt being read: a try asked again starts them anew.
+      let seen: Array<Response.AnyPart> = []
+      const stream = Stream.suspend(() => {
+        seen = []
+        return LanguageModel.streamText({ prompt, toolkit: offered, disableToolCallResolution: true, toolCallValidation: "deferred" })
+      }).pipe(
         Stream.tap((part) => Effect.sync(() => {
           if (part.type === "finish") finish = part.reason
+          if (part.type === "reasoning-start" || part.type === "reasoning-delta") seen.push(part)
         })),
       )
       /** What the turn's own ledger settled since `before`, rounded past the float noise of a difference. */
@@ -210,6 +229,9 @@ const runTurn = <Tools extends Record<string, Tool.Any>>(parts: Required<KernelT
           : { _tag: "ModelFailed", message: wordsOf(error, "the model call failed") })
       }
       const answer = answered.success
+      const first = answer.toolCalls[0]
+      const thought = thoughtsOf(seen)
+      if (parts.replayThinking && first !== undefined && thought.length > 0) thoughts.set(first.id, thought)
       calls.push({ step, tokens: Option.map(answer.usage, (usage) => ({ input: usage.inputTokens, cached: usage.cachedInputTokens ?? 0, output: usage.outputTokens })), cost })
       return Result.succeed({ answer, cut: finish === "length" })
     })
@@ -320,6 +342,7 @@ export const kernelTurns = <Tools extends Record<string, Tool.Any> = NoTools>(op
     model: options.model,
     verifyModel: options.verifyModel ?? options.model,
     memory: options.memory ?? flatMemory,
+    replayThinking: options.replayThinking ?? true,
     tools: options.tools ?? reviewToolHandlers,
     journal: options.journal ?? folderJournal,
   }
