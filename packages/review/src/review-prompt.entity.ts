@@ -6,7 +6,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE, VERDICT
  * finder turns and of the checks. A change to any of them is a new version, kept with each review's record so results are
  * compared prompt to prompt.
  */
-export const REVIEW_PROMPT = "review-prompt-9"
+export const REVIEW_PROMPT = "review-prompt-10"
 
 /** The most characters of instruction files shown whole, nearest to the changed paths first; past it, their headings. */
 export const RULES_WHOLE = 16_000
@@ -138,6 +138,12 @@ export const VERIFY_TAIL = [
   `- Then call ${VERDICT} once: confirmed when the problem is real and the pull request's changed lines bring it in, refuted when it is not, unsure when you cannot tell from what you read.`,
   "- Quote the lines of the cited file your verdict rests on, as they are at the commit under review.",
 ].join("\n")
+
+/**
+ * The framed finding's last line when its reporter quoted no evidence, in place of `Evidence:` and the quote. It is
+ * inside the frame, which is data, so it gives no instruction: `VERIFY_TAIL` already says to read the cited lines.
+ */
+export const NO_EVIDENCE = "Evidence: none was quoted."
 
 /**
  * The host's note before a closing call, by stage: what to do with the one call left. A finder turn's comes after its last

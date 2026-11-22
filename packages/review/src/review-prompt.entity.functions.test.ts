@@ -72,7 +72,7 @@ const ORDER = [
 
 describe("reviewPrompt", () => {
   test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates turn's tail", () => {
-    expect(REVIEW_PROMPT).toBe("review-prompt-9")
+    expect(REVIEW_PROMPT).toBe("review-prompt-10")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
       tail: [
@@ -210,6 +210,20 @@ describe("reviewPrompt", () => {
         "</reported-problem>",
       ].join("\n"),
     })
+  })
+
+  test("a check of a finding with no evidence: the framed problem ends saying none was quoted", () => {
+    const finding = { path: "src/sum.ts", line: 4, kind: "bug" as const, severity: "low" as const, claim: "It multiplies by one.", evidence: "", turn: TurnNumber.make(1), number: 1 }
+    expect(verifyPrompt(reviewPrefix(PREPARED), finding).tail.split("\n\n").at(-1)).toBe([
+      "<reported-problem>",
+      "File: src/sum.ts",
+      "Lines: 4",
+      "Kind: bug",
+      "Severity: low",
+      "Claim: It multiplies by one.",
+      "Evidence: none was quoted.",
+      "</reported-problem>",
+    ].join("\n"))
   })
 
   test("the host's note at the step cap, by stage, pinned whole", () => {

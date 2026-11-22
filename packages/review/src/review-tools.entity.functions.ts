@@ -1,5 +1,6 @@
-import { Array as Arr, Match, Option, Order, Result } from "effect"
+import { Array as Arr, Match, Option, Order, Predicate, Result } from "effect"
 import { clipTo } from "@xandreed/sdk"
+import type { ModelToolCall } from "@xandreed/sdk"
 import { GREP_TIMEOUT_MS } from "./checkout.entity.js"
 import type { GrepHit, TreeEntry } from "./checkout.entity.js"
 import type { FileDiff } from "./diff.entity.js"
@@ -264,6 +265,18 @@ export const wholeLinesWithin = (text: string, max: number): string => {
   }
   return kept === 0 ? clipTo(lines[0] ?? "", max) : lines.slice(0, kept).join("\n")
 }
+
+/**
+ * A `reportFinding` call whose parameters are an object with no `evidence`, given an empty one before it runs; any
+ * other call as it is. The tool still asks for evidence: on the review eval all but 11 of about 296 calls gave it,
+ * the 11 in one turn of Claude Haiku 5.5 that left it out again after each failed result named the missing key, and
+ * 3 of their 5 findings were lost. A check reads the cited lines whatever the evidence, and an empty one matches no
+ * diff (`evidenceMatches`), so it is never the reason a finding is the one its bucket's check is shown.
+ */
+export const withEvidence = (call: ModelToolCall): ModelToolCall =>
+  call.name === REPORT_FINDING && Predicate.isObject(call.params) && !Object.hasOwn(call.params, "evidence")
+    ? { ...call, params: { ...call.params, evidence: "" } }
+    : call
 
 /** A report as it is kept: its claim cut at `CLAIM_LIMIT` (`clipTo`), its evidence's first whole lines within `EVIDENCE_LIMIT`. */
 export const keptReport = <R extends { readonly claim: string; readonly evidence: string }>(report: R): R => ({

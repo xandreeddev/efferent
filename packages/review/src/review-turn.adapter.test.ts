@@ -546,6 +546,12 @@ describe("the harvest: a turn that answers in words is asked once more for what 
     expect(ran.kept.map((one) => one.tools)).toEqual([0, 1].map(() => ["readLines", "searchCode", "listFiles", "readDiff", "reportFinding", "verdict"]))
   })
 
+  test("a report that leaves out evidence is recorded with none, in a step and on the harvest", async () => {
+    const { evidence: _, ...bare } = FINDING
+    const ran = await turn([asksEnding("tool_calls", [["reportFinding", bare]]), says("Done."), asksEnding("tool_calls", [["reportFinding", { ...bare, line: 2 }]])])
+    expect<unknown>(ran.findings).toEqual([{ ...FINDING, evidence: "", turn: 1, number: 1 }, { ...FINDING, line: 2, evidence: "", turn: 1, number: 2 }])
+  })
+
   test("one whose harvest answers none ends Answered with the first summary; one whose harvest call fails too", async () => {
     const none = await turn([says("Nothing wrong."), says("none"), says("never sent")])
     const failed = await turn([says("Nothing wrong."), { status: 400, body: JSON.stringify({ error: { message: "the model does not exist" } }) }])

@@ -1,7 +1,7 @@
 import { describe, expect, test } from "bun:test"
 import { Option, Result } from "effect"
 import type { FileDiff } from "./diff.entity.js"
-import { diffPage, globMatches, keptReport, keptVerdict, linesPage, listText, patternRefusal, searchText, treePath, wholeLinesWithin } from "./review-tools.entity.functions.js"
+import { diffPage, globMatches, keptReport, keptVerdict, linesPage, listText, patternRefusal, searchText, treePath, wholeLinesWithin, withEvidence } from "./review-tools.entity.functions.js"
 
 describe("what a report and a verdict keep: cut, never refused", () => {
   test.each([
@@ -15,6 +15,16 @@ describe("what a report and a verdict keep: cut, never refused", () => {
   })
 
   const lines = Array.from({ length: 40 }, (_, index) => `line ${String(index).padStart(2, "0")} ${"x".repeat(41)}`)
+
+  test.each([
+    ["a report with no evidence gets an empty one", { id: "c1", name: "reportFinding", params: { path: "a.ts", line: 1 } }, { id: "c1", name: "reportFinding", params: { path: "a.ts", line: 1, evidence: "" } }],
+    ["a report's own evidence stays", { id: "c2", name: "reportFinding", params: { line: 1, evidence: "x" } }, { id: "c2", name: "reportFinding", params: { line: 1, evidence: "x" } }],
+    ["a report whose evidence is not text stays, for the tool to refuse", { id: "c3", name: "reportFinding", params: { evidence: 4 } }, { id: "c3", name: "reportFinding", params: { evidence: 4 } }],
+    ["another tool's call stays", { id: "c4", name: "verdict", params: { outcome: "confirmed" } }, { id: "c4", name: "verdict", params: { outcome: "confirmed" } }],
+    ["parameters that are no object stay", { id: "c5", name: "reportFinding", params: ["a.ts"] }, { id: "c5", name: "reportFinding", params: ["a.ts"] }],
+  ])("withEvidence: %s", (_, call, given) => {
+    expect(withEvidence(call)).toEqual(given)
+  })
 
   test("keptReport: a claim past 1,500 characters cut with the marker, evidence past 1,000 its first whole lines, or its one long line cut; the rest as given", () => {
     const report = { path: "src/sum.ts", line: 4, kind: "bug", severity: "low", claim: "It multiplies by one.", evidence: "total += value * 1" }

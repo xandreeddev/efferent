@@ -15,7 +15,7 @@ export const VERDICT = "verdict"
  * The version of the review's tool set: their names, descriptions, parameters and answers. A change to any of them
  * is a new version, kept with each review's record so results are compared tool set to tool set.
  */
-export const REVIEW_TOOLS_VERSION = "review-tools-5"
+export const REVIEW_TOOLS_VERSION = "review-tools-6"
 
 /** The most lines one `readLines` call reads. */
 export const READ_LINES_LIMIT = 150
