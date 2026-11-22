@@ -133,6 +133,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       promptVersion: REVIEW_PROMPT,
       toolsVersion: REVIEW_TOOLS_VERSION,
       hostTools: turns.hostTools.names,
+      limits: turns.limits,
       model: options.model,
       wallMs: (yield* Clock.currentTimeMillis) - started,
     })

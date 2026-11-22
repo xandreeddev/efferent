@@ -7,7 +7,7 @@ import { plainText } from "./log-digest.entity.functions.js"
 import { AT_SOURCE_WORDS } from "./prepare-review.entity.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
 import { FINISHED, INCOMPLETE_BECAUSE } from "./review-turn.entity.js"
-import type { TurnEnded, TurnResult } from "./review-turn.entity.js"
+import type { TurnEnded, TurnLimits, TurnResult } from "./review-turn.entity.js"
 import type { Focus, GroupRun, UngroupedFile } from "./file-group.entity.js"
 import type { Effort } from "./review-model.entity.js"
 import type { Finder } from "./review-prompt.entity.js"
@@ -76,6 +76,7 @@ export interface ReportInput {
   readonly promptVersion: string
   readonly toolsVersion: string
   readonly hostTools: ReadonlyArray<string>
+  readonly limits: TurnLimits
   readonly model: string
   readonly wallMs: number
 }
@@ -134,6 +135,7 @@ export const reviewReport = (input: ReportInput): ReviewReport => {
     promptVersion: input.promptVersion,
     toolsVersion: input.toolsVersion,
     hostTools: input.hostTools,
+    limits: input.limits,
     model: input.model,
     focus: input.focus,
     effort: input.effort,

@@ -47,7 +47,7 @@ export { FILES_INTRO, Finder, FIND_TAIL, GROUP_INTRO, REVIEW_PROMPT, REVIEW_SYST
 export { filesText, focusPrefix, focusPrompt, reviewPrefix, reviewPrompt, stepCapNote, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
 export { REVIEW_TOOLS_VERSION, Reviewed, ReviewStage } from "./review-tools.entity.js"
 export { ListFiles, ReadDiff, ReadLines, ReportFinding, reviewToolHandlers, reviewTools, SearchCode, Verdict as VerdictTool } from "./review-tools.adapter.js"
-export { DEFAULT_MAX_STEPS, TurnEnded, TurnResult } from "./review-turn.entity.js"
+export { DEFAULT_MAX_STEPS, TurnEnded, TurnLimits, TurnResult } from "./review-turn.entity.js"
 export { ReviewTurns } from "./review-turn.port.js"
 export type { HostToolsOffered, TurnInput } from "./review-turn.port.js"
 export { kernelTurns } from "./review-turn.adapter.js"

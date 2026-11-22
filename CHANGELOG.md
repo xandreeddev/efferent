@@ -37,6 +37,17 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   Gateway sends it, is read as one with the key empty, as Anthropic's own
   API sends it; before, Effect AI refused the whole answer.
 
+- `@xandreed/review`: a turn whose answer fails because a tool call's
+  parameters are not JSON (the Anthropic provider fails the whole answer
+  then, so no failed result can tell the model) is asked once more, at any
+  step, the harvest included: on the review eval one turn's harvest was lost
+  so. The read limit counts 2.35 characters a token of a stored result
+  (`CHARS_PER_TOKEN`; on the eval's two draws a result's JSON made 2.46 a
+  token of the next request's growth, so the estimate runs a little high),
+  not 3, which counted reads about a fifth low. `review.json` keeps what the turns were given
+  beyond the model (`limits`: whether thinking was sent back, the read
+  limit; `ReviewTurns.limits`, `TurnLimits`).
+
 - `@xandreed/review`: Claude Haiku 5.5 through the gateway's Messages API
   (`HAIKU_REVIEW_MODEL`, `--model anthropic/claude-haiku-5.5`, no
   `--price` needed: `KNOWN_REVIEW_MODELS`). A model names its wire
