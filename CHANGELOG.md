@@ -8,6 +8,21 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+### Added
+
+- `@xandreed/review`: the review eval, an app of `@xandreed/evals`
+  (`packages/review/src/evals`, `eval.config.ts`). Its known defects
+  (`evals/cases.json`: 59 mined from the repository's own pull requests,
+  split `tuning` 27, `tuning-544` 11 and `held-out` 21, all provisional)
+  and two recorded Haiku draws with the judge's match of each finding
+  (`evals/recorded.json.gz`). The suite `replay` runs each draw's findings
+  through the reviewer's own merge and the report's order and grades each
+  defect `found` and `shown` (the finding the report prints among its six,
+  over the gold groups' findings alone: an upper bound). Its gates are
+  floors at the worse draw (found 7/27, shown 4/27); the tests pin each
+  draw's counts, so a change to the merge, a bucket's best or the order that
+  drops a shown defect fails them. No model is called.
+
 ### Removed
 
 - **Breaking:** `@xandreed/sdk` no longer has the window memory (ADR 0037):

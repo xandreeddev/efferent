@@ -82,6 +82,7 @@
       },
       "dependencies": {
         "@xandreed/core": "workspace:*",
+        "@xandreed/evals": "workspace:*",
         "@xandreed/sdk": "workspace:*",
         "effect": "4.0.7",
         "tsx": "4.23.13",

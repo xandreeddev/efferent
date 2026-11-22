@@ -319,6 +319,10 @@ const config: typeof GateSuiteConfig.Encoded = {
       // no runtime module. A package that imports `@xandreed/core` names `core-kernel`; the layer keeps its name.
       { name: "core-kernel-tests", path: "packages/core/src/**/*.test.ts", canImport: ["core-kernel"], externals: ["effect", "bun:test"] },
       { name: "core-kernel", path: "packages/core/src/**", canImport: [], externals: ["effect"] },
+      // The reviewer's eval (`packages/review/src/evals`): an app of `@xandreed/evals` over the reviewer's own pure parts,
+      // before the reviewer's layers so its files are its own. The reviewer itself never imports the eval package.
+      { name: "review-evals-tests", path: "packages/review/src/evals/**/*.test.ts", canImport: ["review-evals", "review", "evals", "core-kernel"], externals: ["effect", "bun:test"] },
+      { name: "review-evals", path: "packages/review/src/evals/**", canImport: ["review", "evals"], externals: ["effect", "node:"] },
       // The reviewer: a command line over the kernel's shell (`@xandreed/sdk/node`'s `processShell`) and Node's modules,
       // whose passes are a host's loop on the kernel: core's sessions and spend ledger, Effect AI's model and tools.
       ...testLayer("review", ["review", "sdk-kernel", "sdk-kernel/node", "core-kernel"], ["effect", "effect/ai", "effect/http", "node:", "bun:test"]),
