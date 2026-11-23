@@ -60,7 +60,7 @@ export const validationLayers = (repo: RepoName, roots: { readonly cache: string
 /** The flags that take a value; `--workflow` may be given more than once, the others once. */
 const VALUED = ["--repo", "--budget", "--workflow", "--cache", "--records", "--at", "--max-cost", "--find-cost", "--verify-cost", "--max-steps", "--verify-steps", "--turns", "--finder", "--model", "--price", "--run", "--focus", "--group-steps", "--group-order", "--effort-find", "--effort-check"]
 const REPEATED = ["--workflow", "--run"]
-const SWITCHES = ["--json", "--validate", "--vote", "--no-verify", "--config-turn"]
+const SWITCHES = ["--json", "--validate", "--vote", "--no-verify", "--config-turn", "--skills"]
 
 /** A parsed command line: the positional words, each valued flag's values in order, and the switches given. */
 interface Line {
@@ -183,6 +183,8 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   const number = yield* decodedAs(PullNumber, Number(numberText), "the pull request's number")
   const options: PrepareOptions = {
     at: yield* Option.match(one(line, "--at"), { onNone: () => Effect.succeed<ReviewAt>({ _tag: "Head" }), onSome: atOf }),
+    // The repository's skills (`REVIEW_SKILLS_FILE` at the base) only on `--skills`, until an evaluation shows them worth their room.
+    skills: line.switches.has("--skills") ? { _tag: "Repo" } : { _tag: "Off" },
     budgetTokens: yield* Option.match(one(line, "--budget"), { onNone: () => Effect.succeed(DEFAULT_BUDGET_TOKENS), onSome: (text) => wholeNumber(text, "--budget") }),
     run: line.values.get("--run") ?? [],
     validate: line.switches.has("--validate"),

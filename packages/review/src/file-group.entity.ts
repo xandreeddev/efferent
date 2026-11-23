@@ -103,12 +103,14 @@ export type Focus = typeof Focus.Type
 export const DEFAULT_FOCUS: Focus = "groups"
 
 /**
- * A group as the review ran it: the group, the turn that ran on it (none when none started), and why it was not
- * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its turn answered at least one call).
+ * A group as the review ran it: the group, the turn that ran on it (none when none started), why it was not
+ * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its turn answered at least one call), and the paths of the skills its
+ * message showed (`groupSkills`; none when skills are off or none is called for).
  */
 export const GroupRun = Schema.Struct({
   group: FileGroup,
   turn: Schema.OptionFromNullOr(TurnNumber),
   notReviewed: Schema.String,
+  skills: Schema.Array(Schema.String),
 })
 export type GroupRun = typeof GroupRun.Type

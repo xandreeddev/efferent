@@ -28,7 +28,7 @@ import { CommitMissing } from "./checkout.entity.js"
 import { Checkout } from "./checkout.port.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import type { TurnLimits, TurnResult } from "./review-turn.entity.js"
-import { FOCUS_TAIL } from "./review-prompt.entity.js"
+import { FOCUS_TAIL, FOCUS_TAIL_SKILLS, SKILLS_INTRO } from "./review-prompt.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 import { reportText } from "./review-report.entity.functions.js"
 
@@ -72,7 +72,7 @@ const forge =Layer.succeed(Forge, Forge.of({
 const layers = Layer.mergeAll(forge, gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot), findingsInMemory)
   .pipe(Layer.provide(hostShell({ cwd: fixture.root, env: fixture.env })))
 
-const OPTIONS: PrepareOptions = { at: { _tag: "First" }, budgetTokens: 24_000, run: [], validate: false, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
+const OPTIONS: PrepareOptions = { at: { _tag: "First" }, skills: { _tag: "Off" }, budgetTokens: 24_000, run: [], validate: false, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
 
 describe("at the first head", () => {
   test("the commit the first run tested, its diff and rules from where its history meets the base, its own CI, its description as it stood then", async () => {
@@ -187,7 +187,7 @@ describe("reviewPullRequest", () => {
     // The one check runs alone, so it keeps back its closing call's reserve.
     expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6, reserve: 0.1 }, finds[0]?.prompt.prefix, true])
     expect<unknown>([report.promptVersion, report.toolsVersion, report.hostTools, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
-      "review-prompt-10", "review-tools-6", [], 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
+      "review-prompt-11", "review-tools-6", [], 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
     ])
     expect<unknown>([report.reported.map((one) => [one.path, one.line, one.votes, one.checked]), report.stages.find, report.stages.verify.calls]).toEqual([
       [["src/sum.ts", 4, 3, "It does multiply by one."]], { input: 30, cached: 12, output: 6, cost: 0.003, calls: 3 }, 1,
@@ -308,6 +308,22 @@ describe("reviewPullRequest", () => {
       checks.length,
       checks[0]?.prompt.prefix === finds[holding]?.prompt.prefix,
     ]).toEqual([true, true, finds.length, true, 1, true])
+  })
+
+  test("focused, with the repository's skills: a group whose files call for a skill shows it and is asked with the skills' tail, the others as before; each group's skills recorded", async () => {
+    const { asked, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer, {
+      ...REVIEW_OPTIONS, focus: "groups", verify: false, prepare: { ...OPTIONS, skills: { _tag: "Repo" } }, groups: { ...DEFAULT_GROUP_OPTIONS, bounds: { tokens: 6_000, files: 1 } },
+    })
+    const finds = asked.filter((input) => input.reviewed.stage._tag === "Find")
+    const calledFor = report.groups.map((run) => run.group.paths.some((path) => path.startsWith("src/")))
+    expect([calledFor.includes(true), calledFor.includes(false)]).toEqual([true, true])
+    expect(report.groups.map((run) => run.skills)).toEqual(calledFor.map((called) => (called ? [".agents/skills/one/SKILL.md"] : [])))
+    expect(finds.map((input) => [input.prompt.tail, input.prompt.prefix[2]?.content.startsWith(SKILLS_INTRO), input.prompt.prefix[2]?.content.includes("<repo-skills>\nFile: .agents/skills/one/SKILL.md\n# One\nA skill at the base.\n\n</repo-skills>")])).toEqual(
+      calledFor.map((called) => (called ? [FOCUS_TAIL_SKILLS.candidates, true, true] : [FOCUS_TAIL.candidates, false, false])),
+    )
+    // The skills are the group's: the message every group shares is the same with them as without.
+    expect(finds.every((input) => input.prompt.prefix[1]?.content === finds[0]?.prompt.prefix[1]?.content)).toBe(true)
   })
 
   test("focused: a group starts only with its closing reserve and its first call's hold, sized from its prompt, left in the find stage", async () => {

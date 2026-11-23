@@ -21,6 +21,11 @@ describe("cliLine", () => {
   })
 })
 
+test("reads --skills as a switch, taking no value: the word after it stays a word", async () => {
+  const line = await Effect.runPromise(cliLine(["review", "--skills", "1", "--repo", "a/b"]))
+  expect([line.words, [...line.switches]]).toEqual([["review", "1"], ["--skills"]])
+})
+
 test("reads --run whole and again for more, and --validate", async () => {
   const line = await Effect.runPromise(cliLine(["prepare", "1", "--run", "bun run typecheck", "--run=bun test packages/review", "--validate"]))
   expect([line.values.get("--run"), [...line.switches]]).toEqual([["bun run typecheck", "bun test packages/review"], ["--validate"]])

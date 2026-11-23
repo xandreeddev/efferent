@@ -5,9 +5,11 @@ import { shownPath } from "./diff.entity.functions.js"
 import type { Finding } from "./finding.entity.js"
 import { droppedLines, fileKind, isTestPath, packDiff } from "./packed-diff.entity.functions.js"
 import type { FailingRun, PreparedReview } from "./prepare-review.entity.js"
-import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, GROUP_INTRO, HARVEST_NOTE, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, NO_EVIDENCE, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
+import { BODY_SHOWN, CI_INTRO, CI_SHOWN, DIFF_INTRO, FILES_INTRO, FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, FOCUS_TAIL_SKILLS, GROUP_INTRO, HARVEST_NOTE, HEADINGS_NOTE, IN_THE_DIFF, LEFT_OUT, PULL_INTRO, REVIEW_SYSTEM, RULE_HEADINGS_SHOWN, RULES_INTRO, RULES_SHOWN, RULES_WHOLE, NO_EVIDENCE, SKILLS_INTRO, STEP_CAP_NOTE, TAIL_ORDER, TITLE_SHOWN, VERIFY_TAIL } from "./review-prompt.entity.js"
 import type { Finder, FindTailOptions, PromptPart, ReviewPrompt, WalkedFile } from "./review-prompt.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
+import { NO_SKILLS } from "./repo-skills.entity.js"
+import type { ShownSkills } from "./repo-skills.entity.js"
 import type { ReviewStage } from "./review-tools.entity.js"
 
 /** The folder an instruction file sits in, `""` at the root. */
@@ -125,16 +127,30 @@ export const filesText = (prepared: PreparedReview, shown: number = FILES_SHOWN)
  * A focused turn's prefix (`groups` focus), shared byte for byte by the checks of its group's findings: the system text;
  * one user message with the rules, the title and description, every changed file (`filesText`, framed
  * `pull-request-files`, in place of the packed diff, so this message is the same for every group) and the CI's digest;
- * then the group's message, `GROUP_INTRO` and the group's diffs packed under `budgetTokens` (`packDiff`; a file with no
- * room is named, for `readDiff`), framed `files-under-review`.
+ * then the group's message: the skills its files call for when any is shown (`SKILLS_INTRO`, framed `repo-skills`,
+ * `groupSkills`), then `GROUP_INTRO` and the group's diffs packed under `budgetTokens` (`packDiff`; a file with no room
+ * is named, for `readDiff`), framed `files-under-review`.
  */
-export const focusPrefix = (prepared: PreparedReview, group: ReadonlyArray<FileDiff>, budgetTokens: number): ReadonlyArray<PromptPart> => [
+export const focusPrefix = (prepared: PreparedReview, group: ReadonlyArray<FileDiff>, budgetTokens: number, skills: ShownSkills = NO_SKILLS): ReadonlyArray<PromptPart> => [
   ...prefixWith(prepared, [FILES_INTRO, framed("pull-request-files", filesText(prepared))]),
-  { role: "user", content: `${GROUP_INTRO}\n\n${framed("files-under-review", packDiff(group, budgetTokens).text)}` },
+  {
+    role: "user",
+    content: [
+      ...(skills.paths.length > 0 ? [SKILLS_INTRO, framed("repo-skills", skills.text)] : []),
+      GROUP_INTRO,
+      framed("files-under-review", packDiff(group, budgetTokens).text),
+    ].join("\n\n"),
+  },
 ]
 
-/** A focused turn's prompt: its group's prefix (`focusPrefix`) and its finder's focused words (`FOCUS_TAIL`), with no walk: its files are the group's. */
-export const focusPrompt = (prefix: ReadonlyArray<PromptPart>, finder: Finder): ReviewPrompt => ({ prefix, tail: FOCUS_TAIL[finder] })
+/**
+ * A focused turn's prompt: its group's prefix (`focusPrefix`) and its finder's focused words, with no walk: its files are
+ * the group's. `FOCUS_TAIL_SKILLS` when its group's message shows skills (`skills`), else `FOCUS_TAIL`.
+ */
+export const focusPrompt = (prefix: ReadonlyArray<PromptPart>, finder: Finder, skills: ShownSkills = NO_SKILLS): ReviewPrompt => ({
+  prefix,
+  tail: (skills.paths.length > 0 ? FOCUS_TAIL_SKILLS : FOCUS_TAIL)[finder],
+})
 
 /**
  * A finder turn's prompt: the prefix (`reviewPrefix`) and the tail, what the turn is asked (`FIND_TAIL` of its finder), then

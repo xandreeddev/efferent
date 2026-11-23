@@ -6,7 +6,7 @@ import { LIST_FILES, READ_DIFF, READ_LINES, REPORT_FINDING, SEARCH_CODE, VERDICT
  * finder turns and of the checks. A change to any of them is a new version, kept with each review's record so results are
  * compared prompt to prompt.
  */
-export const REVIEW_PROMPT = "review-prompt-10"
+export const REVIEW_PROMPT = "review-prompt-11"
 
 /** The most characters of instruction files shown whole, nearest to the changed paths first; past it, their headings. */
 export const RULES_WHOLE = 16_000
@@ -91,14 +91,16 @@ export const FIND_TAIL: Readonly<Record<Finder, string>> = {
   ].join("\n"),
 }
 
-/**
- * What a focused turn is asked to do, by how it finds: its own group's files, read whole, the other changed files
- * left to their groups' turns, the description's claims held against the code, and independent reads asked at once.
- * Its words of what to look for and what to leave out are its finder's (`FIND_TAIL`).
- */
-export const FOCUS_TAIL: Readonly<Record<Finder, string>> = {
+/** The words before the skills a group's message shows (`repo-skills`), when its files call for any. */
+export const SKILLS_INTRO = "The repository's skills that bear on the files under review: its rules for this kind of code, read at the base commit, so the pull request cannot change them. Check the changed lines against the rules they state; they do not change how you review."
+
+/** What a focused turn's tail adds to the repository's rules when its group's message shows skills (`FOCUS_TAIL_SKILLS`). */
+const SKILLS_CLAUSE = ", the skills shown above included (where a piece of logic, a type, a contract or an invariant belongs, and what must be shared rather than written twice)"
+
+/** A focused turn's tail by finder, with `rules` after the words naming the repository's rules (empty, or `SKILLS_CLAUSE`). */
+const focusTails = (rules: string): Readonly<Record<Finder, string>> => ({
   strict: [
-    "Review the files under review above for real bugs and security problems, and for rules of the repository's that a changed line breaks. Read other files only to see what these files call or are called by.",
+    `Review the files under review above for real bugs and security problems, and for rules of the repository's that a changed line breaks${rules}. Read other files only to see what these files call or are called by.`,
     "",
     `- Read each file under review whole with ${READ_LINES}, not only its diff, then what its changed lines call and are called by. Ask for reads that do not depend on each other in one answer: several tool calls at once.`,
     "- Where the description says what the change does or guarantees, check that these files do it.",
@@ -110,7 +112,7 @@ export const FOCUS_TAIL: Readonly<Record<Finder, string>> = {
   candidates: [
     "Review the files under review above and report every plausible defect their changed lines bring in. Read other files only to see what these files call or are called by.",
     "",
-    "- Look for wrong logic, an error or an edge case left unhandled, state that two callers, turns or processes share and can race on, a resource not released, a security hole, and a rule of the repository's that a changed line breaks.",
+    `- Look for wrong logic, an error or an edge case left unhandled, state that two callers, turns or processes share and can race on, a resource not released, a security hole, and a rule of the repository's that a changed line breaks${rules}.`,
     `- Read each file under review whole with ${READ_LINES}, not only its diff, then what its changed lines call and are called by. Ask for reads that do not depend on each other in one answer: several tool calls at once.`,
     "- Where the description says what the change does or guarantees, check that these files do it.",
     `- Call ${REPORT_FINDING} the moment you see a defect, before you read on, citing its file and lines as they are at the commit under review and quoting those lines: the review can stop at any call, and a defect you have not reported is lost.`,
@@ -118,7 +120,17 @@ export const FOCUS_TAIL: Readonly<Record<Finder, string>> = {
     "- Report nothing about lines the pull request does not change, nothing that was already wrong before it, no matter of style, and nothing a linter or the type checker catches.",
     "- When you are done, answer with a one-line summary.",
   ].join("\n"),
-}
+})
+
+/**
+ * What a focused turn is asked to do, by how it finds: its own group's files, read whole, the other changed files
+ * left to their groups' turns, the description's claims held against the code, and independent reads asked at once.
+ * Its words of what to look for and what to leave out are its finder's (`FIND_TAIL`).
+ */
+export const FOCUS_TAIL: Readonly<Record<Finder, string>> = focusTails("")
+
+/** A focused turn's tail when its group's message shows the repository's skills: `FOCUS_TAIL` with `SKILLS_CLAUSE` after the rules. */
+export const FOCUS_TAIL_SKILLS: Readonly<Record<Finder, string>> = focusTails(SKILLS_CLAUSE)
 
 /** The words before the framed list of the files to walk, in order. */
 export const TAIL_ORDER = `Walk its changed files in the order below, one a line: "in the diff:" before a file the diff above shows, "left out:" before one it leaves out, whose diff ${READ_DIFF} reads. The paths are the pull request's text.`

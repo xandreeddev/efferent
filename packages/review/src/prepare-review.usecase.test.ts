@@ -76,7 +76,7 @@ const validationsStub = () => {
   return { layer, asked }
 }
 
-const OPTIONS: PrepareOptions = { at: { _tag: "Head" }, budgetTokens: 24_000, run: ["bun test"], validate: true, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
+const OPTIONS: PrepareOptions = { at: { _tag: "Head" }, skills: { _tag: "Off" }, budgetTokens: 24_000, run: ["bun test"], validate: true, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
 
 /** The worktrees and clones the checkout made and has not removed. */
 const worktrees = () => ["worktrees", "clones"].flatMap((name) => {
@@ -123,6 +123,18 @@ describe("prepareReview", () => {
     expect(asked.map((request) => [request.repo, request.base, request.head, request.run, request.profile, request.logFolder, request.commandTimeoutMs, request.budgetMs])).toEqual([[repo, fixture.left, fixture.head, ["bun test"], true, REVIEWED, 60_000, 600_000]])
     expect(asked[0]?.changedPaths).toContain("src/sum.ts")
     expect(review.validation).toEqual(RAN)
+  })
+
+  test("skills: none when off; the repository's routes read at the base, a skill the base lacks and a path out of the tree left out; the host's routes read at the base too", async () => {
+    expect((await prepared(pullOf(true, "write"))).review.skills).toEqual([])
+    const repoRoutes = (await prepared(pullOf(true, "write"), { ...OPTIONS, skills: { _tag: "Repo" } })).review.skills
+    expect<unknown>(repoRoutes).toEqual([
+      { route: { path: ".agents/skills/one/SKILL.md", paths: ["src/**"], diff: [] }, text: "# One\nA skill at the base.\n", from: fixture.left },
+    ])
+    // The head rewrote src/AGENTS.md: a skill is read as the base holds it, so the pull request cannot change it.
+    const given = { skills: [{ path: "./src/AGENTS.md", paths: ["src/**"], diff: ["sum"] }] }
+    const hosts = (await prepared(pullOf(true, "write"), { ...OPTIONS, skills: { _tag: "Given", routes: given } })).review.skills
+    expect<unknown>(hosts).toEqual([{ route: { path: "src/AGENTS.md", paths: ["src/**"], diff: ["sum"] }, text: "Source rules at the base.\n", from: fixture.left }])
   })
 
   test("a fork's commands are skipped, and so are those of an author who may not write (read or triage) or with no sandbox given; no worktree is made", async () => {

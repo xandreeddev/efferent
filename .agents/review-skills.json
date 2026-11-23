@@ -1,0 +1,24 @@
+{
+  "skills": [
+    {
+      "path": ".agents/skills/domain-entity/SKILL.md",
+      "paths": ["**/*.entity.ts", "**/*.entity.*.ts"],
+      "diff": ["Schema.Struct", "Schema.TaggedStruct", "Schema.Literals", "Schema.Class", ".brand("]
+    },
+    {
+      "path": ".agents/skills/add-port/SKILL.md",
+      "paths": ["**/*.port.ts", "**/*.port.*.ts", "**/*.adapter.ts", "**/*.adapter.*.ts", "**/*.conformance.ts", "**/*.conformance.*.ts", "**/ports/**/*.ts"],
+      "diff": []
+    },
+    {
+      "path": ".agents/skills/write-model-text/SKILL.md",
+      "paths": ["**/*prompt*.ts", "**/*prompt*.tsx", "**/*prompt*.mts"],
+      "diff": []
+    },
+    {
+      "path": ".agents/skills/kernel-architecture/SKILL.md",
+      "paths": ["**/kernel/**/*.ts", "**/contracts/**/*.ts", "**/plugins/**/*.ts"],
+      "diff": ["from \"@xandreed/core", "from \"@xandreed/sdk"]
+    }
+  ]
+}
