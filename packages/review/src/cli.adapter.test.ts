@@ -21,6 +21,11 @@ describe("cliLine", () => {
   })
 })
 
+test("reads --skills as a switch, taking no value: the word after it stays a word", async () => {
+  const line = await Effect.runPromise(cliLine(["review", "--skills", "1", "--repo", "a/b"]))
+  expect([line.words, [...line.switches]]).toEqual([["review", "1"], ["--skills"]])
+})
+
 test("reads --run whole and again for more, and --validate", async () => {
   const line = await Effect.runPromise(cliLine(["prepare", "1", "--run", "bun run typecheck", "--run=bun test packages/review", "--validate"]))
   expect([line.values.get("--run"), [...line.switches]]).toEqual([["bun run typecheck", "bun test packages/review"], ["--validate"]])
@@ -66,6 +71,7 @@ describe("reviewCli", () => {
     [["review", "1", "--repo", "a/b", "--focus", "groups", "--max-steps", "4"], "--max-steps is a flag of --focus whole, not of --focus groups"],
     [["review", "1", "--repo", "a/b", "--focus", "whole", "--group-steps", "4"], "--group-steps is a flag of --focus groups, not of --focus whole"],
     [["review", "1", "--repo", "a/b", "--focus", "whole", "--config-turn"], "--config-turn is a flag of --focus groups, not of --focus whole"],
+    [["review", "1", "--repo", "a/b", "--focus", "whole", "--skills"], "--skills is a flag of --focus groups, not of --focus whole"],
     [["prepare", "1", "--repo", "a/b", "--focus", "groups"], "--focus is a flag of review, not of prepare"],
     [["prepare", "1", "--repo", "a/b", "--config-turn"], "--config-turn is a flag of review, not of prepare"],
     [["prepare", "1", "--repo", "a/b", "--turns", "2"], "--turns is a flag of review, not of prepare"],

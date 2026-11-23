@@ -330,7 +330,7 @@ describe("listFiles and readDiff", () => {
     const { stored } = await calls([["listFiles", { glob: "src/**" }], ["listFiles", { glob: "**/*.md" }], ["listFiles", { glob: "nothing/*" }]])
     expect(stored).toEqual([
       ["5 files match \"src/**\":\nsrc/AGENTS.md\nsrc/a file's $(echo no).ts\nsrc/big.ts\nsrc/run.sh\nsrc/sum.ts", false],
-      ["4 files match \"**/*.md\":\n:(glob)odd/AGENTS.md\nAGENTS.md\ndocs/old.md\nsrc/AGENTS.md", false],
+      ["5 files match \"**/*.md\":\n.agents/skills/one/SKILL.md\n:(glob)odd/AGENTS.md\nAGENTS.md\ndocs/old.md\nsrc/AGENTS.md", false],
       ["No tracked file matches \"nothing/*\".", false],
     ])
   })

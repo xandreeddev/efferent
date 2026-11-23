@@ -2,7 +2,7 @@ import { Array as Arr, Cause, Clock, Deferred, Effect, Fiber, Match, Option, Ran
 import { ModelSpend } from "@xandreed/core"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
-import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE, SKILLS_UNSHOWN_NOTE } from "./file-group.entity.js"
 import type { Focus, GroupRun } from "./file-group.entity.js"
 import { firstCallHold, lookupFailedNote, noCallWhy, orderGroups, packageFoldersToLook, uncachedCheckNote, ungroupedOf } from "./file-group.entity.functions.js"
 import type { TurnInput } from "./review-turn.port.js"
@@ -23,6 +23,7 @@ import type { TurnEnded, TurnResult } from "./review-turn.entity.js"
 import { ReviewTurns } from "./review-turn.port.js"
 import { REVIEW_PROMPT } from "./review-prompt.entity.js"
 import { focusPrefix, focusPrompt, reviewPrefix, reviewPrompt, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
+import { groupSkills } from "./repo-skills.entity.functions.js"
 import { ReviewReport } from "./review-report.entity.js"
 import type { BucketCheck } from "./review-report.entity.js"
 import { reviewReport, runNameOf } from "./review-report.entity.functions.js"
@@ -112,7 +113,12 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const grouping = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : { focused: [], ungrouped: [], notes: [] }
   // The focus the review runs: the whole one when there is no group to review.
   const focus: Focus = options.focus === "groups" && grouping.focused.length > 0 ? "groups" : "whole"
-  const notes: Array<string> = [...grouping.notes, ...(options.focus === "groups" && focus === "whole" ? [NO_GROUP_NOTE] : [])]
+  const notes: Array<string> = [
+    ...grouping.notes,
+    ...(options.focus === "groups" && focus === "whole" ? [NO_GROUP_NOTE] : []),
+    // Only a group's message shows skills: a review that ran whole read them for nothing, and says so.
+    ...(focus === "whole" && prepared.skills.length > 0 ? [SKILLS_UNSHOWN_NOTE] : []),
+  ]
   const groupRuns: Array<GroupRun> = []
   const found: Array<TurnResult> = []
 
@@ -176,14 +182,14 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   if (focus === "groups") {
     const runAs: TurnOptions ={ maxSteps: options.groups.steps, reserve: Math.min(options.groups.reserve, options.budget.find / 2) }
     let stopped = ""
-    for (const { group, prefix } of grouping.focused) {
-      const prompt = focusPrompt(prefix, options.finder)
+    for (const { group, prefix, skills } of grouping.focused) {
+      const prompt = focusPrompt(prefix, options.finder, skills)
       if (stopped.length === 0) {
         const totals = yield* Effect.orDie(findSpend.totals)
         if (options.budget.find - totals.settled - totals.reserved < runAs.reserve + firstCallHold(prompt, options.price, turns.hostTools.declarationBytes)) stopped = NOT_REVIEWED_BECAUSE.spent
       }
       if (stopped.length > 0) {
-        groupRuns.push({ group, turn: Option.none(), notReviewed: stopped })
+        groupRuns.push({ group, turn: Option.none(), notReviewed: stopped, skills: skills.paths })
         continue
       }
       const turn = TurnNumber.make(found.length + 1)
@@ -191,7 +197,7 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
       const result = yield* find(found.length, prompt, runAs, { retryFirstCall: true })
       found.push(result)
       const answered = result.calls.some((call) => Option.isSome(call.tokens))
-      groupRuns.push({ group, turn: Option.some(turn), notReviewed: answered ? "" : noCallWhy(result.ended) })
+      groupRuns.push({ group, turn: Option.some(turn), notReviewed: answered ? "" : noCallWhy(result.ended), skills: skills.paths })
       // Only the stage's refusal stops the rest; a group whose turn failed otherwise is lost alone.
       if (!answered && result.ended._tag === "SpendRefused") stopped = NOT_REVIEWED_BECAUSE.stopped
       yield* record({ turns: found, groups: groupRuns, checks: [], findings: yield* findings.all(run), buckets: [], verdicts: [], complete: false })
@@ -272,8 +278,9 @@ const holdsPackage = (repo: RepoName, at: CommitSha, folder: string) => Effect.g
 
 /**
  * A focused review's groups (`policies.group` over the files the verdict kept, given the folders that hold a
- * `package.json` at the commit under review), in the order `groups.order` says (`orderGroups`), each with its prefix
- * (`focusPrefix`, its diffs under the preparation's token budget); the files no group holds, with why
+ * `package.json` at the commit under review), in the order `groups.order` says (`orderGroups`), each with the skills
+ * its files call for (`groupSkills`) and its prefix (`focusPrefix`, those skills and its diffs under the preparation's
+ * token budget); the files no group holds, with why
  * (`ungroupedOf`); and a note for each folder whose `package.json` could not be looked up.
  */
 const reviewGroups = (repo: RepoName, prepared: PreparedReview, options: ReviewOptions, policies: ReviewPolicies) => Effect.gen(function* () {
@@ -284,10 +291,11 @@ const reviewGroups = (repo: RepoName, prepared: PreparedReview, options: ReviewO
   const groups = orderGroups(policies.group(read, roots, options.groups.bounds, options.groups.config), read, options.groups.order)
   const byPath = new Map(read.map((file) => [file.path, file]))
   return {
-    focused: groups.map((group) => ({
-      group,
-      prefix: focusPrefix(prepared, group.paths.flatMap((path) => Option.toArray(Option.fromNullishOr(byPath.get(path)))), options.prepare.budgetTokens),
-    })),
+    focused: groups.map((group) => {
+      const files = group.paths.flatMap((path) => Option.toArray(Option.fromNullishOr(byPath.get(path))))
+      const skills = groupSkills(prepared.skills, files, options.prepare.budgetTokens)
+      return { group, skills, prefix: focusPrefix(prepared, files, options.prepare.budgetTokens, skills) }
+    }),
     ungrouped: ungroupedOf(read, groups),
     notes: looked.filter((one) => Option.isNone(one.holds)).map((one) => lookupFailedNote(one.folder)),
   }

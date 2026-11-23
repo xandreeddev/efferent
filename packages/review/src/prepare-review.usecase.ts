@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Result } from "effect"
+import { Array as Arr, Effect, Match, Option, Result, Schema } from "effect"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff } from "./diff.entity.functions.js"
@@ -13,6 +13,9 @@ import { reviewFolderOf } from "./prepare-review.entity.functions.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import type { PullNumber, PullRequest, RepoName } from "./pull-request.entity.js"
 import type { RepoRules } from "./repo-rules.entity.js"
+import { REVIEW_SKILLS_FILE, SkillRoutes, SkillsSource } from "./repo-skills.entity.js"
+import type { RepoSkill, SkillRoute } from "./repo-skills.entity.js"
+import { treePath } from "./review-tools.entity.functions.js"
 import { ReviewLogs } from "./review-logs.port.js"
 import { Validations } from "./validations.port.js"
 
@@ -82,6 +85,38 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
     onSome: (body) => all.some((rule) => rule.text === body) ? all : [...all, { path, text: body, from: at.base }],
   }), [])
 
+  // The skills, read at the base as the rules are: the repository's routes (a file it does not hold, or one that does
+  // not decode, logged, gives none) or the host's; a route whose path is no tree path, or whose skill the base does not
+  // hold, is left out, logged.
+  const routes = yield* SkillsSource.match(options.skills, {
+    Off: () => Effect.succeed<ReadonlyArray<SkillRoute>>([]),
+    Given: ({ routes }) => Effect.succeed(routes.skills),
+    Repo: () => Effect.flatMap(checkout.show(repo, at.base, REVIEW_SKILLS_FILE), (text) => Option.match(text, {
+      onNone: () => Effect.as(Effect.logDebug("the base holds no skill routes", { file: REVIEW_SKILLS_FILE }), []),
+      onSome: (json) => Schema.decodeUnknownEffect(Schema.fromJsonString(SkillRoutes))(json).pipe(
+        Effect.map((decoded) => decoded.skills),
+        Effect.catch((error) => Effect.as(Effect.logWarning("the skill routes do not decode, so no skill is shown", { file: REVIEW_SKILLS_FILE, error: error.message }), [])),
+      ),
+    })),
+  })
+  const read = yield* Effect.forEach(routes, (route) => Result.match(treePath(route.path), {
+    onFailure: () => Effect.as(Effect.logWarning("a skill route's path is no path in the repository, so it is left out", { path: route.path }), Option.none<RepoSkill>()),
+    onSuccess: (path) => Effect.flatMap(checkout.show(repo, at.base, path), (text) => Option.match(text, {
+      onNone: () => Effect.as(Effect.logWarning("the base holds no skill at a route's path, so it is left out", { path }), Option.none<RepoSkill>()),
+      onSome: (body) => Effect.succeed(Option.some<RepoSkill>({ route: { ...route, path }, text: body, from: at.base })),
+    })),
+  }), { concurrency: 4 })
+  // One skill once: routes to one path (`./x` and `x` alike, as `treePath` reads them) are one, with all their globs
+  // and words, where the first stood.
+  const held = read.flatMap((skill) => Option.toArray(skill))
+  const skills = Arr.dedupeWith(held, (one, other) => one.route.path === other.route.path).map((skill) => {
+    const same = held.filter((other) => other.route.path === skill.route.path)
+    return same.length === 1 ? skill : {
+      ...skill,
+      route: { ...skill.route, paths: Arr.dedupe(same.flatMap((one) => one.route.paths)), diff: Arr.dedupe(same.flatMap((one) => one.route.diff)) },
+    }
+  })
+
   const ci = yield* forge.ciRuns(repo, at.sha, options.workflows)
   const folder = reviewFolderOf(pull.number, at.sha)
   const failing = yield* Effect.forEach(ci.filter(policies.failed), (run) => Effect.gen(function* () {
@@ -131,6 +166,6 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       }),
     })
 
-  const prepared: PreparedReview = { pullRequest, at, files, later, verdicts, diff, rules, ci, failing, validation }
+  const prepared: PreparedReview = { pullRequest, at, files, later, verdicts, diff, rules, skills, ci, failing, validation }
   return prepared
 })

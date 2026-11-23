@@ -12,6 +12,7 @@ import { PackedDiff } from "./packed-diff.entity.js"
 import { CommitSha, PullRequest } from "./pull-request.entity.js"
 import { FileDiff } from "./diff.entity.js"
 import { RepoRules } from "./repo-rules.entity.js"
+import { RepoSkill, SkillsSource } from "./repo-skills.entity.js"
 
 /**
  * Which commit of a pull request is reviewed: its head now (`Head`); its first head (`First`), the commit its earliest
@@ -64,10 +65,12 @@ export type ReviewedAt = typeof ReviewedAt.Type
  * What a preparation is asked: which commit to review; the token budget of the diff; the commands to run by hand
  * (`run`) and whether the repository's profile runs too (`validate`; neither: nothing is run); the workflow files whose
  * CI runs count (none: every one the `pull_request` event started); the digest's limits; how long each command may
- * run, and how long each clone's whole run may take (`budgetMs`).
+ * run, and how long each clone's whole run may take (`budgetMs`); and where the skills a group shows come from
+ * (`skills`: `Off`, the repository's routes, or the host's).
  */
 export const PrepareOptions = Schema.Struct({
   at: ReviewAt,
+  skills: SkillsSource,
   budgetTokens: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
   run: Schema.Array(Schema.String),
   validate: Schema.Boolean,
@@ -126,8 +129,9 @@ export type FailingRun = typeof FailingRun.Type
 /**
  * A pull request prepared for review, with no model asked: the pull request, the commit under review and its base,
  * every changed file's diff (`files`, whole), what the pull request changed after the commit under review when it is
- * not the head (`later`), each changed file's verdict, the diff packed under its budget, the repository's rules at the base commit, the CI runs of the head with a digest of each
- * failed one, and the commands asked for.
+ * not the head (`later`), each changed file's verdict, the diff packed under its budget, the repository's rules at the base commit,
+ * the skills its routes name read at the base commit (`skills`, none when they are off), the CI runs of the head with a
+ * digest of each failed one, and the commands asked for.
  */
 export const PreparedReview = Schema.Struct({
   pullRequest: PullRequest,
@@ -137,6 +141,7 @@ export const PreparedReview = Schema.Struct({
   verdicts: Schema.Array(FileVerdict),
   diff: PackedDiff,
   rules: Schema.Array(RepoRules),
+  skills: Schema.Array(RepoSkill),
   ci: Schema.Array(CiRun),
   failing: Schema.Array(FailingRun),
   validation: Validation,

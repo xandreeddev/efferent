@@ -10,6 +10,24 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ### Added
 
+- `@xandreed/review`: the repository's skills in a focused review, off by
+  default (`--skills`, `PrepareOptions.skills`). A repository names which
+  of its skills bear on which files in `.agents/review-skills.json` (each
+  skill's file, path globs, and plain words of a group's diff), read at
+  the base commit; a host may give its own routes. A group's message
+  shows the skills its files call for (`SKILLS_INTRO`, framed
+  `repo-skills`, 30,000 characters, a long skill by its ranked sections),
+  and its turn is asked with `FOCUS_TAIL_SKILLS`, whose rules' words name
+  them; a group with none gets the prompt as before, byte for byte.
+  The skills shown never pass 30,000 characters, routes to one file are
+  one skill, and a review that ran whole says it showed none
+  (`SKILLS_UNSHOWN_NOTE`); `--skills` is refused with `--focus whole`.
+  `review.json` records each group's skills (`GroupRun.skills`). The
+  docs site's review pages describe the skills (Pipeline, Safety) and
+  plan what is left (Planned: instruction files as skills). New
+  model-facing text: `REVIEW_PROMPT` is `review-prompt-11`. Efferent
+  declares its own routes for `domain-entity`, `add-port`,
+  `write-model-text` and `kernel-architecture`.
 - `@xandreed/review`: the review eval, an app of `@xandreed/evals`
   (`packages/review/src/evals`, `eval.config.ts`). Its known defects
   (`evals/cases.json`: 59 mined from the repository's own pull requests,

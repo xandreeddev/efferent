@@ -3,7 +3,8 @@ import { Option } from "effect"
 import type { FileDiff } from "./diff.entity.js"
 import { CheckNumber, TurnNumber } from "./finding.entity.js"
 import type { PreparedReview } from "./prepare-review.entity.js"
-import { FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, HARVEST_NOTE, REVIEW_PROMPT } from "./review-prompt.entity.js"
+import { FILES_SHOWN, FIND_TAIL, FOCUS_TAIL, FOCUS_TAIL_SKILLS, HARVEST_NOTE, REVIEW_PROMPT } from "./review-prompt.entity.js"
+import { NO_SKILLS } from "./repo-skills.entity.js"
 import { isTestPath } from "./packed-diff.entity.functions.js"
 import { filesText, focusPrefix, focusPrompt, harvestNote, nearestFirst, reviewPrefix, reviewPrompt, rulesText, stepCapNote, verifyPrompt, walkOrders } from "./review-prompt.entity.functions.js"
 import { PREPARED } from "./review-prompt.testing.js"
@@ -72,7 +73,7 @@ const ORDER = [
 
 describe("reviewPrompt", () => {
   test("the review's prompt, pinned whole: the system text, the framed rules nearest first, pull request, diff and CI digest, and the candidates turn's tail", () => {
-    expect(REVIEW_PROMPT).toBe("review-prompt-10")
+    expect(REVIEW_PROMPT).toBe("review-prompt-11")
     expect(reviewPrompt(PREPARED, { finder: "candidates", order: walkOrders(PREPARED, 1)[0] ?? [] })).toEqual({
       prefix: [{ role: "system", content: SYSTEM }, { role: "user", content: PREFIX_USER }],
       tail: [
@@ -154,6 +155,48 @@ describe("reviewPrompt", () => {
     const prefix = focusPrefix(PREPARED, PREPARED.files, 24_000)
     expect([focusPrompt(prefix, "strict").tail, focusPrompt(prefix, "candidates").tail]).toEqual([strict, candidates])
     expect([FIND_TAIL.strict === strict, FIND_TAIL.candidates === candidates]).toEqual([false, false])
+  })
+
+  test("a focused turn's group message with skills, pinned whole: the skills framed and introduced before the group's diff, the first two messages unchanged", () => {
+    const skills = { paths: [".agents/skills/entity/SKILL.md"], text: "File: .agents/skills/entity/SKILL.md\n# Entities\nA field named id is branded.\n" }
+    const files = PREPARED.files.filter((file) => file.path === "src/sum.ts")
+    const plain = focusPrefix(PREPARED, files, 24_000)
+    const prefix = focusPrefix(PREPARED, files, 24_000, skills)
+    expect(prefix[2]).toEqual({
+      role: "user",
+      content: [
+        "The repository's skills that bear on the files under review: its rules for this kind of code, read at the base commit, so the pull request cannot change them. Check the changed lines against the rules they state; they do not change how you review.",
+        "",
+        "<repo-skills>",
+        "File: .agents/skills/entity/SKILL.md",
+        "# Entities",
+        "A field named id is branded.",
+        "",
+        "</repo-skills>",
+        "",
+        plain[2]?.content,
+      ].join("\n"),
+    })
+    expect([prefix[0], prefix[1]]).toEqual([plain[0], plain[1]])
+    expect(focusPrefix(PREPARED, files, 24_000, NO_SKILLS)).toEqual(plain)
+  })
+
+  test("a focused turn's tail with skills, by finder, pinned whole: the rules' words name the skills shown above", () => {
+    const clause = ", the skills shown above included (where a piece of logic, a type, a contract or an invariant belongs, and what must be shared rather than written twice)"
+    expect(FOCUS_TAIL_SKILLS.strict).toBe(FOCUS_TAIL.strict.replace(
+      "and for rules of the repository's that a changed line breaks. Read other files",
+      `and for rules of the repository's that a changed line breaks${clause}. Read other files`,
+    ))
+    expect(FOCUS_TAIL_SKILLS.candidates).toBe(FOCUS_TAIL.candidates.replace(
+      "a security hole, and a rule of the repository's that a changed line breaks.\n",
+      `a security hole, and a rule of the repository's that a changed line breaks${clause}.\n`,
+    ))
+    expect([FOCUS_TAIL_SKILLS.strict.includes(clause), FOCUS_TAIL_SKILLS.candidates.includes(clause)]).toEqual([true, true])
+    const prefix = focusPrefix(PREPARED, PREPARED.files, 24_000)
+    const skills = { paths: ["a/SKILL.md"], text: "File: a/SKILL.md\nx\n" }
+    expect([focusPrompt(prefix, "strict", skills).tail, focusPrompt(prefix, "candidates", skills).tail, focusPrompt(prefix, "candidates", NO_SKILLS).tail]).toEqual([
+      FOCUS_TAIL_SKILLS.strict, FOCUS_TAIL_SKILLS.candidates, FOCUS_TAIL.candidates,
+    ])
   })
 
   test("the host's note after a finder turn answers in words, pinned whole: report what was weighed and kept back, or answer none", () => {

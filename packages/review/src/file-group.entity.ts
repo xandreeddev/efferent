@@ -75,6 +75,9 @@ export const NOT_REVIEWED_BECAUSE = {
 /** The note when a focused review found no file to group (config, CI or docs alone) and reviewed the whole pull request. */
 export const NO_GROUP_NOTE = "No changed file is code a group holds, so the pull request was reviewed whole (--focus whole)."
 
+/** The report's note when the repository's skills were read but the review ran whole, where no prompt shows them. */
+export const SKILLS_UNSHOWN_NOTE = "The repository's skills were read, but a review of the whole pull request shows none: only a group's turn is shown its skills."
+
 /**
  * The order a focused review runs its groups in: by risk (`riskOf`: changed lines on shared state, concurrency,
  * processes, files, the network and secrets first), or in git's order (`git`).
@@ -103,12 +106,14 @@ export type Focus = typeof Focus.Type
 export const DEFAULT_FOCUS: Focus = "groups"
 
 /**
- * A group as the review ran it: the group, the turn that ran on it (none when none started), and why it was not
- * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its turn answered at least one call).
+ * A group as the review ran it: the group, the turn that ran on it (none when none started), why it was not
+ * reviewed (`NOT_REVIEWED_BECAUSE`; empty when its turn answered at least one call), and the paths of the skills its
+ * message showed (`groupSkills`; none when skills are off or none is called for).
  */
 export const GroupRun = Schema.Struct({
   group: FileGroup,
   turn: Schema.OptionFromNullOr(TurnNumber),
   notReviewed: Schema.String,
+  skills: Schema.Array(Schema.String),
 })
 export type GroupRun = typeof GroupRun.Type

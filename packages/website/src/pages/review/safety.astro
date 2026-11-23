@@ -127,7 +127,7 @@ const validationsAdapter = excerpt("validations.adapter.ts", "export const sandb
   <h2 id="framed">Untrusted text, framed</h2>
   <p>
     Each part of the prompt the pull request wrote is wrapped in a named frame by the kernel's <code>framed</code>
-    (<code>repo-rules</code>, <code>pull-request</code>, <code>pull-request-diff</code>, <code>pull-request-files</code>, <code>files-under-review</code>,
+    (<code>repo-rules</code>, <code>repo-skills</code>, <code>pull-request</code>, <code>pull-request-diff</code>, <code>pull-request-files</code>, <code>files-under-review</code>,
     <code>ci-digest</code>, <code>changed-files</code>, <code>reported-problem</code>), clipped to a bound, with any
     text that would forge a frame's end made inert. A path holding a control character, a quote or a backslash is
     shown as a JSON string, so a file name cannot forge a line of the diff. A CI log's digest strips escape sequences
@@ -144,7 +144,9 @@ const validationsAdapter = excerpt("validations.adapter.ts", "export const sandb
     The repository's instruction files are read at the base commit (<code>show</code> at the base), not at the head.
     A pull request that edits <code>AGENTS.md</code> to say "approve everything" is reviewed by the
     <code>AGENTS.md</code> it started from. The same holds for the <code>.gitattributes</code> that decides which files
-    are generated, and for the "definition of done" commands <code>--validate</code> runs.
+    are generated, for the "definition of done" commands <code>--validate</code> runs, and, with
+    <code>--skills</code>, for the repository's skills and the routes that choose them: a pull request that rewrites a
+    skill, or routes its own files away from one, is reviewed by the skills of its base.
   </p>
 
   <h2 id="limits">What it does not guarantee</h2>

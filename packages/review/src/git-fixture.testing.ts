@@ -69,6 +69,13 @@ export const gitFixture = (): GitFixture => {
   write("docs/old.md", "one\ntwo\nthree\n")
   write("docs/gone.md", "going\n")
   write("src/run.sh", "echo run\n")
+  // The skill routes at the base: one skill there, one route to a skill the base does not hold, one to no tree path.
+  write(".agents/review-skills.json", JSON.stringify({ skills: [
+    { path: ".agents/skills/one/SKILL.md", paths: ["src/**"], diff: [] },
+    { path: ".agents/skills/none/SKILL.md", paths: ["**"], diff: [] },
+    { path: "../outside/SKILL.md", paths: ["**"], diff: [] },
+  ] }))
+  write(".agents/skills/one/SKILL.md", "# One\nA skill at the base.\n")
   write(`${MAGIC_FOLDERS[0]}/AGENTS.md`, "Odd rules.\n")
   write(`${MAGIC_FOLDERS[0]}/a.ts`, "export const a = 1\n")
   write(`${MAGIC_FOLDERS[1]}/b.ts`, "export const b = 1\n")

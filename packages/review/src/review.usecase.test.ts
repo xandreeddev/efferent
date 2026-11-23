@@ -22,13 +22,13 @@ import { ReviewTurns } from "./review-turn.port.js"
 import { ReviewReport } from "./review-report.entity.js"
 import { DEFAULT_GROUP_OPTIONS } from "./review.entity.js"
 import type { ReviewOptions } from "./review.entity.js"
-import { DEFAULT_GROUP_RESERVE, DEFAULT_GROUP_STEPS, NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import { DEFAULT_GROUP_RESERVE, DEFAULT_GROUP_STEPS, NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE, SKILLS_UNSHOWN_NOTE } from "./file-group.entity.js"
 import { firstCallHold, lookupFailedNote, uncachedCheckNote } from "./file-group.entity.functions.js"
 import { CommitMissing } from "./checkout.entity.js"
 import { Checkout } from "./checkout.port.js"
 import { STOCK_POLICIES } from "./prepare-review.usecase.functions.js"
 import type { TurnLimits, TurnResult } from "./review-turn.entity.js"
-import { FOCUS_TAIL } from "./review-prompt.entity.js"
+import { FOCUS_TAIL, FOCUS_TAIL_SKILLS, SKILLS_INTRO } from "./review-prompt.entity.js"
 import { reviewPullRequest } from "./review.usecase.js"
 import { reportText } from "./review-report.entity.functions.js"
 
@@ -72,7 +72,7 @@ const forge =Layer.succeed(Forge, Forge.of({
 const layers = Layer.mergeAll(forge, gitCheckout({ cacheRoot: fixture.cacheRoot, remoteUrl: () => fixture.remote, transports: ["file"] }), directoryLogs(logsRoot), findingsInMemory)
   .pipe(Layer.provide(hostShell({ cwd: fixture.root, env: fixture.env })))
 
-const OPTIONS: PrepareOptions = { at: { _tag: "First" }, budgetTokens: 24_000, run: [], validate: false, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
+const OPTIONS: PrepareOptions = { at: { _tag: "First" }, skills: { _tag: "Off" }, budgetTokens: 24_000, run: [], validate: false, workflows: [], limits: DIGEST_LIMITS, timeoutMs: 60_000, budgetMs: 600_000 }
 
 describe("at the first head", () => {
   test("the commit the first run tested, its diff and rules from where its history meets the base, its own CI, its description as it stood then", async () => {
@@ -187,7 +187,7 @@ describe("reviewPullRequest", () => {
     // The one check runs alone, so it keeps back its closing call's reserve.
     expect([checks.length, checks[0]?.journalAt, checks[0]?.options, checks[0]?.prompt.prefix, checks[0]?.prompt.tail.startsWith("Another reviewer reported the problem below")]).toEqual([1, join(folder, "check-1"), { maxSteps: 6, reserve: 0.1 }, finds[0]?.prompt.prefix, true])
     expect<unknown>([report.promptVersion, report.toolsVersion, report.hostTools, report.findings.length, report.buckets.map((bucket) => [bucket.path, bucket.votes, bucket.why]), report.verdicts.map((check) => [check.outcome, check.quoteHolds])]).toEqual([
-      "review-prompt-10", "review-tools-6", [], 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
+      "review-prompt-11", "review-tools-6", [], 4, [["README.md", 1, "off-changed-lines"], ["src/sum.ts", 3, "kept"]], [["confirmed", true]],
     ])
     expect<unknown>([report.reported.map((one) => [one.path, one.line, one.votes, one.checked]), report.stages.find, report.stages.verify.calls]).toEqual([
       [["src/sum.ts", 4, 3, "It does multiply by one."]], { input: 30, cached: 12, output: 6, cost: 0.003, calls: 3 }, 1,
@@ -310,6 +310,22 @@ describe("reviewPullRequest", () => {
     ]).toEqual([true, true, finds.length, true, 1, true])
   })
 
+  test("focused, with the repository's skills: a group whose files call for a skill shows it and is asked with the skills' tail, the others as before; each group's skills recorded", async () => {
+    const { asked, layer } = scripted("total += value * 1")
+    const report = await reviewWith(layer, {
+      ...REVIEW_OPTIONS, focus: "groups", verify: false, prepare: { ...OPTIONS, skills: { _tag: "Repo" } }, groups: { ...DEFAULT_GROUP_OPTIONS, bounds: { tokens: 6_000, files: 1 } },
+    })
+    const finds = asked.filter((input) => input.reviewed.stage._tag === "Find")
+    const calledFor = report.groups.map((run) => run.group.paths.some((path) => path.startsWith("src/")))
+    expect([calledFor.includes(true), calledFor.includes(false)]).toEqual([true, true])
+    expect(report.groups.map((run) => run.skills)).toEqual(calledFor.map((called) => (called ? [".agents/skills/one/SKILL.md"] : [])))
+    expect(finds.map((input) => [input.prompt.tail, input.prompt.prefix[2]?.content.startsWith(SKILLS_INTRO), input.prompt.prefix[2]?.content.includes("<repo-skills>\nFile: .agents/skills/one/SKILL.md\n# One\nA skill at the base.\n\n</repo-skills>")])).toEqual(
+      calledFor.map((called) => (called ? [FOCUS_TAIL_SKILLS.candidates, true, true] : [FOCUS_TAIL.candidates, false, false])),
+    )
+    // The skills are the group's: the message every group shares is the same with them as without.
+    expect(finds.every((input) => input.prompt.prefix[1]?.content === finds[0]?.prompt.prefix[1]?.content)).toBe(true)
+  })
+
   test("focused: a group starts only with its closing reserve and its first call's hold, sized from its prompt, left in the find stage", async () => {
     const sized = scripted("q")
     await reviewWith(sized.layer, { ...REVIEW_OPTIONS, focus: "groups", verify: false })
@@ -419,6 +435,18 @@ describe("reviewPullRequest", () => {
     const { asked, layer } = scripted("q")
     const report = await Effect.runPromise(reviewPullRequest(repo, PULL.number, { ...REVIEW_OPTIONS, turns: 1, focus: "groups", verify: false }, onlyDocs).pipe(Effect.provide(layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
     expect<unknown>([report.focus, report.groups, report.notes, asked.length, asked[0]?.prompt.prefix.length]).toEqual(["whole", [], [NO_GROUP_NOTE], 1, 2])
+  })
+
+  test("skills read but the review ran whole: the report says none was shown", async () => {
+    expect(SKILLS_UNSHOWN_NOTE).toBe("The repository's skills were read, but a review of the whole pull request shows none: only a group's turn is shown its skills.")
+    const onlyDocs = { ...STOCK_POLICIES, group: () => [] }
+    const { asked, layer } = scripted("q")
+    const options = { ...REVIEW_OPTIONS, prepare: { ...REVIEW_OPTIONS.prepare, skills: { _tag: "Repo" as const } }, turns: 1, focus: "groups" as const, verify: false }
+    const report = await Effect.runPromise(reviewPullRequest(repo, PULL.number, options, onlyDocs).pipe(Effect.provide(layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
+    expect<unknown>([report.focus, report.notes, asked.some((one) => JSON.stringify(one.prompt).includes("<repo-skills>"))]).toEqual(["whole", [NO_GROUP_NOTE, SKILLS_UNSHOWN_NOTE], false])
+    // Skills off: no such note (the control).
+    const off = await Effect.runPromise(reviewPullRequest(repo, PULL.number, { ...options, prepare: REVIEW_OPTIONS.prepare }, onlyDocs).pipe(Effect.provide(scripted("q").layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
+    expect(off.notes).toEqual([NO_GROUP_NOTE])
   })
 
   test("focused: a group starts only while the find stage has room; the rest are listed as not reviewed", async () => {
