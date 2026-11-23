@@ -71,6 +71,7 @@ describe("reviewCli", () => {
     [["review", "1", "--repo", "a/b", "--focus", "groups", "--max-steps", "4"], "--max-steps is a flag of --focus whole, not of --focus groups"],
     [["review", "1", "--repo", "a/b", "--focus", "whole", "--group-steps", "4"], "--group-steps is a flag of --focus groups, not of --focus whole"],
     [["review", "1", "--repo", "a/b", "--focus", "whole", "--config-turn"], "--config-turn is a flag of --focus groups, not of --focus whole"],
+    [["review", "1", "--repo", "a/b", "--focus", "whole", "--skills"], "--skills is a flag of --focus groups, not of --focus whole"],
     [["prepare", "1", "--repo", "a/b", "--focus", "groups"], "--focus is a flag of review, not of prepare"],
     [["prepare", "1", "--repo", "a/b", "--config-turn"], "--config-turn is a flag of review, not of prepare"],
     [["prepare", "1", "--repo", "a/b", "--turns", "2"], "--turns is a flag of review, not of prepare"],

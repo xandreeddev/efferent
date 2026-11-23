@@ -218,7 +218,7 @@ export const reviewCli = Effect.fn("review.cli")(function* (raw: ReadonlyArray<s
   // `--vote` too: in a focused review a group is one turn's, so a second vote would come from a turn that wandered into its files, not from agreement.
   const otherFocus = focus === "groups"
     ? [...["--turns", "--max-steps"].filter((flag) => Option.isSome(one(line, flag))), ...["--vote"].filter((flag) => line.switches.has(flag))][0]
-    : [...["--group-steps", "--group-order"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-turn"].filter((flag) => line.switches.has(flag))][0]
+    : [...["--group-steps", "--group-order"].filter((flag) => Option.isSome(one(line, flag))), ...["--config-turn", "--skills"].filter((flag) => line.switches.has(flag))][0]
   if (otherFocus !== undefined) return yield* Effect.fail(usage(`${otherFocus} is a flag of --focus ${focus === "groups" ? "whole" : "groups"}, not of --focus ${focus}`))
   // A stage's cap above the total would promise what the total refuses: refused, never clamped.
   const overTotal = ([["--find-cost", findCost], ["--verify-cost", verifyCost]] as const).find(([, cost]) => cost > maxCost)
