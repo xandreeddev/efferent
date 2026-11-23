@@ -22,7 +22,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   The skills shown never pass 30,000 characters, routes to one file are
   one skill, and a review that ran whole says it showed none
   (`SKILLS_UNSHOWN_NOTE`); `--skills` is refused with `--focus whole`.
-  `review.json` records each group's skills (`GroupRun.skills`). New
+  `review.json` records each group's skills (`GroupRun.skills`). The
+  docs site's review pages describe the skills (Pipeline, Safety) and
+  plan what is left (Planned: instruction files as skills). New
   model-facing text: `REVIEW_PROMPT` is `review-prompt-11`. Efferent
   declares its own routes for `domain-entity`, `add-port`,
   `write-model-text` and `kernel-architecture`.

@@ -6,11 +6,28 @@ import MergeCheckDiagram from "../../components/review/MergeCheckDiagram.astro"
 import { reviewHref } from "../../lib/nav"
 import { excerpt } from "../../lib/review-source"
 
+// Two routes in the shape `SkillRoutes` decodes: a skill by its paths and by plain words of a group's diff.
+const SKILL_ROUTES = `{
+  "skills": [
+    {
+      "path": ".agents/skills/domain-entity/SKILL.md",
+      "paths": ["**/*.entity.ts", "**/*.entity.*.ts"],
+      "diff": ["Schema.Struct", "Schema.TaggedStruct"]
+    },
+    {
+      "path": ".agents/skills/add-port/SKILL.md",
+      "paths": ["**/*.port.ts", "**/*.adapter.ts"],
+      "diff": []
+    }
+  ]
+}`
+
 const headings = [
   { depth: 2, slug: "fetch", text: "1. Fetch" },
   { depth: 2, slug: "prepare", text: "2. Prepare" },
   { depth: 3, slug: "packing", text: "Which files, in which order" },
   { depth: 3, slug: "groups", text: "File groups" },
+  { depth: 3, slug: "skills", text: "The repository's skills" },
   { depth: 2, slug: "find", text: "3. Find" },
   { depth: 3, slug: "tools", text: "The six tools" },
   { depth: 3, slug: "harvest", text: "The harvest and the closing call" },
@@ -54,6 +71,11 @@ const verifyTail = excerpt("review-prompt.entity.ts", "export const VERIFY_TAIL"
       reviewed by. A text met twice (a link from one name to another) is kept once.
     </li>
     <li>
+      <strong>The repository's skills</strong>, only with <code>--skills</code>: the routes in
+      <code>.agents/review-skills.json</code> and the skill files they name, read at the base as the rules are
+      (<a href="#skills">below</a>).
+    </li>
+    <li>
       <strong>The CI</strong>: every run for the commit started by a pull request, a push or a merge queue; each failed
       run's log digested (escape codes stripped, repeated failures counted, lines cut), the whole log kept beside the
       records.
@@ -91,6 +113,28 @@ const verifyTail = excerpt("review-prompt.entity.ts", "export const VERIFY_TAIL"
     one group of config. Within each tier the riskiest group goes first: a group whose added lines touch shared state,
     concurrency, processes, files, the network or secrets. Docs get no turn; every file no group holds is listed with
     why. A pull request with no code at all is reviewed whole instead.
+  </p>
+  <h3 id="skills">The repository's skills</h3>
+  <p>
+    Off by default; <code>--skills</code> turns them on. Instruction files apply by folder and, past 16,000 characters
+    in all, reach the model as their headings alone; a repository's skills (the rules for one kind of code: an entity,
+    a port, text the model reads) apply by what a group's files are. The repository says which skill applies where in
+    <code>.agents/review-skills.json</code>: each skill's file, the globs of the paths that call for it, and plain words
+    whose presence in the group's diff calls for it wherever the file lives (an import of the kernel, say). Never a
+    pattern: a repository's text is matched as text.
+  </p>
+  <SourceFile file=".agents/review-skills.json (an example)" lang="json" code={SKILL_ROUTES} />
+  <p>
+    Each group is shown the skills its files call for, in its own message, before its diffs, at most 30,000 characters:
+    a skill whole while it fits, else the sections its paths rank highest, with every other heading named. Its tail then
+    asks it to check the changed lines against those rules too. A group shown none gets the prompt as before, byte for
+    byte, and the message every group shares never changes, so the provider's cache still serves it. The record keeps
+    the skills each group was shown. Only a focused review shows skills: <code>--skills</code> is refused with
+    <code>--focus whole</code>, and a focused review that fell back to whole says in its report that none was shown.
+  </p>
+  <p>
+    A rule written only in an instruction file is reached by no route (<a href={reviewHref("planned") + "#skills"}>planned</a>).
+    The skills stay off by default until an evaluation shows them worth their room.
   </p>
 
   <h2 id="find">3. Find</h2>

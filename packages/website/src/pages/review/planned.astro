@@ -5,7 +5,7 @@ import { reviewHref } from "../../lib/nav"
 const headings = [
   { depth: 2, slug: "memory", text: "Memory tied to the codebase" },
   { depth: 2, slug: "lsp", text: "Language-server tools, as an add-on" },
-  { depth: 2, slug: "skills", text: "Review skills by path" },
+  { depth: 2, slug: "skills", text: "Instruction files as skills" },
 ]
 ---
 
@@ -40,10 +40,13 @@ const headings = [
     toolkit and its handlers handed to <code>kernelTurns</code>; what is planned is the tools themselves.
   </p>
 
-  <h2 id="skills">Review skills by path</h2>
+  <h2 id="skills">Instruction files as skills</h2>
   <p><span class="rv-tag planned">planned</span></p>
   <p>
-    Instruction files apply by folder. The plan is review skills attached to paths of the repository: guidance on what
-    to look for in one part of the code, given to a review by the paths it changes.
+    A repository's skills already reach a focused review by the paths it changes (<a
+    href={reviewHref("pipeline") + "#skills"}>the repository's skills</a>, off by default). A rule written only in an
+    <code>AGENTS.md</code> does not: past 16,000 characters an instruction file reaches the model as its headings alone,
+    and no route names its sections. The plan is routes to an instruction file's sections, so a group is shown the
+    section that bears on its files whole; then the skills on by default once a measurement through the gateway holds.
   </p>
 </ReviewLayout>
