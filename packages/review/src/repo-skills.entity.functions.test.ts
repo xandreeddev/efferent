@@ -51,6 +51,20 @@ describe("sectionsOf", () => {
       { heading: "## Two", body: "c" },
     ])
   })
+
+  test("a ## line inside a fenced block is the block's text", () => {
+    expect(sectionsOf("# T\n## One\n```markdown\n## Not a heading\n```\n~~~\n## Nor this\n~~~\n## Two\nc")).toEqual([
+      { heading: "", body: "# T" },
+      { heading: "## One", body: "```markdown\n## Not a heading\n```\n~~~\n## Nor this\n~~~" },
+      { heading: "## Two", body: "c" },
+    ])
+  })
+})
+
+describe("SECTIONS_NOTE", () => {
+  test("the note after a skill shown by its sections, pinned whole", () => {
+    expect(SECTIONS_NOTE).toBe("Only the sections that bear on the files under review are shown whole; the others by their headings.")
+  })
 })
 
 describe("skillsShown", () => {
@@ -85,6 +99,20 @@ describe("skillsShown", () => {
     expect(skillsShown([skill("p/SKILL.md", `# T\n## Big\n${"x".repeat(2_000)}`)], [], 1_600)).toEqual(NO_SKILLS)
     const first = skill("a/SKILL.md", "a".repeat(1_000))
     expect(skillsShown([first, skill("b/SKILL.md", "b")], [], 2_000).paths).toEqual(["a/SKILL.md"])
+  })
+
+  test("the text shown never passes the room: File: lines and joins counted, a skill of many headings left out", () => {
+    // Text that fits the room alone, but not with its File: line: shown by its sections instead.
+    const exact = `# T\n## A\n${"a".repeat(800)}\n## B\n${"b".repeat(1_185)}`
+    expect(exact.length).toBe(2_000)
+    const byParts = skillsShown([skill("p/SKILL.md", exact)], [], 2_000)
+    expect(byParts.text).toBe(["File: p/SKILL.md", "# T", `## A\n${"a".repeat(800)}`, "## B", `${SECTIONS_NOTE}\n`].join("\n"))
+    // A hundred headings name more than the room holds once a section is shown: the skill is left out.
+    const many = `# T\n## Small\nrule\n${Array.from({ length: 100 }, (_, n) => `## Heading number ${n} of the many\n${"x".repeat(3_000)}`).join("\n")}`
+    expect(skillsShown([skill("m/SKILL.md", many)], [], 2_000)).toEqual(NO_SKILLS)
+    // Several skills: the text shown, joins included, within the room.
+    const several = [1_500, 1_400, 900, 3_000].map((size, n) => skill(`s${n}/SKILL.md`, `# S${n}\n## Only\n${"r".repeat(size)}`))
+    for (const room of [2_000, 3_500, 5_000, 30_000]) expect(skillsShown(several, [], room).text.length).toBeLessThanOrEqual(room)
   })
 })
 

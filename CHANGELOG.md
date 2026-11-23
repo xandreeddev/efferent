@@ -19,6 +19,9 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   `repo-skills`, 30,000 characters, a long skill by its ranked sections),
   and its turn is asked with `FOCUS_TAIL_SKILLS`, whose rules' words name
   them; a group with none gets the prompt as before, byte for byte.
+  The skills shown never pass 30,000 characters, routes to one file are
+  one skill, and a review that ran whole says it showed none
+  (`SKILLS_UNSHOWN_NOTE`); `--skills` is refused with `--focus whole`.
   `review.json` records each group's skills (`GroupRun.skills`). New
   model-facing text: `REVIEW_PROMPT` is `review-prompt-11`. Efferent
   declares its own routes for `domain-entity`, `add-port`,

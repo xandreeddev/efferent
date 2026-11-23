@@ -2,7 +2,7 @@ import { Array as Arr, Cause, Clock, Deferred, Effect, Fiber, Match, Option, Ran
 import { ModelSpend } from "@xandreed/core"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
-import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import { NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE, SKILLS_UNSHOWN_NOTE } from "./file-group.entity.js"
 import type { Focus, GroupRun } from "./file-group.entity.js"
 import { firstCallHold, lookupFailedNote, noCallWhy, orderGroups, packageFoldersToLook, uncachedCheckNote, ungroupedOf } from "./file-group.entity.functions.js"
 import type { TurnInput } from "./review-turn.port.js"
@@ -113,7 +113,12 @@ export const reviewPullRequest = Effect.fn("review.review")(function* (repo: Rep
   const grouping = options.focus === "groups" ? yield* reviewGroups(repo, prepared, options, policies) : { focused: [], ungrouped: [], notes: [] }
   // The focus the review runs: the whole one when there is no group to review.
   const focus: Focus = options.focus === "groups" && grouping.focused.length > 0 ? "groups" : "whole"
-  const notes: Array<string> = [...grouping.notes, ...(options.focus === "groups" && focus === "whole" ? [NO_GROUP_NOTE] : [])]
+  const notes: Array<string> = [
+    ...grouping.notes,
+    ...(options.focus === "groups" && focus === "whole" ? [NO_GROUP_NOTE] : []),
+    // Only a group's message shows skills: a review that ran whole read them for nothing, and says so.
+    ...(focus === "whole" && prepared.skills.length > 0 ? [SKILLS_UNSHOWN_NOTE] : []),
+  ]
   const groupRuns: Array<GroupRun> = []
   const found: Array<TurnResult> = []
 

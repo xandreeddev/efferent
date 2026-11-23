@@ -29,11 +29,16 @@ export const termsOf = (paths: ReadonlyArray<string>): ReadonlyArray<string> => 
   return Arr.dedupe(words.filter(kept))
 }
 
-/** A Markdown text's level-two sections: what comes before the first (`heading` empty), then each `## ` heading with its body. */
+/**
+ * A Markdown text's level-two sections: what comes before the first (`heading` empty), then each `## ` heading with its
+ * body. A `## ` line inside a fenced block (between lines starting with three backticks or tildes) is the block's text.
+ */
 export const sectionsOf = (text: string): ReadonlyArray<{ readonly heading: string; readonly body: string }> => {
   const out: Array<{ heading: string; body: Array<string> }> = [{ heading: "", body: [] }]
+  let fenced = false
   for (const line of text.split("\n")) {
-    if (line.startsWith("## ")) out.push({ heading: line, body: [] })
+    if (line.startsWith("```") || line.startsWith("~~~")) fenced = !fenced
+    if (!fenced && line.startsWith("## ")) out.push({ heading: line, body: [] })
     else out[out.length - 1]?.body.push(line)
   }
   return out.map((section) => ({ heading: section.heading, body: section.body.join("\n") }))
@@ -79,28 +84,28 @@ const bySections = (path: string, text: string, terms: ReadonlyArray<string>, ro
 /**
  * The skills a group's message shows, in their order, within `room` characters: each whole (`File: <path>` and its
  * text) while it fits in what is left, else by its sections (`bySections`); a skill whose text is empty, or that comes
- * when less than `SKILL_ROOM_LEAST` is left, is not shown.
+ * when less than `SKILL_ROOM_LEAST` is left, is not shown, nor one whose block (by sections too: many headings) would
+ * take the text shown past `room`, so the text shown never passes it.
  */
 export const skillsShown = (skills: ReadonlyArray<RepoSkill>, paths: ReadonlyArray<string>, room: number = SKILLS_SHOWN): ShownSkills => {
   const terms = termsOf(paths)
   const parts: Array<string> = []
   const shown: Array<string> = []
   let left = room
+  let used = 0 // the length of `parts.join("\n")`
   for (const skill of skills) {
     const text = skill.text.trim()
     if (text.length === 0 || left < SKILL_ROOM_LEAST) continue
-    if (text.length <= left) {
-      parts.push(`File: ${shownPath(skill.route.path)}\n${text}\n`)
-      shown.push(skill.route.path)
-      left -= text.length
-      continue
-    }
-    const lines = bySections(skill.route.path, text, terms, left)
-    if (lines.length === 0) continue
-    const block = lines.join("\n")
+    const joint = parts.length > 0 ? 1 : 0
+    const wholeBlock = `File: ${shownPath(skill.route.path)}\n${text}\n`
+    const whole = text.length <= left && used + joint + wholeBlock.length <= room
+    const block = whole ? wholeBlock : bySections(skill.route.path, text, terms, left).join("\n")
+    const after = used + joint + block.length
+    if (block.length === 0 || after > room) continue
     parts.push(block)
     shown.push(skill.route.path)
-    left -= block.length
+    used = after
+    left -= whole ? text.length : block.length
   }
   return { paths: shown, text: parts.join("\n") }
 }

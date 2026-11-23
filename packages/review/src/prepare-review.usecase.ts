@@ -1,4 +1,4 @@
-import { Effect, Match, Option, Result, Schema } from "effect"
+import { Array as Arr, Effect, Match, Option, Result, Schema } from "effect"
 import { clipTo } from "@xandreed/sdk"
 import { Checkout } from "./checkout.port.js"
 import { parseUnifiedDiff } from "./diff.entity.functions.js"
@@ -106,7 +106,16 @@ export const prepareReview = Effect.fn("review.prepare")(function* (repo: RepoNa
       onSome: (body) => Effect.succeed(Option.some<RepoSkill>({ route: { ...route, path }, text: body, from: at.base })),
     })),
   }), { concurrency: 4 })
-  const skills = read.flatMap((skill) => Option.toArray(skill))
+  // One skill once: routes to one path (`./x` and `x` alike, as `treePath` reads them) are one, with all their globs
+  // and words, where the first stood.
+  const held = read.flatMap((skill) => Option.toArray(skill))
+  const skills = Arr.dedupeWith(held, (one, other) => one.route.path === other.route.path).map((skill) => {
+    const same = held.filter((other) => other.route.path === skill.route.path)
+    return same.length === 1 ? skill : {
+      ...skill,
+      route: { ...skill.route, paths: Arr.dedupe(same.flatMap((one) => one.route.paths)), diff: Arr.dedupe(same.flatMap((one) => one.route.diff)) },
+    }
+  })
 
   const ci = yield* forge.ciRuns(repo, at.sha, options.workflows)
   const folder = reviewFolderOf(pull.number, at.sha)

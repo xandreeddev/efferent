@@ -137,6 +137,21 @@ describe("prepareReview", () => {
     expect<unknown>(hosts).toEqual([{ route: { path: "src/AGENTS.md", paths: ["src/**"], diff: ["sum"] }, text: "Source rules at the base.\n", from: fixture.left }])
   })
 
+  test("skills: routes to one path, however written, are one skill with all their globs and words, where the first stood", async () => {
+    const given = {
+      skills: [
+        { path: "./src/AGENTS.md", paths: ["src/**"], diff: ["sum"] },
+        { path: ".agents/skills/one/SKILL.md", paths: ["lib/**"], diff: [] },
+        { path: "src/AGENTS.md", paths: ["test/**", "src/**"], diff: ["total"] },
+      ],
+    }
+    const skills = (await prepared(pullOf(true, "write"), { ...OPTIONS, skills: { _tag: "Given", routes: given } })).review.skills
+    expect<unknown>(skills).toEqual([
+      { route: { path: "src/AGENTS.md", paths: ["src/**", "test/**"], diff: ["sum", "total"] }, text: "Source rules at the base.\n", from: fixture.left },
+      { route: { path: ".agents/skills/one/SKILL.md", paths: ["lib/**"], diff: [] }, text: "# One\nA skill at the base.\n", from: fixture.left },
+    ])
+  })
+
   test("a fork's commands are skipped, and so are those of an author who may not write (read or triage) or with no sandbox given; no worktree is made", async () => {
     const fork = await prepared(pullOf(false, "admin"))
     expect([fork.review.validation, fork.asked.length]).toEqual([{ _tag: "Skipped", reason: "fork" }, 0])

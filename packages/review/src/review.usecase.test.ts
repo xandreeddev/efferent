@@ -22,7 +22,7 @@ import { ReviewTurns } from "./review-turn.port.js"
 import { ReviewReport } from "./review-report.entity.js"
 import { DEFAULT_GROUP_OPTIONS } from "./review.entity.js"
 import type { ReviewOptions } from "./review.entity.js"
-import { DEFAULT_GROUP_RESERVE, DEFAULT_GROUP_STEPS, NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE } from "./file-group.entity.js"
+import { DEFAULT_GROUP_RESERVE, DEFAULT_GROUP_STEPS, NO_GROUP_NOTE, NOT_REVIEWED_BECAUSE, SKILLS_UNSHOWN_NOTE } from "./file-group.entity.js"
 import { firstCallHold, lookupFailedNote, uncachedCheckNote } from "./file-group.entity.functions.js"
 import { CommitMissing } from "./checkout.entity.js"
 import { Checkout } from "./checkout.port.js"
@@ -435,6 +435,18 @@ describe("reviewPullRequest", () => {
     const { asked, layer } = scripted("q")
     const report = await Effect.runPromise(reviewPullRequest(repo, PULL.number, { ...REVIEW_OPTIONS, turns: 1, focus: "groups", verify: false }, onlyDocs).pipe(Effect.provide(layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
     expect<unknown>([report.focus, report.groups, report.notes, asked.length, asked[0]?.prompt.prefix.length]).toEqual(["whole", [], [NO_GROUP_NOTE], 1, 2])
+  })
+
+  test("skills read but the review ran whole: the report says none was shown", async () => {
+    expect(SKILLS_UNSHOWN_NOTE).toBe("The repository's skills were read, but a review of the whole pull request shows none: only a group's turn is shown its skills.")
+    const onlyDocs = { ...STOCK_POLICIES, group: () => [] }
+    const { asked, layer } = scripted("q")
+    const options = { ...REVIEW_OPTIONS, prepare: { ...REVIEW_OPTIONS.prepare, skills: { _tag: "Repo" as const } }, turns: 1, focus: "groups" as const, verify: false }
+    const report = await Effect.runPromise(reviewPullRequest(repo, PULL.number, options, onlyDocs).pipe(Effect.provide(layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
+    expect<unknown>([report.focus, report.notes, asked.some((one) => JSON.stringify(one.prompt).includes("<repo-skills>"))]).toEqual(["whole", [NO_GROUP_NOTE, SKILLS_UNSHOWN_NOTE], false])
+    // Skills off: no such note (the control).
+    const off = await Effect.runPromise(reviewPullRequest(repo, PULL.number, { ...options, prepare: REVIEW_OPTIONS.prepare }, onlyDocs).pipe(Effect.provide(scripted("q").layer.pipe(Layer.provideMerge(Layer.mergeAll(layers, modelSpendMemory))))))
+    expect(off.notes).toEqual([NO_GROUP_NOTE])
   })
 
   test("focused: a group starts only while the find stage has room; the rest are listed as not reviewed", async () => {
