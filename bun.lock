@@ -16,14 +16,14 @@
     },
     "packages/core": {
       "name": "@xandreed/core",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "effect": "4.0.7",
       },
     },
     "packages/evals": {
       "name": "@xandreed/evals",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@noble/hashes": "2.4.0",
         "@xandreed/core": "workspace:*",
@@ -35,7 +35,7 @@
     },
     "packages/evals-cli": {
       "name": "@xandreed/evals-cli",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "bin": {
         "efferent-eval": "./src/main.ts",
       },
@@ -50,7 +50,7 @@
     },
     "packages/evals-langfuse": {
       "name": "@xandreed/evals-langfuse",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@langfuse/client": "5.11.1",
         "@xandreed/evals": "workspace:*",
@@ -59,7 +59,7 @@
     },
     "packages/evals-langsmith": {
       "name": "@xandreed/evals-langsmith",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@xandreed/evals": "workspace:*",
         "effect": "4.0.7",
@@ -90,7 +90,7 @@
     },
     "packages/sdk": {
       "name": "@xandreed/sdk",
-      "version": "0.23.0",
+      "version": "0.24.0",
       "dependencies": {
         "@effect/ai-anthropic": "4.0.7",
         "@xandreed/core": "workspace:*",
