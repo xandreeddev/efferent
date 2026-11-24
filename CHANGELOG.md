@@ -8,6 +8,8 @@ section into the new version. Releases before 0.11.0 are not recorded here.
 
 ## Unreleased
 
+## 0.24.0 — 2026-11-24
+
 ### Added
 
 - `@xandreed/review`: the repository's skills in a focused review, off by
@@ -332,6 +334,12 @@ section into the new version. Releases before 0.11.0 are not recorded here.
   what is planned. Its diagrams are inline SVG drawn in both themes; its
   code is cut from the package's source at build time, and its host examples
   are compiled by the site's check (`tsconfig.review.json`).
+
+### Changes
+
+- `anthropicModel({ effort })` (`AnthropicEffort`: `low`, `medium` or `high`) asks for the API's adaptive thinking at that effort; left out, nothing of it is sent. The thinking comes back as reasoning parts whose metadata carries the signature, and a reasoning part sent back with that metadata as its options is the thinking block. A thinking block's start with no `signature` key, as Vercel's AI Gateway sends it, is now read as one with the key empty, where Effect AI refused the whole answer before.
+
+- The window memory is removed (ADR 0037): `windowMemory`, `WindowOptions`, `windowDroppedEvent`, `windowPressureEvent` and their data are gone, since a memory that drops one more turn for every new message misses a provider's prompt cache on every message. Use `summaryMemory` over a `Summarizer` for a conversation kept to a budget, or `flatMemory` for the whole of it; a journal holding the window's `plugin.window.dropped` records opens as it is, and the turns it had dropped are sent again. New: `flatMemoryWith({ pointers })`, the flat memory with long tool results sent as pointers.
 
 ## 0.23.0 — 2026-11-19
 

@@ -1,6 +1,6 @@
 {
   "name": "@xandreed/evals-langsmith",
-  "version": "0.23.0",
+  "version": "0.24.0",
   "engines": { "node": ">=24" },
   "type": "module",
   "description": "Exports a saved Efferent evaluation run to LangSmith: a project, one run per trial and one feedback per measured metric.",
